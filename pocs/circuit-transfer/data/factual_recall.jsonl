@@ -1,0 +1,4 @@
+{"behavior":"factual-recall","case_id":"capital-france","clean_prompt":"The capital of France is","corrupt_prompt":"The capital of Germany is","distractor":" Berlin","target":" Paris","templates":["The capital of France is","France's capital city is","Q: What is the capital of France? A:"]}
+{"behavior":"factual-recall","case_id":"capital-japan","clean_prompt":"The capital of Japan is","corrupt_prompt":"The capital of Italy is","distractor":" Rome","target":" Tokyo","templates":["The capital of Japan is","Japan's capital city is","Q: What is the capital of Japan? A:"]}
+{"behavior":"factual-recall","case_id":"currency-sweden","clean_prompt":"The currency used in Sweden is the","corrupt_prompt":"The currency used in Japan is the","distractor":" yen","target":" krona","templates":["The currency used in Sweden is the","Sweden's official currency is the","Q: What currency is used in Sweden? A:"]}
+
