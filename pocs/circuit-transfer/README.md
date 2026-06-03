@@ -176,13 +176,17 @@ python pocs/circuit-transfer/steering_injection.py run \
   --vector-file work/circuit-transfer/vectors/capital-france-feature-1234.json \
   --run-file work/circuit-transfer/results.jsonl \
   --model meta-llama/Llama-3.2-1B \
-  --strength 1.0
+  --strength 1.0 \
+  --top-k 20
 ```
 
 For `inject-to-restore`, the hook adds `strength * vector` at the selected layer
 and token position. For `ablate-to-fail`, it removes the hidden state's
 projection along the same vector. The default token position is the final prompt
 token (`-1`), which is the first useful target for next-token factual recall.
+When `--top-k` is greater than zero, each result row also records baseline and
+intervention top-k token distributions. Those become the soft teacher signal
+for LoRA distillation.
 
 After collecting rows, run:
 
@@ -227,7 +231,9 @@ python pocs/circuit-transfer/distill_lora.py train-lora \
   --rank 4 \
   --target-modules q_proj,v_proj \
   --steps 100 \
-  --learning-rate 1e-4
+  --learning-rate 1e-4 \
+  --top-k-kl-weight 0.2 \
+  --temperature 1.0
 ```
 
 Then evaluate `base + LoRA` with the same prompts and success criteria. Only

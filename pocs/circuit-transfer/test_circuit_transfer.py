@@ -59,7 +59,9 @@ def result_row(
         "feature_id": 1234,
         "graph_path": None,
         "baseline_logit_diff": baseline,
+        "baseline_top_k": None,
         "intervention_logit_diff": baseline + delta,
+        "intervention_top_k": None,
         "delta_logit_diff": delta,
         "control_group": control_group,
         "notes": "smoke test",
@@ -103,6 +105,13 @@ class CircuitTransferTest(unittest.TestCase):
 
     def test_result_row_validation_accepts_schema_v1(self):
         circuit_transfer.validate_result_row(result_row("inject-to-restore", 4.9))
+
+    def test_top_k_validation_accepts_token_distribution(self):
+        row = result_row("inject-to-restore", 4.9)
+        row["intervention_top_k"] = [
+            {"token_id": 200, "token": " Paris", "logit": 3.9, "probability": 0.7}
+        ]
+        circuit_transfer.validate_result_row(row)
 
     def test_make_result_row_builds_site_and_delta(self):
         row = circuit_transfer.make_result_row(
@@ -172,6 +181,20 @@ class CircuitTransferTest(unittest.TestCase):
     def test_logit_diff_from_logits(self):
         self.assertAlmostEqual(3.5, steering_injection.logit_diff_from_logits([0.0, 4.0, 0.5], 1, 2))
 
+    def test_top_k_from_logits(self):
+        try:
+            torch = __import__("torch")
+        except ModuleNotFoundError:
+            self.skipTest("torch is not installed in the lightweight test environment")
+
+        class FakeTokenizer:
+            def decode(self, token_ids):
+                return f"tok-{token_ids[0]}"
+
+        entries = steering_injection.top_k_from_logits(torch.tensor([0.0, 2.0, 1.0]), FakeTokenizer(), 2)
+        self.assertEqual([1, 2], [entry["token_id"] for entry in entries])
+        self.assertEqual("tok-1", entries[0]["token"])
+
     def test_build_distillation_examples_filters_successful_injections(self):
         rows = [
             result_row("inject-to-restore", 3.0, template_id="template-a"),
@@ -184,6 +207,14 @@ class CircuitTransferTest(unittest.TestCase):
         self.assertEqual("template-a", examples[0].template_id)
         self.assertEqual(" Paris", examples[0].target)
 
+    def test_distillation_examples_preserve_teacher_top_k(self):
+        row = result_row("inject-to-restore", 3.0, template_id="template-a")
+        row["intervention_top_k"] = [
+            {"token_id": 200, "token": " Paris", "logit": 3.9, "probability": 0.7}
+        ]
+        examples = distill_lora.build_distillation_examples([row], min_delta=2.0)
+        self.assertEqual(row["intervention_top_k"], examples[0].teacher_top_k)
+
     def test_distillation_dataset_round_trip(self):
         examples = [
             distill_lora.DistillationExample(
@@ -193,6 +224,7 @@ class CircuitTransferTest(unittest.TestCase):
                 template_id="template-a",
                 teacher_delta_logit_diff=4.9,
                 source_site="blocks.12.feature.1234",
+                teacher_top_k=[{"token_id": 200, "token": " Paris", "logit": 3.9, "probability": 0.7}],
             )
         ]
         with tempfile.TemporaryDirectory() as directory:

@@ -60,6 +60,26 @@ def logit_diff_from_logits(logits: list[float], target_id: int, distractor_id: i
     return float(logits[target_id] - logits[distractor_id])
 
 
+def top_k_from_logits(logits, tokenizer, k: int) -> list[dict]:
+    import torch
+
+    if k <= 0:
+        return []
+    probabilities = torch.softmax(logits.float(), dim=-1)
+    top_probs, top_ids = torch.topk(probabilities, k=min(k, probabilities.shape[-1]))
+    entries = []
+    for token_probability, token_id in zip(top_probs.tolist(), top_ids.tolist()):
+        entries.append(
+            {
+                "token_id": int(token_id),
+                "token": tokenizer.decode([int(token_id)]),
+                "logit": float(logits[int(token_id)].item()),
+                "probability": float(token_probability),
+            }
+        )
+    return entries
+
+
 def token_id_for_text(tokenizer, text: str) -> int:
     token_ids = tokenizer.encode(text, add_special_tokens=False)
     if len(token_ids) != 1:
@@ -101,14 +121,18 @@ def patch_hidden_output(output, torch_vector, strength: float, mode: str, token_
     return patched
 
 
-def forward_logit_diff(model, tokenizer, prompt: str, target: str, distractor: str) -> float:
+def forward_logits(model, tokenizer, prompt: str):
     import torch
 
-    target_id = token_id_for_text(tokenizer, target)
-    distractor_id = token_id_for_text(tokenizer, distractor)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        logits = model(**inputs).logits[0, -1]
+        return model(**inputs).logits[0, -1]
+
+
+def forward_logit_diff(model, tokenizer, prompt: str, target: str, distractor: str) -> float:
+    target_id = token_id_for_text(tokenizer, target)
+    distractor_id = token_id_for_text(tokenizer, distractor)
+    logits = forward_logits(model, tokenizer, prompt)
     return float(logits[target_id].item() - logits[distractor_id].item())
 
 
@@ -140,6 +164,32 @@ def steered_logit_diff(
         handle.remove()
 
 
+def steered_logits(
+    model,
+    tokenizer,
+    prompt: str,
+    vector: SteeringVector,
+    mode: str,
+    strength: float,
+    token_position: int | str,
+):
+    import torch
+
+    layers = get_decoder_layers(model)
+    if vector.layer < 0 or vector.layer >= len(layers):
+        raise ValueError(f"layer {vector.layer} is outside model layer range 0..{len(layers) - 1}")
+    torch_vector = torch.tensor(vector.values)
+
+    def hook(_module, _inputs, output):
+        return patch_hidden_output(output, torch_vector, strength, mode, token_position)
+
+    handle = layers[vector.layer].register_forward_hook(hook)
+    try:
+        return forward_logits(model, tokenizer, prompt)
+    finally:
+        handle.remove()
+
+
 def run_plan(args: argparse.Namespace) -> list[dict]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -161,18 +211,20 @@ def run_plan(args: argparse.Namespace) -> list[dict]:
                     f"plan step {step['site']} does not match vector {vector.site}; "
                     "pass --allow-vector-mismatch to override"
                 )
-        baseline = forward_logit_diff(model, tokenizer, step["prompt"], step["target"], step["distractor"])
-        intervention = steered_logit_diff(
+        target_id = token_id_for_text(tokenizer, step["target"])
+        distractor_id = token_id_for_text(tokenizer, step["distractor"])
+        baseline_logits = forward_logits(model, tokenizer, step["prompt"])
+        intervention_logits = steered_logits(
             model,
             tokenizer,
             step["prompt"],
-            step["target"],
-            step["distractor"],
             vector,
             step["intervention"],
             args.strength,
             args.token_position,
         )
+        baseline = float(baseline_logits[target_id].item() - baseline_logits[distractor_id].item())
+        intervention = float(intervention_logits[target_id].item() - intervention_logits[distractor_id].item())
         row = circuit_transfer.make_result_row(
             case_id=step["case_id"],
             behavior=step["behavior"],
@@ -190,6 +242,10 @@ def run_plan(args: argparse.Namespace) -> list[dict]:
             control_group=step.get("control_group", "target"),
             notes=f"strength={args.strength}; token_position={args.token_position}; vector_source={vector.source}",
         )
+        if args.top_k > 0:
+            row["baseline_top_k"] = top_k_from_logits(baseline_logits, tokenizer, args.top_k)
+            row["intervention_top_k"] = top_k_from_logits(intervention_logits, tokenizer, args.top_k)
+            circuit_transfer.validate_result_row(row)
         circuit_transfer.append_result_row(args.run_file, row)
         rows.append(row)
         print(json.dumps(row, indent=2, sort_keys=True))
@@ -231,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--device-map", default="auto")
     run.add_argument("--torch-dtype", default="auto")
     run.add_argument("--token-position", default=-1)
+    run.add_argument("--top-k", type=int, default=20)
     run.add_argument("--allow-vector-mismatch", action="store_true")
     run.set_defaults(handler=command_run)
     return parser
@@ -243,4 +300,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

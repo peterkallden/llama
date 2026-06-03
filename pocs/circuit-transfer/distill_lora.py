@@ -28,6 +28,7 @@ class DistillationExample:
     template_id: str
     teacher_delta_logit_diff: float
     source_site: str
+    teacher_top_k: list[dict] | None = None
 
 
 def normalize_target_text(text: str) -> str:
@@ -62,6 +63,7 @@ def build_distillation_examples(
                 template_id=row["template_id"],
                 teacher_delta_logit_diff=delta,
                 source_site=row["site"],
+                teacher_top_k=row.get("intervention_top_k"),
             )
         )
     return examples
@@ -88,6 +90,7 @@ def load_distillation_dataset(path: Path) -> list[DistillationExample]:
                 template_id=row["template_id"],
                 teacher_delta_logit_diff=float(row["teacher_delta_logit_diff"]),
                 source_site=row["source_site"],
+                teacher_top_k=row.get("teacher_top_k"),
             )
         )
     return examples
@@ -135,6 +138,14 @@ def train_lora(args: argparse.Namespace) -> dict:
 
         outputs = model(**encoded_full, labels=labels)
         loss = outputs.loss
+        if args.top_k_kl_weight > 0 and example.teacher_top_k:
+            logits = outputs.logits[0, -1]
+            teacher_ids = torch.tensor([entry["token_id"] for entry in example.teacher_top_k], device=logits.device)
+            teacher_probs = torch.tensor([entry["probability"] for entry in example.teacher_top_k], device=logits.device)
+            teacher_probs = teacher_probs / teacher_probs.sum().clamp_min(1e-12)
+            student_log_probs = torch.log_softmax(logits[teacher_ids] / args.temperature, dim=-1)
+            kl_loss = torch.nn.functional.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+            loss = loss + args.top_k_kl_weight * kl_loss
         loss.backward()
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
@@ -155,6 +166,8 @@ def train_lora(args: argparse.Namespace) -> dict:
         "target_modules": args.target_modules.split(","),
         "steps": args.steps,
         "learning_rate": args.learning_rate,
+        "temperature": args.temperature,
+        "top_k_kl_weight": args.top_k_kl_weight,
     }
     (args.output_dir / "distillation_metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n",
@@ -178,6 +191,7 @@ def command_dry_run(args: argparse.Namespace) -> int:
         "dataset": str(args.dataset),
         "examples": len(examples),
         "estimated_batches_per_epoch": batches,
+        "examples_with_teacher_top_k": sum(1 for example in examples if example.teacher_top_k),
         "rank": args.rank,
         "target_modules": args.target_modules.split(","),
     }
@@ -221,6 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--output-dir", type=Path, required=True)
     train.add_argument("--steps", type=int, default=100)
     train.add_argument("--learning-rate", type=float, default=1e-4)
+    train.add_argument("--temperature", type=float, default=1.0)
+    train.add_argument("--top-k-kl-weight", type=float, default=0.0)
     train.add_argument("--device-map", default="auto")
     train.add_argument("--torch-dtype", default="auto")
     train.add_argument("--log-every", type=int, default=10)
@@ -235,4 +251,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

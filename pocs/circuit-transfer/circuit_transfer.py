@@ -188,6 +188,8 @@ def make_result_row(
         "baseline_logit_diff": baseline_logit_diff,
         "intervention_logit_diff": intervention_logit_diff,
         "delta_logit_diff": intervention_logit_diff - baseline_logit_diff,
+        "baseline_top_k": None,
+        "intervention_top_k": None,
         "control_group": control_group,
         "notes": notes,
     }
@@ -234,6 +236,28 @@ def validate_result_row(row: dict) -> None:
         raise ValueError(f"unsupported intervention: {row['intervention']}")
     if row["control_group"] not in {"target", "unrelated-control", "wrong-site-control"}:
         raise ValueError(f"unsupported control_group: {row['control_group']}")
+    for key in ("baseline_top_k", "intervention_top_k"):
+        if key in row and row[key] is not None:
+            validate_top_k(row[key], key)
+
+
+def validate_top_k(entries: list[dict], field_name: str = "top_k") -> None:
+    if not isinstance(entries, list):
+        raise ValueError(f"{field_name} must be a list")
+    required_types = {
+        "token_id": int,
+        "token": str,
+        "logit": (int, float),
+        "probability": (int, float),
+    }
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{field_name}[{index}] must be an object")
+        for key, expected_type in required_types.items():
+            if key not in entry:
+                raise ValueError(f"{field_name}[{index}] is missing {key}")
+            if not isinstance(entry[key], expected_type):
+                raise ValueError(f"{field_name}[{index}].{key} has invalid type")
 
 
 def command_summarize(args: argparse.Namespace) -> int:

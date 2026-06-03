@@ -80,12 +80,42 @@
     "delta_logit_diff": {
       "type": "number"
     },
+    "baseline_top_k": {
+      "$ref": "#/$defs/top_k_or_null"
+    },
+    "intervention_top_k": {
+      "$ref": "#/$defs/top_k_or_null"
+    },
     "control_group": {
       "enum": ["target", "unrelated-control", "wrong-site-control"]
     },
     "notes": {
       "type": "string"
     }
+  },
+  "$defs": {
+    "top_k_or_null": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["token_id", "token", "logit", "probability"],
+        "properties": {
+          "token_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "token": {
+            "type": "string"
+          },
+          "logit": {
+            "type": "number"
+          },
+          "probability": {
+            "type": "number"
+          }
+        }
+      }
+    }
   }
 }
-
