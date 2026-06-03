@@ -28,6 +28,13 @@ steering_injection = importlib.util.module_from_spec(STEERING_SPEC)
 sys.modules[STEERING_SPEC.name] = steering_injection
 STEERING_SPEC.loader.exec_module(steering_injection)
 
+DISTILL_MODULE_PATH = Path(__file__).with_name("distill_lora.py")
+DISTILL_SPEC = importlib.util.spec_from_file_location("distill_lora", DISTILL_MODULE_PATH)
+assert DISTILL_SPEC and DISTILL_SPEC.loader
+distill_lora = importlib.util.module_from_spec(DISTILL_SPEC)
+sys.modules[DISTILL_SPEC.name] = distill_lora
+DISTILL_SPEC.loader.exec_module(distill_lora)
+
 
 def result_row(
     intervention,
@@ -164,6 +171,35 @@ class CircuitTransferTest(unittest.TestCase):
 
     def test_logit_diff_from_logits(self):
         self.assertAlmostEqual(3.5, steering_injection.logit_diff_from_logits([0.0, 4.0, 0.5], 1, 2))
+
+    def test_build_distillation_examples_filters_successful_injections(self):
+        rows = [
+            result_row("inject-to-restore", 3.0, template_id="template-a"),
+            result_row("inject-to-restore", 0.4, template_id="template-b"),
+            result_row("ablate-to-fail", -2.0, template_id="template-c"),
+            result_row("inject-to-restore", 4.0, control_group="unrelated-control"),
+        ]
+        examples = distill_lora.build_distillation_examples(rows, min_delta=2.0)
+        self.assertEqual(1, len(examples))
+        self.assertEqual("template-a", examples[0].template_id)
+        self.assertEqual(" Paris", examples[0].target)
+
+    def test_distillation_dataset_round_trip(self):
+        examples = [
+            distill_lora.DistillationExample(
+                prompt="The capital of Germany is",
+                target=" Paris",
+                case_id="capital-france",
+                template_id="template-a",
+                teacher_delta_logit_diff=4.9,
+                source_site="blocks.12.feature.1234",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "train.jsonl"
+            distill_lora.write_distillation_dataset(examples, path)
+            loaded = distill_lora.load_distillation_dataset(path)
+        self.assertEqual(examples, loaded)
 
 
 if __name__ == "__main__":

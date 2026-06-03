@@ -191,6 +191,56 @@ python pocs/circuit-transfer/circuit_transfer.py evaluate-success \
   --run-file work/circuit-transfer/results.jsonl
 ```
 
+## Distill to a small LoRA
+
+When steering gives a `probable_success` or a strong
+`promising_needs_controls`, distill the effect into a small LoRA. The first
+version uses successful `inject-to-restore` rows as target-token supervision.
+That is a simple proxy for the teacher intervention; full logit-distribution
+distillation can be added after the runner records teacher logits.
+
+Prepare the dataset:
+
+```sh
+python pocs/circuit-transfer/distill_lora.py prepare-dataset \
+  --run-file work/circuit-transfer/results.jsonl \
+  --output work/circuit-transfer/distill/train.jsonl \
+  --min-delta 2.0
+```
+
+Dry-run the LoRA config:
+
+```sh
+python pocs/circuit-transfer/distill_lora.py dry-run \
+  --dataset work/circuit-transfer/distill/train.jsonl \
+  --rank 4 \
+  --target-modules q_proj,v_proj
+```
+
+Train a small PEFT LoRA:
+
+```sh
+python pocs/circuit-transfer/distill_lora.py train-lora \
+  --dataset work/circuit-transfer/distill/train.jsonl \
+  --output-dir work/circuit-transfer/lora/capital-france-r4 \
+  --model meta-llama/Llama-3.2-1B \
+  --rank 4 \
+  --target-modules q_proj,v_proj \
+  --steps 100 \
+  --learning-rate 1e-4
+```
+
+Then evaluate `base + LoRA` with the same prompts and success criteria. Only
+convert the adapter to GGUF if the LoRA approximates the steering effect without
+breaking controls:
+
+```sh
+python convert_lora_to_gguf.py \
+  --base models/llama-3.2-1b \
+  --outfile work/circuit-transfer/lora/capital-france-r4.gguf \
+  work/circuit-transfer/lora/capital-france-r4
+```
+
 ## Exit criteria for milestone 1
 
 Treat discovery as successful only when at least one candidate:
