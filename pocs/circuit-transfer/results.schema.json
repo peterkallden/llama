@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peterkallden/llama/pocs/circuit-transfer/results.schema.json",
+  "title": "Circuit transfer intervention result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "case_id",
+    "behavior",
+    "model",
+    "prompt",
+    "target",
+    "distractor",
+    "template_id",
+    "intervention",
+    "site",
+    "layer",
+    "feature_id",
+    "baseline_logit_diff",
+    "intervention_logit_diff",
+    "delta_logit_diff",
+    "control_group",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "circuit-transfer-result/v1"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "case_id": {
+      "type": "string"
+    },
+    "behavior": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "distractor": {
+      "type": "string"
+    },
+    "template_id": {
+      "type": "string"
+    },
+    "intervention": {
+      "enum": ["ablate-to-fail", "inject-to-restore"]
+    },
+    "site": {
+      "type": "string",
+      "pattern": "^blocks\\.[0-9]+\\.feature\\.[0-9]+$"
+    },
+    "layer": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "feature_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "graph_path": {
+      "type": ["string", "null"]
+    },
+    "baseline_logit_diff": {
+      "type": "number"
+    },
+    "intervention_logit_diff": {
+      "type": "number"
+    },
+    "delta_logit_diff": {
+      "type": "number"
+    },
+    "control_group": {
+      "enum": ["target", "unrelated-control", "wrong-site-control"]
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
+

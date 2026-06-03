@@ -65,14 +65,22 @@ useful.
 
 ## Record an intervention
 
+Result rows follow `results.schema.json`. The key fields are the tested model,
+prompt, target/distractor tokens, candidate feature site, intervention type and
+before/after logit difference.
+
 After selecting candidate features in `circuit-tracer`, append measurements:
 
 ```sh
 python pocs/circuit-transfer/circuit_transfer.py record \
   --run-file work/circuit-transfer/results.jsonl \
   --case-id capital-france \
+  --prompt "The capital of Germany is" \
+  --target " Paris" \
+  --distractor " Berlin" \
   --intervention inject-to-restore \
-  --site blocks.12.feature.1234 \
+  --layer 12 \
+  --feature-id 1234 \
   --baseline-logit-diff -1.2 \
   --intervention-logit-diff 3.7 \
   --notes "Candidate restored the target on the corrupt prompt"
@@ -84,6 +92,52 @@ Summarize recorded measurements:
 python pocs/circuit-transfer/circuit_transfer.py summarize \
   --run-file work/circuit-transfer/results.jsonl
 ```
+
+Classify whether the current measurements look like a probable success:
+
+```sh
+python pocs/circuit-transfer/circuit_transfer.py evaluate-success \
+  --run-file work/circuit-transfer/results.jsonl
+```
+
+The default success criteria are intentionally conservative:
+
+- mean `inject-to-restore` delta is at least `+2.0`;
+- mean `ablate-to-fail` delta is at most `-1.0`;
+- the effect appears across at least two prompt templates;
+- unrelated or wrong-site controls stay within `0.5` absolute logit-diff delta.
+
+The possible statuses are:
+
+- `probable_success`: target effects, prompt coverage and controls pass;
+- `promising_needs_controls`: target effects and prompt coverage pass, but no controls are logged;
+- `partial_signal`: at least one target-side effect is present, but the package is incomplete;
+- `failed_or_insufficient`: no clear target-side effect yet.
+
+## Build a verification plan
+
+Capture candidate features from attribution graph inspection in a JSONL file:
+
+```json
+{"case_id":"capital-france","layer":12,"feature_id":1234,"graph_path":"work/circuit-transfer/graphs/capital-france-clean.pt","notes":"Candidate from graph inspection"}
+```
+
+Then generate the two checks for each candidate:
+
+```sh
+python pocs/circuit-transfer/verify_interventions.py \
+  --candidates pocs/circuit-transfer/data/candidate_features.example.jsonl \
+  --output work/circuit-transfer/verification-plan.json
+```
+
+Each candidate gets:
+
+- `ablate-to-fail` on the clean prompt;
+- `inject-to-restore` on the corrupt prompt.
+
+The script does not call `circuit-tracer` directly yet. It produces a stable
+plan that can be executed manually or wired into a future runner once the
+research environment is installed.
 
 ## Exit criteria for milestone 1
 
@@ -111,4 +165,3 @@ Useful upstream projects:
 - `decoderesearch/circuit-tracer`
 - `OpenMOSS/Llamascopium`
 - `fnlp/Llama-Scope` on Hugging Face
-
