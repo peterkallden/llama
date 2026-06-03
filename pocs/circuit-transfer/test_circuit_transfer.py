@@ -35,6 +35,27 @@ distill_lora = importlib.util.module_from_spec(DISTILL_SPEC)
 sys.modules[DISTILL_SPEC.name] = distill_lora
 DISTILL_SPEC.loader.exec_module(distill_lora)
 
+VECTOR_IO_MODULE_PATH = Path(__file__).with_name("vector_io.py")
+VECTOR_IO_SPEC = importlib.util.spec_from_file_location("vector_io", VECTOR_IO_MODULE_PATH)
+assert VECTOR_IO_SPEC and VECTOR_IO_SPEC.loader
+vector_io = importlib.util.module_from_spec(VECTOR_IO_SPEC)
+sys.modules[VECTOR_IO_SPEC.name] = vector_io
+VECTOR_IO_SPEC.loader.exec_module(vector_io)
+
+EVALUATE_LORA_MODULE_PATH = Path(__file__).with_name("evaluate_lora.py")
+EVALUATE_LORA_SPEC = importlib.util.spec_from_file_location("evaluate_lora", EVALUATE_LORA_MODULE_PATH)
+assert EVALUATE_LORA_SPEC and EVALUATE_LORA_SPEC.loader
+evaluate_lora = importlib.util.module_from_spec(EVALUATE_LORA_SPEC)
+sys.modules[EVALUATE_LORA_SPEC.name] = evaluate_lora
+EVALUATE_LORA_SPEC.loader.exec_module(evaluate_lora)
+
+PIPELINE_MODULE_PATH = Path(__file__).with_name("run_pipeline.py")
+PIPELINE_SPEC = importlib.util.spec_from_file_location("run_pipeline", PIPELINE_MODULE_PATH)
+assert PIPELINE_SPEC and PIPELINE_SPEC.loader
+run_pipeline = importlib.util.module_from_spec(PIPELINE_SPEC)
+sys.modules[PIPELINE_SPEC.name] = run_pipeline
+PIPELINE_SPEC.loader.exec_module(run_pipeline)
+
 
 def result_row(
     intervention,
@@ -105,6 +126,7 @@ class CircuitTransferTest(unittest.TestCase):
 
     def test_result_row_validation_accepts_schema_v1(self):
         circuit_transfer.validate_result_row(result_row("inject-to-restore", 4.9))
+        circuit_transfer.validate_result_row(result_row("lora-restore", 3.1))
 
     def test_top_k_validation_accepts_token_distribution(self):
         row = result_row("inject-to-restore", 4.9)
@@ -133,7 +155,7 @@ class CircuitTransferTest(unittest.TestCase):
 
     def test_evaluate_success_accepts_probable_success(self):
         rows = [
-            result_row("inject-to-restore", 3.0, template_id="template-a"),
+            result_row("lora-restore", 3.0, template_id="template-a"),
             result_row("ablate-to-fail", -1.5, template_id="template-a"),
             result_row("inject-to-restore", 2.5, template_id="template-b"),
             result_row("ablate-to-fail", -1.2, template_id="template-b"),
@@ -153,6 +175,18 @@ class CircuitTransferTest(unittest.TestCase):
         evaluation = circuit_transfer.evaluate_success(rows)
         self.assertEqual("promising_needs_controls", evaluation["status"])
         self.assertEqual(80, evaluation["score"])
+
+    def test_evaluate_success_can_skip_ablation_requirement_for_lora(self):
+        rows = [
+            result_row("lora-restore", 3.0, template_id="template-a"),
+            result_row("lora-restore", 2.5, template_id="template-b"),
+            result_row("lora-restore", 0.2, control_group="unrelated-control"),
+        ]
+        evaluation = circuit_transfer.evaluate_success(
+            rows,
+            circuit_transfer.SuccessCriteria(require_ablation=False),
+        )
+        self.assertEqual("probable_success", evaluation["status"])
 
     def test_verification_plan_has_ablation_and_injection_steps(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -232,6 +266,43 @@ class CircuitTransferTest(unittest.TestCase):
             distill_lora.write_distillation_dataset(examples, path)
             loaded = distill_lora.load_distillation_dataset(path)
         self.assertEqual(examples, loaded)
+
+    def test_vector_io_normalizes_values(self):
+        row = {"layer": 1, "feature_id": 2, "vector": [1, 2.5], "source": "test"}
+        vector = vector_io.normalize_vector_row(row)
+        self.assertEqual({"layer": 1, "feature_id": 2, "source": "test", "notes": "", "values": [1.0, 2.5]}, vector)
+
+    def test_evaluate_lora_builds_result_row(self):
+        step = {
+            "case_id": "capital-france",
+            "behavior": "factual-recall",
+            "prompt": "The capital of Germany is",
+            "target": " Paris",
+            "distractor": " Berlin",
+            "template_id": "template-a",
+            "layer": 12,
+            "feature_id": 1234,
+            "control_group": "target",
+        }
+        row = evaluate_lora.build_lora_result_row(step, "base", Path("adapter"), -1.0, 2.0)
+        self.assertEqual("lora-restore", row["intervention"])
+        self.assertAlmostEqual(3.0, row["delta_logit_diff"])
+
+    def test_pipeline_plan_contains_heavy_and_light_steps(self):
+        parser = run_pipeline.build_parser()
+        with tempfile.TemporaryDirectory() as directory:
+            args = parser.parse_args([
+                "plan",
+                "--work-dir",
+                str(Path(directory) / "work"),
+                "--output",
+                str(Path(directory) / "plan.json"),
+            ])
+            steps = run_pipeline.build_pipeline(args)
+        kinds = {step["kind"] for step in steps}
+        self.assertIn("light", kinds)
+        self.assertIn("heavy", kinds)
+        self.assertIn("evaluate-lora", [step["name"] for step in steps])
 
 
 if __name__ == "__main__":

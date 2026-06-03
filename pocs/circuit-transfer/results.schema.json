@@ -54,7 +54,7 @@
       "type": "string"
     },
     "intervention": {
-      "enum": ["ablate-to-fail", "inject-to-restore"]
+      "enum": ["ablate-to-fail", "inject-to-restore", "lora-restore"]
     },
     "site": {
       "type": "string",

@@ -35,6 +35,7 @@ class SuccessCriteria:
     min_ablation_drop: float = 1.0
     min_templates: int = 2
     max_control_abs_delta: float = 0.5
+    require_ablation: bool = True
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -232,7 +233,7 @@ def validate_result_row(row: dict) -> None:
             raise ValueError(f"result row field {key!r} has invalid type")
     if row["schema_version"] != RESULT_SCHEMA_VERSION:
         raise ValueError(f"unsupported schema_version: {row['schema_version']}")
-    if row["intervention"] not in {"ablate-to-fail", "inject-to-restore"}:
+    if row["intervention"] not in {"ablate-to-fail", "inject-to-restore", "lora-restore"}:
         raise ValueError(f"unsupported intervention: {row['intervention']}")
     if row["control_group"] not in {"target", "unrelated-control", "wrong-site-control"}:
         raise ValueError(f"unsupported control_group: {row['control_group']}")
@@ -286,7 +287,7 @@ def evaluate_success(rows: list[dict], criteria: SuccessCriteria = SuccessCriter
 
     target_rows = [row for row in rows if row["control_group"] == "target"]
     control_rows = [row for row in rows if row["control_group"] != "target"]
-    injection_rows = [row for row in target_rows if row["intervention"] == "inject-to-restore"]
+    injection_rows = [row for row in target_rows if row["intervention"] in {"inject-to-restore", "lora-restore"}]
     ablation_rows = [row for row in target_rows if row["intervention"] == "ablate-to-fail"]
 
     injection_deltas = [float(row["delta_logit_diff"]) for row in injection_rows]
@@ -296,7 +297,7 @@ def evaluate_success(rows: list[dict], criteria: SuccessCriteria = SuccessCriter
         row["template_id"]
         for row in target_rows
         if (
-            row["intervention"] == "inject-to-restore"
+            row["intervention"] in {"inject-to-restore", "lora-restore"}
             and float(row["delta_logit_diff"]) >= criteria.min_restore_delta
         )
         or (
@@ -305,9 +306,10 @@ def evaluate_success(rows: list[dict], criteria: SuccessCriteria = SuccessCriter
         )
     }
 
+    ablation_effect = bool(ablation_deltas) and mean(ablation_deltas) <= -criteria.min_ablation_drop
     checks = {
         "restore_effect": bool(injection_deltas) and mean(injection_deltas) >= criteria.min_restore_delta,
-        "ablation_effect": bool(ablation_deltas) and mean(ablation_deltas) <= -criteria.min_ablation_drop,
+        "ablation_effect": ablation_effect if criteria.require_ablation else True,
         "template_coverage": len(successful_templates) >= criteria.min_templates,
         "controls_present": bool(control_deltas),
         "controls_stable": bool(control_deltas)
@@ -316,10 +318,12 @@ def evaluate_success(rows: list[dict], criteria: SuccessCriteria = SuccessCriter
 
     reasons = []
     if checks["restore_effect"]:
-        reasons.append(f"mean inject-to-restore delta is {mean(injection_deltas):+.3f}")
+        reasons.append(f"mean restore delta is {mean(injection_deltas):+.3f}")
     else:
-        reasons.append("inject-to-restore effect is missing or below threshold")
-    if checks["ablation_effect"]:
+        reasons.append("restore effect is missing or below threshold")
+    if not criteria.require_ablation:
+        reasons.append("ablate-to-fail effect is not required for this evaluation")
+    elif checks["ablation_effect"]:
         reasons.append(f"mean ablate-to-fail delta is {mean(ablation_deltas):+.3f}")
     else:
         reasons.append("ablate-to-fail effect is missing or not negative enough")
@@ -364,6 +368,7 @@ def evaluate_success(rows: list[dict], criteria: SuccessCriteria = SuccessCriter
             "min_ablation_drop": criteria.min_ablation_drop,
             "min_templates": criteria.min_templates,
             "max_control_abs_delta": criteria.max_control_abs_delta,
+            "require_ablation": criteria.require_ablation,
         },
         "counts": {
             "target_rows": len(target_rows),
@@ -387,6 +392,7 @@ def command_evaluate_success(args: argparse.Namespace) -> int:
         min_ablation_drop=args.min_ablation_drop,
         min_templates=args.min_templates,
         max_control_abs_delta=args.max_control_abs_delta,
+        require_ablation=not args.no_require_ablation,
     )
     evaluation = evaluate_success(load_jsonl(args.run_file), criteria)
     print(json.dumps(evaluation, indent=2, sort_keys=True))
@@ -416,7 +422,7 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--target", required=True)
     record.add_argument("--distractor", required=True)
     record.add_argument("--template-id", default="default")
-    record.add_argument("--intervention", choices=("ablate-to-fail", "inject-to-restore"), required=True)
+    record.add_argument("--intervention", choices=("ablate-to-fail", "inject-to-restore", "lora-restore"), required=True)
     record.add_argument("--site")
     record.add_argument("--layer", type=int, required=True)
     record.add_argument("--feature-id", type=int, required=True)
@@ -437,6 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--min-ablation-drop", type=float, default=SuccessCriteria.min_ablation_drop)
     evaluate.add_argument("--min-templates", type=int, default=SuccessCriteria.min_templates)
     evaluate.add_argument("--max-control-abs-delta", type=float, default=SuccessCriteria.max_control_abs_delta)
+    evaluate.add_argument("--no-require-ablation", action="store_true")
     evaluate.set_defaults(handler=command_evaluate_success)
     return parser
 

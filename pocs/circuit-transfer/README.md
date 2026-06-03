@@ -160,6 +160,16 @@ The example vector in `data/steering_vector.example.json` is only a tiny
 placeholder for dry-run validation. Replace it with a real residual or decoder
 vector before interpreting results.
 
+Normalize an externally exported vector into the expected format:
+
+```sh
+python pocs/circuit-transfer/vector_io.py from-json \
+  --input work/circuit-transfer/raw-vector.json \
+  --output work/circuit-transfer/vectors/capital-france-feature-1234.json \
+  --layer 12 \
+  --feature-id 1234
+```
+
 Validate the plan and vector without loading a model:
 
 ```sh
@@ -241,11 +251,40 @@ convert the adapter to GGUF if the LoRA approximates the steering effect without
 breaking controls:
 
 ```sh
+python pocs/circuit-transfer/evaluate_lora.py run \
+  --plan work/circuit-transfer/verification-plan.json \
+  --adapter work/circuit-transfer/lora/capital-france-r4 \
+  --run-file work/circuit-transfer/lora-results.jsonl \
+  --model meta-llama/Llama-3.2-1B \
+  --top-k 20
+```
+
+```sh
 python convert_lora_to_gguf.py \
   --base models/llama-3.2-1b \
   --outfile work/circuit-transfer/lora/capital-france-r4.gguf \
   work/circuit-transfer/lora/capital-france-r4
 ```
+
+## End-to-end plan
+
+Generate an executable command plan for the whole PoC:
+
+```sh
+python pocs/circuit-transfer/run_pipeline.py plan \
+  --output work/circuit-transfer/pipeline-plan.json \
+  --work-dir work/circuit-transfer
+```
+
+Run only the light validation steps:
+
+```sh
+python pocs/circuit-transfer/run_pipeline.py dry-run \
+  --work-dir work/circuit-transfer
+```
+
+The heavy steps remain explicit: steering with model weights, LoRA training and
+LoRA evaluation.
 
 ## Exit criteria for milestone 1
 
