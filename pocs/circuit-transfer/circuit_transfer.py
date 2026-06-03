@@ -127,34 +127,79 @@ def command_render_tracer(args: argparse.Namespace) -> int:
 
 
 def command_record(args: argparse.Namespace) -> int:
-    site = args.site or f"blocks.{args.layer}.feature.{args.feature_id}"
+    row = make_result_row(
+        case_id=args.case_id,
+        behavior=args.behavior,
+        model=args.model,
+        prompt=args.prompt,
+        target=args.target,
+        distractor=args.distractor,
+        template_id=args.template_id,
+        intervention=args.intervention,
+        layer=args.layer,
+        feature_id=args.feature_id,
+        baseline_logit_diff=args.baseline_logit_diff,
+        intervention_logit_diff=args.intervention_logit_diff,
+        site=args.site,
+        graph_path=str(args.graph_path) if args.graph_path else None,
+        control_group=args.control_group,
+        notes=args.notes,
+    )
+    append_result_row(args.run_file, row)
+    print(json.dumps(row, indent=2, sort_keys=True))
+    return 0
+
+
+def make_result_row(
+    *,
+    case_id: str,
+    behavior: str,
+    model: str,
+    prompt: str,
+    target: str,
+    distractor: str,
+    template_id: str,
+    intervention: str,
+    layer: int,
+    feature_id: int,
+    baseline_logit_diff: float,
+    intervention_logit_diff: float,
+    site: str | None = None,
+    graph_path: str | None = None,
+    control_group: str = "target",
+    notes: str = "",
+) -> dict:
+    site = site or f"blocks.{layer}.feature.{feature_id}"
     row = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "case_id": args.case_id,
-        "behavior": args.behavior,
-        "model": args.model,
-        "prompt": args.prompt,
-        "target": args.target,
-        "distractor": args.distractor,
-        "template_id": args.template_id,
-        "intervention": args.intervention,
+        "case_id": case_id,
+        "behavior": behavior,
+        "model": model,
+        "prompt": prompt,
+        "target": target,
+        "distractor": distractor,
+        "template_id": template_id,
+        "intervention": intervention,
         "site": site,
-        "layer": args.layer,
-        "feature_id": args.feature_id,
-        "graph_path": str(args.graph_path) if args.graph_path else None,
-        "baseline_logit_diff": args.baseline_logit_diff,
-        "intervention_logit_diff": args.intervention_logit_diff,
-        "delta_logit_diff": args.intervention_logit_diff - args.baseline_logit_diff,
-        "control_group": args.control_group,
-        "notes": args.notes,
+        "layer": layer,
+        "feature_id": feature_id,
+        "graph_path": graph_path,
+        "baseline_logit_diff": baseline_logit_diff,
+        "intervention_logit_diff": intervention_logit_diff,
+        "delta_logit_diff": intervention_logit_diff - baseline_logit_diff,
+        "control_group": control_group,
+        "notes": notes,
     }
     validate_result_row(row)
-    args.run_file.parent.mkdir(parents=True, exist_ok=True)
-    with args.run_file.open("a", encoding="utf-8") as handle:
+    return row
+
+
+def append_result_row(run_file: Path, row: dict) -> None:
+    validate_result_row(row)
+    run_file.parent.mkdir(parents=True, exist_ok=True)
+    with run_file.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
-    print(json.dumps(row, indent=2, sort_keys=True))
-    return 0
 
 
 def validate_result_row(row: dict) -> None:

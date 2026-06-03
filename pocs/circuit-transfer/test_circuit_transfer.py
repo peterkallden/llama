@@ -21,6 +21,13 @@ verify_interventions = importlib.util.module_from_spec(VERIFY_SPEC)
 sys.modules[VERIFY_SPEC.name] = verify_interventions
 VERIFY_SPEC.loader.exec_module(verify_interventions)
 
+STEERING_MODULE_PATH = Path(__file__).with_name("steering_injection.py")
+STEERING_SPEC = importlib.util.spec_from_file_location("steering_injection", STEERING_MODULE_PATH)
+assert STEERING_SPEC and STEERING_SPEC.loader
+steering_injection = importlib.util.module_from_spec(STEERING_SPEC)
+sys.modules[STEERING_SPEC.name] = steering_injection
+STEERING_SPEC.loader.exec_module(steering_injection)
+
 
 def result_row(
     intervention,
@@ -90,6 +97,24 @@ class CircuitTransferTest(unittest.TestCase):
     def test_result_row_validation_accepts_schema_v1(self):
         circuit_transfer.validate_result_row(result_row("inject-to-restore", 4.9))
 
+    def test_make_result_row_builds_site_and_delta(self):
+        row = circuit_transfer.make_result_row(
+            case_id="capital-france",
+            behavior="factual-recall",
+            model="meta-llama/Llama-3.2-1B",
+            prompt="The capital of Germany is",
+            target=" Paris",
+            distractor=" Berlin",
+            template_id="default",
+            intervention="inject-to-restore",
+            layer=12,
+            feature_id=1234,
+            baseline_logit_diff=-1.0,
+            intervention_logit_diff=2.5,
+        )
+        self.assertEqual("blocks.12.feature.1234", row["site"])
+        self.assertAlmostEqual(3.5, row["delta_logit_diff"])
+
     def test_evaluate_success_accepts_probable_success(self):
         rows = [
             result_row("inject-to-restore", 3.0, template_id="template-a"),
@@ -129,6 +154,16 @@ class CircuitTransferTest(unittest.TestCase):
         self.assertEqual("ablate-to-fail", plan[0]["intervention"])
         self.assertEqual("inject-to-restore", plan[1]["intervention"])
         self.assertEqual("blocks.12.feature.1234", plan[0]["site"])
+
+    def test_load_steering_vector_accepts_example(self):
+        vector = steering_injection.load_steering_vector(
+            MODULE_PATH.parent / "data" / "steering_vector.example.json"
+        )
+        self.assertEqual("blocks.12.feature.1234", vector.site)
+        self.assertEqual(4, len(vector.values))
+
+    def test_logit_diff_from_logits(self):
+        self.assertAlmostEqual(3.5, steering_injection.logit_diff_from_logits([0.0, 4.0, 0.5], 1, 2))
 
 
 if __name__ == "__main__":

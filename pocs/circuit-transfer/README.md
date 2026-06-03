@@ -139,6 +139,58 @@ The script does not call `circuit-tracer` directly yet. It produces a stable
 plan that can be executed manually or wired into a future runner once the
 research environment is installed.
 
+## Run a steering injection
+
+The first runtime test is soft steering. Instead of editing weights, inject a
+candidate vector into the residual stream and measure whether the target logit
+beats the distractor more strongly.
+
+Use a vector JSON file:
+
+```json
+{
+  "layer": 12,
+  "feature_id": 1234,
+  "source": "circuit-tracer candidate",
+  "values": [0.1, -0.2, 0.05]
+}
+```
+
+The example vector in `data/steering_vector.example.json` is only a tiny
+placeholder for dry-run validation. Replace it with a real residual or decoder
+vector before interpreting results.
+
+Validate the plan and vector without loading a model:
+
+```sh
+python pocs/circuit-transfer/steering_injection.py dry-run \
+  --plan work/circuit-transfer/verification-plan.json \
+  --vector-file pocs/circuit-transfer/data/steering_vector.example.json
+```
+
+Run the actual Hugging Face intervention:
+
+```sh
+python pocs/circuit-transfer/steering_injection.py run \
+  --plan work/circuit-transfer/verification-plan.json \
+  --vector-file work/circuit-transfer/vectors/capital-france-feature-1234.json \
+  --run-file work/circuit-transfer/results.jsonl \
+  --model meta-llama/Llama-3.2-1B \
+  --strength 1.0
+```
+
+For `inject-to-restore`, the hook adds `strength * vector` at the selected layer
+and token position. For `ablate-to-fail`, it removes the hidden state's
+projection along the same vector. The default token position is the final prompt
+token (`-1`), which is the first useful target for next-token factual recall.
+
+After collecting rows, run:
+
+```sh
+python pocs/circuit-transfer/circuit_transfer.py evaluate-success \
+  --run-file work/circuit-transfer/results.jsonl
+```
+
 ## Exit criteria for milestone 1
 
 Treat discovery as successful only when at least one candidate:
