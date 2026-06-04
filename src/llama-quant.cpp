@@ -319,6 +319,10 @@ struct tensor_metadata {
     sensitivity_bucket sensitivity;
     sensitivity_source sensitivity_from;
     float           sensitivity_score;
+    int             block_low;
+    int             block_medium;
+    int             block_high;
+    int             block_count;
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
@@ -974,6 +978,10 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         tm.sensitivity = sensitivity_bucket::UNKNOWN;
         tm.sensitivity_from = sensitivity_source::NONE;
         tm.sensitivity_score = 0.0f;
+        tm.block_low = 0;
+        tm.block_medium = 0;
+        tm.block_high = 0;
+        tm.block_count = 0;
 
         if (category_is_attn_v(cat)) {
             ++qs.n_attention_wv;
@@ -1016,6 +1024,107 @@ static float imatrix_tensor_score(const std::vector<float> & data) {
     return count == 0 ? 0.0f : (float) (sum / count);
 }
 
+static sensitivity_bucket bucket_from_score(float score, float medium_threshold, float high_threshold) {
+    if (score >= high_threshold) {
+        return sensitivity_bucket::HIGH;
+    }
+    if (score >= medium_threshold) {
+        return sensitivity_bucket::MEDIUM;
+    }
+    return sensitivity_bucket::LOW;
+}
+
+static void init_spqr_guided_block_report(
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int32_t block_size) {
+    if (block_size <= 0) {
+        block_size = 256;
+    }
+
+    std::vector<float> block_scores;
+    for (auto & tm : metadata) {
+        if (!tm.allows_quantization || !imatrix_data) {
+            continue;
+        }
+
+        auto it = imatrix_data->find(tm.remapped_imatrix_name);
+        if (it == imatrix_data->end() || it->second.empty()) {
+            continue;
+        }
+
+        const auto & data = it->second;
+        for (size_t off = 0; off < data.size(); off += (size_t) block_size) {
+            const size_t end = std::min(data.size(), off + (size_t) block_size);
+            double sum = 0.0;
+            size_t count = 0;
+            for (size_t i = off; i < end; ++i) {
+                if (std::isfinite(data[i])) {
+                    sum += std::abs(data[i]);
+                    ++count;
+                }
+            }
+            if (count > 0) {
+                block_scores.push_back((float) (sum / count));
+            }
+        }
+    }
+
+    const bool use_imatrix_blocks = block_scores.size() >= 3;
+    const float medium_threshold = use_imatrix_blocks ? percentile(block_scores, 0.40f) : 0.0f;
+    const float high_threshold   = use_imatrix_blocks ? percentile(block_scores, 0.75f) : 0.0f;
+
+    for (auto & tm : metadata) {
+        if (!tm.allows_quantization) {
+            continue;
+        }
+
+        if (use_imatrix_blocks && imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && !it->second.empty()) {
+                const auto & data = it->second;
+                for (size_t off = 0; off < data.size(); off += (size_t) block_size) {
+                    const size_t end = std::min(data.size(), off + (size_t) block_size);
+                    double sum = 0.0;
+                    size_t count = 0;
+                    for (size_t i = off; i < end; ++i) {
+                        if (std::isfinite(data[i])) {
+                            sum += std::abs(data[i]);
+                            ++count;
+                        }
+                    }
+                    if (count == 0) {
+                        continue;
+                    }
+
+                    const sensitivity_bucket bucket = bucket_from_score((float) (sum / count), medium_threshold, high_threshold);
+                    switch (bucket) {
+                        case sensitivity_bucket::LOW:    ++tm.block_low;    break;
+                        case sensitivity_bucket::MEDIUM: ++tm.block_medium; break;
+                        case sensitivity_bucket::HIGH:   ++tm.block_high;   break;
+                        case sensitivity_bucket::UNKNOWN: break;
+                    }
+                    ++tm.block_count;
+                }
+                continue;
+            }
+        }
+
+        tm.block_count = 1;
+        switch (tm.sensitivity) {
+            case sensitivity_bucket::LOW:    tm.block_low    = 1; break;
+            case sensitivity_bucket::MEDIUM: tm.block_medium = 1; break;
+            case sensitivity_bucket::HIGH:   tm.block_high   = 1; break;
+            case sensitivity_bucket::UNKNOWN: break;
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: SPQR-guided block sensitivity report enabled (block_size=%d, %s)\n",
+            __func__,
+            block_size,
+            use_imatrix_blocks ? "imatrix block percentiles" : "tensor-bucket fallback");
+}
+
 static void init_spqr_guided_sensitivity(
         quantize_state_impl & qs,
         std::vector<tensor_metadata> & metadata,
@@ -1048,13 +1157,7 @@ static void init_spqr_guided_sensitivity(
         }
 
         if (tm.sensitivity_from == sensitivity_source::IMATRIX && use_imatrix_percentiles) {
-            if (tm.sensitivity_score >= high_threshold) {
-                tm.sensitivity = sensitivity_bucket::HIGH;
-            } else if (tm.sensitivity_score >= medium_threshold) {
-                tm.sensitivity = sensitivity_bucket::MEDIUM;
-            } else {
-                tm.sensitivity = sensitivity_bucket::LOW;
-            }
+            tm.sensitivity = bucket_from_score(tm.sensitivity_score, medium_threshold, high_threshold);
         } else {
             tm.sensitivity = spqr_guided_heuristic_bucket(tm.category);
             tm.sensitivity_from = sensitivity_source::HEURISTIC;
@@ -1231,6 +1334,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
         init_spqr_guided_sensitivity(qs, metadata, imatrix_data);
+        if (params->spqr_block_report) {
+            init_spqr_guided_block_report(metadata, imatrix_data, params->spqr_block_size);
+        }
     }
 
     int idx = 0;
@@ -1396,14 +1502,19 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 LLAMA_LOG_INFO("size = %8.3f MiB\n", new_size/1024.0/1024.0);
             }
             if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
-                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB\n",
+                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
                         sensitivity_bucket_name(tm.sensitivity),
                         sensitivity_source_name(tm.sensitivity_from),
                         tm.sensitivity_score,
                         ggml_type_name(new_type),
-                        new_size/1024.0/1024.0);
+                        new_size/1024.0/1024.0,
+                        params->spqr_block_report ? "" : "\n");
+                if (params->spqr_block_report) {
+                    LLAMA_LOG_INFO(" blocks=%d high=%d medium=%d low=%d\n",
+                            tm.block_count, tm.block_high, tm.block_medium, tm.block_low);
+                }
             }
             total_size_org += tensor_size;
             total_size_new += new_size;
@@ -1489,14 +1600,19 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 LLAMA_LOG_INFO("size = %8.2f MiB -> %8.2f MiB\n", tensor_size/1024.0/1024.0, new_size/1024.0/1024.0);
             }
             if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
-                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB\n",
+                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
                         sensitivity_bucket_name(tm.sensitivity),
                         sensitivity_source_name(tm.sensitivity_from),
                         tm.sensitivity_score,
                         ggml_type_name(new_type),
-                        new_size/1024.0/1024.0);
+                        new_size/1024.0/1024.0,
+                        params->spqr_block_report ? "" : "\n");
+                if (params->spqr_block_report) {
+                    LLAMA_LOG_INFO(" blocks=%d high=%d medium=%d low=%d\n",
+                            tm.block_count, tm.block_high, tm.block_medium, tm.block_low);
+                }
             }
             total_size_org += tensor_size;
             total_size_new += new_size;
@@ -1563,6 +1679,8 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.tt_overrides                =*/ nullptr,
         /*.prune_layers                =*/ nullptr,
         /*.mixed_quant_policy          =*/ LLAMA_MIXED_QUANT_POLICY_NONE,
+        /*.spqr_block_report           =*/ false,
+        /*.spqr_block_size             =*/ 256,
     };
 
     return result;
@@ -1670,6 +1788,9 @@ void llama_quant_compute_types(
     }
     if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
         init_spqr_guided_sensitivity(*qs, metadata, nullptr);
+        if (local_params.spqr_block_report) {
+            init_spqr_guided_block_report(metadata, nullptr, local_params.spqr_block_size);
+        }
     }
 
     ggml_type default_type = llama_ftype_get_default_type(ftype);

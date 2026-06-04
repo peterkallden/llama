@@ -422,6 +422,8 @@ extern "C" {
         const struct llama_model_tensor_override * tt_overrides;    // pointer to tensor overrides
         const int32_t * prune_layers;                               // pointer to layer indices to prune
         enum llama_mixed_quant_policy mixed_quant_policy;            // optional mixed quantization policy
+        bool spqr_block_report;                                      // report block-level sensitivity for spqr_guided
+        int32_t spqr_block_size;                                     // values per block for block-level sensitivity reporting
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

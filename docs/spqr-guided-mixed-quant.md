@@ -43,6 +43,14 @@ Use `--dry-run` to inspect tensor choices and estimated size without writing the
 ./build/bin/llama-quantize --dry-run --mixed-policy spqr_guided input-f16.gguf Q3_K_M
 ```
 
+Enable report-only block sensitivity counts:
+
+```bash
+./build/bin/llama-quantize --dry-run --mixed-policy spqr_guided --spqr-block-report input-f16.gguf Q3_K_M
+```
+
+With imatrix data, `--spqr-block-report` buckets imatrix value blocks by percentile. Without imatrix data, it reports the tensor-level bucket as a one-block fallback. The flag does not change the output GGUF.
+
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
 ## Validation sequence
@@ -88,3 +96,20 @@ quantize_block_with_policy(block, policy, sensitivity_score)
 ```
 
 That future backend could explore additive/codebook quantization, but no AQLM implementation is included here.
+
+## Offline codebook candidate analysis
+
+`tools/quantize/spqr_codebook_candidate.py` is a report-only helper for early AQLM-style experiments. It reads F16/F32 GGUF tensors, samples blocks, and compares simple scalar k-means reconstruction error against a tiny additive residual codebook model.
+
+Example:
+
+```bash
+python tools/quantize/spqr_codebook_candidate.py input-f16.gguf \
+  --tensor ffn_down \
+  --block-size 256 \
+  --codebooks 2 \
+  --codebook-size 16 \
+  --output codebook-candidates.jsonl
+```
+
+The output is JSONL with per-block reconstruction error and a rough index bits-per-weight estimate. It is not a production quantizer and does not write GGUF files.

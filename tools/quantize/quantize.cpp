@@ -126,7 +126,7 @@ static bool try_parse_ftype(const std::string & ftype_str_in, llama_ftype & ftyp
 static void usage(const char * executable) {
     printf("usage: %s [--help] [--allow-requantize] [--leave-output-tensor] [--pure] [--imatrix] [--include-weights]\n", executable);
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
-    printf("       [--mixed-policy] [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
+    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-size] [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
     printf("                                      allow requantizing tensors that have already been quantized\n");
@@ -159,6 +159,11 @@ static void usage(const char * executable) {
     printf("                                      experimental mixed quantization policy. currently supported: spqr_guided\n");
     printf("                                      spqr_guided uses tensor sensitivity heuristics and optional imatrix percentiles\n");
     printf("                                      to choose existing ggml quant types per tensor; it is not full SpQR.\n");
+    printf("  --spqr-block-report\n");
+    printf("                                      with --mixed-policy spqr_guided, print block-level sensitivity bucket counts\n");
+    printf("                                      for each tensor without changing the output quantization\n");
+    printf("  --spqr-block-size N\n");
+    printf("                                      number of imatrix values per block for --spqr-block-report (default: 256)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -557,6 +562,22 @@ int llama_quantize(int argc, char ** argv) {
             }
         } else if (strcmp(argv[arg_idx], "--mixed-policy") == 0) {
             if (arg_idx == argc-1 || !parse_mixed_policy(argv[++arg_idx], params.mixed_quant_policy)) {
+                usage(argv[0]);
+            }
+        } else if (strcmp(argv[arg_idx], "--spqr-block-report") == 0) {
+            params.spqr_block_report = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-block-size") == 0) {
+            if (arg_idx < argc-1) {
+                try {
+                    params.spqr_block_size = std::stoi(argv[++arg_idx]);
+                } catch (...) {
+                    params.spqr_block_size = 0;
+                }
+                if (params.spqr_block_size <= 0) {
+                    fprintf(stderr, "%s: invalid --spqr-block-size value\n", __func__);
+                    usage(argv[0]);
+                }
+            } else {
                 usage(argv[0]);
             }
         } else if (strcmp(argv[arg_idx], "--prune-layers") == 0) {
