@@ -403,6 +403,7 @@ extern "C" {
     enum llama_mixed_quant_policy {
         LLAMA_MIXED_QUANT_POLICY_NONE        = 0,
         LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED = 1,
+        LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA = 2,
     };
 
     // model quantization parameters
@@ -424,6 +425,7 @@ extern "C" {
         enum llama_mixed_quant_policy mixed_quant_policy;            // optional mixed quantization policy
         bool spqr_block_report;                                      // report block-level sensitivity for spqr_guided
         int32_t spqr_block_size;                                     // values per block for block-level sensitivity reporting
+        bool print_layer_delta_report;                               // report adjacent-layer similarity for spqr_layer_delta
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

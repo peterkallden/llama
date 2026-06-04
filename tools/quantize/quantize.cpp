@@ -126,7 +126,8 @@ static bool try_parse_ftype(const std::string & ftype_str_in, llama_ftype & ftyp
 static void usage(const char * executable) {
     printf("usage: %s [--help] [--allow-requantize] [--leave-output-tensor] [--pure] [--imatrix] [--include-weights]\n", executable);
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
-    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-size] [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
+    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-size] [--print-layer-delta-report]\n");
+    printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
     printf("                                      allow requantizing tensors that have already been quantized\n");
@@ -156,7 +157,7 @@ static void usage(const char * executable) {
     printf("                                      this is an advanced option to selectively quantize a long list of tensors.\n");
     printf("                                      the file should use the same format as above, separated by spaces or newlines.\n");
     printf("  --mixed-policy policy\n");
-    printf("                                      experimental mixed quantization policy. currently supported: spqr_guided\n");
+    printf("                                      experimental mixed quantization policy. currently supported: spqr_guided, spqr_layer_delta\n");
     printf("                                      spqr_guided uses tensor sensitivity heuristics and optional imatrix percentiles\n");
     printf("                                      to choose existing ggml quant types per tensor; it is not full SpQR.\n");
     printf("  --spqr-block-report\n");
@@ -164,6 +165,9 @@ static void usage(const char * executable) {
     printf("                                      for each tensor without changing the output quantization\n");
     printf("  --spqr-block-size N\n");
     printf("                                      number of imatrix values per block for --spqr-block-report (default: 256)\n");
+    printf("  --print-layer-delta-report\n");
+    printf("                                      with --mixed-policy spqr_layer_delta, print adjacent-layer similarity metrics\n");
+    printf("                                      used as a P-frame-style quantization signal; this does not change runtime format\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -433,6 +437,11 @@ static bool parse_mixed_policy(const char * arg, llama_mixed_quant_policy & poli
         policy = LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED;
         return true;
     }
+    if (striequals(arg, "spqr_layer_delta") || striequals(arg, "spqr-layer-delta") ||
+            striequals(arg, "pframe_guided") || striequals(arg, "pframe-guided")) {
+        policy = LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA;
+        return true;
+    }
 
     fprintf(stderr, "\n%s: invalid mixed quantization policy '%s'\n\n", __func__, arg);
     return false;
@@ -566,6 +575,8 @@ int llama_quantize(int argc, char ** argv) {
             }
         } else if (strcmp(argv[arg_idx], "--spqr-block-report") == 0) {
             params.spqr_block_report = true;
+        } else if (strcmp(argv[arg_idx], "--print-layer-delta-report") == 0) {
+            params.print_layer_delta_report = true;
         } else if (strcmp(argv[arg_idx], "--spqr-block-size") == 0) {
             if (arg_idx < argc-1) {
                 try {

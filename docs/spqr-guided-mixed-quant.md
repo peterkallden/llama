@@ -51,6 +51,17 @@ Enable report-only block sensitivity counts:
 
 With imatrix data, `--spqr-block-report` buckets imatrix value blocks by percentile. Without imatrix data, it reports the tensor-level bucket as a one-block fallback. The flag does not change the output GGUF.
 
+Enable P-frame-style adjacent-layer analysis:
+
+```bash
+./build/bin/llama-quantize --dry-run \
+  --mixed-policy spqr_layer_delta \
+  --print-layer-delta-report \
+  input-f16.gguf Q3_K_M
+```
+
+`spqr_layer_delta` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra compression signal. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type.
+
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
 ## Validation sequence
@@ -68,17 +79,25 @@ The console report prints each quantized tensor's sensitivity bucket, score sour
 ./build/bin/llama-quantize --mixed-policy spqr_guided input-f16.gguf output-spqr-guided.gguf Q3_K_M
 ```
 
-4. If available, compare perplexity:
+4. Quantize with SpQR plus layer-delta guidance:
+
+```bash
+./build/bin/llama-quantize --mixed-policy spqr_layer_delta --print-layer-delta-report input-f16.gguf output-spqr-layer-delta.gguf Q3_K_M
+```
+
+5. If available, compare perplexity:
 
 ```bash
 ./build/bin/llama-perplexity -m output-q4-k-m.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-guided.gguf -f wiki.test.raw
+./build/bin/llama-perplexity -m output-spqr-layer-delta.gguf -f wiki.test.raw
 ```
 
-5. Run a few generation sanity checks:
+6. Run a few generation sanity checks:
 
 ```bash
 ./build/bin/llama-cli -m output-spqr-guided.gguf -p "Write a short explanation of quantization." -n 64
+./build/bin/llama-cli -m output-spqr-layer-delta.gguf -p "Write a short explanation of quantization." -n 64
 ```
 
 ## Limitations and next steps
@@ -96,6 +115,15 @@ quantize_block_with_policy(block, policy, sensitivity_score)
 ```
 
 That future backend could explore additive/codebook quantization, but no AQLM implementation is included here.
+
+Layer-delta guidance is also report-only with respect to representation. A future format could store:
+
+```text
+anchor layer stored normally
+following layer stored as quantized delta
+```
+
+That would require GGUF metadata changes and runtime reconstruction support. This POC avoids that and only uses adjacent-layer similarity as a quantization policy signal.
 
 ## Offline codebook candidate analysis
 

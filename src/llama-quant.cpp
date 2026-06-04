@@ -9,6 +9,7 @@
 #include <cinttypes>
 #include <fstream>
 #include <mutex>
+#include <numeric>
 #include <regex>
 #include <thread>
 #include <unordered_map>
@@ -48,6 +49,13 @@ enum class sensitivity_source {
     NONE,
     HEURISTIC,
     IMATRIX,
+};
+
+enum class layer_similarity_bucket {
+    UNKNOWN,
+    LOW,
+    MEDIUM,
+    HIGH,
 };
 
 static void zeros(std::ofstream & file, size_t n) {
@@ -162,6 +170,14 @@ static tensor_category tensor_get_category(const std::string & tensor_name) {
     return tensor_category::OTHER;
 }
 
+static int tensor_get_layer_index(const std::string & tensor_name) {
+    int layer = -1;
+    if (sscanf(tensor_name.c_str(), "blk.%d.", &layer) == 1) {
+        return layer;
+    }
+    return -1;
+}
+
 // check if category is for attention-v-like tensors (more sensitive to quantization)
 static bool category_is_attn_v(tensor_category cat) {
     return cat == tensor_category::ATTENTION_V     ||
@@ -186,6 +202,16 @@ static const char * sensitivity_source_name(sensitivity_source source) {
         case sensitivity_source::NONE:      return "none";
     }
     return "none";
+}
+
+static const char * layer_similarity_bucket_name(layer_similarity_bucket bucket) {
+    switch (bucket) {
+        case layer_similarity_bucket::LOW:     return "LOW_SIMILARITY";
+        case layer_similarity_bucket::MEDIUM:  return "MEDIUM_SIMILARITY";
+        case layer_similarity_bucket::HIGH:    return "HIGH_SIMILARITY";
+        case layer_similarity_bucket::UNKNOWN: return "UNKNOWN";
+    }
+    return "UNKNOWN";
 }
 
 static sensitivity_bucket spqr_guided_heuristic_bucket(tensor_category category) {
@@ -267,6 +293,62 @@ static ggml_type spqr_guided_type_for_bucket(
     return selected;
 }
 
+static bool tensor_category_participates_in_layer_delta(tensor_category category) {
+    switch (category) {
+        case tensor_category::ATTENTION_Q:
+        case tensor_category::ATTENTION_K:
+        case tensor_category::ATTENTION_V:
+        case tensor_category::ATTENTION_QKV:
+        case tensor_category::ATTENTION_KV_B:
+        case tensor_category::ATTENTION_OUTPUT:
+        case tensor_category::FFN_GATE:
+        case tensor_category::FFN_UP:
+        case tensor_category::FFN_DOWN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static ggml_type spqr_layer_delta_type_for_bucket(
+        const llama_model_quantize_params * params,
+        tensor_category category,
+        ggml_type base_type,
+        sensitivity_bucket sensitivity,
+        layer_similarity_bucket similarity) {
+    if (!tensor_category_participates_in_layer_delta(category)) {
+        return spqr_guided_type_for_bucket(params, category, base_type, sensitivity);
+    }
+
+    ggml_type selected = base_type;
+    if (sensitivity == sensitivity_bucket::HIGH && similarity == layer_similarity_bucket::LOW) {
+        selected = GGML_TYPE_Q6_K;
+    } else if (sensitivity == sensitivity_bucket::HIGH && similarity == layer_similarity_bucket::HIGH) {
+        selected = GGML_TYPE_Q5_K;
+    } else if (sensitivity == sensitivity_bucket::HIGH) {
+        selected = GGML_TYPE_Q5_K;
+    } else if (sensitivity == sensitivity_bucket::MEDIUM && similarity == layer_similarity_bucket::HIGH) {
+        selected = base_type;
+    } else if (sensitivity == sensitivity_bucket::MEDIUM) {
+        selected = GGML_TYPE_Q4_K;
+    } else if (sensitivity == sensitivity_bucket::LOW && similarity == layer_similarity_bucket::HIGH) {
+        selected = base_type;
+    } else if (sensitivity == sensitivity_bucket::LOW && similarity == layer_similarity_bucket::LOW) {
+        selected = ggml_type_is_below_q4_for_policy(base_type) ? GGML_TYPE_Q4_K : base_type;
+    } else {
+        selected = base_type;
+    }
+
+    if (params->output_tensor_type < GGML_TYPE_COUNT && category == tensor_category::OUTPUT) {
+        selected = params->output_tensor_type;
+    }
+    if (params->token_embedding_type < GGML_TYPE_COUNT && category == tensor_category::TOKEN_EMBD) {
+        selected = params->token_embedding_type;
+    }
+
+    return selected;
+}
+
 //
 // quantization state
 //
@@ -292,6 +374,10 @@ struct quantize_state_impl {
     int n_spqr_medium   = 0;
     int n_spqr_high     = 0;
     int n_spqr_promoted = 0;
+    int n_delta_low     = 0;
+    int n_delta_medium  = 0;
+    int n_delta_high    = 0;
+    int n_delta_demoted = 0;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -323,6 +409,10 @@ struct tensor_metadata {
     int             block_medium;
     int             block_high;
     int             block_count;
+    int             layer;
+    float           rel_delta_norm;
+    float           cosine_similarity;
+    layer_similarity_bucket layer_similarity;
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
@@ -402,6 +492,179 @@ static void llama_tensor_dequantize_impl(
     }
     for (auto & w : workers) { w.join(); }
     workers.clear();
+}
+
+static void load_tensor_as_f32(
+        llama_model_loader & ml,
+        ggml_tensor * tensor,
+        std::vector<no_init<uint8_t>> & read_data,
+        std::vector<no_init<float>> & f32_conv_buf,
+        std::vector<float> & out,
+        std::vector<std::thread> & workers,
+        int nthread) {
+    const size_t tensor_size = ggml_nbytes(tensor);
+    if (!ml.use_mmap) {
+        if (read_data.size() < tensor_size) {
+            read_data.resize(tensor_size);
+        }
+        tensor->data = read_data.data();
+    }
+    ml.load_data_for(tensor);
+
+    const int64_t nelements = ggml_nelements(tensor);
+    if (tensor->type == GGML_TYPE_F32) {
+        const float * data = (const float *) tensor->data;
+        out.assign(data, data + nelements);
+    } else {
+        llama_tensor_dequantize_impl(tensor, f32_conv_buf, workers, nelements, nthread);
+        const float * data = (const float *) f32_conv_buf.data();
+        out.assign(data, data + nelements);
+    }
+}
+
+static layer_similarity_bucket layer_similarity_bucket_from_metrics(float rel_delta_norm, float cosine_similarity) {
+    if (rel_delta_norm <= 0.10f || cosine_similarity >= 0.995f) {
+        return layer_similarity_bucket::HIGH;
+    }
+    if (rel_delta_norm <= 0.25f || cosine_similarity >= 0.980f) {
+        return layer_similarity_bucket::MEDIUM;
+    }
+    return layer_similarity_bucket::LOW;
+}
+
+static void init_layer_delta_analysis(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        int nthread,
+        bool print_report) {
+    std::map<std::pair<int, int>, size_t> layer_category_to_index;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        tm.layer = tensor_get_layer_index(tm.name);
+        if (tm.layer >= 0 && tensor_category_participates_in_layer_delta(tm.category)) {
+            layer_category_to_index[{ tm.layer, (int) tm.category }] = i;
+        }
+    }
+
+    std::vector<no_init<uint8_t>> read_data_prev;
+    std::vector<no_init<uint8_t>> read_data_cur;
+    std::vector<no_init<float>> f32_conv_prev;
+    std::vector<no_init<float>> f32_conv_cur;
+    std::vector<float> prev_data;
+    std::vector<float> cur_data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    std::map<int, std::vector<float>> rel_by_layer;
+    std::map<int, std::vector<float>> cos_by_layer;
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        if (!tm.allows_quantization || tm.layer <= 0 || !tensor_category_participates_in_layer_delta(tm.category)) {
+            continue;
+        }
+
+        auto prev_it = layer_category_to_index.find({ tm.layer - 1, (int) tm.category });
+        if (prev_it == layer_category_to_index.end()) {
+            continue;
+        }
+
+        ggml_tensor * cur_tensor = tensors[i]->tensor;
+        ggml_tensor * prev_tensor = tensors[prev_it->second]->tensor;
+        if (ggml_nelements(cur_tensor) != ggml_nelements(prev_tensor)) {
+            continue;
+        }
+
+        load_tensor_as_f32(ml, prev_tensor, read_data_prev, f32_conv_prev, prev_data, workers, nthread);
+        load_tensor_as_f32(ml, cur_tensor,  read_data_cur,  f32_conv_cur,  cur_data,  workers, nthread);
+
+        double delta_norm2 = 0.0;
+        double cur_norm2 = 0.0;
+        double prev_norm2 = 0.0;
+        double dot = 0.0;
+
+        for (size_t j = 0; j < cur_data.size(); ++j) {
+            const double cur = cur_data[j];
+            const double prev = prev_data[j];
+            const double delta = cur - prev;
+            delta_norm2 += delta * delta;
+            cur_norm2   += cur * cur;
+            prev_norm2  += prev * prev;
+            dot         += cur * prev;
+        }
+
+        const double eps = 1e-12;
+        tm.rel_delta_norm = (float) (std::sqrt(delta_norm2) / (std::sqrt(cur_norm2) + eps));
+        tm.cosine_similarity = (float) (dot / ((std::sqrt(cur_norm2) * std::sqrt(prev_norm2)) + eps));
+        tm.layer_similarity = layer_similarity_bucket_from_metrics(tm.rel_delta_norm, tm.cosine_similarity);
+
+        switch (tm.layer_similarity) {
+            case layer_similarity_bucket::LOW:    ++qs.n_delta_low;    break;
+            case layer_similarity_bucket::MEDIUM: ++qs.n_delta_medium; break;
+            case layer_similarity_bucket::HIGH:   ++qs.n_delta_high;   break;
+            case layer_similarity_bucket::UNKNOWN: break;
+        }
+
+        rel_by_layer[tm.layer].push_back(tm.rel_delta_norm);
+        cos_by_layer[tm.layer].push_back(tm.cosine_similarity);
+
+        if (print_report) {
+            LLAMA_LOG_INFO("%s: layer-delta layer=%4d tensor=%-36s rel_delta_norm=%10.6f cosine_sim=%10.6f sensitivity=%-6s similarity=%s\n",
+                    __func__,
+                    tm.layer,
+                    tm.name.c_str(),
+                    tm.rel_delta_norm,
+                    tm.cosine_similarity,
+                    sensitivity_bucket_name(tm.sensitivity),
+                    layer_similarity_bucket_name(tm.layer_similarity));
+        }
+    }
+
+    double rel_sum = 0.0;
+    double cos_sum = 0.0;
+    int n_pairs = 0;
+    std::vector<std::pair<int, float>> layer_rel;
+    for (const auto & kv : rel_by_layer) {
+        const auto & rels = kv.second;
+        const auto & coss = cos_by_layer[kv.first];
+        const float avg_rel = std::accumulate(rels.begin(), rels.end(), 0.0f) / rels.size();
+        const float avg_cos = std::accumulate(coss.begin(), coss.end(), 0.0f) / coss.size();
+        layer_rel.push_back({ kv.first, avg_rel });
+        rel_sum += avg_rel;
+        cos_sum += avg_cos;
+        ++n_pairs;
+    }
+
+    std::sort(layer_rel.begin(), layer_rel.end(), [](const auto & a, const auto & b) {
+        return a.second > b.second;
+    });
+
+    LLAMA_LOG_INFO("%s: layer-delta summary: tensors high=%d medium=%d low=%d avg_layer_rel_delta=%10.6f avg_layer_cosine=%10.6f\n",
+            __func__,
+            qs.n_delta_high,
+            qs.n_delta_medium,
+            qs.n_delta_low,
+            n_pairs > 0 ? rel_sum / n_pairs : 0.0,
+            n_pairs > 0 ? cos_sum / n_pairs : 0.0);
+
+    if (!layer_rel.empty()) {
+        LLAMA_LOG_INFO("%s: layer-delta most unique layers:", __func__);
+        for (size_t i = 0; i < std::min<size_t>(3, layer_rel.size()); ++i) {
+            LLAMA_LOG_INFO(" %d(%.4f)", layer_rel[i].first, layer_rel[i].second);
+        }
+        LLAMA_LOG_INFO("\n");
+
+        std::sort(layer_rel.begin(), layer_rel.end(), [](const auto & a, const auto & b) {
+            return a.second < b.second;
+        });
+        LLAMA_LOG_INFO("%s: layer-delta most redundant-looking layers:", __func__);
+        for (size_t i = 0; i < std::min<size_t>(3, layer_rel.size()); ++i) {
+            LLAMA_LOG_INFO(" %d(%.4f)", layer_rel[i].first, layer_rel[i].second);
+        }
+        LLAMA_LOG_INFO("\n");
+    }
 }
 
 //
@@ -817,6 +1080,8 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         if (!manual) {
             if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
                 new_type = spqr_guided_type_for_bucket(params, tm.category, default_type, tm.sensitivity);
+            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
+                new_type = spqr_layer_delta_type_for_bucket(params, tm.category, default_type, tm.sensitivity, tm.layer_similarity);
             } else {
                 new_type = llama_tensor_get_type_impl(qs, new_type, tensor, params->ftype, tm.category);
             }
@@ -825,13 +1090,17 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         // incompatible tensor shapes are handled here - fallback to a compatible type
         new_type = tensor_type_fallback(qs, tensor, new_type);
 
-        if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && !manual) {
+        if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+                    params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && !manual) {
             const int64_t ncols = tensor->ne[0];
             const bool can_compare =
                 ncols % ggml_blck_size(default_type) == 0 &&
                 ncols % ggml_blck_size(new_type) == 0;
             if (can_compare && ggml_row_size(new_type, ncols) > ggml_row_size(default_type, ncols)) {
                 ++qs.n_spqr_promoted;
+            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA &&
+                    can_compare && ggml_row_size(new_type, ncols) < ggml_row_size(default_type, ncols)) {
+                ++qs.n_delta_demoted;
             }
         }
     }
@@ -982,6 +1251,10 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         tm.block_medium = 0;
         tm.block_high = 0;
         tm.block_count = 0;
+        tm.layer = -1;
+        tm.rel_delta_norm = 0.0f;
+        tm.cosine_similarity = 0.0f;
+        tm.layer_similarity = layer_similarity_bucket::UNKNOWN;
 
         if (category_is_attn_v(cat)) {
             ++qs.n_attention_wv;
@@ -1332,11 +1605,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         metadata[i].remapped_imatrix_name = params->imatrix ? remap_imatrix(tensor->name, mapped) : metadata[i].name;
     }
 
-    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
+            params->print_layer_delta_report) {
         init_spqr_guided_sensitivity(qs, metadata, imatrix_data);
         if (params->spqr_block_report) {
             init_spqr_guided_block_report(metadata, imatrix_data, params->spqr_block_size);
         }
+    }
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA || params->print_layer_delta_report) {
+        init_layer_delta_analysis(qs, ml, tensors, metadata, nthread, params->print_layer_delta_report);
     }
 
     int idx = 0;
@@ -1501,13 +1779,15 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 new_size = tensor_size;
                 LLAMA_LOG_INFO("size = %8.3f MiB\n", new_size/1024.0/1024.0);
             }
-            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
-                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB%s",
+            if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+                        params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && tm.allows_quantization) {
+                LLAMA_LOG_INFO("%s: mixed-guided %-36s bucket=%-6s source=%-9s score=%10.6g similarity=%s selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
                         sensitivity_bucket_name(tm.sensitivity),
                         sensitivity_source_name(tm.sensitivity_from),
                         tm.sensitivity_score,
+                        layer_similarity_bucket_name(tm.layer_similarity),
                         ggml_type_name(new_type),
                         new_size/1024.0/1024.0,
                         params->spqr_block_report ? "" : "\n");
@@ -1599,13 +1879,15 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 }
                 LLAMA_LOG_INFO("size = %8.2f MiB -> %8.2f MiB\n", tensor_size/1024.0/1024.0, new_size/1024.0/1024.0);
             }
-            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
-                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB%s",
+            if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+                        params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && tm.allows_quantization) {
+                LLAMA_LOG_INFO("%s: mixed-guided %-36s bucket=%-6s source=%-9s score=%10.6g similarity=%s selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
                         sensitivity_bucket_name(tm.sensitivity),
                         sensitivity_source_name(tm.sensitivity_from),
                         tm.sensitivity_score,
+                        layer_similarity_bucket_name(tm.layer_similarity),
                         ggml_type_name(new_type),
                         new_size/1024.0/1024.0,
                         params->spqr_block_report ? "" : "\n");
@@ -1635,7 +1917,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     LLAMA_LOG_INFO("%s: model size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_org/1024.0/1024.0, total_size_org*8.0/ml.n_elements);
     LLAMA_LOG_INFO("%s: quant size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
 
-    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
         LLAMA_LOG_INFO("%s: spqr-guided summary: high=%d medium=%d low=%d promoted=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
                 __func__,
                 qs.n_spqr_high,
@@ -1644,6 +1927,10 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 qs.n_spqr_promoted,
                 total_size_new/1024.0/1024.0,
                 total_size_new*8.0/ml.n_elements);
+    }
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
+        LLAMA_LOG_INFO("%s: layer-delta-guided summary: high_similarity=%d medium_similarity=%d low_similarity=%d demoted=%d\n",
+                __func__, qs.n_delta_high, qs.n_delta_medium, qs.n_delta_low, qs.n_delta_demoted);
     }
 
     if (!params->imatrix && params->dry_run && will_require_imatrix) {
@@ -1681,6 +1968,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.mixed_quant_policy          =*/ LLAMA_MIXED_QUANT_POLICY_NONE,
         /*.spqr_block_report           =*/ false,
         /*.spqr_block_size             =*/ 256,
+        /*.print_layer_delta_report    =*/ false,
     };
 
     return result;
@@ -1768,6 +2056,10 @@ void llama_quant_compute_types(
     qs->n_spqr_medium       = 0;
     qs->n_spqr_high         = 0;
     qs->n_spqr_promoted     = 0;
+    qs->n_delta_low         = 0;
+    qs->n_delta_medium      = 0;
+    qs->n_delta_high        = 0;
+    qs->n_delta_demoted     = 0;
 
     // build metadata from tensor names
     std::vector<tensor_metadata> metadata(n_tensors);
@@ -1786,7 +2078,8 @@ void llama_quant_compute_types(
         metadata[i].allows_quantization = tensor_allows_quantization(&local_params, qs->model.arch, tensors[i]);
         metadata[i].remapped_imatrix_name = metadata[i].name;
     }
-    if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+    if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
+            local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
         init_spqr_guided_sensitivity(*qs, metadata, nullptr);
         if (local_params.spqr_block_report) {
             init_spqr_guided_block_report(metadata, nullptr, local_params.spqr_block_size);
