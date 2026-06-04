@@ -1,0 +1,5 @@
+{"prompt":"The capital of France is","prompt_id":"capital-france-clean","split":"train"}
+{"prompt":"The capital of Germany is","prompt_id":"capital-france-corrupt","split":"train"}
+{"prompt":"The capital of Japan is","prompt_id":"capital-japan-clean","split":"validation"}
+{"prompt":"The currency used in Sweden is the","prompt_id":"currency-sweden-clean","split":"validation"}
+

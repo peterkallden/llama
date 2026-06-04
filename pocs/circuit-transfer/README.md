@@ -307,6 +307,66 @@ Once discovery is repeatable, add a PyTorch experiment that:
 6. converts the LoRA adapter with `convert_lora_to_gguf.py`;
 7. regression-tests the GGUF adapter with `llama-server`.
 
+## Affine stitch transfer
+
+The first transfer experiment maps a donor steering direction into a related
+recipient model by fitting an affine map between residual streams. Start with
+models that share tokenizer and hidden size.
+
+Validate the setup:
+
+```sh
+python pocs/circuit-transfer/affine_stitch.py dry-run \
+  --donor-model meta-llama/Llama-3.1-8B-Instruct \
+  --recipient-model meta-llama/Llama-3.1-8B \
+  --prompts pocs/circuit-transfer/data/paired_prompts.example.jsonl \
+  --layers 8,12,16 \
+  --output work/circuit-transfer/affine/activations.pt
+```
+
+Collect paired last-token residual activations:
+
+```sh
+python pocs/circuit-transfer/affine_stitch.py collect-activations \
+  --donor-model meta-llama/Llama-3.1-8B-Instruct \
+  --recipient-model meta-llama/Llama-3.1-8B \
+  --prompts pocs/circuit-transfer/data/paired_prompts.example.jsonl \
+  --layers 12 \
+  --output work/circuit-transfer/affine/activations.pt
+```
+
+Fit a ridge affine stitch for one layer:
+
+```sh
+python pocs/circuit-transfer/affine_stitch.py fit \
+  --activations work/circuit-transfer/affine/activations.pt \
+  --layer 12 \
+  --output work/circuit-transfer/affine/layer-12-stitch.json \
+  --ridge-lambda 0.01
+```
+
+Map a verified donor vector into recipient space:
+
+```sh
+python pocs/circuit-transfer/affine_stitch.py map-vector \
+  --stitch work/circuit-transfer/affine/layer-12-stitch.json \
+  --vector-file work/circuit-transfer/vectors/donor-feature-1234.json \
+  --output work/circuit-transfer/vectors/recipient-feature-1234.json
+```
+
+Generate the recipient evaluation commands:
+
+```sh
+python pocs/circuit-transfer/affine_stitch.py evaluate-plan \
+  --stitch work/circuit-transfer/affine/layer-12-stitch.json \
+  --vector-file work/circuit-transfer/vectors/donor-feature-1234.json \
+  --mapped-vector work/circuit-transfer/vectors/recipient-feature-1234.json \
+  --verification-plan work/circuit-transfer/verification-plan.json \
+  --run-file work/circuit-transfer/recipient-steering-results.jsonl \
+  --recipient-model meta-llama/Llama-3.1-8B \
+  --output work/circuit-transfer/affine/evaluate-recipient-plan.json
+```
+
 Useful upstream projects:
 
 - `decoderesearch/circuit-tracer`

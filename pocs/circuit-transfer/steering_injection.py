@@ -38,7 +38,7 @@ class SteeringVector:
 
 
 def load_steering_vector(path: Path) -> SteeringVector:
-    row = json.loads(path.read_text(encoding="utf-8"))
+    row = json.loads(path.read_text(encoding="utf-8-sig"))
     missing = sorted({"layer", "feature_id", "values"} - row.keys())
     if missing:
         raise ValueError(f"{path}: missing steering vector fields: {', '.join(missing)}")

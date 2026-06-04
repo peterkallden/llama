@@ -56,6 +56,13 @@ run_pipeline = importlib.util.module_from_spec(PIPELINE_SPEC)
 sys.modules[PIPELINE_SPEC.name] = run_pipeline
 PIPELINE_SPEC.loader.exec_module(run_pipeline)
 
+AFFINE_MODULE_PATH = Path(__file__).with_name("affine_stitch.py")
+AFFINE_SPEC = importlib.util.spec_from_file_location("affine_stitch", AFFINE_MODULE_PATH)
+assert AFFINE_SPEC and AFFINE_SPEC.loader
+affine_stitch = importlib.util.module_from_spec(AFFINE_SPEC)
+sys.modules[AFFINE_SPEC.name] = affine_stitch
+AFFINE_SPEC.loader.exec_module(affine_stitch)
+
 
 def result_row(
     intervention,
@@ -303,6 +310,48 @@ class CircuitTransferTest(unittest.TestCase):
         self.assertIn("light", kinds)
         self.assertIn("heavy", kinds)
         self.assertIn("evaluate-lora", [step["name"] for step in steps])
+
+    def test_affine_load_paired_prompts(self):
+        prompts = affine_stitch.load_paired_prompts(
+            MODULE_PATH.parent / "data" / "paired_prompts.example.jsonl"
+        )
+        self.assertEqual(4, len(prompts))
+        self.assertEqual("capital-france-clean", prompts[0].prompt_id)
+
+    def test_affine_fit_and_map_vector(self):
+        numpy = __import__("numpy")
+        donor = numpy.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        recipient = numpy.array([[2.0, 1.0], [0.0, 3.0], [2.0, 4.0]])
+        weight, bias, mse = affine_stitch.fit_affine_numpy(donor, recipient, ridge_lambda=0.0)
+        self.assertLess(mse, 1e-20)
+        mapped = affine_stitch.map_vector_values([1.0, 0.0], weight.tolist())
+        self.assertAlmostEqual(2.0, mapped[0])
+        self.assertAlmostEqual(1.0, mapped[1])
+
+    def test_affine_evaluate_plan_shape(self):
+        parser = affine_stitch.build_parser()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            args = parser.parse_args([
+                "evaluate-plan",
+                "--stitch",
+                str(base / "stitch.json"),
+                "--vector-file",
+                str(base / "donor-vector.json"),
+                "--mapped-vector",
+                str(base / "recipient-vector.json"),
+                "--verification-plan",
+                str(base / "verification.json"),
+                "--run-file",
+                str(base / "recipient-results.jsonl"),
+                "--recipient-model",
+                "recipient",
+                "--output",
+                str(base / "plan.json"),
+            ])
+            args.handler(args)
+            plan = json.loads((base / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(["map-vector", "recipient-steering", "recipient-success"], [step["name"] for step in plan])
 
 
 if __name__ == "__main__":
