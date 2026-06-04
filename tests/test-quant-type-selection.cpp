@@ -424,6 +424,73 @@ static bool run_test_section(quantize_state_impl * qs, mock_tensors & mt, const 
     return all_pass;
 }
 
+static bool run_spqr_guided_smoke() {
+    llama_quant_model_desc desc = {};
+    desc.architecture           = "llama";
+    desc.n_embd                 = 256;
+    desc.n_ff                   = 512;
+    desc.n_layer                = 2;
+    desc.n_head                 = 8;
+    desc.n_head_kv              = 8;
+    desc.n_embd_head_k          = 32;
+    desc.n_embd_head_v          = 32;
+
+    llama_model * model = llama_quant_model_from_metadata(&desc);
+
+    llama_model_quantize_params qparams = llama_model_quantize_default_params();
+    qparams.mixed_quant_policy = LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED;
+
+    quantize_state_impl * qs = llama_quant_init(model, &qparams);
+
+    struct ggml_init_params ctx_params = { 8 * ggml_tensor_overhead(), nullptr, true };
+    ggml_context_ptr        ctx(ggml_init(ctx_params));
+
+    std::vector<ggml_tensor *> tensors;
+    auto add_tensor = [&](const char * name) {
+        ggml_tensor * tensor = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, 256, 256);
+        ggml_set_name(tensor, name);
+        tensors.push_back(tensor);
+    };
+
+    add_tensor("output.weight");
+    add_tensor("token_embd.weight");
+    add_tensor("blk.0.ffn_down.weight");
+    add_tensor("blk.0.attn_q.weight");
+    add_tensor("blk.0.ffn_up.weight");
+    add_tensor("blk.0.other.weight");
+
+    std::vector<ggml_type> result_types(tensors.size());
+    llama_quant_compute_types(qs, LLAMA_FTYPE_MOSTLY_Q3_K_M, tensors.data(), result_types.data(), tensors.size());
+
+    const std::pair<const char *, ggml_type> expected[] = {
+        { "output.weight",         GGML_TYPE_Q6_K },
+        { "token_embd.weight",     GGML_TYPE_Q6_K },
+        { "blk.0.ffn_down.weight", GGML_TYPE_Q5_K },
+        { "blk.0.attn_q.weight",   GGML_TYPE_Q4_K },
+        { "blk.0.ffn_up.weight",   GGML_TYPE_Q4_K },
+        { "blk.0.other.weight",    GGML_TYPE_Q3_K },
+    };
+
+    bool ok = true;
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        if (result_types[i] != expected[i].second) {
+            printf("  FAIL  spqr_guided %-28s expected %s, got %s\n",
+                    expected[i].first,
+                    ggml_type_name(expected[i].second),
+                    ggml_type_name(result_types[i]));
+            ok = false;
+        }
+    }
+
+    llama_quant_free(qs);
+    llama_model_free(model);
+
+    if (ok) {
+        printf("  PASS  spqr_guided heuristic smoke\n");
+    }
+    return ok;
+}
+
 static int run_remote_tests(const std::string & snapshot_dir, const char * argv0) {
     int total_pass = 0;
     int total_fail = 0;
@@ -515,6 +582,10 @@ int main(int argc, char ** argv) {
 
     // suppress llama log warnings during test (e.g. tensor type fallback messages)
     llama_log_set([](enum ggml_log_level, const char *, void *) {}, nullptr);
+
+    if (!run_spqr_guided_smoke()) {
+        return 1;
+    }
 
     return run_remote_tests(snapshot_dir, argv[0]);
 }

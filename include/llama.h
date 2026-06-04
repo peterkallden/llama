@@ -400,6 +400,11 @@ extern "C" {
         size_t size;
     };
 
+    enum llama_mixed_quant_policy {
+        LLAMA_MIXED_QUANT_POLICY_NONE        = 0,
+        LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED = 1,
+    };
+
     // model quantization parameters
     typedef struct llama_model_quantize_params {
         int32_t nthread;                                            // number of threads to use for quantizing, if <=0 will use std::thread::hardware_concurrency()
@@ -416,6 +421,7 @@ extern "C" {
         const struct llama_model_kv_override * kv_overrides;        // pointer to kv overrides
         const struct llama_model_tensor_override * tt_overrides;    // pointer to tensor overrides
         const int32_t * prune_layers;                               // pointer to layer indices to prune
+        enum llama_mixed_quant_policy mixed_quant_policy;            // optional mixed quantization policy
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

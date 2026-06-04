@@ -37,6 +37,19 @@ enum class tensor_category {
     OTHER
 };
 
+enum class sensitivity_bucket {
+    UNKNOWN,
+    LOW,
+    MEDIUM,
+    HIGH,
+};
+
+enum class sensitivity_source {
+    NONE,
+    HEURISTIC,
+    IMATRIX,
+};
+
 static void zeros(std::ofstream & file, size_t n) {
     char zero = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -156,6 +169,104 @@ static bool category_is_attn_v(tensor_category cat) {
            cat == tensor_category::ATTENTION_KV_B;
 }
 
+static const char * sensitivity_bucket_name(sensitivity_bucket bucket) {
+    switch (bucket) {
+        case sensitivity_bucket::LOW:     return "low";
+        case sensitivity_bucket::MEDIUM:  return "medium";
+        case sensitivity_bucket::HIGH:    return "high";
+        case sensitivity_bucket::UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+static const char * sensitivity_source_name(sensitivity_source source) {
+    switch (source) {
+        case sensitivity_source::HEURISTIC: return "heuristic";
+        case sensitivity_source::IMATRIX:   return "imatrix";
+        case sensitivity_source::NONE:      return "none";
+    }
+    return "none";
+}
+
+static sensitivity_bucket spqr_guided_heuristic_bucket(tensor_category category) {
+    // SpQR-inspired sensitivity guidance only: this does not store sparse outliers
+    // and does not change runtime tensor formats.
+    switch (category) {
+        case tensor_category::OUTPUT:
+        case tensor_category::TOKEN_EMBD:
+        case tensor_category::ATTENTION_OUTPUT:
+        case tensor_category::FFN_DOWN:
+            return sensitivity_bucket::HIGH;
+        case tensor_category::ATTENTION_Q:
+        case tensor_category::ATTENTION_K:
+        case tensor_category::ATTENTION_V:
+        case tensor_category::ATTENTION_QKV:
+        case tensor_category::ATTENTION_KV_B:
+        case tensor_category::FFN_GATE:
+        case tensor_category::FFN_UP:
+            return sensitivity_bucket::MEDIUM;
+        case tensor_category::OTHER:
+            return sensitivity_bucket::LOW;
+    }
+    return sensitivity_bucket::LOW;
+}
+
+static bool ggml_type_is_below_q4_for_policy(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_IQ1_S:
+        case GGML_TYPE_IQ1_M:
+        case GGML_TYPE_IQ2_XXS:
+        case GGML_TYPE_IQ2_XS:
+        case GGML_TYPE_IQ2_S:
+        case GGML_TYPE_IQ3_XXS:
+        case GGML_TYPE_IQ3_S:
+        case GGML_TYPE_Q1_0:
+        case GGML_TYPE_Q2_K:
+        case GGML_TYPE_Q3_K:
+        case GGML_TYPE_TQ1_0:
+        case GGML_TYPE_TQ2_0:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static ggml_type spqr_guided_type_for_bucket(
+        const llama_model_quantize_params * params,
+        tensor_category category,
+        ggml_type base_type,
+        sensitivity_bucket bucket) {
+    ggml_type selected = base_type;
+
+    switch (bucket) {
+        case sensitivity_bucket::HIGH:
+            selected = (category == tensor_category::OUTPUT || category == tensor_category::TOKEN_EMBD) ? GGML_TYPE_Q6_K : GGML_TYPE_Q5_K;
+            break;
+        case sensitivity_bucket::MEDIUM:
+            selected = GGML_TYPE_Q4_K;
+            break;
+        case sensitivity_bucket::LOW:
+            selected = base_type;
+            break;
+        case sensitivity_bucket::UNKNOWN:
+            break;
+    }
+
+    if ((category == tensor_category::OUTPUT || category == tensor_category::TOKEN_EMBD) &&
+            ggml_type_is_below_q4_for_policy(selected)) {
+        selected = GGML_TYPE_Q4_K;
+    }
+
+    if (params->output_tensor_type < GGML_TYPE_COUNT && category == tensor_category::OUTPUT) {
+        selected = params->output_tensor_type;
+    }
+    if (params->token_embedding_type < GGML_TYPE_COUNT && category == tensor_category::TOKEN_EMBD) {
+        selected = params->token_embedding_type;
+    }
+
+    return selected;
+}
+
 //
 // quantization state
 //
@@ -176,6 +287,11 @@ struct quantize_state_impl {
     int n_fallback    = 0;
 
     bool has_imatrix = false;
+
+    int n_spqr_low      = 0;
+    int n_spqr_medium   = 0;
+    int n_spqr_high     = 0;
+    int n_spqr_promoted = 0;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -200,6 +316,9 @@ struct tensor_metadata {
     std::string     name;
     ggml_type       target_type;
     tensor_category category;
+    sensitivity_bucket sensitivity;
+    sensitivity_source sensitivity_from;
+    float           sensitivity_score;
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
@@ -692,11 +811,25 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
 
         // if not manual - use the standard logic for choosing the quantization type based on the selected mixture
         if (!manual) {
-            new_type = llama_tensor_get_type_impl(qs, new_type, tensor, params->ftype, tm.category);
+            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+                new_type = spqr_guided_type_for_bucket(params, tm.category, default_type, tm.sensitivity);
+            } else {
+                new_type = llama_tensor_get_type_impl(qs, new_type, tensor, params->ftype, tm.category);
+            }
         }
 
         // incompatible tensor shapes are handled here - fallback to a compatible type
         new_type = tensor_type_fallback(qs, tensor, new_type);
+
+        if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && !manual) {
+            const int64_t ncols = tensor->ne[0];
+            const bool can_compare =
+                ncols % ggml_blck_size(default_type) == 0 &&
+                ncols % ggml_blck_size(new_type) == 0;
+            if (can_compare && ggml_row_size(new_type, ncols) > ggml_row_size(default_type, ncols)) {
+                ++qs.n_spqr_promoted;
+            }
+        }
     }
 
     return new_type;
@@ -838,6 +971,9 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
     for (auto & tm : metadata) {
         tensor_category cat = tensor_get_category(tm.name);
         tm.category = cat;
+        tm.sensitivity = sensitivity_bucket::UNKNOWN;
+        tm.sensitivity_from = sensitivity_source::NONE;
+        tm.sensitivity_score = 0.0f;
 
         if (category_is_attn_v(cat)) {
             ++qs.n_attention_wv;
@@ -848,6 +984,94 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         }
     }
     qs.n_ffn_down = qs.n_ffn_gate = qs.n_ffn_up = (int)qs.model.hparams.n_layer;
+}
+
+static float percentile(std::vector<float> values, float p) {
+    GGML_ASSERT(!values.empty());
+    std::sort(values.begin(), values.end());
+    const float pos = p * (values.size() - 1);
+    const size_t lo = (size_t) std::floor(pos);
+    const size_t hi = (size_t) std::ceil(pos);
+    if (lo == hi) {
+        return values[lo];
+    }
+    const float t = pos - lo;
+    return values[lo] * (1.0f - t) + values[hi] * t;
+}
+
+static float imatrix_tensor_score(const std::vector<float> & data) {
+    if (data.empty()) {
+        return 0.0f;
+    }
+
+    double sum = 0.0;
+    size_t count = 0;
+    for (float v : data) {
+        if (std::isfinite(v)) {
+            sum += std::abs(v);
+            ++count;
+        }
+    }
+
+    return count == 0 ? 0.0f : (float) (sum / count);
+}
+
+static void init_spqr_guided_sensitivity(
+        quantize_state_impl & qs,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data) {
+    std::vector<float> imatrix_scores;
+    imatrix_scores.reserve(metadata.size());
+
+    for (auto & tm : metadata) {
+        if (!tm.allows_quantization || !imatrix_data) {
+            continue;
+        }
+
+        auto it = imatrix_data->find(tm.remapped_imatrix_name);
+        if (it == imatrix_data->end()) {
+            continue;
+        }
+
+        tm.sensitivity_score = imatrix_tensor_score(it->second);
+        tm.sensitivity_from  = sensitivity_source::IMATRIX;
+        imatrix_scores.push_back(tm.sensitivity_score);
+    }
+
+    const bool use_imatrix_percentiles = imatrix_scores.size() >= 3;
+    const float medium_threshold = use_imatrix_percentiles ? percentile(imatrix_scores, 0.40f) : 0.0f;
+    const float high_threshold   = use_imatrix_percentiles ? percentile(imatrix_scores, 0.75f) : 0.0f;
+
+    for (auto & tm : metadata) {
+        if (!tm.allows_quantization) {
+            continue;
+        }
+
+        if (tm.sensitivity_from == sensitivity_source::IMATRIX && use_imatrix_percentiles) {
+            if (tm.sensitivity_score >= high_threshold) {
+                tm.sensitivity = sensitivity_bucket::HIGH;
+            } else if (tm.sensitivity_score >= medium_threshold) {
+                tm.sensitivity = sensitivity_bucket::MEDIUM;
+            } else {
+                tm.sensitivity = sensitivity_bucket::LOW;
+            }
+        } else {
+            tm.sensitivity = spqr_guided_heuristic_bucket(tm.category);
+            tm.sensitivity_from = sensitivity_source::HEURISTIC;
+        }
+
+        switch (tm.sensitivity) {
+            case sensitivity_bucket::LOW:    ++qs.n_spqr_low;    break;
+            case sensitivity_bucket::MEDIUM: ++qs.n_spqr_medium; break;
+            case sensitivity_bucket::HIGH:   ++qs.n_spqr_high;   break;
+            case sensitivity_bucket::UNKNOWN: break;
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: SPQR-guided mixed quantization enabled (%s sensitivity for %d tensor(s), heuristic fallback for the rest)\n",
+            __func__,
+            use_imatrix_percentiles ? "imatrix percentile" : "heuristic",
+            (int) imatrix_scores.size());
 }
 
 //
@@ -999,6 +1223,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     // initialize quantization state counters and metadata categories
     init_quantize_state_counters(qs, metadata);
 
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        const struct ggml_tensor * tensor = tensors[i]->tensor;
+        metadata[i].allows_quantization = tensor_allows_quantization(params, model->arch, tensor);
+        metadata[i].remapped_imatrix_name = params->imatrix ? remap_imatrix(tensor->name, mapped) : metadata[i].name;
+    }
+
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+        init_spqr_guided_sensitivity(qs, metadata, imatrix_data);
+    }
+
     int idx = 0;
     uint16_t n_split = 1;
 
@@ -1028,8 +1262,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         }
         gguf_add_tensor(ctx_outs[i_split].get(), tensor);
 
-        metadata[i].allows_quantization = tensor_allows_quantization(params, model->arch, tensor);
-
         if (metadata[i].allows_quantization) {
             metadata[i].target_type = llama_tensor_get_type(qs, params, tensor, default_type, metadata[i]);
         } else {
@@ -1038,9 +1270,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
         metadata[i].requires_imatrix = tensor_requires_imatrix(tensor->name, metadata[i].target_type, ftype);
 
-        if (params->imatrix) {
-            metadata[i].remapped_imatrix_name = remap_imatrix(tensor->name, mapped);
-        } else if (metadata[i].allows_quantization && metadata[i].requires_imatrix) {
+        if (!params->imatrix && metadata[i].allows_quantization && metadata[i].requires_imatrix) {
             if (params->dry_run) {
                 will_require_imatrix = true;
             } else {
@@ -1165,6 +1395,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 new_size = tensor_size;
                 LLAMA_LOG_INFO("size = %8.3f MiB\n", new_size/1024.0/1024.0);
             }
+            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
+                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB\n",
+                        __func__,
+                        ggml_get_name(tensor),
+                        sensitivity_bucket_name(tm.sensitivity),
+                        sensitivity_source_name(tm.sensitivity_from),
+                        tm.sensitivity_score,
+                        ggml_type_name(new_type),
+                        new_size/1024.0/1024.0);
+            }
             total_size_org += tensor_size;
             total_size_new += new_size;
             continue;
@@ -1248,6 +1488,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 }
                 LLAMA_LOG_INFO("size = %8.2f MiB -> %8.2f MiB\n", tensor_size/1024.0/1024.0, new_size/1024.0/1024.0);
             }
+            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED && tm.allows_quantization) {
+                LLAMA_LOG_INFO("%s: spqr-guided %-36s bucket=%-6s source=%-9s score=%10.6g selected=%7s estimated_size=%8.2f MiB\n",
+                        __func__,
+                        ggml_get_name(tensor),
+                        sensitivity_bucket_name(tm.sensitivity),
+                        sensitivity_source_name(tm.sensitivity_from),
+                        tm.sensitivity_score,
+                        ggml_type_name(new_type),
+                        new_size/1024.0/1024.0);
+            }
             total_size_org += tensor_size;
             total_size_new += new_size;
 
@@ -1268,6 +1518,17 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     LLAMA_LOG_INFO("%s: model size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_org/1024.0/1024.0, total_size_org*8.0/ml.n_elements);
     LLAMA_LOG_INFO("%s: quant size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
+
+    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+        LLAMA_LOG_INFO("%s: spqr-guided summary: high=%d medium=%d low=%d promoted=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
+                __func__,
+                qs.n_spqr_high,
+                qs.n_spqr_medium,
+                qs.n_spqr_low,
+                qs.n_spqr_promoted,
+                total_size_new/1024.0/1024.0,
+                total_size_new*8.0/ml.n_elements);
+    }
 
     if (!params->imatrix && params->dry_run && will_require_imatrix) {
         LLAMA_LOG_WARN("%s: WARNING: dry run completed successfully, but actually completing this quantization will require an imatrix!\n",
@@ -1299,8 +1560,9 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.dry_run                     =*/ false,
         /*.imatrix                     =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,
-        /*.tensor_type                 =*/ nullptr,
-        /*.prune_layers                =*/ nullptr
+        /*.tt_overrides                =*/ nullptr,
+        /*.prune_layers                =*/ nullptr,
+        /*.mixed_quant_policy          =*/ LLAMA_MIXED_QUANT_POLICY_NONE,
     };
 
     return result;
@@ -1384,6 +1646,10 @@ void llama_quant_compute_types(
     qs->n_fallback          = 0;
     qs->has_imatrix         = false;
     qs->has_tied_embeddings = true;
+    qs->n_spqr_low          = 0;
+    qs->n_spqr_medium       = 0;
+    qs->n_spqr_high         = 0;
+    qs->n_spqr_promoted     = 0;
 
     // build metadata from tensor names
     std::vector<tensor_metadata> metadata(n_tensors);
@@ -1397,6 +1663,14 @@ void llama_quant_compute_types(
     // use a local copy of params with the requested ftype
     llama_model_quantize_params local_params = *qs->params;
     local_params.ftype = ftype;
+
+    for (size_t i = 0; i < n_tensors; i++) {
+        metadata[i].allows_quantization = tensor_allows_quantization(&local_params, qs->model.arch, tensors[i]);
+        metadata[i].remapped_imatrix_name = metadata[i].name;
+    }
+    if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+        init_spqr_guided_sensitivity(*qs, metadata, nullptr);
+    }
 
     ggml_type default_type = llama_ftype_get_default_type(ftype);
 
