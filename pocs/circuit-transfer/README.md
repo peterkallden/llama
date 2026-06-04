@@ -41,6 +41,56 @@ python pocs/circuit-transfer/circuit_transfer.py validate
 The starter dataset uses factual recall because target and distractor logits
 are easy to compare. Replace or extend it before drawing conclusions.
 
+## Draft dynamic cases
+
+The starter cases are intentionally small. To explore a different circuit, draft
+a new case file from a context or theme.
+
+Generate a prompt for a source/teacher model:
+
+```sh
+python pocs/circuit-transfer/case_draft.py prompt \
+  --context "basic astronomy facts with clean country/planet contrasts" \
+  --count 8 \
+  --output work/circuit-transfer/cases/teacher-prompt.txt
+```
+
+Ask your source model with that prompt, save the JSONL answer, and normalize it:
+
+```sh
+python pocs/circuit-transfer/case_draft.py from-output \
+  --input work/circuit-transfer/cases/teacher-output.jsonl \
+  --output work/circuit-transfer/cases/astronomy.jsonl
+```
+
+If the source model is available through Hugging Face locally, you can combine
+both steps:
+
+```sh
+python pocs/circuit-transfer/case_draft.py generate-with-model \
+  --model path-or-hf-model-id \
+  --context "basic astronomy facts with clean planet contrasts" \
+  --output work/circuit-transfer/cases/astronomy.jsonl \
+  --raw-output work/circuit-transfer/cases/astronomy.raw.txt
+```
+
+Check whether target and distractor are single tokens for the model you will
+score:
+
+```sh
+python pocs/circuit-transfer/case_draft.py check-tokenization \
+  --cases work/circuit-transfer/cases/astronomy.jsonl \
+  --model path-or-hf-model-id
+```
+
+Then pass the case file into existing commands:
+
+```sh
+python pocs/circuit-transfer/circuit_transfer.py render-tracer \
+  --cases work/circuit-transfer/cases/astronomy.jsonl \
+  --output-dir work/circuit-transfer/graphs
+```
+
 ## Generate attribution commands
 
 ```sh
@@ -126,6 +176,7 @@ Then generate the two checks for each candidate:
 
 ```sh
 python pocs/circuit-transfer/verify_interventions.py \
+  --cases work/circuit-transfer/cases/astronomy.jsonl \
   --candidates pocs/circuit-transfer/data/candidate_features.example.jsonl \
   --output work/circuit-transfer/verification-plan.json
 ```

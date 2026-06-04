@@ -1,0 +1,3 @@
+{"case_id":"planet-mars","behavior":"factual-recall","clean_prompt":"The planet known as the red planet is","corrupt_prompt":"The largest planet in the solar system is","target":" Mars","distractor":" Jupiter","templates":["The planet known as the red planet is","The red planet is"]}
+{"case_id":"element-gold","behavior":"factual-recall","clean_prompt":"The chemical symbol Au refers to","corrupt_prompt":"The chemical symbol Fe refers to","target":" gold","distractor":" iron","templates":["The chemical symbol Au refers to","Au is the chemical symbol for"]}
+

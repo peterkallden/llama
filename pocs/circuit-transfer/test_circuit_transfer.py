@@ -63,6 +63,13 @@ affine_stitch = importlib.util.module_from_spec(AFFINE_SPEC)
 sys.modules[AFFINE_SPEC.name] = affine_stitch
 AFFINE_SPEC.loader.exec_module(affine_stitch)
 
+CASE_DRAFT_MODULE_PATH = Path(__file__).with_name("case_draft.py")
+CASE_DRAFT_SPEC = importlib.util.spec_from_file_location("case_draft", CASE_DRAFT_MODULE_PATH)
+assert CASE_DRAFT_SPEC and CASE_DRAFT_SPEC.loader
+case_draft = importlib.util.module_from_spec(CASE_DRAFT_SPEC)
+sys.modules[CASE_DRAFT_SPEC.name] = case_draft
+CASE_DRAFT_SPEC.loader.exec_module(case_draft)
+
 
 def result_row(
     intervention,
@@ -352,6 +359,44 @@ class CircuitTransferTest(unittest.TestCase):
             args.handler(args)
             plan = json.loads((base / "plan.json").read_text(encoding="utf-8"))
         self.assertEqual(["map-vector", "recipient-steering", "recipient-success"], [step["name"] for step in plan])
+
+    def test_case_draft_prompt_mentions_jsonl_contract(self):
+        prompt = case_draft.build_teacher_prompt("astronomy facts", "factual-recall", 3, "English")
+        self.assertIn("Return JSONL only", prompt)
+        self.assertIn("astronomy facts", prompt)
+        self.assertIn('"behavior":"factual-recall"', prompt)
+
+    def test_case_draft_normalizes_teacher_output(self):
+        rows = case_draft.parse_json_or_jsonl(
+            '{"case_id":"planet-mars","clean_prompt":"The red planet is","corrupt_prompt":"The largest planet is","answer":"Mars","distractors":["Jupiter"],"templates":["The red planet is","The planet called the red planet is"]}'
+        )
+        case = case_draft.normalize_case_row(rows[0], "factual-recall")
+        self.assertEqual("planet-mars", case["case_id"])
+        self.assertEqual(" Mars", case["target"])
+        self.assertEqual(" Jupiter", case["distractor"])
+
+    def test_case_draft_from_output_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "cases.jsonl"
+            cases = [
+                case_draft.normalize_case_row(
+                    {
+                        "case_id": "element-gold",
+                        "clean_prompt": "The chemical symbol Au refers to",
+                        "corrupt_prompt": "The chemical symbol Fe refers to",
+                        "target": " gold",
+                        "distractor": " iron",
+                        "templates": [
+                            "The chemical symbol Au refers to",
+                            "Au is the chemical symbol for",
+                        ],
+                    },
+                    "factual-recall",
+                )
+            ]
+            case_draft.write_cases(cases, output)
+            loaded = circuit_transfer.load_cases(output)
+        self.assertEqual("element-gold", loaded[0].case_id)
 
 
 if __name__ == "__main__":
