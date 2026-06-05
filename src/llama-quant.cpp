@@ -1874,7 +1874,7 @@ static rd_block_stats sample_rd_candidate(
     }
 
     std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
-    std::vector<no_init<float>> reconstructed(ncols);
+    std::vector<float> reconstructed(ncols);
     std::vector<float> block_distortions;
     block_distortions.reserve(sample_rows);
 
