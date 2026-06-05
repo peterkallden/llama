@@ -459,6 +459,12 @@ struct tensor_metadata {
     float           rd_cost;
     float           rd_distortion;
     float           rd_bpw;
+    float           activity_mean;
+    float           activity_variance;
+    float           activity_peak_ratio;
+    float           activity_active_fraction;
+    float           activity_risk;
+    float           activity_shift;
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
@@ -580,6 +586,94 @@ static layer_similarity_bucket layer_similarity_bucket_from_metrics(float rel_de
 
 static float percentile(std::vector<float> values, float p);
 
+static float robust_scene_threshold(const std::vector<float> & scores, float percentile_value) {
+    if (scores.empty()) {
+        return 0.0f;
+    }
+    const float percentile_threshold = percentile(scores, percentile_value);
+    const float median = percentile(scores, 0.5f);
+    std::vector<float> deviations;
+    deviations.reserve(scores.size());
+    for (float score : scores) {
+        deviations.push_back(std::abs(score - median));
+    }
+    const float mad = percentile(deviations, 0.5f);
+    return std::max(percentile_threshold, median + 2.5f * 1.4826f * mad);
+}
+
+// MPEG-inspired activity masking and scene-change signals. These only steer existing
+// per-tensor quant types; they do not introduce dynamic bit allocation at inference.
+static std::map<int, float> layer_scene_scores(
+        const std::map<int, float> & avg_rel_by_layer,
+        const std::vector<tensor_metadata> & metadata) {
+    std::map<int, std::vector<float>> shifts_by_layer;
+    for (const tensor_metadata & tm : metadata) {
+        if (tm.layer >= 0 && tensor_category_participates_in_layer_delta(tm.category)) {
+            shifts_by_layer[tm.layer].push_back(tm.activity_shift);
+        }
+    }
+
+    std::map<int, float> result;
+    for (const auto & kv : avg_rel_by_layer) {
+        float avg_shift = 0.0f;
+        auto shift_it = shifts_by_layer.find(kv.first);
+        if (shift_it != shifts_by_layer.end() && !shift_it->second.empty()) {
+            avg_shift = std::accumulate(shift_it->second.begin(), shift_it->second.end(), 0.0f) / shift_it->second.size();
+        }
+        result[kv.first] = kv.second * (1.0f + 0.5f * avg_shift);
+    }
+    return result;
+}
+
+static void init_activity_profile(std::vector<tensor_metadata> & metadata, const llama_model_quantize_params * params) {
+    if (!params->activity_profile) {
+        return;
+    }
+
+    std::unordered_map<std::string, const llama_model_quantize_activity_data *> profiles;
+    for (const llama_model_quantize_activity_data * p = params->activity_profile; p->name != nullptr; ++p) {
+        profiles.emplace(p->name, p);
+    }
+
+    std::map<std::pair<int, int>, tensor_metadata *> by_layer_category;
+    int loaded = 0;
+    for (tensor_metadata & tm : metadata) {
+        tm.layer = tensor_get_layer_index(tm.name);
+        auto it = profiles.find(tm.name);
+        if (it == profiles.end()) {
+            continue;
+        }
+        tm.activity_mean = it->second->mean;
+        tm.activity_variance = it->second->variance;
+        tm.activity_peak_ratio = it->second->peak_ratio;
+        tm.activity_active_fraction = it->second->active_fraction;
+
+        const float cv = std::sqrt(std::max(0.0f, tm.activity_variance)) / (tm.activity_mean + 1e-20f);
+        const float peak_signal = std::log1p(std::max(0.0f, tm.activity_peak_ratio));
+        const float rare_active = (1.0f - std::clamp(tm.activity_active_fraction, 0.0f, 1.0f)) * std::min(peak_signal, 3.0f) / 3.0f;
+        tm.activity_risk = std::clamp(1.0f + 0.12f * peak_signal + 0.08f * std::log1p(cv) + 0.15f * rare_active, 1.0f, 1.75f);
+        if (tm.layer >= 0) {
+            by_layer_category[{ tm.layer, (int) tm.category }] = &tm;
+        }
+        ++loaded;
+    }
+
+    for (auto & kv : by_layer_category) {
+        tensor_metadata * cur = kv.second;
+        auto prev_it = by_layer_category.find({ cur->layer - 1, (int) cur->category });
+        if (prev_it == by_layer_category.end()) {
+            continue;
+        }
+        const tensor_metadata * prev = prev_it->second;
+        const float mean_change = std::abs(std::log((cur->activity_mean + 1e-20f) / (prev->activity_mean + 1e-20f)));
+        const float peak_change = std::abs(std::log1p(cur->activity_peak_ratio) - std::log1p(prev->activity_peak_ratio));
+        const float active_change = std::abs(cur->activity_active_fraction - prev->activity_active_fraction);
+        cur->activity_shift = std::clamp(0.50f * mean_change + 0.25f * peak_change + 0.25f * active_change, 0.0f, 2.0f);
+    }
+
+    LLAMA_LOG_INFO("%s: loaded activity-mask statistics for %d tensor(s)\n", __func__, loaded);
+}
+
 static int init_precomputed_layer_delta_analysis(
         quantize_state_impl & qs,
         std::vector<tensor_metadata> & metadata,
@@ -637,11 +731,14 @@ static int init_precomputed_layer_delta_analysis(
 
     if (loaded > 0 && qs.params->adaptive_anchors) {
         std::map<int, float> avg_rel_by_layer;
-        std::vector<float> layer_scores;
         for (const auto & kv : rel_by_layer) {
             const float avg = std::accumulate(kv.second.begin(), kv.second.end(), 0.0f) / kv.second.size();
             avg_rel_by_layer[kv.first] = avg;
-            layer_scores.push_back(avg);
+        }
+        const std::map<int, float> scene_scores = layer_scene_scores(avg_rel_by_layer, metadata);
+        std::vector<float> layer_scores;
+        for (const auto & kv : scene_scores) {
+            layer_scores.push_back(kv.second);
         }
 
         std::map<int, int> anchor_reasons;
@@ -652,8 +749,8 @@ static int init_precomputed_layer_delta_analysis(
         }
         float scene_threshold = 0.0f;
         if (!layer_scores.empty()) {
-            scene_threshold = percentile(layer_scores, qs.params->anchor_percentile / 100.0f);
-            for (const auto & kv : avg_rel_by_layer) {
+            scene_threshold = robust_scene_threshold(layer_scores, qs.params->anchor_percentile / 100.0f);
+            for (const auto & kv : scene_scores) {
                 if (kv.second >= scene_threshold) {
                     anchor_reasons[kv.first] |= ANCHOR_REASON_SCENE_CHANGE;
                 }
@@ -667,13 +764,15 @@ static int init_precomputed_layer_delta_analysis(
             }
         }
         qs.n_anchor_layers = (int) anchor_reasons.size();
-        LLAMA_LOG_INFO("%s: adaptive anchors from profile: layers=%d tensors=%d percentile=%.1f scene_threshold=%.6f\n",
+        LLAMA_LOG_INFO("%s: adaptive anchors from profile: layers=%d tensors=%d percentile=%.1f robust_scene_threshold=%.6f\n",
                 __func__, qs.n_anchor_layers, qs.n_anchor_tensors, qs.params->anchor_percentile, scene_threshold);
         if (qs.params->print_anchor_report) {
             for (const auto & kv : anchor_reasons) {
-                const auto score_it = avg_rel_by_layer.find(kv.first);
-                LLAMA_LOG_INFO("%s: anchor-profile layer=%4d avg_rel_delta=%10.6f reason=%s\n",
-                        __func__, kv.first, score_it != avg_rel_by_layer.end() ? score_it->second : 0.0f,
+                const auto rel_it = avg_rel_by_layer.find(kv.first);
+                const auto score_it = scene_scores.find(kv.first);
+                LLAMA_LOG_INFO("%s: anchor-profile layer=%4d avg_rel_delta=%10.6f scene_score=%10.6f reason=%s\n",
+                        __func__, kv.first, rel_it != avg_rel_by_layer.end() ? rel_it->second : 0.0f,
+                        score_it != scene_scores.end() ? score_it->second : 0.0f,
                         anchor_reason_name(kv.second).c_str());
             }
         }
@@ -798,16 +897,17 @@ static void init_layer_delta_analysis(
             anchor_reasons[n_layer - 1] |= ANCHOR_REASON_FINAL_LAYER;
         }
 
+        const std::map<int, float> scene_scores = layer_scene_scores(avg_rel_by_layer, metadata);
         std::vector<float> layer_scores;
-        layer_scores.reserve(avg_rel_by_layer.size());
-        for (const auto & kv : avg_rel_by_layer) {
+        layer_scores.reserve(scene_scores.size());
+        for (const auto & kv : scene_scores) {
             layer_scores.push_back(kv.second);
         }
 
         float scene_threshold = 0.0f;
         if (!layer_scores.empty()) {
-            scene_threshold = percentile(layer_scores, qs.params->anchor_percentile / 100.0f);
-            for (const auto & kv : avg_rel_by_layer) {
+            scene_threshold = robust_scene_threshold(layer_scores, qs.params->anchor_percentile / 100.0f);
+            for (const auto & kv : scene_scores) {
                 if (kv.second >= scene_threshold) {
                     anchor_reasons[kv.first] |= ANCHOR_REASON_SCENE_CHANGE;
                 }
@@ -826,15 +926,17 @@ static void init_layer_delta_analysis(
         }
         qs.n_anchor_layers = (int) anchor_reasons.size();
 
-        LLAMA_LOG_INFO("%s: adaptive anchors: layers=%d tensors=%d percentile=%.1f scene_threshold=%.6f\n",
+        LLAMA_LOG_INFO("%s: adaptive anchors: layers=%d tensors=%d percentile=%.1f robust_scene_threshold=%.6f\n",
                 __func__, qs.n_anchor_layers, qs.n_anchor_tensors, qs.params->anchor_percentile, scene_threshold);
         if (qs.params->print_anchor_report) {
             for (const auto & kv : anchor_reasons) {
-                const auto score_it = avg_rel_by_layer.find(kv.first);
-                LLAMA_LOG_INFO("%s: anchor layer=%4d avg_rel_delta=%10.6f reason=%s\n",
+                const auto rel_it = avg_rel_by_layer.find(kv.first);
+                const auto score_it = scene_scores.find(kv.first);
+                LLAMA_LOG_INFO("%s: anchor layer=%4d avg_rel_delta=%10.6f scene_score=%10.6f reason=%s\n",
                         __func__,
                         kv.first,
-                        score_it != avg_rel_by_layer.end() ? score_it->second : 0.0f,
+                        rel_it != avg_rel_by_layer.end() ? rel_it->second : 0.0f,
+                        score_it != scene_scores.end() ? score_it->second : 0.0f,
                         anchor_reason_name(kv.second).c_str());
             }
         }
@@ -1466,6 +1568,12 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         tm.rd_cost = 0.0f;
         tm.rd_distortion = 0.0f;
         tm.rd_bpw = 0.0f;
+        tm.activity_mean = 0.0f;
+        tm.activity_variance = 0.0f;
+        tm.activity_peak_ratio = 0.0f;
+        tm.activity_active_fraction = 0.0f;
+        tm.activity_risk = 1.0f;
+        tm.activity_shift = 0.0f;
 
         if (category_is_attn_v(cat)) {
             ++qs.n_attention_wv;
@@ -1777,6 +1885,7 @@ static void init_rate_distortion_analysis(
         } else if (tm.layer_similarity == layer_similarity_bucket::HIGH) {
             distortion_weight *= 0.85f;
         }
+        distortion_weight *= tm.activity_risk;
 
         float best_cost = std::numeric_limits<float>::infinity();
         ggml_type best_type = GGML_TYPE_COUNT;
@@ -1801,8 +1910,9 @@ static void init_rate_distortion_analysis(
                 const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
                 const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
                 if (params->print_rd_report) {
-                    LLAMA_LOG_INFO("%s: rd-profile   tensor=%-36s type=%-7s distortion=%10.6g weight=%5.2f bpw=%6.3f cost=%10.6g\n",
-                            __func__, tm.name.c_str(), ggml_type_name(candidate), distortion, distortion_weight, bpw, cost);
+                    LLAMA_LOG_INFO("%s: rd-profile   tensor=%-36s type=%-7s distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
+                            __func__, tm.name.c_str(), ggml_type_name(candidate), distortion,
+                            distortion_weight, tm.activity_risk, bpw, cost);
                 }
                 if (cost < best_cost) {
                     best_cost = cost;
@@ -1863,9 +1973,9 @@ static void init_rate_distortion_analysis(
             const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
 
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s samples=%3d distortion=%10.6g weight=%5.2f bpw=%6.3f cost=%10.6g\n",
+                LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s samples=%3d distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
                         __func__, tm.name.c_str(), ggml_type_name(candidate), sample_rows,
-                        distortion, distortion_weight, bpw, cost);
+                        distortion, distortion_weight, tm.activity_risk, bpw, cost);
             }
 
             if (cost < best_cost) {
@@ -2058,6 +2168,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         if (params->spqr_block_report || params->spqr_block_scoring) {
             init_spqr_guided_block_scoring(qs, metadata, imatrix_data, params->spqr_block_size, params->spqr_block_scoring);
         }
+    }
+    if (params->rd_guided ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
+            params->print_layer_delta_report) {
+        init_activity_profile(metadata, params);
     }
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA || params->print_layer_delta_report) {
         const int loaded = init_precomputed_layer_delta_analysis(qs, metadata, params->print_layer_delta_report);
@@ -2450,6 +2565,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.print_rd_report             =*/ false,
         /*.rd_profile                  =*/ nullptr,
         /*.layer_delta_profile         =*/ nullptr,
+        /*.activity_profile            =*/ nullptr,
     };
 
     return result;
@@ -2569,6 +2685,11 @@ void llama_quant_compute_types(
         if (local_params.spqr_block_report || local_params.spqr_block_scoring) {
             init_spqr_guided_block_scoring(*qs, metadata, nullptr, local_params.spqr_block_size, local_params.spqr_block_scoring);
         }
+    }
+    if (local_params.rd_guided ||
+            local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
+            local_params.print_layer_delta_report) {
+        init_activity_profile(metadata, &local_params);
     }
 
     ggml_type default_type = llama_ftype_get_default_type(ftype);

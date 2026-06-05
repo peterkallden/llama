@@ -627,6 +627,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
     std::map<std::string, std::vector<float>> rd_profiles;
     std::map<std::string, std::vector<float>> block_profiles;
     std::map<std::string, std::vector<float>> layer_delta_profiles;
+    std::map<std::string, std::vector<float>> activity_profiles;
 
     if (m_params.collect_quant_profile && include_quant_profile) {
         for (const auto & kv : m_stats) {
@@ -637,6 +638,10 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
             if (!stats.values.empty() && !stats.counts.empty()) {
                 const int block_size = std::max(1, m_params.quant_profile_block_size);
                 std::vector<float> blocks;
+                double activity_sum = 0.0;
+                double activity_sum2 = 0.0;
+                float activity_max = 0.0f;
+                int activity_active = 0;
                 for (size_t off = 0; off < stats.values.size(); off += block_size) {
                     const size_t end = std::min(stats.values.size(), off + (size_t) block_size);
                     double sum = 0.0;
@@ -648,6 +653,10 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
                             i / (stats.values.size() / stats.counts.size()) : 0;
                         const float count = stats.counts[std::min(expert, stats.counts.size() - 1)];
                         const float value = count > 0 ? stats.values[i] / count : 0.0f;
+                        activity_sum += value;
+                        activity_sum2 += value * value;
+                        activity_max = std::max(activity_max, value);
+                        activity_active += value > 1e-5f;
                         sum += value;
                         sum2 += value * value;
                         max_value = std::max(max_value, value);
@@ -661,6 +670,14 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
                     blocks.push_back(n > 0 ? active / n : 0.0f);
                 }
                 block_profiles[name] = std::move(blocks);
+                const float n = (float) stats.values.size();
+                const float activity_mean = n > 0 ? (float) (activity_sum / n) : 0.0f;
+                activity_profiles[name] = {
+                    activity_mean,
+                    n > 0 ? std::max(0.0f, (float) (activity_sum2 / n - activity_mean * activity_mean)) : 0.0f,
+                    activity_max / (activity_mean + 1e-20f),
+                    n > 0 ? activity_active / n : 0.0f,
+                };
             }
 
             if (sample_it == m_weight_samples.end()) {
@@ -779,7 +796,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.values.size(), GGML_MEM_ALIGN);
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.counts.size(), GGML_MEM_ALIGN);
     }
-    for (const auto & profiles : { &rd_profiles, &block_profiles, &layer_delta_profiles }) {
+    for (const auto & profiles : { &rd_profiles, &block_profiles, &layer_delta_profiles, &activity_profiles }) {
         for (const auto & kv : *profiles) {
             data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.size(), GGML_MEM_ALIGN);
         }
@@ -817,7 +834,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
             for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
                 rd_types.push_back(ggml_type_name(type));
             }
-            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION, 1);
+            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION, 2);
             gguf_set_arr_str(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_RD_TYPES, rd_types.data(), rd_types.size());
             gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS, m_params.quant_profile_sample_rows);
             gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE, m_params.quant_profile_block_size);
@@ -836,6 +853,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
     add_profile_tensors(rd_profiles, "analysis.rd", 0);
     add_profile_tensors(block_profiles, "analysis.blocks", 4);
     add_profile_tensors(layer_delta_profiles, "analysis.layer_delta", 2);
+    add_profile_tensors(activity_profiles, "analysis.activity", 4);
 
     for (const auto & name : to_store) {
         const auto & stat = m_stats.at(name);
@@ -864,8 +882,9 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
     LOGV(1, "\n");
     LOG_DBGV(1, "%s: stored collected data after %d chunks in %s\n", __func__, m_last_chunk, fname.c_str());
     if (m_params.collect_quant_profile && include_quant_profile) {
-        LOG_INF("%s: stored quantization profile: rd=%d blocks=%d layer_delta=%d\n",
-                __func__, (int) rd_profiles.size(), (int) block_profiles.size(), (int) layer_delta_profiles.size());
+        LOG_INF("%s: stored quantization profile: rd=%d blocks=%d layer_delta=%d activity=%d\n",
+                __func__, (int) rd_profiles.size(), (int) block_profiles.size(),
+                (int) layer_delta_profiles.size(), (int) activity_profiles.size());
     }
 
     gguf_free(ctx_gguf);

@@ -57,7 +57,9 @@ Recent versions of `llama-imatrix` store data in GGUF format by default. For the
   --adaptive-anchors --rd-guided ggml-model-f16.gguf model-guided.gguf q3_k_m
 ```
 
-The profile is optional and policy-neutral: it stores raw candidate distortion and similarity metrics, not selected quantization types or sensitivity buckets. RD profile reuse currently covers `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K`. Unsupported or incompatible entries fall back to analysis during quantization. Profile generation from F16, BF16, or F32 model weights is supported; other source weight types are skipped. Profile compatibility currently validates tensor name and shape, so use it with the exact model weights that generated it.
+The profile is optional and policy-neutral: it stores raw candidate distortion and similarity metrics, not selected quantization types or sensitivity buckets. It also stores activity-mask statistics per tensor: mean squared activity, variance across channels, peak-to-mean ratio, and active-channel fraction. RD profile reuse currently covers `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K`. Unsupported or incompatible entries fall back to analysis during quantization. Profile generation from F16, BF16, or F32 model weights is supported; other source weight types are skipped. Profile compatibility currently validates tensor name and shape, so use it with the exact model weights that generated it.
+
+The guided quantizer converts activity statistics into a bounded rare-event risk multiplier for RD distortion. Adaptive anchors combine adjacent-layer weight delta with changes in activity statistics and use a conservative robust-MAD scene-change threshold. These choices remain quantization-time policy decisions; the stored profile contains only reusable raw statistics.
 
 To avoid repeating candidate evaluation during calibration, periodic and snapshot imatrix saves omit the optional profile. The final output written when calibration completes contains it.
 

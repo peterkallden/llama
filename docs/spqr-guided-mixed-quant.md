@@ -1,17 +1,57 @@
 # SpQR-guided mixed quantization POC
 
-This is an experimental quantization policy for `llama-quantize`. It borrows one idea from SpQR: use a sensitivity signal to decide which weights should receive more bits. It does not implement SpQR sparse outlier storage, sparse correction kernels, new runtime tensor formats, or AQLM/codebook quantization.
+This POC explores whether more informed quantization decisions can improve the quality-to-size tradeoff of ordinary llama.cpp GGUF models without introducing a new runtime tensor format.
+
+The central hypothesis is that uniform or mostly name-based quantization leaves useful quality on the table. Different tensors and transformer layers tolerate quantization differently, and calibration-time analysis can expose those differences before the model is written. The quantizer can then spend existing quantization types more deliberately: protect sensitive, unusual, or rare-event-heavy regions and compress redundant-looking regions more aggressively.
+
+The work borrows selected ideas from several compression approaches:
+
+- SpQR: use sensitivity and outlier-like signals to steer precision, without sparse outlier storage.
+- MPEG-style compression: identify anchor/I-frame-like layers, detect scene changes, and use activity masking.
+- Rate-distortion optimization: compare candidate quantization types by reconstruction error versus bits per weight.
+- Two-pass encoding: collect reusable analysis during calibration, then make policy decisions during quantization.
+
+The result is still a normal GGUF containing existing `ggml_type` tensor encodings. Inference does not reconstruct deltas, consult an imatrix, dynamically allocate bits, or require new CPU/GPU kernels.
 
 ## Purpose
 
-The policy starts from an existing high-precision GGUF model and writes a normal GGUF that uses existing `ggml_type` encodings. Sensitive tensors are promoted to higher precision, while less sensitive tensors stay at the requested base quantization.
+The POC has three practical goals:
 
-The first implementation is tensor-level:
+1. Determine which inexpensive analysis signals predict quantization tolerance.
+2. Reuse those signals across repeated quantization experiments.
+3. Evaluate mixed quantization policies while keeping storage, runtime, and removal cost low.
 
-- high sensitivity: `Q5_K`, or `Q6_K` for token embeddings and output tensors
-- medium sensitivity: `Q4_K`
-- low sensitivity: the requested base quantization type
-- token embeddings and output projection are not selected below `Q4_K` by this policy
+It intentionally separates measurement from policy. The optional imatrix quantization profile stores reusable raw statistics. `llama-quantize` interprets those statistics using adjustable policies and safety rules. This allows the same profile to support multiple base formats, RD lambdas, anchor thresholds, and future experiments.
+
+## Current implementation
+
+The branch currently implements:
+
+- Opt-in `spqr_guided` mixed quantization using tensor-name heuristics and optional imatrix percentile sensitivity.
+- Block-distribution sensitivity reports and block-derived tensor scoring.
+- Adjacent-layer weight-delta analysis using relative delta norm and cosine similarity.
+- P-frame-inspired `spqr_layer_delta` guidance that treats similar layers as more compression-friendly.
+- Adaptive I-frame-style anchors for first, final, and robustly detected scene-change layers.
+- Sampled rate-distortion candidate evaluation across the requested base type and compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` types.
+- An optional reusable quantization profile stored alongside normal imatrix data.
+- Activity masking based on mean activity, variance, peak-to-mean ratio, and active-channel fraction.
+- Robust scene-change detection combining layer delta, activity-profile changes, percentile filtering, and median absolute deviation.
+- Conservative safety floors for token embeddings, output projection, and anchor layers.
+- Reports for sensitivity, blocks, layer similarity, anchors, candidate RD costs, selected types, estimated size, and average bits per weight.
+
+The reusable imatrix profile is optional. Standard imatrix files continue to work: sensitivity and block scoring use their normal activation data, while layer-delta and RD analysis fall back to being computed during quantization.
+
+## Non-goals
+
+This POC does not implement:
+
+- SpQR sparse outlier storage or sparse correction kernels.
+- A new GGUF runtime tensor encoding.
+- Actual P-frame storage such as `layer N = layer N-1 + delta`.
+- Dynamic precision selection during inference.
+- New GPU kernels.
+- Full AQLM or additive/codebook quantization.
+- Global model-size-constrained bit allocation.
 
 ## Sensitivity scoring
 
@@ -118,7 +158,9 @@ Precompute reusable analysis while generating an imatrix:
   -o imatrix-profile.gguf
 ```
 
-The optional profile stores namespaced GGUF tensors containing raw `Q3_K`/`Q4_K`/`Q5_K`/`Q6_K` candidate distortions, block importance summaries, and sampled adjacent-layer delta metrics. Existing imatrix consumers ignore them and continue using the unchanged `.in_sum2` and `.counts` entries. `llama-quantize` automatically reuses compatible RD and layer-delta entries and falls back to its existing analysis when entries are absent, incompatible, or the requested base type is not represented. Adaptive anchors can be derived from the stored layer-delta scores. Compatibility currently validates tensor name and shape; use the profile with the exact model weights that generated it.
+The optional profile stores namespaced GGUF tensors containing raw `Q3_K`/`Q4_K`/`Q5_K`/`Q6_K` candidate distortions, block importance summaries, sampled adjacent-layer delta metrics, and activity-mask statistics. Existing imatrix consumers ignore them and continue using the unchanged `.in_sum2` and `.counts` entries. `llama-quantize` automatically reuses compatible RD and layer-delta entries and falls back to its existing analysis when entries are absent, incompatible, or the requested base type is not represented. Compatibility currently validates tensor name and shape; use the profile with the exact model weights that generated it.
+
+Activity masking uses mean squared activity, cross-channel variance, peak-to-mean ratio, and active-channel fraction to create a bounded rare-event risk multiplier for RD distortion. This can protect tensors where average importance hides a small number of highly active channels. Adaptive anchors combine layer-delta with changes in activity statistics, then require scene-change candidates to pass both the configured percentile and a robust median-absolute-deviation threshold. The profile stores the raw signals; weighting and anchor selection remain adjustable quantization policy.
 
 The profile does not currently survive combining imatrix files using `--in-file`, because candidate curves are model-bound rather than safely mergeable like activation sums. Generate the profile on the final calibration run.
 

@@ -96,6 +96,13 @@ struct loaded_layer_delta_profile {
     float cosine_similarity = 0.0f;
 };
 
+struct loaded_activity_profile {
+    float mean = 0.0f;
+    float variance = 0.0f;
+    float peak_ratio = 0.0f;
+    float active_fraction = 0.0f;
+};
+
 static bool striequals(const char * a, const char * b) {
     while (*a && *b) {
         if (std::tolower(*a) != std::tolower(*b)) {
@@ -298,7 +305,8 @@ static int load_imatrix(
         std::vector<std::string> & imatrix_datasets,
         std::unordered_map<std::string, std::vector<float>> & imatrix_data,
         std::unordered_map<std::string, loaded_rd_profile> & rd_profiles,
-        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles) {
+        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles,
+        std::unordered_map<std::string, loaded_activity_profile> & activity_profiles) {
 
     struct ggml_context * ctx = nullptr;
     struct gguf_init_params meta_gguf_params = {
@@ -335,6 +343,7 @@ static int load_imatrix(
     const std::string rd_suffix{ ".analysis.rd" };
     const std::string layer_delta_suffix{ ".analysis.layer_delta" };
     const std::string blocks_suffix{ ".analysis.blocks" };
+    const std::string activity_suffix{ ".analysis.activity" };
     std::vector<ggml_type> rd_types;
     int block_profile_count = 0;
 
@@ -385,6 +394,11 @@ static int load_imatrix(
         } else if (string_remove_suffix(name, blocks_suffix)) {
             if (cur->type == GGML_TYPE_F32 && cur->ne[0] == 4) {
                 ++block_profile_count;
+            }
+        } else if (string_remove_suffix(name, activity_suffix)) {
+            if (cur->type == GGML_TYPE_F32 && ggml_nelements(cur) == 4) {
+                const float * values = (const float *) cur->data;
+                activity_profiles[name] = { values[0], values[1], values[2], values[3] };
             }
         } else {
             // ignore other tensors
@@ -444,9 +458,10 @@ static int load_imatrix(
     printf("]\n");
 
     printf("%s: loaded %d importance matrix entries from %s computed on %d chunks\n", __func__, int(imatrix_data.size()), imatrix_file.c_str(), m_last_chunk);
-    if (!rd_profiles.empty() || !layer_delta_profiles.empty() || block_profile_count > 0) {
-        printf("%s: loaded quantization profile with %d RD curves, %d block summaries, and %d layer-delta entries\n",
-                __func__, int(rd_profiles.size()), block_profile_count, int(layer_delta_profiles.size()));
+    if (!rd_profiles.empty() || !layer_delta_profiles.empty() || block_profile_count > 0 || !activity_profiles.empty()) {
+        printf("%s: loaded quantization profile with %d RD curves, %d block summaries, %d layer-delta entries, and %d activity entries\n",
+                __func__, int(rd_profiles.size()), block_profile_count,
+                int(layer_delta_profiles.size()), int(activity_profiles.size()));
     }
 
     gguf_free(ctx_gguf);
@@ -461,10 +476,11 @@ static int prepare_imatrix(const std::string & imatrix_file,
         const std::vector<std::string> & excluded_weights,
         std::unordered_map<std::string, std::vector<float>> & imatrix_data,
         std::unordered_map<std::string, loaded_rd_profile> & rd_profiles,
-        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles) {
+        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles,
+        std::unordered_map<std::string, loaded_activity_profile> & activity_profiles) {
     int m_last_call = -1;
     if (!imatrix_file.empty()) {
-        m_last_call = load_imatrix(imatrix_file, imatrix_dataset, imatrix_data, rd_profiles, layer_delta_profiles);
+        m_last_call = load_imatrix(imatrix_file, imatrix_dataset, imatrix_data, rd_profiles, layer_delta_profiles, activity_profiles);
     }
     if (imatrix_data.empty()) {
         return m_last_call;
@@ -795,13 +811,15 @@ int llama_quantize(int argc, char ** argv) {
     std::unordered_map<std::string, std::vector<float>> imatrix_data;
     std::unordered_map<std::string, loaded_rd_profile> rd_profiles;
     std::unordered_map<std::string, loaded_layer_delta_profile> layer_delta_profiles;
+    std::unordered_map<std::string, loaded_activity_profile> activity_profiles;
     int m_last_call = prepare_imatrix(
             imatrix_file, imatrix_datasets, included_weights, excluded_weights,
-            imatrix_data, rd_profiles, layer_delta_profiles);
+            imatrix_data, rd_profiles, layer_delta_profiles, activity_profiles);
 
     std::vector<llama_model_imatrix_data> i_data;
     std::vector<llama_model_quantize_rd_data> rd_data;
     std::vector<llama_model_quantize_layer_delta_data> layer_delta_data;
+    std::vector<llama_model_quantize_activity_data> activity_data;
     std::vector<llama_model_tensor_override> t_override;
     if (!imatrix_data.empty()) {
         i_data.reserve(imatrix_data.size() + 1);
@@ -868,6 +886,17 @@ int llama_quantize(int argc, char ** argv) {
         }
         layer_delta_data.push_back({ nullptr, 0.0f, 0.0f });
         params.layer_delta_profile = layer_delta_data.data();
+    }
+    if (!activity_profiles.empty()) {
+        activity_data.reserve(activity_profiles.size() + 1);
+        for (const auto & kv : activity_profiles) {
+            activity_data.push_back({
+                kv.first.c_str(), kv.second.mean, kv.second.variance,
+                kv.second.peak_ratio, kv.second.active_fraction,
+            });
+        }
+        activity_data.push_back({ nullptr, 0.0f, 0.0f, 0.0f, 0.0f });
+        params.activity_profile = activity_data.data();
     }
     if (!kv_overrides.empty()) {
         kv_overrides.emplace_back();

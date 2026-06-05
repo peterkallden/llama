@@ -415,6 +415,14 @@ extern "C" {
         float cosine_similarity;
     };
 
+    struct llama_model_quantize_activity_data {
+        const char * name;
+        float mean;
+        float variance;
+        float peak_ratio;
+        float active_fraction;
+    };
+
     enum llama_mixed_quant_policy {
         LLAMA_MIXED_QUANT_POLICY_NONE        = 0,
         LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED = 1,
@@ -451,6 +459,7 @@ extern "C" {
         bool print_rd_report;                                         // print sampled rate-distortion candidates and selections
         const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
         const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
+        const struct llama_model_quantize_activity_data * activity_profile; // optional activity-mask statistics, null-terminated
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {
