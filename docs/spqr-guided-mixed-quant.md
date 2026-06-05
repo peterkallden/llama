@@ -168,6 +168,22 @@ The profile does not currently survive combining imatrix files using `--in-file`
 
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
+## Reproducible benchmark harness
+
+`tools/quantize/spqr_benchmark.py` runs a fixed comparison matrix and records quantization time, output size, reported BPW, optional perplexity, and an optional generation sanity check. Its default baseline variants deliberately do not use an imatrix; guided variants use `--imatrix` when supplied, and the full RD variant prefers `--profile-imatrix`.
+
+```bash
+python tools/quantize/spqr_benchmark.py \
+  --build-bin ./build/bin \
+  --input-model input-f16.gguf \
+  --output-dir benchmark-results \
+  --imatrix imatrix.gguf \
+  --profile-imatrix imatrix-profile.gguf \
+  --ppl-dataset wiki.test.raw
+```
+
+The harness writes per-stage logs, machine-readable `results.jsonl`, and a compact `summary.csv`. Use `--variants tools/quantize/spqr_benchmark.example.json` to customize the comparison matrix, `--resume` to reuse completed GGUF outputs, or `--dry-run` to inspect all generated commands without requiring model files or built executables.
+
 ## Validation sequence
 
 1. Convert or obtain a small F16/BF16 GGUF model.

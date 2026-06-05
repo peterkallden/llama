@@ -1,0 +1,22 @@
+{
+  "variants": [
+    {
+      "name": "baseline_q4_k_m",
+      "type": "Q4_K_M",
+      "args": []
+    },
+    {
+      "name": "spqr_guided_q3",
+      "type": "Q3_K_M",
+      "use_imatrix": true,
+      "args": ["--mixed-policy", "spqr_guided", "--spqr-block-scoring"]
+    },
+    {
+      "name": "full_profile_q3",
+      "type": "Q3_K_M",
+      "use_imatrix": true,
+      "prefer_profile_imatrix": true,
+      "args": ["--mixed-policy", "spqr_layer_delta", "--spqr-block-scoring", "--adaptive-anchors", "--rd-guided"]
+    }
+  ]
+}
