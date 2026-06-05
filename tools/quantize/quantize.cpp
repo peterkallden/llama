@@ -89,7 +89,7 @@ static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.r
 static const char * const LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS = "imatrix.analysis.sample_rows";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE = "imatrix.analysis.block_size";
 static constexpr uint32_t IMATRIX_ANALYSIS_MIN_VERSION = 2;
-static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 3;
+static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 4;
 
 struct loaded_rd_profile {
     std::vector<ggml_type> types;
@@ -396,7 +396,7 @@ static int load_imatrix(
             accept_analysis_profile = false;
         } else {
             const int64_t n = gguf_get_arr_n(ctx_gguf, features_idx);
-            const std::unordered_set<std::string> known_features = { "rd", "blocks", "layer_delta", "activity" };
+            const std::unordered_set<std::string> known_features = { "rd", "block_rd", "blocks", "layer_delta", "activity" };
             accept_analysis_profile = n > 0;
             for (int64_t i = 0; i < n; ++i) {
                 const std::string feature = gguf_get_arr_str(ctx_gguf, features_idx, i);

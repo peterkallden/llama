@@ -140,7 +140,7 @@ Enable sampled rate-distortion type selection:
   input-f16.gguf output-rd-guided.gguf Q3_K_M
 ```
 
-`--rd-guided` tries the requested base type plus compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` candidates on evenly spaced tensor rows. It selects the existing type with the lowest sampled cost:
+`--rd-guided` treats deterministically selected, evenly spaced tensor rows as analysis blocks while still choosing one existing GGUF type for the complete tensor. Block distortions are aggregated as `50% mean + 30% p90 + 20% worst`, which protects small difficult regions better than a single combined average. Q3 and Q5 establish a coarse curve; Q4 is evaluated when Q3 distortion or the Q3-to-Q5 improvement is meaningful, and Q6 is evaluated when Q5 distortion remains high. The requested base type is always evaluated by the local fallback. It selects the existing type with the lowest sampled cost:
 
 ```text
 sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda * bits_per_weight
@@ -177,7 +177,7 @@ Precompute reusable analysis while generating an imatrix:
 
 The optional profile stores namespaced GGUF tensors containing raw `Q3_K`/`Q4_K`/`Q5_K`/`Q6_K` candidate distortions, block importance summaries, sampled adjacent-layer delta metrics, and activity-mask statistics. Existing imatrix consumers ignore them and continue using the unchanged `.in_sum2` and `.counts` entries. `llama-quantize` automatically reuses compatible RD and layer-delta entries and falls back to its existing analysis when entries are absent, incompatible, or the requested base type is not represented.
 
-Analysis profile version 3 explicitly declares its available features and is validated before reuse. The reader checks the supported version range, feature metadata, RD candidate types, profile tensor shapes, and finite values. Version 2 profiles remain readable. Unsupported or malformed analysis entries are ignored without discarding the standard imatrix activation data. Profiles do not yet include a model-content fingerprint, so use them with the exact model weights that generated them.
+Analysis profile version 4 declares the block-aggregated RD semantics through the `block_rd` feature. The reader checks the supported version range, feature metadata, RD candidate types, profile tensor shapes, and finite values. Version 2 and 3 profiles remain readable. Unsupported or malformed analysis entries are ignored without discarding the standard imatrix activation data. Profiles do not yet include a model-content fingerprint, so use them with the exact model weights that generated them.
 
 Activity masking uses mean squared activity, cross-channel variance, peak-to-mean ratio, and active-channel fraction to create a bounded rare-event risk multiplier for RD distortion. This can protect tensors where average importance hides a small number of highly active channels. Adaptive anchors combine layer-delta with changes in activity statistics, then require scene-change candidates to pass both the configured percentile and a robust median-absolute-deviation threshold. The profile stores the raw signals; weighting and anchor selection remain adjustable quantization policy.
 

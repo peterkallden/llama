@@ -43,7 +43,7 @@ static const char * const LLM_KV_IMATRIX_ANALYSIS_FEATURES = "imatrix.analysis.f
 static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.rd_types";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS = "imatrix.analysis.sample_rows";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE = "imatrix.analysis.block_size";
-static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 3;
+static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 4;
 
 static const std::vector<ggml_type> QUANT_PROFILE_RD_TYPES = {
     GGML_TYPE_Q3_K,
@@ -180,6 +180,16 @@ static bool copy_weight_row_as_f32(const ggml_tensor * tensor, int64_t row, std:
         return false;
     }
     return true;
+}
+
+static float aggregate_block_distortions(std::vector<float> values) {
+    if (values.empty()) {
+        return -1.0f;
+    }
+    std::sort(values.begin(), values.end());
+    const float mean = std::accumulate(values.begin(), values.end(), 0.0f) / values.size();
+    const size_t p90_index = std::min(values.size() - 1, (size_t) std::ceil(0.90 * values.size()) - 1);
+    return 0.50f * mean + 0.30f * values[p90_index] + 0.20f * values.back();
 }
 
 static void compute_statistics(std::vector<tensor_statistics> & tstats, const std::string & name, const Stats & e) {
@@ -688,20 +698,18 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
 
             const WeightSample & sample = sample_it->second;
             const int sample_rows = (int) sample.row_indices.size();
-            std::vector<float> distortions = { (float) sample.ncols, (float) sample.total_rows };
-            distortions.reserve(QUANT_PROFILE_RD_TYPES.size() + 2);
-
-            for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
+            std::map<ggml_type, float> candidate_distortions;
+            auto evaluate_candidate = [&] (ggml_type type) {
                 if (sample.ncols % ggml_blck_size(type) != 0) {
-                    distortions.push_back(-1.0f);
-                    continue;
+                    candidate_distortions[type] = -1.0f;
+                    return;
                 }
 
                 const ggml_type_traits * traits = ggml_get_type_traits(type);
                 std::vector<uint8_t> quantized(ggml_row_size(type, sample.ncols));
                 std::vector<float> reconstructed(sample.ncols);
-                double error_sum = 0.0;
-                double signal_sum = 0.0;
+                std::vector<float> block_distortions;
+                block_distortions.reserve(sample_rows);
 
                 for (int row_i = 0; row_i < sample_rows; ++row_i) {
                     const float * src = sample.rows.data() + (size_t) row_i * sample.ncols;
@@ -716,14 +724,39 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
 
                     ggml_quantize_chunk(type, src, quantized.data(), 0, 1, sample.ncols, nullptr);
                     traits->to_float(quantized.data(), reconstructed.data(), sample.ncols);
+                    double error_sum = 0.0;
+                    double signal_sum = 0.0;
                     for (int64_t col = 0; col < sample.ncols; ++col) {
                         const double weight = importance && count > 0 ? importance[col] / count : 1.0;
                         const double delta = (double) src[col] - reconstructed[col];
                         error_sum += weight * delta * delta;
                         signal_sum += weight * src[col] * src[col];
                     }
+                    block_distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
                 }
-                distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
+                candidate_distortions[type] = aggregate_block_distortions(std::move(block_distortions));
+            };
+
+            // Q3 and Q5 establish a cheap coarse RD curve. Q4 and Q6 are only evaluated
+            // when the observed block distortion says they can materially improve it.
+            evaluate_candidate(GGML_TYPE_Q3_K);
+            evaluate_candidate(GGML_TYPE_Q5_K);
+            const float q3 = candidate_distortions[GGML_TYPE_Q3_K];
+            const float q5 = candidate_distortions[GGML_TYPE_Q5_K];
+            // Conservative POC thresholds: fill the middle of a meaningful Q3-to-Q5
+            // quality jump, and extend upward when Q5 still leaves visible distortion.
+            if (q3 < 0.0f || q5 < 0.0f || q3 > 0.01f || q5 < 0.80f * q3) {
+                evaluate_candidate(GGML_TYPE_Q4_K);
+            }
+            if (q5 < 0.0f || q5 > 0.003f) {
+                evaluate_candidate(GGML_TYPE_Q6_K);
+            }
+
+            std::vector<float> distortions = { (float) sample.ncols, (float) sample.total_rows };
+            distortions.reserve(QUANT_PROFILE_RD_TYPES.size() + 2);
+            for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
+                auto it = candidate_distortions.find(type);
+                distortions.push_back(it == candidate_distortions.end() ? -1.0f : it->second);
             }
             rd_profiles[name] = std::move(distortions);
         }
@@ -832,7 +865,7 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_COUNT, m_last_chunk);
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_SIZE, m_params.n_ctx / m_params.n_parallel);
         if (m_params.collect_quant_profile && include_quant_profile) {
-            const char * features[] = { "rd", "blocks", "layer_delta", "activity" };
+            const char * features[] = { "rd", "block_rd", "blocks", "layer_delta", "activity" };
             std::vector<const char *> rd_types;
             for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
                 rd_types.push_back(ggml_type_name(type));

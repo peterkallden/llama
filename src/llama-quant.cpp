@@ -1830,6 +1830,16 @@ static void init_spqr_guided_sensitivity(
 // SpQR-inspired sensitivity and layer similarity are useful steering signals, but the output
 // remains a normal GGUF tensor using one existing ggml_type. This sampled rate-distortion pass
 // provides an extension point for richer block-level policies without adding a runtime format.
+static float aggregate_rd_block_distortions(std::vector<float> values) {
+    if (values.empty()) {
+        return -1.0f;
+    }
+    std::sort(values.begin(), values.end());
+    const float mean = std::accumulate(values.begin(), values.end(), 0.0f) / values.size();
+    const size_t p90_index = std::min(values.size() - 1, (size_t) std::ceil(0.90 * values.size()) - 1);
+    return 0.50f * mean + 0.30f * values[p90_index] + 0.20f * values.back();
+}
+
 static void init_rate_distortion_analysis(
         quantize_state_impl & qs,
         llama_model_loader & ml,
@@ -1840,16 +1850,6 @@ static void init_rate_distortion_analysis(
         int nthread) {
     const llama_model_quantize_params * params = qs.params;
     const int max_sample_rows = std::max(1, params->rd_sample_rows);
-
-    std::vector<ggml_type> candidates = {
-        default_type,
-        GGML_TYPE_Q3_K,
-        GGML_TYPE_Q4_K,
-        GGML_TYPE_Q5_K,
-        GGML_TYPE_Q6_K,
-    };
-    std::sort(candidates.begin(), candidates.end());
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -1957,23 +1957,28 @@ static void init_rate_distortion_analysis(
         }
 
         const int sample_rows = (int) std::min<int64_t>(nrows, max_sample_rows);
-
-        for (ggml_type candidate : used_precomputed ? std::vector<ggml_type>{} : candidates) {
+        std::map<ggml_type, float> sampled_distortions;
+        auto evaluate_candidate = [&] (ggml_type candidate) {
+            if (used_precomputed || sampled_distortions.count(candidate)) {
+                return;
+            }
             if (!ggml_is_quantized(candidate) ||
                     ncols % ggml_blck_size(candidate) != 0 ||
                     (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
-                continue;
+                sampled_distortions[candidate] = -1.0f;
+                return;
             }
 
             const ggml_type_traits * traits = ggml_get_type_traits(candidate);
             if (!traits || !traits->to_float) {
-                continue;
+                sampled_distortions[candidate] = -1.0f;
+                return;
             }
 
             std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
             std::vector<no_init<float>> reconstructed(ncols);
-            double error_sum = 0.0;
-            double signal_sum = 0.0;
+            std::vector<float> block_distortions;
+            block_distortions.reserve(sample_rows);
 
             for (int sample = 0; sample < sample_rows; ++sample) {
                 const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
@@ -1984,15 +1989,19 @@ static void init_rate_distortion_analysis(
                 ggml_quantize_chunk(candidate, src, quantized.data(), 0, 1, ncols, row_imatrix);
                 traits->to_float(quantized.data(), reconstructed.data(), ncols);
 
+                double error_sum = 0.0;
+                double signal_sum = 0.0;
                 for (int64_t col = 0; col < ncols; ++col) {
                     const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
                     const double delta = (double) src[col] - reconstructed[col];
                     error_sum += weight * delta * delta;
                     signal_sum += weight * src[col] * src[col];
                 }
+                block_distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
             }
 
-            const float distortion = (float) (error_sum / (signal_sum + 1e-20));
+            const float distortion = aggregate_rd_block_distortions(std::move(block_distortions));
+            sampled_distortions[candidate] = distortion;
             const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
             const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
             tm.rd_candidates.push_back({
@@ -2004,7 +2013,7 @@ static void init_rate_distortion_analysis(
             });
 
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s samples=%3d distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
+                LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s blocks=%3d aggregate_distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
                         __func__, tm.name.c_str(), ggml_type_name(candidate), sample_rows,
                         distortion, distortion_weight, tm.activity_risk, bpw, cost);
             }
@@ -2014,6 +2023,22 @@ static void init_rate_distortion_analysis(
                 best_type = candidate;
                 best_distortion = distortion;
                 best_bpw = bpw;
+            }
+        };
+
+        if (!used_precomputed) {
+            evaluate_candidate(GGML_TYPE_Q3_K);
+            evaluate_candidate(GGML_TYPE_Q5_K);
+            evaluate_candidate(default_type);
+            const float q3 = sampled_distortions.count(GGML_TYPE_Q3_K) ? sampled_distortions[GGML_TYPE_Q3_K] : -1.0f;
+            const float q5 = sampled_distortions.count(GGML_TYPE_Q5_K) ? sampled_distortions[GGML_TYPE_Q5_K] : -1.0f;
+            // Conservative POC thresholds: fill the middle of a meaningful Q3-to-Q5
+            // quality jump, and extend upward when Q5 still leaves visible distortion.
+            if (q3 < 0.0f || q5 < 0.0f || q3 > 0.01f || q5 < 0.80f * q3) {
+                evaluate_candidate(GGML_TYPE_Q4_K);
+            }
+            if (q5 < 0.0f || q5 > 0.003f) {
+                evaluate_candidate(GGML_TYPE_Q6_K);
             }
         }
 
@@ -2025,9 +2050,10 @@ static void init_rate_distortion_analysis(
             ++qs.n_rd_selected;
 
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: rd-selected  tensor=%-36s type=%-7s source=%-9s distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
+                LLAMA_LOG_INFO("%s: rd-selected  tensor=%-36s type=%-7s source=%-9s candidates=%2d distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
                         __func__, tm.name.c_str(), ggml_type_name(best_type),
-                        used_precomputed ? "profile" : "sampled", best_distortion, best_bpw, best_cost);
+                        used_precomputed ? "profile" : "sampled", (int) tm.rd_candidates.size(),
+                        best_distortion, best_bpw, best_cost);
             }
         }
     }
