@@ -148,6 +148,21 @@ sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda 
 
 This remains a normal per-tensor GGUF mixture and requires no runtime changes. Token embeddings, output projection, and adaptive anchor tensors retain the existing safety policies instead of using the sampled selection. Use `--print-rd-report` to inspect every candidate. A dry run still reads tensor data and quantizes the sampled rows because estimated size alone cannot provide a distortion signal.
 
+Optionally provide a soft global size target:
+
+```bash
+./build/bin/llama-quantize \
+  --mixed-policy spqr_layer_delta \
+  --adaptive-anchors \
+  --rd-guided \
+  --rd-lambda 0.002 \
+  --rd-target-bpw 3.8 \
+  --print-rd-allocation-report \
+  input-f16.gguf output-budget-guided.gguf Q3_K_M
+```
+
+`--rd-target-bpw` and `--rd-target-size-mib` are mutually exclusive and optional. Without either target, RD selection behaves as before. With a target, the allocator chooses one existing tensor type from each collected RD curve and searches for the lowest compression pressure that reaches the requested estimated tensor-payload size. `--rd-lambda` becomes the maximum permitted compression pressure: if the target would require more distortion, the output remains larger and the report marks it as quality-limited. GGUF metadata and alignment can also make the final file slightly larger than the MiB target. This candidate interface is the extension point through which future compression methods can participate in the same allocation.
+
 Precompute reusable analysis while generating an imatrix:
 
 ```bash
@@ -181,6 +196,7 @@ python tools/quantize/spqr_benchmark.py \
   --output-dir benchmark-results \
   --imatrix imatrix.gguf \
   --profile-imatrix imatrix-profile.gguf \
+  --rd-target-bpw 3.8 \
   --ppl-dataset wiki.test.raw
 ```
 

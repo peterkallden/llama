@@ -457,6 +457,9 @@ extern "C" {
         float rd_lambda;                                              // size penalty used by sampled rate-distortion analysis
         int32_t rd_sample_rows;                                       // maximum sampled rows per tensor and candidate type
         bool print_rd_report;                                         // print sampled rate-distortion candidates and selections
+        float rd_target_bpw;                                          // optional soft total-model BPW target, 0 disables
+        float rd_target_size_mib;                                     // optional soft total-model MiB target, 0 disables
+        bool print_rd_allocation_report;                              // print global soft-budget allocation details
         const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
         const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
         const struct llama_model_quantize_activity_data * activity_profile; // optional activity-mask statistics, null-terminated

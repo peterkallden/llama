@@ -63,6 +63,8 @@ Quantization analysis profile version 3 declares its available features in `imat
 
 The guided quantizer converts activity statistics into a bounded rare-event risk multiplier for RD distortion. Adaptive anchors combine adjacent-layer weight delta with changes in activity statistics and use a conservative robust-MAD scene-change threshold. These choices remain quantization-time policy decisions; the stored profile contains only reusable raw statistics.
 
+RD-guided quantization can optionally use `--rd-target-bpw` or `--rd-target-size-mib` as a soft global model-size target. The profile's candidate curves are allocated globally, while `--rd-lambda` limits compression pressure. If reaching the target would exceed that quality limit, the quantizer keeps the larger model and reports the difference.
+
 To avoid repeating candidate evaluation during calibration, periodic and snapshot imatrix saves omit the optional profile. The final output written when calibration completes contains it.
 
 ```bash

@@ -419,6 +419,10 @@ struct quantize_state_impl {
     int n_anchor_layers = 0;
     int n_anchor_tensors = 0;
     int n_rd_selected = 0;
+    float rd_allocation_lambda = 0.0f;
+    size_t rd_target_bytes = 0;
+    size_t rd_estimated_bytes = 0;
+    bool rd_quality_limited = false;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -436,6 +440,16 @@ struct quantize_state_impl {
             }
         }
     }
+};
+
+// A normal GGUF tensor-type candidate. Future compression backends can participate in
+// the same global allocator by providing an equivalent rate-distortion candidate.
+struct rd_candidate {
+    ggml_type type = GGML_TYPE_COUNT;
+    float weighted_distortion = 0.0f;
+    float distortion = 0.0f;
+    float bpw = 0.0f;
+    size_t bytes = 0;
 };
 
 // per-tensor metadata, computed in the preliminary loop and used in the main loop
@@ -459,6 +473,7 @@ struct tensor_metadata {
     float           rd_cost;
     float           rd_distortion;
     float           rd_bpw;
+    std::vector<rd_candidate> rd_candidates;
     float           activity_mean;
     float           activity_variance;
     float           activity_peak_ratio;
@@ -1568,6 +1583,7 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         tm.rd_cost = 0.0f;
         tm.rd_distortion = 0.0f;
         tm.rd_bpw = 0.0f;
+        tm.rd_candidates.clear();
         tm.activity_mean = 0.0f;
         tm.activity_variance = 0.0f;
         tm.activity_peak_ratio = 0.0f;
@@ -1909,6 +1925,13 @@ static void init_rate_distortion_analysis(
                 }
                 const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
                 const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
+                tm.rd_candidates.push_back({
+                    candidate,
+                    distortion_weight * distortion,
+                    distortion,
+                    bpw,
+                    (size_t) nrows * ggml_row_size(candidate, ncols),
+                });
                 if (params->print_rd_report) {
                     LLAMA_LOG_INFO("%s: rd-profile   tensor=%-36s type=%-7s distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
                             __func__, tm.name.c_str(), ggml_type_name(candidate), distortion,
@@ -1925,6 +1948,7 @@ static void init_rate_distortion_analysis(
             if (!used_precomputed) {
                 best_cost = std::numeric_limits<float>::infinity();
                 best_type = GGML_TYPE_COUNT;
+                tm.rd_candidates.clear();
             }
         }
 
@@ -1971,6 +1995,13 @@ static void init_rate_distortion_analysis(
             const float distortion = (float) (error_sum / (signal_sum + 1e-20));
             const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
             const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
+            tm.rd_candidates.push_back({
+                candidate,
+                distortion_weight * distortion,
+                distortion,
+                bpw,
+                (size_t) nrows * ggml_row_size(candidate, ncols),
+            });
 
             if (params->print_rd_report) {
                 LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s samples=%3d distortion=%10.6g weight=%5.2f activity_risk=%5.2f bpw=%6.3f cost=%10.6g\n",
@@ -2003,6 +2034,121 @@ static void init_rate_distortion_analysis(
 
     LLAMA_LOG_INFO("%s: rate-distortion analysis selected existing quant types for %d tensor(s) (lambda=%.6g, max_sample_rows=%d, profile_entries=%d)\n",
             __func__, qs.n_rd_selected, params->rd_lambda, max_sample_rows, (int) precomputed.size());
+}
+
+static const rd_candidate * select_rd_candidate(const tensor_metadata & tm, float lambda) {
+    const rd_candidate * best = nullptr;
+    float best_cost = std::numeric_limits<float>::infinity();
+    for (const rd_candidate & candidate : tm.rd_candidates) {
+        const float cost = candidate.weighted_distortion + lambda * candidate.bpw;
+        if (cost < best_cost || (cost == best_cost && best && candidate.bytes < best->bytes)) {
+            best = &candidate;
+            best_cost = cost;
+        }
+    }
+    return best;
+}
+
+// The target is deliberately soft. rd_lambda is the maximum compression pressure:
+// if that lambda cannot reach the requested size, quality wins and the output remains larger.
+static void apply_rd_soft_target(
+        quantize_state_impl & qs,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        int64_t n_model_elements) {
+    const llama_model_quantize_params * params = qs.params;
+    if (params->rd_target_bpw <= 0.0f && params->rd_target_size_mib <= 0.0f) {
+        return;
+    }
+
+    const size_t target_bytes = params->rd_target_bpw > 0.0f ?
+        (size_t) std::ceil(params->rd_target_bpw * n_model_elements / 8.0) :
+        (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0);
+    size_t fixed_bytes = 0;
+    std::vector<size_t> allocatable;
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        const ggml_tensor * tensor = tensors[i]->tensor;
+        const tensor_metadata & tm = metadata[i];
+        // A differing target means a manual override, safety policy, or compatibility fallback won.
+        if (!tm.rd_candidates.empty() && tm.rd_type == tm.target_type) {
+            allocatable.push_back(i);
+        } else {
+            fixed_bytes += tm.target_type == tensor->type ?
+                ggml_nbytes(tensor) :
+                (size_t) ggml_nrows(tensor) * ggml_row_size(tm.target_type, tensor->ne[0]);
+        }
+    }
+
+    auto estimate = [&] (float lambda, bool apply) {
+        size_t total = fixed_bytes;
+        for (size_t i : allocatable) {
+            tensor_metadata & tm = metadata[i];
+            const rd_candidate * selected = select_rd_candidate(tm, lambda);
+            if (!selected) {
+                continue;
+            }
+            total += selected->bytes;
+            if (apply) {
+                tm.rd_type = selected->type;
+                tm.target_type = selected->type;
+                tm.rd_distortion = selected->distortion;
+                tm.rd_bpw = selected->bpw;
+                tm.rd_cost = selected->weighted_distortion + lambda * selected->bpw;
+            }
+        }
+        return total;
+    };
+
+    const float max_lambda = params->rd_lambda;
+    const size_t highest_quality_size = estimate(0.0f, false);
+    const size_t quality_limit_size = estimate(max_lambda, false);
+    float selected_lambda = 0.0f;
+    bool quality_limited = false;
+
+    if (highest_quality_size > target_bytes) {
+        if (quality_limit_size > target_bytes) {
+            selected_lambda = max_lambda;
+            quality_limited = true;
+        } else {
+            float low = 0.0f;
+            float high = max_lambda;
+            for (int iteration = 0; iteration < 48; ++iteration) {
+                const float mid = low + (high - low) * 0.5f;
+                if (estimate(mid, false) <= target_bytes) {
+                    high = mid;
+                } else {
+                    low = mid;
+                }
+            }
+            selected_lambda = high;
+        }
+    }
+
+    const size_t achieved_bytes = estimate(selected_lambda, true);
+    qs.rd_allocation_lambda = selected_lambda;
+    qs.rd_target_bytes = target_bytes;
+    qs.rd_estimated_bytes = achieved_bytes;
+    qs.rd_quality_limited = quality_limited;
+
+    LLAMA_LOG_INFO("%s: soft RD budget target=%8.2f MiB estimated=%8.2f MiB difference=%+.2f MiB lambda=%.6g/%g status=%s allocatable=%d\n",
+            __func__,
+            target_bytes/1024.0/1024.0,
+            achieved_bytes/1024.0/1024.0,
+            ((double) achieved_bytes - target_bytes)/1024.0/1024.0,
+            selected_lambda,
+            max_lambda,
+            quality_limited ? "quality-limit" : "target-met",
+            (int) allocatable.size());
+
+    if (params->print_rd_allocation_report) {
+        for (size_t i : allocatable) {
+            const tensor_metadata & tm = metadata[i];
+            LLAMA_LOG_INFO("%s: rd-allocation tensor=%-36s selected=%-7s distortion=%10.6g bpw=%6.3f bytes=%zu\n",
+                    __func__, tm.name.c_str(), ggml_type_name(tm.rd_type), tm.rd_distortion, tm.rd_bpw,
+                    (size_t) ggml_nrows(tensors[i]->tensor) * ggml_row_size(tm.rd_type, tensors[i]->tensor->ne[0]));
+        }
+    }
 }
 
 //
@@ -2233,6 +2379,14 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                                 metadata[i].name.c_str(), ggml_type_name(metadata[i].target_type));
                 throw std::runtime_error("this quantization requires an imatrix!");
             }
+        }
+    }
+
+    apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
+    if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f) {
+        for (size_t i = 0; i < tensors.size(); ++i) {
+            metadata[i].requires_imatrix = tensor_requires_imatrix(
+                    tensors[i]->tensor->name, metadata[i].target_type, ftype);
         }
     }
 
@@ -2517,6 +2671,16 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         LLAMA_LOG_INFO("%s: sampled rate-distortion summary: selected=%d lambda=%.6g sample_rows=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
                 __func__, qs.n_rd_selected, params->rd_lambda, params->rd_sample_rows,
                 total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
+        if (qs.rd_target_bytes > 0) {
+            LLAMA_LOG_INFO("%s: soft RD budget summary: target=%8.2f MiB actual=%8.2f MiB difference=%+.2f MiB selected_lambda=%.6g max_lambda=%.6g status=%s\n",
+                    __func__,
+                    qs.rd_target_bytes/1024.0/1024.0,
+                    total_size_new/1024.0/1024.0,
+                    ((double) total_size_new - qs.rd_target_bytes)/1024.0/1024.0,
+                    qs.rd_allocation_lambda,
+                    params->rd_lambda,
+                    qs.rd_quality_limited ? "quality-limit" : "target-met");
+        }
     }
 
     if (!params->imatrix && params->dry_run && will_require_imatrix) {
@@ -2563,6 +2727,9 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.rd_lambda                   =*/ 0.002f,
         /*.rd_sample_rows              =*/ 8,
         /*.print_rd_report             =*/ false,
+        /*.rd_target_bpw               =*/ 0.0f,
+        /*.rd_target_size_mib          =*/ 0.0f,
+        /*.print_rd_allocation_report  =*/ false,
         /*.rd_profile                  =*/ nullptr,
         /*.layer_delta_profile         =*/ nullptr,
         /*.activity_profile            =*/ nullptr,

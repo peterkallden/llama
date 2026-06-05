@@ -164,7 +164,7 @@ static void usage(const char * executable) {
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
     printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
-    printf("       [--rd-guided] [--rd-lambda] [--rd-sample-rows] [--print-rd-report]\n");
+    printf("       [--rd-guided] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -224,6 +224,12 @@ static void usage(const char * executable) {
     printf("                                      maximum evenly spaced rows sampled per tensor and candidate type (default: 8)\n");
     printf("  --print-rd-report\n");
     printf("                                      enable --rd-guided and print each candidate's sampled rate-distortion cost\n");
+    printf("  --rd-target-bpw X\n");
+    printf("                                      optional soft total-model BPW target; quality limit may leave output larger\n");
+    printf("  --rd-target-size-mib X\n");
+    printf("                                      optional soft total-model MiB target; quality limit may leave output larger\n");
+    printf("  --print-rd-allocation-report\n");
+    printf("                                      print global soft-budget allocation details\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -802,6 +808,30 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--print-rd-report") == 0) {
             params.print_rd_report = true;
             params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--print-rd-allocation-report") == 0) {
+            params.print_rd_allocation_report = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--rd-target-bpw") == 0 ||
+                strcmp(argv[arg_idx], "--rd-target-size-mib") == 0) {
+            const bool is_bpw = strcmp(argv[arg_idx], "--rd-target-bpw") == 0;
+            float value = 0.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = 0.0f;
+                }
+            }
+            if (!std::isfinite(value) || value <= 0.0f) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__, is_bpw ? "--rd-target-bpw" : "--rd-target-size-mib");
+                usage(argv[0]);
+            }
+            if (is_bpw) {
+                params.rd_target_bpw = value;
+            } else {
+                params.rd_target_size_mib = value;
+            }
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-lambda") == 0) {
             if (arg_idx < argc-1) {
                 try {
@@ -917,6 +947,14 @@ int llama_quantize(int argc, char ** argv) {
     }
     if (params.rd_guided && params.pure) {
         fprintf(stderr, "%s: --rd-guided cannot be combined with --pure because it selects mixed tensor types\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {
+        fprintf(stderr, "%s: --rd-target-bpw and --rd-target-size-mib are mutually exclusive\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.print_rd_allocation_report && params.rd_target_bpw <= 0.0f && params.rd_target_size_mib <= 0.0f) {
+        fprintf(stderr, "%s: --print-rd-allocation-report requires --rd-target-bpw or --rd-target-size-mib\n", __func__);
         usage(argv[0]);
     }
 

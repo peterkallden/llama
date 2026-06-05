@@ -45,6 +45,10 @@ DEFAULT_VARIANTS = [
 PPL_RE = re.compile(r"(?:Final estimate:\s+PPL\s*=|perplexity:)\s*([0-9.eE+-]+)")
 QUANT_SIZE_RE = re.compile(r"quant size\s*=\s*([0-9.]+)\s*MiB\s*\(([0-9.]+)\s*BPW\)")
 QUANT_TIME_RE = re.compile(r"quantize time\s*=\s*([0-9.]+)\s*ms")
+RD_BUDGET_RE = re.compile(
+    r"soft RD budget summary: target=\s*([0-9.]+)\s*MiB actual=\s*([0-9.]+)\s*MiB "
+    r"difference=([+-]?[0-9.]+)\s*MiB .* status=([a-z-]+)"
+)
 
 
 def command_string(command: list[str]) -> str:
@@ -95,6 +99,11 @@ def parse_metrics(output: str) -> dict:
         metrics["reported_quantize_ms"] = float(match.group(1))
     if matches := PPL_RE.findall(output):
         metrics["perplexity"] = float(matches[-1])
+    if match := RD_BUDGET_RE.search(output):
+        metrics["rd_target_mib"] = float(match.group(1))
+        metrics["rd_actual_mib"] = float(match.group(2))
+        metrics["rd_difference_mib"] = float(match.group(3))
+        metrics["rd_budget_status"] = match.group(4)
     return metrics
 
 
@@ -134,6 +143,7 @@ def write_summary(path: Path, rows: list[dict]) -> None:
     fields = [
         "variant", "status", "quant_type", "model_size_bytes", "model_size_mib",
         "reported_bpw", "quantize_seconds", "perplexity", "generation_exit_code",
+        "rd_target_mib", "rd_actual_mib", "rd_difference_mib", "rd_budget_status",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -154,6 +164,9 @@ def main() -> int:
     parser.add_argument("--gpu-layers", type=int, default=0)
     parser.add_argument("--ppl-context", type=int, default=512)
     parser.add_argument("--ppl-chunks", type=int, default=8)
+    target_group = parser.add_mutually_exclusive_group()
+    target_group.add_argument("--rd-target-bpw", type=float, help="soft BPW target passed to RD-guided variants")
+    target_group.add_argument("--rd-target-size-mib", type=float, help="soft MiB target passed to RD-guided variants")
     parser.add_argument("--generation-prompt", default="Write a short explanation of quantization.")
     parser.add_argument("--generation-tokens", type=int, default=64)
     parser.add_argument("--skip-generation", action="store_true")
@@ -184,6 +197,11 @@ def main() -> int:
         imatrix = selected_imatrix(variant, args)
 
         quant_command = [quantize_exe, *variant["args"]]
+        if "--rd-guided" in variant["args"]:
+            if args.rd_target_bpw:
+                quant_command += ["--rd-target-bpw", str(args.rd_target_bpw)]
+            if args.rd_target_size_mib:
+                quant_command += ["--rd-target-size-mib", str(args.rd_target_size_mib)]
         if imatrix:
             quant_command += ["--imatrix", str(imatrix)]
         quant_command += [str(args.input_model), str(output_model), variant["type"]]
