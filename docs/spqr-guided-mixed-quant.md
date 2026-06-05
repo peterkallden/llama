@@ -9,7 +9,7 @@ The work borrows selected ideas from several compression approaches:
 - SpQR: use sensitivity and outlier-like signals to steer precision, without sparse outlier storage.
 - MPEG-style compression: identify anchor/I-frame-like layers, detect scene changes, and use activity masking.
 - Rate-distortion optimization: compare candidate quantization types by reconstruction error versus bits per weight.
-- Two-pass encoding: collect reusable analysis during calibration, then make policy decisions during quantization.
+- Two-pass encoding: an optional profile-enabled imatrix run acts as the first pass, collecting reusable calibration, weight-sample, RD, activity, and layer-delta analysis. `llama-quantize` acts as the second pass and uses that profile to choose existing tensor types.
 
 The result is still a normal GGUF containing existing `ggml_type` tensor encodings. Inference does not reconstruct deltas, consult an imatrix, dynamically allocate bits, or require new CPU/GPU kernels.
 
@@ -22,6 +22,8 @@ The POC has three practical goals:
 3. Evaluate mixed quantization policies while keeping storage, runtime, and removal cost low.
 
 It intentionally separates measurement from policy. The optional imatrix quantization profile stores reusable raw statistics. `llama-quantize` interprets those statistics using adjustable policies and safety rules. This allows the same profile to support multiple base formats, RD lambdas, anchor thresholds, and future experiments.
+
+This is a partial two-pass design rather than a hard requirement. With a profile-enabled imatrix, most expensive analysis is performed once during calibration and reused during quantization. With a standard imatrix or missing/incompatible profile entries, `llama-quantize` falls back to its existing local analysis, including sampling weight rows for RD candidate evaluation and directly comparing adjacent-layer weights. The fallback preserves compatibility but makes repeated quantization experiments slower and can produce slightly different choices from a precomputed profile.
 
 ## Current implementation
 
