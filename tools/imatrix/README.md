@@ -29,6 +29,9 @@ The parameters in square brackets are optional and have the following meaning:
 * `--chunks` maximum number of chunks to process. Default is -1 for all available chunks.
 * `--no-ppl` disables the calculation of perplexity for the processed chunks. Useful if you want to speed up the processing and do not care about perplexity.
 * `--show-statistics` displays imatrix file's statistics.
+* `--collect-quant-profile` stores optional sampled rate-distortion curves, block statistics, and sampled adjacent-layer delta metrics in the GGUF imatrix. Existing imatrix consumers ignore these namespaced tensors.
+* `--quant-profile-sample-rows` controls sampled weight rows per tensor for the optional profile. Default is 8.
+* `--quant-profile-block-size` controls the number of imatrix values summarized per optional analysis block. Default is 256.
 
 For faster computation, make sure to use GPU offloading via the `-ngl | --n-gpu-layers` argument.
 
@@ -43,6 +46,20 @@ Recent versions of `llama-imatrix` store data in GGUF format by default. For the
 # use the imatrix to perform a Q4_K_M quantization
 ./llama-quantize --imatrix imatrix.gguf ggml-model-f16.gguf ./ggml-model-q4_k_m.gguf q4_k_m
 ```
+
+```bash
+# generate a reusable quantization-analysis profile alongside the normal imatrix
+./llama-imatrix -m ggml-model-f16.gguf -f calibration-data.txt \
+  --collect-quant-profile --quant-profile-sample-rows 8 -o imatrix-profile.gguf -ngl 99
+
+# spqr-layer-delta and rd-guided reuse compatible profile entries automatically
+./llama-quantize --imatrix imatrix-profile.gguf --mixed-policy spqr_layer_delta \
+  --adaptive-anchors --rd-guided ggml-model-f16.gguf model-guided.gguf q3_k_m
+```
+
+The profile is optional and policy-neutral: it stores raw candidate distortion and similarity metrics, not selected quantization types or sensitivity buckets. RD profile reuse currently covers `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K`. Unsupported or incompatible entries fall back to analysis during quantization. Profile generation from F16, BF16, or F32 model weights is supported; other source weight types are skipped. Profile compatibility currently validates tensor name and shape, so use it with the exact model weights that generated it.
+
+To avoid repeating candidate evaluation during calibration, periodic and snapshot imatrix saves omit the optional profile. The final output written when calibration completes contains it.
 
 ```bash
 # generate and save the imatrix using legacy format

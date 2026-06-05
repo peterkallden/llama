@@ -2758,6 +2758,35 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg(
+        {"--collect-quant-profile"},
+        "collect optional RD, block-statistics, and layer-delta analysis in the imatrix GGUF",
+        [](common_params & params) {
+            params.collect_quant_profile = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--quant-profile-sample-rows"}, "N",
+        string_format("sampled weight rows per tensor for the quantization profile (default: %d)", params.quant_profile_sample_rows),
+        [](common_params & params, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument("quant profile sample rows must be positive");
+            }
+            params.quant_profile_sample_rows = value;
+            params.collect_quant_profile = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--quant-profile-block-size"}, "N",
+        string_format("imatrix values per quantization-profile block (default: %d)", params.quant_profile_block_size),
+        [](common_params & params, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument("quant profile block size must be positive");
+            }
+            params.quant_profile_block_size = value;
+            params.collect_quant_profile = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--parse-special"},
         string_format("parse special tokens (chat, tool, etc) (default: %s)", params.parse_special ? "true" : "false"),
         [](common_params & params) {

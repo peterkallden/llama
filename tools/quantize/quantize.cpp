@@ -82,6 +82,19 @@ static const char * const LLM_KV_QUANTIZE_IMATRIX_N_CHUNKS   = "quantize.imatrix
 static const char * const LLM_KV_IMATRIX_DATASETS    = "imatrix.datasets";
 static const char * const LLM_KV_IMATRIX_CHUNK_COUNT = "imatrix.chunk_count";
 static const char * const LLM_KV_IMATRIX_CHUNK_SIZE  = "imatrix.chunk_size";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.rd_types";
+
+struct loaded_rd_profile {
+    std::vector<ggml_type> types;
+    std::vector<float> distortions;
+    int64_t ncols = 0;
+    int64_t nrows = 0;
+};
+
+struct loaded_layer_delta_profile {
+    float rel_delta_norm = 0.0f;
+    float cosine_similarity = 0.0f;
+};
 
 static bool striequals(const char * a, const char * b) {
     while (*a && *b) {
@@ -280,7 +293,12 @@ static int load_legacy_imatrix(const std::string & imatrix_file, std::vector<std
     return m_last_call;
 }
 
-static int load_imatrix(const std::string & imatrix_file, std::vector<std::string> & imatrix_datasets, std::unordered_map<std::string, std::vector<float>> & imatrix_data) {
+static int load_imatrix(
+        const std::string & imatrix_file,
+        std::vector<std::string> & imatrix_datasets,
+        std::unordered_map<std::string, std::vector<float>> & imatrix_data,
+        std::unordered_map<std::string, loaded_rd_profile> & rd_profiles,
+        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles) {
 
     struct ggml_context * ctx = nullptr;
     struct gguf_init_params meta_gguf_params = {
@@ -314,6 +332,27 @@ static int load_imatrix(const std::string & imatrix_file, std::vector<std::strin
 
     const std::string sums_suffix{ ".in_sum2" };
     const std::string counts_suffix{ ".counts" };
+    const std::string rd_suffix{ ".analysis.rd" };
+    const std::string layer_delta_suffix{ ".analysis.layer_delta" };
+    const std::string blocks_suffix{ ".analysis.blocks" };
+    std::vector<ggml_type> rd_types;
+    int block_profile_count = 0;
+
+    const int rd_types_idx = gguf_find_key(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_RD_TYPES);
+    if (rd_types_idx >= 0 && gguf_get_arr_type(ctx_gguf, rd_types_idx) == GGUF_TYPE_STRING) {
+        const int64_t n = gguf_get_arr_n(ctx_gguf, rd_types_idx);
+        for (int64_t i = 0; i < n; ++i) {
+            const char * type_name = gguf_get_arr_str(ctx_gguf, rd_types_idx, i);
+            ggml_type type = GGML_TYPE_COUNT;
+            for (int candidate = 0; candidate < GGML_TYPE_COUNT; ++candidate) {
+                if (ggml_type_name((ggml_type) candidate) && striequals(ggml_type_name((ggml_type) candidate), type_name)) {
+                    type = (ggml_type) candidate;
+                    break;
+                }
+            }
+            rd_types.push_back(type);
+        }
+    }
 
     // Using an ordered map to get a deterministic iteration order.
     std::map<std::string, std::pair<struct ggml_tensor *, struct ggml_tensor *>> sums_counts_for;
@@ -329,6 +368,24 @@ static int load_imatrix(const std::string & imatrix_file, std::vector<std::strin
         } else if (string_remove_suffix(name, counts_suffix)) {
             // counts
             sums_counts_for[std::move(name)].second = cur;
+        } else if (string_remove_suffix(name, rd_suffix)) {
+            if (cur->type == GGML_TYPE_F32 && ggml_nelements(cur) == (int64_t) rd_types.size() + 2) {
+                loaded_rd_profile profile;
+                profile.types = rd_types;
+                profile.ncols = std::lround(((const float *) cur->data)[0]);
+                profile.nrows = std::lround(((const float *) cur->data)[1]);
+                profile.distortions.assign((const float *) cur->data + 2, (const float *) cur->data + ggml_nelements(cur));
+                rd_profiles.emplace(std::move(name), std::move(profile));
+            }
+        } else if (string_remove_suffix(name, layer_delta_suffix)) {
+            if (cur->type == GGML_TYPE_F32 && ggml_nelements(cur) == 2) {
+                const float * values = (const float *) cur->data;
+                layer_delta_profiles[name] = { values[0], values[1] };
+            }
+        } else if (string_remove_suffix(name, blocks_suffix)) {
+            if (cur->type == GGML_TYPE_F32 && cur->ne[0] == 4) {
+                ++block_profile_count;
+            }
         } else {
             // ignore other tensors
         }
@@ -387,6 +444,10 @@ static int load_imatrix(const std::string & imatrix_file, std::vector<std::strin
     printf("]\n");
 
     printf("%s: loaded %d importance matrix entries from %s computed on %d chunks\n", __func__, int(imatrix_data.size()), imatrix_file.c_str(), m_last_chunk);
+    if (!rd_profiles.empty() || !layer_delta_profiles.empty() || block_profile_count > 0) {
+        printf("%s: loaded quantization profile with %d RD curves, %d block summaries, and %d layer-delta entries\n",
+                __func__, int(rd_profiles.size()), block_profile_count, int(layer_delta_profiles.size()));
+    }
 
     gguf_free(ctx_gguf);
     ggml_free(ctx);
@@ -398,10 +459,12 @@ static int prepare_imatrix(const std::string & imatrix_file,
         std::vector<std::string> & imatrix_dataset,
         const std::vector<std::string> & included_weights,
         const std::vector<std::string> & excluded_weights,
-        std::unordered_map<std::string, std::vector<float>> & imatrix_data) {
+        std::unordered_map<std::string, std::vector<float>> & imatrix_data,
+        std::unordered_map<std::string, loaded_rd_profile> & rd_profiles,
+        std::unordered_map<std::string, loaded_layer_delta_profile> & layer_delta_profiles) {
     int m_last_call = -1;
     if (!imatrix_file.empty()) {
-        m_last_call = load_imatrix(imatrix_file, imatrix_dataset, imatrix_data);
+        m_last_call = load_imatrix(imatrix_file, imatrix_dataset, imatrix_data, rd_profiles, layer_delta_profiles);
     }
     if (imatrix_data.empty()) {
         return m_last_call;
@@ -730,9 +793,15 @@ int llama_quantize(int argc, char ** argv) {
 
     std::vector<std::string> imatrix_datasets;
     std::unordered_map<std::string, std::vector<float>> imatrix_data;
-    int m_last_call = prepare_imatrix(imatrix_file, imatrix_datasets, included_weights, excluded_weights, imatrix_data);
+    std::unordered_map<std::string, loaded_rd_profile> rd_profiles;
+    std::unordered_map<std::string, loaded_layer_delta_profile> layer_delta_profiles;
+    int m_last_call = prepare_imatrix(
+            imatrix_file, imatrix_datasets, included_weights, excluded_weights,
+            imatrix_data, rd_profiles, layer_delta_profiles);
 
     std::vector<llama_model_imatrix_data> i_data;
+    std::vector<llama_model_quantize_rd_data> rd_data;
+    std::vector<llama_model_quantize_layer_delta_data> layer_delta_data;
     std::vector<llama_model_tensor_override> t_override;
     if (!imatrix_data.empty()) {
         i_data.reserve(imatrix_data.size() + 1);
@@ -772,6 +841,33 @@ int llama_quantize(int argc, char ** argv) {
             kvo.val_i64 = m_last_call;
             kv_overrides.emplace_back(std::move(kvo));
         }
+    }
+    if (!rd_profiles.empty()) {
+        rd_data.reserve(rd_profiles.size() + 1);
+        for (const auto & kv : rd_profiles) {
+            rd_data.push_back({
+                kv.first.c_str(),
+                kv.second.types.data(),
+                kv.second.distortions.data(),
+                kv.second.distortions.size(),
+                kv.second.ncols,
+                kv.second.nrows,
+            });
+        }
+        rd_data.push_back({ nullptr, nullptr, nullptr, 0, 0, 0 });
+        params.rd_profile = rd_data.data();
+    }
+    if (!layer_delta_profiles.empty()) {
+        layer_delta_data.reserve(layer_delta_profiles.size() + 1);
+        for (const auto & kv : layer_delta_profiles) {
+            layer_delta_data.push_back({
+                kv.first.c_str(),
+                kv.second.rel_delta_norm,
+                kv.second.cosine_similarity,
+            });
+        }
+        layer_delta_data.push_back({ nullptr, 0.0f, 0.0f });
+        params.layer_delta_profile = layer_delta_data.data();
     }
     if (!kv_overrides.empty()) {
         kv_overrides.emplace_back();

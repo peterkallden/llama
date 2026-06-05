@@ -29,6 +29,7 @@ static void print_usage(int, char ** argv) {
     LOG("\n    %s \\\n"
             "       -m model.gguf -f some-text.txt [-o imatrix.gguf] [--output-format {gguf,dat}] [--no-ppl] \\\n"
             "       [--process-output] [--chunk 123] [--save-frequency 0] [--output-frequency 10] \\\n"
+            "       [--collect-quant-profile] [--quant-profile-sample-rows 8] [--quant-profile-block-size 256] \\\n"
             "       [--in-file imatrix-prev-0.gguf --in-file imatrix-prev-1.gguf ...] [--parse-special] \\\n"
             "       [--show-statistics] [...]\n" , argv[0]);
     LOG("\n");
@@ -37,6 +38,17 @@ static void print_usage(int, char ** argv) {
 static const char * const LLM_KV_IMATRIX_DATASETS    = "imatrix.datasets";
 static const char * const LLM_KV_IMATRIX_CHUNK_COUNT = "imatrix.chunk_count";
 static const char * const LLM_KV_IMATRIX_CHUNK_SIZE  = "imatrix.chunk_size";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_VERSION = "imatrix.analysis.version";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.rd_types";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS = "imatrix.analysis.sample_rows";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE = "imatrix.analysis.block_size";
+
+static const std::vector<ggml_type> QUANT_PROFILE_RD_TYPES = {
+    GGML_TYPE_Q3_K,
+    GGML_TYPE_Q4_K,
+    GGML_TYPE_Q5_K,
+    GGML_TYPE_Q6_K,
+};
 
 struct Stats {
     std::vector<float>   values;
@@ -58,13 +70,20 @@ struct tensor_statistics {
     float cossim       = 0.0f;
 };
 
+struct WeightSample {
+    int64_t ncols = 0;
+    int64_t total_rows = 0;
+    std::vector<int64_t> row_indices;
+    std::vector<float> rows;
+};
+
 class IMatrixCollector {
 public:
     IMatrixCollector() = default;
     void set_params(common_params params) { m_params = std::move(params); }
     bool collect_imatrix(struct ggml_tensor * t, bool ask, void * user_data);
     void save_imatrix_legacy(int32_t ncall = -1) const;
-    void save_imatrix(int32_t n_chunk = -1) const;
+    void save_imatrix(int32_t n_chunk = -1, bool include_quant_profile = true) const;
     bool load_imatrix_legacy(const char * fname);
     bool load_imatrix(const char * file_name);
     const std::unordered_map<std::string, Stats> & get_mstats() const { return m_stats; }
@@ -76,6 +95,7 @@ private:
     int32_t                                m_last_chunk = 0;
     std::vector<char>                      m_src1_data;
     std::vector<char>                      m_ids; // the expert ids from ggml_mul_mat_id
+    std::unordered_map<std::string, WeightSample> m_weight_samples;
 };
 
 // remove any prefix and suffixes from the name
@@ -124,6 +144,40 @@ static void process_tensor_name(const std::string & input, std::string & layer, 
     if (layer.empty()) {
         layer = "-";
     }
+}
+
+static bool parse_block_tensor_name(const std::string & name, int & layer, std::string & suffix) {
+    static const std::regex pattern(R"(^blk\.(\d+)\.(.+)$)");
+    std::smatch match;
+    if (!std::regex_match(name, match, pattern)) {
+        return false;
+    }
+    layer = std::stoi(match[1].str());
+    suffix = match[2].str();
+    return true;
+}
+
+static bool copy_weight_row_as_f32(const ggml_tensor * tensor, int64_t row, std::vector<float> & output) {
+    const int64_t ncols = tensor->ne[0];
+    const size_t row_size = ggml_row_size(tensor->type, ncols);
+    std::vector<uint8_t> raw(row_size);
+    if (ggml_backend_buffer_is_host(tensor->buffer)) {
+        std::memcpy(raw.data(), (const uint8_t *) tensor->data + row * row_size, row_size);
+    } else {
+        ggml_backend_tensor_get(tensor, raw.data(), row * row_size, row_size);
+    }
+
+    output.resize(ncols);
+    if (tensor->type == GGML_TYPE_F32) {
+        std::memcpy(output.data(), raw.data(), row_size);
+    } else if (tensor->type == GGML_TYPE_F16) {
+        ggml_fp16_to_fp32_row((const ggml_fp16_t *) raw.data(), output.data(), ncols);
+    } else if (tensor->type == GGML_TYPE_BF16) {
+        ggml_bf16_to_fp32_row((const ggml_bf16_t *) raw.data(), output.data(), ncols);
+    } else {
+        return false;
+    }
+    return true;
 }
 
 static void compute_statistics(std::vector<tensor_statistics> & tstats, const std::string & name, const Stats & e) {
@@ -248,6 +302,37 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
+    if (m_params.collect_quant_profile && m_weight_samples.find(wname) == m_weight_samples.end()) {
+        const int64_t ncols = src0->ne[0];
+        const int64_t total_rows = ggml_nrows(src0);
+        const int sample_count = (int) std::min<int64_t>(total_rows, m_params.quant_profile_sample_rows);
+        WeightSample sample;
+        sample.ncols = ncols;
+        sample.total_rows = total_rows;
+        sample.row_indices.reserve(sample_count);
+        sample.rows.reserve((size_t) sample_count * ncols);
+
+        bool supported = ncols > 0 && total_rows > 0 &&
+            ggml_is_contiguous(src0) &&
+            (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16);
+        std::vector<float> row_data;
+        for (int i = 0; supported && i < sample_count; ++i) {
+            const int64_t row = sample_count == 1 ? 0 : i * (total_rows - 1) / (sample_count - 1);
+            supported = copy_weight_row_as_f32(src0, row, row_data);
+            if (supported) {
+                sample.row_indices.push_back(row);
+                sample.rows.insert(sample.rows.end(), row_data.begin(), row_data.end());
+            }
+        }
+
+        if (supported && !sample.rows.empty()) {
+            m_weight_samples.emplace(wname, std::move(sample));
+        } else {
+            LOG_DBGV(1, "%s: quant profile skipped unsupported weight type %s for %s\n",
+                    __func__, ggml_type_name(src0->type), wname.c_str());
+        }
+    }
+
     // copy the data from the GPU memory if needed
     const bool is_host = ggml_backend_buffer_is_host(src1->buffer);
 
@@ -335,10 +420,10 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                 const int32_t chunk_step = n_chunk - m_last_chunk;
                 m_last_chunk = n_chunk;
                 if ((m_last_chunk % m_params.n_out_freq) / chunk_step == 0) {
-                    save_imatrix();
+                    save_imatrix(-1, false);
                 }
                 if (m_params.n_save_freq > 0 && (m_last_chunk % m_params.n_save_freq) / chunk_step == 0) {
-                    save_imatrix(m_last_chunk);
+                    save_imatrix(m_last_chunk, false);
                 }
             }
         }
@@ -396,10 +481,10 @@ bool IMatrixCollector::collect_imatrix(struct ggml_tensor * t, bool ask, void * 
                 const int32_t chunk_step = n_chunk - m_last_chunk;
                 m_last_chunk = n_chunk;
                 if ((m_last_chunk % m_params.n_out_freq) / chunk_step == 0) {
-                    save_imatrix();
+                    save_imatrix(-1, false);
                 }
                 if (m_params.n_save_freq > 0 && (m_last_chunk % m_params.n_save_freq) / chunk_step == 0) {
-                    save_imatrix(m_last_chunk);
+                    save_imatrix(m_last_chunk, false);
                 }
             }
         }
@@ -514,11 +599,14 @@ void IMatrixCollector::save_imatrix_legacy(int32_t ncall) const {
     LOG_DBGV(1, "%s: stored collected data after %d chunks in %s\n", __func__, m_last_chunk, fname.c_str());
 }
 
-void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
+void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile) const {
     auto fname = m_params.out_file;
     int8_t use_legacy_format = m_params.imat_dat;
 
     if (use_legacy_format > 0) {
+        if (m_params.collect_quant_profile && include_quant_profile) {
+            LOG_WRN("%s: quantization analysis profiles require GGUF output; legacy imatrix output will omit them\n", __func__);
+        }
         this->save_imatrix_legacy(n_chunk);
         return;
     }
@@ -535,6 +623,134 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
 
     // write imatrix entries even if they don't have full data. (can be corrected when reading)
     // this can happen with MoE models where some of the experts end up not being exercised by the provided training data
+
+    std::map<std::string, std::vector<float>> rd_profiles;
+    std::map<std::string, std::vector<float>> block_profiles;
+    std::map<std::string, std::vector<float>> layer_delta_profiles;
+
+    if (m_params.collect_quant_profile && include_quant_profile) {
+        for (const auto & kv : m_stats) {
+            const std::string & name = kv.first;
+            const Stats & stats = kv.second;
+            auto sample_it = m_weight_samples.find(name);
+
+            if (!stats.values.empty() && !stats.counts.empty()) {
+                const int block_size = std::max(1, m_params.quant_profile_block_size);
+                std::vector<float> blocks;
+                for (size_t off = 0; off < stats.values.size(); off += block_size) {
+                    const size_t end = std::min(stats.values.size(), off + (size_t) block_size);
+                    double sum = 0.0;
+                    double sum2 = 0.0;
+                    float max_value = 0.0f;
+                    int active = 0;
+                    for (size_t i = off; i < end; ++i) {
+                        const size_t expert = stats.values.size() / stats.counts.size() > 0 ?
+                            i / (stats.values.size() / stats.counts.size()) : 0;
+                        const float count = stats.counts[std::min(expert, stats.counts.size() - 1)];
+                        const float value = count > 0 ? stats.values[i] / count : 0.0f;
+                        sum += value;
+                        sum2 += value * value;
+                        max_value = std::max(max_value, value);
+                        active += value > 1e-5f;
+                    }
+                    const float n = (float) (end - off);
+                    const float mean = n > 0 ? (float) (sum / n) : 0.0f;
+                    blocks.push_back(mean);
+                    blocks.push_back(max_value);
+                    blocks.push_back(n > 0 ? std::max(0.0f, (float) (sum2 / n - mean * mean)) : 0.0f);
+                    blocks.push_back(n > 0 ? active / n : 0.0f);
+                }
+                block_profiles[name] = std::move(blocks);
+            }
+
+            if (sample_it == m_weight_samples.end()) {
+                continue;
+            }
+
+            const WeightSample & sample = sample_it->second;
+            const int sample_rows = (int) sample.row_indices.size();
+            std::vector<float> distortions = { (float) sample.ncols, (float) sample.total_rows };
+            distortions.reserve(QUANT_PROFILE_RD_TYPES.size() + 2);
+
+            for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
+                if (sample.ncols % ggml_blck_size(type) != 0) {
+                    distortions.push_back(-1.0f);
+                    continue;
+                }
+
+                const ggml_type_traits * traits = ggml_get_type_traits(type);
+                std::vector<uint8_t> quantized(ggml_row_size(type, sample.ncols));
+                std::vector<float> reconstructed(sample.ncols);
+                double error_sum = 0.0;
+                double signal_sum = 0.0;
+
+                for (int row_i = 0; row_i < sample_rows; ++row_i) {
+                    const float * src = sample.rows.data() + (size_t) row_i * sample.ncols;
+                    const size_t nmat = sample.ncols > 0 ? stats.values.size() / sample.ncols : 0;
+                    const int64_t rows_per_matrix = nmat > 0 ? std::max<int64_t>(1, sample.total_rows / nmat) : sample.total_rows;
+                    const size_t matrix = nmat > 0 ?
+                        std::min<size_t>(sample.row_indices[row_i] / rows_per_matrix, nmat - 1) : 0;
+                    const size_t count_index = stats.counts.size() == 1 ? 0 : matrix;
+                    const float count = count_index < stats.counts.size() ? stats.counts[count_index] : 0.0f;
+                    const float * importance = stats.values.size() >= (matrix + 1) * (size_t) sample.ncols ?
+                        stats.values.data() + matrix * sample.ncols : nullptr;
+
+                    ggml_quantize_chunk(type, src, quantized.data(), 0, 1, sample.ncols, nullptr);
+                    traits->to_float(quantized.data(), reconstructed.data(), sample.ncols);
+                    for (int64_t col = 0; col < sample.ncols; ++col) {
+                        const double weight = importance && count > 0 ? importance[col] / count : 1.0;
+                        const double delta = (double) src[col] - reconstructed[col];
+                        error_sum += weight * delta * delta;
+                        signal_sum += weight * src[col] * src[col];
+                    }
+                }
+                distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
+            }
+            rd_profiles[name] = std::move(distortions);
+        }
+
+        std::map<std::pair<int, std::string>, const WeightSample *> by_layer;
+        for (const auto & kv : m_weight_samples) {
+            int layer = -1;
+            std::string suffix;
+            if (parse_block_tensor_name(kv.first, layer, suffix)) {
+                by_layer[{ layer, suffix }] = &kv.second;
+            }
+        }
+        for (const auto & kv : m_weight_samples) {
+            int layer = -1;
+            std::string suffix;
+            if (!parse_block_tensor_name(kv.first, layer, suffix) || layer <= 0) {
+                continue;
+            }
+            auto prev_it = by_layer.find({ layer - 1, suffix });
+            if (prev_it == by_layer.end()) {
+                continue;
+            }
+            const WeightSample & cur = kv.second;
+            const WeightSample & prev = *prev_it->second;
+            if (cur.ncols != prev.ncols || cur.rows.size() != prev.rows.size()) {
+                continue;
+            }
+            double delta2 = 0.0;
+            double cur2 = 0.0;
+            double prev2 = 0.0;
+            double dot = 0.0;
+            for (size_t i = 0; i < cur.rows.size(); ++i) {
+                const double c = cur.rows[i];
+                const double p = prev.rows[i];
+                const double d = c - p;
+                delta2 += d * d;
+                cur2 += c * c;
+                prev2 += p * p;
+                dot += c * p;
+            }
+            layer_delta_profiles[kv.first] = {
+                (float) (std::sqrt(delta2) / (std::sqrt(cur2) + 1e-20)),
+                (float) (dot / (std::sqrt(cur2) * std::sqrt(prev2) + 1e-20)),
+            };
+        }
+    }
 
     std::vector<std::string> to_store;
     size_t data_size = 0;
@@ -562,6 +778,11 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
         to_store.push_back(kv.first);
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.values.size(), GGML_MEM_ALIGN);
         data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.counts.size(), GGML_MEM_ALIGN);
+    }
+    for (const auto & profiles : { &rd_profiles, &block_profiles, &layer_delta_profiles }) {
+        for (const auto & kv : *profiles) {
+            data_size += GGML_PAD(ggml_tensor_overhead() + sizeof(float) * kv.second.size(), GGML_MEM_ALIGN);
+        }
     }
 
     // deterministic tensor name order
@@ -591,7 +812,30 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
         // Write the number of chunks the matrix was computed with
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_COUNT, m_last_chunk);
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_SIZE, m_params.n_ctx / m_params.n_parallel);
+        if (m_params.collect_quant_profile && include_quant_profile) {
+            std::vector<const char *> rd_types;
+            for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
+                rd_types.push_back(ggml_type_name(type));
+            }
+            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION, 1);
+            gguf_set_arr_str(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_RD_TYPES, rd_types.data(), rd_types.size());
+            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS, m_params.quant_profile_sample_rows);
+            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE, m_params.quant_profile_block_size);
+        }
     }
+
+    auto add_profile_tensors = [&] (const std::map<std::string, std::vector<float>> & profiles, const char * suffix, int64_t columns) {
+        for (const auto & kv : profiles) {
+            const int64_t rows = columns > 0 ? kv.second.size() / columns : 1;
+            ggml_tensor * tensor = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, columns > 0 ? columns : kv.second.size(), rows);
+            ggml_format_name(tensor, "%s.%s", kv.first.c_str(), suffix);
+            std::memcpy(tensor->data, kv.second.data(), kv.second.size() * sizeof(float));
+            gguf_add_tensor(ctx_gguf, tensor);
+        }
+    };
+    add_profile_tensors(rd_profiles, "analysis.rd", 0);
+    add_profile_tensors(block_profiles, "analysis.blocks", 4);
+    add_profile_tensors(layer_delta_profiles, "analysis.layer_delta", 2);
 
     for (const auto & name : to_store) {
         const auto & stat = m_stats.at(name);
@@ -619,6 +863,10 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk) const {
 
     LOGV(1, "\n");
     LOG_DBGV(1, "%s: stored collected data after %d chunks in %s\n", __func__, m_last_chunk, fname.c_str());
+    if (m_params.collect_quant_profile && include_quant_profile) {
+        LOG_INF("%s: stored quantization profile: rd=%d blocks=%d layer_delta=%d\n",
+                __func__, (int) rd_profiles.size(), (int) block_profiles.size(), (int) layer_delta_profiles.size());
+    }
 
     gguf_free(ctx_gguf);
     ggml_free(ctx);

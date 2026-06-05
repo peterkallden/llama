@@ -678,6 +678,9 @@ struct common_params {
     bool compute_ppl     = true;  // whether to compute perplexity
     bool show_statistics = false; // show imatrix statistics per tensor
     bool parse_special   = false; // whether to parse special tokens during imatrix tokenization
+    bool collect_quant_profile = false; // collect reusable quantization analysis in the imatrix GGUF
+    int32_t quant_profile_sample_rows = 8; // sampled weight rows per tensor
+    int32_t quant_profile_block_size = 256; // imatrix values per analysis block
 
     // cvector-generator params
     int n_pca_batch = 100;

@@ -400,6 +400,21 @@ extern "C" {
         size_t size;
     };
 
+    struct llama_model_quantize_rd_data {
+        const char * name;
+        const enum ggml_type * types;
+        const float * distortions;
+        size_t size;
+        int64_t ncols;
+        int64_t nrows;
+    };
+
+    struct llama_model_quantize_layer_delta_data {
+        const char * name;
+        float rel_delta_norm;
+        float cosine_similarity;
+    };
+
     enum llama_mixed_quant_policy {
         LLAMA_MIXED_QUANT_POLICY_NONE        = 0,
         LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED = 1,
@@ -434,6 +449,8 @@ extern "C" {
         float rd_lambda;                                              // size penalty used by sampled rate-distortion analysis
         int32_t rd_sample_rows;                                       // maximum sampled rows per tensor and candidate type
         bool print_rd_report;                                         // print sampled rate-distortion candidates and selections
+        const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
+        const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

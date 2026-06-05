@@ -106,6 +106,22 @@ sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda 
 
 This remains a normal per-tensor GGUF mixture and requires no runtime changes. Token embeddings, output projection, and adaptive anchor tensors retain the existing safety policies instead of using the sampled selection. Use `--print-rd-report` to inspect every candidate. A dry run still reads tensor data and quantizes the sampled rows because estimated size alone cannot provide a distortion signal.
 
+Precompute reusable analysis while generating an imatrix:
+
+```bash
+./build/bin/llama-imatrix \
+  -m input-f16.gguf \
+  -f calibration-data.txt \
+  --collect-quant-profile \
+  --quant-profile-sample-rows 8 \
+  --quant-profile-block-size 256 \
+  -o imatrix-profile.gguf
+```
+
+The optional profile stores namespaced GGUF tensors containing raw `Q3_K`/`Q4_K`/`Q5_K`/`Q6_K` candidate distortions, block importance summaries, and sampled adjacent-layer delta metrics. Existing imatrix consumers ignore them and continue using the unchanged `.in_sum2` and `.counts` entries. `llama-quantize` automatically reuses compatible RD and layer-delta entries and falls back to its existing analysis when entries are absent, incompatible, or the requested base type is not represented. Adaptive anchors can be derived from the stored layer-delta scores. Compatibility currently validates tensor name and shape; use the profile with the exact model weights that generated it.
+
+The profile does not currently survive combining imatrix files using `--in-file`, because candidate curves are model-bound rather than safely mergeable like activation sums. Generate the profile on the final calibration run.
+
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
 ## Validation sequence
