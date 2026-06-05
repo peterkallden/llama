@@ -128,6 +128,7 @@ static void usage(const char * executable) {
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
     printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
+    printf("       [--rd-guided] [--rd-lambda] [--rd-sample-rows] [--print-rd-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -178,6 +179,15 @@ static void usage(const char * executable) {
     printf("                                      layer relative-delta percentile used for scene-change anchors (default: 90)\n");
     printf("  --print-anchor-report\n");
     printf("                                      print adaptive anchor layer decisions\n");
+    printf("  --rd-guided\n");
+    printf("                                      sample tensor rows and select an existing quant type by rate-distortion cost\n");
+    printf("                                      embeddings, output, and adaptive anchor layers keep existing safety policies\n");
+    printf("  --rd-lambda X\n");
+    printf("                                      size penalty in distortion + lambda * bits-per-weight (default: 0.002)\n");
+    printf("  --rd-sample-rows N\n");
+    printf("                                      maximum evenly spaced rows sampled per tensor and candidate type (default: 8)\n");
+    printf("  --print-rd-report\n");
+    printf("                                      enable --rd-guided and print each candidate's sampled rate-distortion cost\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -595,6 +605,41 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--print-anchor-report") == 0) {
             params.print_anchor_report = true;
             params.adaptive_anchors = true;
+        } else if (strcmp(argv[arg_idx], "--rd-guided") == 0) {
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--print-rd-report") == 0) {
+            params.print_rd_report = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--rd-lambda") == 0) {
+            if (arg_idx < argc-1) {
+                try {
+                    params.rd_lambda = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    params.rd_lambda = -1.0f;
+                }
+                if (!std::isfinite(params.rd_lambda) || params.rd_lambda < 0.0f) {
+                    fprintf(stderr, "%s: invalid --rd-lambda value\n", __func__);
+                    usage(argv[0]);
+                }
+                params.rd_guided = true;
+            } else {
+                usage(argv[0]);
+            }
+        } else if (strcmp(argv[arg_idx], "--rd-sample-rows") == 0) {
+            if (arg_idx < argc-1) {
+                try {
+                    params.rd_sample_rows = std::stoi(argv[++arg_idx]);
+                } catch (...) {
+                    params.rd_sample_rows = 0;
+                }
+                if (params.rd_sample_rows <= 0) {
+                    fprintf(stderr, "%s: invalid --rd-sample-rows value\n", __func__);
+                    usage(argv[0]);
+                }
+                params.rd_guided = true;
+            } else {
+                usage(argv[0]);
+            }
         } else if (strcmp(argv[arg_idx], "--anchor-percentile") == 0) {
             if (arg_idx < argc-1) {
                 try {
@@ -676,6 +721,10 @@ int llama_quantize(int argc, char ** argv) {
     if ((params.adaptive_anchors || params.print_anchor_report) &&
             params.mixed_quant_policy != LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
         fprintf(stderr, "%s: adaptive anchors require --mixed-policy spqr_layer_delta\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.rd_guided && params.pure) {
+        fprintf(stderr, "%s: --rd-guided cannot be combined with --pure because it selects mixed tensor types\n", __func__);
         usage(argv[0]);
     }
 

@@ -86,6 +86,26 @@ Enable adaptive I-frame-style anchors:
 
 Adaptive anchors protect the first transformer layer, final transformer layer, and scene-change layers whose average adjacent-layer relative delta is at or above the configured percentile. High-sensitivity tensors in anchor layers receive at least `Q5_K`; other participating anchor tensors are not selected below `Q4_K`. Embeddings, output projection, norms, and tensors outside the transformer block layer-delta analysis are unaffected.
 
+Enable sampled rate-distortion type selection:
+
+```bash
+./build/bin/llama-quantize \
+  --mixed-policy spqr_layer_delta \
+  --adaptive-anchors \
+  --rd-guided \
+  --rd-lambda 0.002 \
+  --rd-sample-rows 8 \
+  input-f16.gguf output-rd-guided.gguf Q3_K_M
+```
+
+`--rd-guided` tries the requested base type plus compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` candidates on evenly spaced tensor rows. It selects the existing type with the lowest sampled cost:
+
+```text
+sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda * bits_per_weight
+```
+
+This remains a normal per-tensor GGUF mixture and requires no runtime changes. Token embeddings, output projection, and adaptive anchor tensors retain the existing safety policies instead of using the sampled selection. Use `--print-rd-report` to inspect every candidate. A dry run still reads tensor data and quantizes the sampled rows because estimated size alone cannot provide a distortion signal.
+
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
 ## Validation sequence
@@ -121,7 +141,13 @@ The console report prints each quantized tensor's sensitivity bucket, score sour
 ./build/bin/llama-quantize --mixed-policy spqr_layer_delta --adaptive-anchors --print-anchor-report input-f16.gguf output-anchor-guided.gguf Q3_K_M
 ```
 
-7. If available, compare perplexity:
+7. Quantize using sampled rate-distortion selection:
+
+```bash
+./build/bin/llama-quantize --mixed-policy spqr_layer_delta --adaptive-anchors --rd-guided --print-rd-report input-f16.gguf output-rd-guided.gguf Q3_K_M
+```
+
+8. If available, compare perplexity:
 
 ```bash
 ./build/bin/llama-perplexity -m output-q4-k-m.gguf -f wiki.test.raw
@@ -129,9 +155,10 @@ The console report prints each quantized tensor's sensitivity bucket, score sour
 ./build/bin/llama-perplexity -m output-spqr-layer-delta.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-block-guided.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-anchor-guided.gguf -f wiki.test.raw
+./build/bin/llama-perplexity -m output-rd-guided.gguf -f wiki.test.raw
 ```
 
-8. Run a few generation sanity checks:
+9. Run a few generation sanity checks:
 
 ```bash
 ./build/bin/llama-cli -m output-spqr-guided.gguf -p "Write a short explanation of quantization." -n 64

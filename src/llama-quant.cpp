@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cinttypes>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <numeric>
 #include <regex>
@@ -417,6 +418,7 @@ struct quantize_state_impl {
     int n_delta_demoted = 0;
     int n_anchor_layers = 0;
     int n_anchor_tensors = 0;
+    int n_rd_selected = 0;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -453,6 +455,10 @@ struct tensor_metadata {
     float           cosine_similarity;
     layer_similarity_bucket layer_similarity;
     int             anchor_reason;
+    ggml_type       rd_type;
+    float           rd_cost;
+    float           rd_distortion;
+    float           rd_bpw;
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
@@ -1172,7 +1178,9 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
 
         // if not manual - use the standard logic for choosing the quantization type based on the selected mixture
         if (!manual) {
-            if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+            if (params->rd_guided && tm.rd_type != GGML_TYPE_COUNT) {
+                new_type = tm.rd_type;
+            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
                 new_type = spqr_guided_type_for_bucket(params, tm.category, default_type, tm.sensitivity);
             } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
                 new_type = spqr_layer_delta_type_for_bucket(
@@ -1351,6 +1359,10 @@ static void init_quantize_state_counters(quantize_state_impl & qs, std::vector<t
         tm.cosine_similarity = 0.0f;
         tm.layer_similarity = layer_similarity_bucket::UNKNOWN;
         tm.anchor_reason = ANCHOR_REASON_NONE;
+        tm.rd_type = GGML_TYPE_COUNT;
+        tm.rd_cost = 0.0f;
+        tm.rd_distortion = 0.0f;
+        tm.rd_bpw = 0.0f;
 
         if (category_is_attn_v(cat)) {
             ++qs.n_attention_wv;
@@ -1588,6 +1600,153 @@ static void init_spqr_guided_sensitivity(
             (int) imatrix_scores.size());
 }
 
+// SpQR-inspired sensitivity and layer similarity are useful steering signals, but the output
+// remains a normal GGUF tensor using one existing ggml_type. This sampled rate-distortion pass
+// provides an extension point for richer block-level policies without adding a runtime format.
+static void init_rate_distortion_analysis(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        ggml_type default_type,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    const int max_sample_rows = std::max(1, params->rd_sample_rows);
+
+    std::vector<ggml_type> candidates = {
+        default_type,
+        GGML_TYPE_Q3_K,
+        GGML_TYPE_Q4_K,
+        GGML_TYPE_Q5_K,
+        GGML_TYPE_Q6_K,
+    };
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+
+        // Keep explicit safety floors and adaptive anchors under the existing mixed policy.
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                tm.anchor_reason != ANCHOR_REASON_NONE) {
+            continue;
+        }
+
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        float distortion_weight = 1.0f;
+        if (tm.sensitivity == sensitivity_bucket::HIGH) {
+            distortion_weight = 2.0f;
+        } else if (tm.sensitivity == sensitivity_bucket::MEDIUM) {
+            distortion_weight = 1.35f;
+        }
+        if (tm.layer_similarity == layer_similarity_bucket::LOW) {
+            distortion_weight *= 1.20f;
+        } else if (tm.layer_similarity == layer_similarity_bucket::HIGH) {
+            distortion_weight *= 0.85f;
+        }
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, max_sample_rows);
+        float best_cost = std::numeric_limits<float>::infinity();
+        ggml_type best_type = GGML_TYPE_COUNT;
+        float best_distortion = 0.0f;
+        float best_bpw = 0.0f;
+
+        for (ggml_type candidate : candidates) {
+            if (!ggml_is_quantized(candidate) ||
+                    ncols % ggml_blck_size(candidate) != 0 ||
+                    (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
+                continue;
+            }
+
+            const ggml_type_traits * traits = ggml_get_type_traits(candidate);
+            if (!traits || !traits->to_float) {
+                continue;
+            }
+
+            std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
+            std::vector<no_init<float>> reconstructed(ncols);
+            double error_sum = 0.0;
+            double signal_sum = 0.0;
+
+            for (int sample = 0; sample < sample_rows; ++sample) {
+                const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+                const float * src = data.data() + row * ncols;
+                const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+                const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+
+                ggml_quantize_chunk(candidate, src, quantized.data(), 0, 1, ncols, row_imatrix);
+                traits->to_float(quantized.data(), reconstructed.data(), ncols);
+
+                for (int64_t col = 0; col < ncols; ++col) {
+                    const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+                    const double delta = (double) src[col] - reconstructed[col];
+                    error_sum += weight * delta * delta;
+                    signal_sum += weight * src[col] * src[col];
+                }
+            }
+
+            const float distortion = (float) (error_sum / (signal_sum + 1e-20));
+            const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
+            const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
+
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: rd-candidate tensor=%-36s type=%-7s samples=%3d distortion=%10.6g weight=%5.2f bpw=%6.3f cost=%10.6g\n",
+                        __func__, tm.name.c_str(), ggml_type_name(candidate), sample_rows,
+                        distortion, distortion_weight, bpw, cost);
+            }
+
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_type = candidate;
+                best_distortion = distortion;
+                best_bpw = bpw;
+            }
+        }
+
+        if (best_type != GGML_TYPE_COUNT) {
+            tm.rd_type = best_type;
+            tm.rd_cost = best_cost;
+            tm.rd_distortion = best_distortion;
+            tm.rd_bpw = best_bpw;
+            ++qs.n_rd_selected;
+
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: rd-selected  tensor=%-36s type=%-7s distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
+                        __func__, tm.name.c_str(), ggml_type_name(best_type),
+                        best_distortion, best_bpw, best_cost);
+            }
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: sampled rate-distortion analysis selected existing quant types for %d tensor(s) (lambda=%.6g, max_sample_rows=%d)\n",
+            __func__, qs.n_rd_selected, params->rd_lambda, max_sample_rows);
+}
+
 //
 // main quantization driver
 //
@@ -1745,7 +1904,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
-            params->print_layer_delta_report) {
+            params->print_layer_delta_report ||
+            params->rd_guided) {
         init_spqr_guided_sensitivity(qs, metadata, imatrix_data);
         if (params->spqr_block_report || params->spqr_block_scoring) {
             init_spqr_guided_block_scoring(qs, metadata, imatrix_data, params->spqr_block_size, params->spqr_block_scoring);
@@ -1753,6 +1913,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     }
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA || params->print_layer_delta_report) {
         init_layer_delta_analysis(qs, ml, tensors, metadata, nthread, params->print_layer_delta_report);
+    }
+    if (params->rd_guided) {
+        init_rate_distortion_analysis(qs, ml, tensors, metadata, imatrix_data, default_type, nthread);
     }
 
     int idx = 0;
@@ -1935,6 +2098,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                             tm.block_count, tm.block_high, tm.block_medium, tm.block_low);
                 }
             }
+            if (params->rd_guided && tm.rd_type != GGML_TYPE_COUNT) {
+                LLAMA_LOG_INFO("%s: rd-guided    %-36s selected=%-7s distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
+                        __func__, ggml_get_name(tensor), ggml_type_name(new_type),
+                        tm.rd_distortion, tm.rd_bpw, tm.rd_cost);
+            }
             total_size_org += tensor_size;
             total_size_new += new_size;
             continue;
@@ -2036,6 +2204,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                             tm.block_count, tm.block_high, tm.block_medium, tm.block_low);
                 }
             }
+            if (params->rd_guided && tm.rd_type != GGML_TYPE_COUNT) {
+                LLAMA_LOG_INFO("%s: rd-guided    %-36s selected=%-7s distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
+                        __func__, ggml_get_name(tensor), ggml_type_name(new_type),
+                        tm.rd_distortion, tm.rd_bpw, tm.rd_cost);
+            }
             total_size_org += tensor_size;
             total_size_new += new_size;
 
@@ -2073,6 +2246,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         LLAMA_LOG_INFO("%s: layer-delta-guided summary: high_similarity=%d medium_similarity=%d low_similarity=%d anchors=%d anchor_tensors=%d demoted=%d\n",
                 __func__, qs.n_delta_high, qs.n_delta_medium, qs.n_delta_low,
                 qs.n_anchor_layers, qs.n_anchor_tensors, qs.n_delta_demoted);
+    }
+    if (params->rd_guided) {
+        LLAMA_LOG_INFO("%s: sampled rate-distortion summary: selected=%d lambda=%.6g sample_rows=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
+                __func__, qs.n_rd_selected, params->rd_lambda, params->rd_sample_rows,
+                total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
     }
 
     if (!params->imatrix && params->dry_run && will_require_imatrix) {
@@ -2115,6 +2293,10 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.adaptive_anchors            =*/ false,
         /*.anchor_percentile           =*/ 90.0f,
         /*.print_anchor_report         =*/ false,
+        /*.rd_guided                   =*/ false,
+        /*.rd_lambda                   =*/ 0.002f,
+        /*.rd_sample_rows              =*/ 8,
+        /*.print_rd_report             =*/ false,
     };
 
     return result;
@@ -2209,6 +2391,7 @@ void llama_quant_compute_types(
     qs->n_delta_demoted     = 0;
     qs->n_anchor_layers     = 0;
     qs->n_anchor_tensors    = 0;
+    qs->n_rd_selected       = 0;
 
     // build metadata from tensor names
     std::vector<tensor_metadata> metadata(n_tensors);
