@@ -148,6 +148,21 @@ sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda 
 
 This remains a normal per-tensor GGUF mixture and requires no runtime changes. Token embeddings, output projection, and adaptive anchor tensors retain the existing safety policies instead of using the sampled selection. Use `--print-rd-report` to inspect every candidate. A dry run still reads tensor data and quantizes the sampled rows because estimated size alone cannot provide a distortion signal.
 
+When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
+
+```bash
+./build/bin/llama-quantize \
+  --mixed-policy spqr_layer_delta \
+  --rd-guided \
+  --rd-sample-rows 8 \
+  --rd-local-refine-top-k 16 \
+  --rd-local-refine-rows 32 \
+  --print-rd-refinement-report \
+  input-f16.gguf output-locally-refined.gguf Q3_K_M
+```
+
+The coarse pass ranks locally sampled curves using Q3 tail distortion, Q3-to-Q5 improvement, and activity risk. The top-K tensors are then loaded again and evaluated over more rows with Q3, Q4, Q5, Q6, and the requested base type before any soft size target is allocated. Compatible curves loaded from an imatrix analysis profile are trusted and never reevaluated. This quantizer-side fallback keeps the feature usable without a profile, but profile-side refinement is more efficient because imatrix generation already retains the selected weight rows.
+
 Optionally provide a soft global size target:
 
 ```bash

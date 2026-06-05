@@ -474,6 +474,8 @@ struct tensor_metadata {
     float           rd_distortion;
     float           rd_bpw;
     std::vector<rd_candidate> rd_candidates;
+    float           rd_refinement_score;
+    bool            rd_from_profile;
     float           activity_mean;
     float           activity_variance;
     float           activity_peak_ratio;
@@ -1830,14 +1832,88 @@ static void init_spqr_guided_sensitivity(
 // SpQR-inspired sensitivity and layer similarity are useful steering signals, but the output
 // remains a normal GGUF tensor using one existing ggml_type. This sampled rate-distortion pass
 // provides an extension point for richer block-level policies without adding a runtime format.
-static float aggregate_rd_block_distortions(std::vector<float> values) {
+struct rd_block_stats {
+    float aggregate = -1.0f;
+    float mean = -1.0f;
+    float p90 = -1.0f;
+    float worst = -1.0f;
+};
+
+static rd_block_stats aggregate_rd_block_distortions(std::vector<float> values) {
     if (values.empty()) {
-        return -1.0f;
+        return {};
     }
     std::sort(values.begin(), values.end());
     const float mean = std::accumulate(values.begin(), values.end(), 0.0f) / values.size();
     const size_t p90_index = std::min(values.size() - 1, (size_t) std::ceil(0.90 * values.size()) - 1);
-    return 0.50f * mean + 0.30f * values[p90_index] + 0.20f * values.back();
+    return {
+        0.50f * mean + 0.30f * values[p90_index] + 0.20f * values.back(),
+        mean,
+        values[p90_index],
+        values.back(),
+    };
+}
+
+static rd_block_stats sample_rd_candidate(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type candidate,
+        int sample_rows) {
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    if (!ggml_is_quantized(candidate) ||
+            ncols % ggml_blck_size(candidate) != 0 ||
+            (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
+        return {};
+    }
+
+    const ggml_type_traits * traits = ggml_get_type_traits(candidate);
+    if (!traits || !traits->to_float) {
+        return {};
+    }
+
+    std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
+    std::vector<no_init<float>> reconstructed(ncols);
+    std::vector<float> block_distortions;
+    block_distortions.reserve(sample_rows);
+
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * src = data.data() + row * ncols;
+        const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+        const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+
+        ggml_quantize_chunk(candidate, src, quantized.data(), 0, 1, ncols, row_imatrix);
+        traits->to_float(quantized.data(), reconstructed.data(), ncols);
+
+        double error_sum = 0.0;
+        double signal_sum = 0.0;
+        for (int64_t col = 0; col < ncols; ++col) {
+            const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+            const double delta = (double) src[col] - reconstructed[col];
+            error_sum += weight * delta * delta;
+            signal_sum += weight * src[col] * src[col];
+        }
+        block_distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
+    }
+
+    return aggregate_rd_block_distortions(std::move(block_distortions));
+}
+
+static float rd_distortion_weight(const tensor_metadata & tm) {
+    float weight = 1.0f;
+    if (tm.sensitivity == sensitivity_bucket::HIGH) {
+        weight = 2.0f;
+    } else if (tm.sensitivity == sensitivity_bucket::MEDIUM) {
+        weight = 1.35f;
+    }
+    if (tm.layer_similarity == layer_similarity_bucket::LOW) {
+        weight *= 1.20f;
+    } else if (tm.layer_similarity == layer_similarity_bucket::HIGH) {
+        weight *= 0.85f;
+    }
+    return weight * tm.activity_risk;
 }
 
 static void init_rate_distortion_analysis(
@@ -1850,6 +1926,12 @@ static void init_rate_distortion_analysis(
         int nthread) {
     const llama_model_quantize_params * params = qs.params;
     const int max_sample_rows = std::max(1, params->rd_sample_rows);
+    const bool local_refinement_enabled =
+        params->rd_local_refine_top_k > 0 && params->rd_local_refine_rows > max_sample_rows;
+    if (params->rd_local_refine_top_k > 0 && !local_refinement_enabled) {
+        LLAMA_LOG_WARN("%s: local RD refinement disabled because refine rows (%d) must exceed coarse sample rows (%d)\n",
+                __func__, params->rd_local_refine_rows, max_sample_rows);
+    }
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -1890,18 +1972,7 @@ static void init_rate_distortion_analysis(
             }
         }
 
-        float distortion_weight = 1.0f;
-        if (tm.sensitivity == sensitivity_bucket::HIGH) {
-            distortion_weight = 2.0f;
-        } else if (tm.sensitivity == sensitivity_bucket::MEDIUM) {
-            distortion_weight = 1.35f;
-        }
-        if (tm.layer_similarity == layer_similarity_bucket::LOW) {
-            distortion_weight *= 1.20f;
-        } else if (tm.layer_similarity == layer_similarity_bucket::HIGH) {
-            distortion_weight *= 0.85f;
-        }
-        distortion_weight *= tm.activity_risk;
+        const float distortion_weight = rd_distortion_weight(tm);
 
         float best_cost = std::numeric_limits<float>::infinity();
         ggml_type best_type = GGML_TYPE_COUNT;
@@ -1957,51 +2028,17 @@ static void init_rate_distortion_analysis(
         }
 
         const int sample_rows = (int) std::min<int64_t>(nrows, max_sample_rows);
-        std::map<ggml_type, float> sampled_distortions;
+        std::map<ggml_type, rd_block_stats> sampled_distortions;
         auto evaluate_candidate = [&] (ggml_type candidate) {
             if (used_precomputed || sampled_distortions.count(candidate)) {
                 return;
             }
-            if (!ggml_is_quantized(candidate) ||
-                    ncols % ggml_blck_size(candidate) != 0 ||
-                    (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
-                sampled_distortions[candidate] = -1.0f;
+            const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
+            sampled_distortions[candidate] = stats;
+            if (stats.aggregate < 0.0f) {
                 return;
             }
-
-            const ggml_type_traits * traits = ggml_get_type_traits(candidate);
-            if (!traits || !traits->to_float) {
-                sampled_distortions[candidate] = -1.0f;
-                return;
-            }
-
-            std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
-            std::vector<no_init<float>> reconstructed(ncols);
-            std::vector<float> block_distortions;
-            block_distortions.reserve(sample_rows);
-
-            for (int sample = 0; sample < sample_rows; ++sample) {
-                const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
-                const float * src = data.data() + row * ncols;
-                const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
-                const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
-
-                ggml_quantize_chunk(candidate, src, quantized.data(), 0, 1, ncols, row_imatrix);
-                traits->to_float(quantized.data(), reconstructed.data(), ncols);
-
-                double error_sum = 0.0;
-                double signal_sum = 0.0;
-                for (int64_t col = 0; col < ncols; ++col) {
-                    const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
-                    const double delta = (double) src[col] - reconstructed[col];
-                    error_sum += weight * delta * delta;
-                    signal_sum += weight * src[col] * src[col];
-                }
-                block_distortions.push_back((float) (error_sum / (signal_sum + 1e-20)));
-            }
-
-            const float distortion = aggregate_rd_block_distortions(std::move(block_distortions));
-            sampled_distortions[candidate] = distortion;
+            const float distortion = stats.aggregate;
             const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
             const float cost = distortion_weight * distortion + params->rd_lambda * bpw;
             tm.rd_candidates.push_back({
@@ -2030,8 +2067,8 @@ static void init_rate_distortion_analysis(
             evaluate_candidate(GGML_TYPE_Q3_K);
             evaluate_candidate(GGML_TYPE_Q5_K);
             evaluate_candidate(default_type);
-            const float q3 = sampled_distortions.count(GGML_TYPE_Q3_K) ? sampled_distortions[GGML_TYPE_Q3_K] : -1.0f;
-            const float q5 = sampled_distortions.count(GGML_TYPE_Q5_K) ? sampled_distortions[GGML_TYPE_Q5_K] : -1.0f;
+            const float q3 = sampled_distortions.count(GGML_TYPE_Q3_K) ? sampled_distortions[GGML_TYPE_Q3_K].aggregate : -1.0f;
+            const float q5 = sampled_distortions.count(GGML_TYPE_Q5_K) ? sampled_distortions[GGML_TYPE_Q5_K].aggregate : -1.0f;
             // Conservative POC thresholds: fill the middle of a meaningful Q3-to-Q5
             // quality jump, and extend upward when Q5 still leaves visible distortion.
             if (q3 < 0.0f || q5 < 0.0f || q3 > 0.01f || q5 < 0.80f * q3) {
@@ -2040,6 +2077,16 @@ static void init_rate_distortion_analysis(
             if (q5 < 0.0f || q5 > 0.003f) {
                 evaluate_candidate(GGML_TYPE_Q6_K);
             }
+            const rd_block_stats q3_stats = sampled_distortions.count(GGML_TYPE_Q3_K) ?
+                sampled_distortions[GGML_TYPE_Q3_K] : rd_block_stats {};
+            const float tail_ratio = q3_stats.mean > 0.0f ?
+                std::max(0.0f, q3_stats.worst / q3_stats.mean - 1.0f) : 0.0f;
+            const float curve_gain = q3 > 0.0f && q5 >= 0.0f ?
+                std::max(0.0f, 1.0f - q5 / q3) : 0.0f;
+            tm.rd_refinement_score =
+                0.45f * tail_ratio +
+                0.35f * curve_gain +
+                0.20f * std::max(0.0f, tm.activity_risk - 1.0f);
         }
 
         if (best_type != GGML_TYPE_COUNT) {
@@ -2047,6 +2094,7 @@ static void init_rate_distortion_analysis(
             tm.rd_cost = best_cost;
             tm.rd_distortion = best_distortion;
             tm.rd_bpw = best_bpw;
+            tm.rd_from_profile = used_precomputed;
             ++qs.n_rd_selected;
 
             if (params->print_rd_report) {
@@ -2058,8 +2106,103 @@ static void init_rate_distortion_analysis(
         }
     }
 
-    LLAMA_LOG_INFO("%s: rate-distortion analysis selected existing quant types for %d tensor(s) (lambda=%.6g, max_sample_rows=%d, profile_entries=%d)\n",
-            __func__, qs.n_rd_selected, params->rd_lambda, max_sample_rows, (int) precomputed.size());
+    int refined_count = 0;
+    if (local_refinement_enabled) {
+        std::vector<size_t> refinement_candidates;
+        for (size_t i = 0; i < metadata.size(); ++i) {
+            const tensor_metadata & tm = metadata[i];
+            if (!tm.rd_from_profile && !tm.rd_candidates.empty() && tm.rd_type != GGML_TYPE_COUNT) {
+                refinement_candidates.push_back(i);
+            }
+        }
+        std::sort(refinement_candidates.begin(), refinement_candidates.end(), [&] (size_t a, size_t b) {
+            if (metadata[a].rd_refinement_score != metadata[b].rd_refinement_score) {
+                return metadata[a].rd_refinement_score > metadata[b].rd_refinement_score;
+            }
+            return metadata[a].name < metadata[b].name;
+        });
+        refinement_candidates.resize(std::min(refinement_candidates.size(), (size_t) params->rd_local_refine_top_k));
+
+        for (size_t rank = 0; rank < refinement_candidates.size(); ++rank) {
+            const size_t i = refinement_candidates[rank];
+            tensor_metadata & tm = metadata[i];
+            ggml_tensor * tensor = tensors[i]->tensor;
+            const int64_t ncols = tensor->ne[0];
+            const int64_t nrows = ggml_nrows(tensor);
+            const int sample_rows = (int) std::min<int64_t>(nrows, params->rd_local_refine_rows);
+
+            const float * imatrix = nullptr;
+            if (imatrix_data) {
+                auto it = imatrix_data->find(tm.remapped_imatrix_name);
+                if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                    imatrix = it->second.data();
+                }
+            }
+
+            const float distortion_weight = rd_distortion_weight(tm);
+
+            load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+            std::vector<rd_candidate> refined_candidates;
+            float best_cost = std::numeric_limits<float>::infinity();
+            ggml_type best_type = GGML_TYPE_COUNT;
+            float best_distortion = 0.0f;
+            float best_bpw = 0.0f;
+            std::vector<ggml_type> candidate_types = {
+                GGML_TYPE_Q3_K, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
+            };
+            if (std::find(candidate_types.begin(), candidate_types.end(), default_type) == candidate_types.end()) {
+                candidate_types.push_back(default_type);
+            }
+            for (ggml_type candidate : candidate_types) {
+                const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
+                if (stats.aggregate < 0.0f) {
+                    continue;
+                }
+                const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
+                const float cost = distortion_weight * stats.aggregate + params->rd_lambda * bpw;
+                refined_candidates.push_back({
+                    candidate,
+                    distortion_weight * stats.aggregate,
+                    stats.aggregate,
+                    bpw,
+                    (size_t) nrows * ggml_row_size(candidate, ncols),
+                });
+                if (cost < best_cost) {
+                    best_cost = cost;
+                    best_type = candidate;
+                    best_distortion = stats.aggregate;
+                    best_bpw = bpw;
+                }
+                if (params->print_rd_refinement_report) {
+                    LLAMA_LOG_INFO("%s: rd-refine-candidate rank=%3d tensor=%-36s type=%-7s rows=%3d distortion=%10.6g bpw=%6.3f cost=%10.6g\n",
+                            __func__, (int) rank + 1, tm.name.c_str(), ggml_type_name(candidate),
+                            sample_rows, stats.aggregate, bpw, cost);
+                }
+            }
+
+            if (best_type == GGML_TYPE_COUNT) {
+                continue;
+            }
+
+            const ggml_type coarse_type = tm.rd_type;
+            tm.rd_candidates = std::move(refined_candidates);
+            tm.rd_type = best_type;
+            tm.rd_cost = best_cost;
+            tm.rd_distortion = best_distortion;
+            tm.rd_bpw = best_bpw;
+            ++refined_count;
+
+            if (params->print_rd_refinement_report) {
+                LLAMA_LOG_INFO("%s: rd-refined   rank=%3d tensor=%-36s score=%8.4f rows=%3d coarse=%-7s selected=%-7s candidates=%2d\n",
+                        __func__, (int) rank + 1, tm.name.c_str(), tm.rd_refinement_score, sample_rows,
+                        ggml_type_name(coarse_type), ggml_type_name(best_type), (int) tm.rd_candidates.size());
+            }
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: rate-distortion analysis selected existing quant types for %d tensor(s) (lambda=%.6g, max_sample_rows=%d, profile_entries=%d, locally_refined=%d)\n",
+            __func__, qs.n_rd_selected, params->rd_lambda, max_sample_rows, (int) precomputed.size(), refined_count);
 }
 
 static const rd_candidate * select_rd_candidate(const tensor_metadata & tm, float lambda) {
@@ -2756,6 +2899,9 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.rd_target_bpw               =*/ 0.0f,
         /*.rd_target_size_mib          =*/ 0.0f,
         /*.print_rd_allocation_report  =*/ false,
+        /*.rd_local_refine_top_k       =*/ 0,
+        /*.rd_local_refine_rows        =*/ 32,
+        /*.print_rd_refinement_report  =*/ false,
         /*.rd_profile                  =*/ nullptr,
         /*.layer_delta_profile         =*/ nullptr,
         /*.activity_profile            =*/ nullptr,

@@ -167,6 +167,7 @@ static void usage(const char * executable) {
     printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
     printf("       [--rd-guided] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
+    printf("       [--rd-local-refine-top-k] [--rd-local-refine-rows] [--print-rd-refinement-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -232,6 +233,13 @@ static void usage(const char * executable) {
     printf("                                      optional soft total-model MiB target; quality limit may leave output larger\n");
     printf("  --print-rd-allocation-report\n");
     printf("                                      print global soft-budget allocation details\n");
+    printf("  --rd-local-refine-top-k N\n");
+    printf("                                      locally reevaluate the top-N uncertain sampled RD curves (default: 0, disabled)\n");
+    printf("                                      compatible precomputed imatrix profile curves are never reevaluated\n");
+    printf("  --rd-local-refine-rows N\n");
+    printf("                                      maximum rows sampled for local high-fidelity refinement (default: 32)\n");
+    printf("  --print-rd-refinement-report\n");
+    printf("                                      print local refinement ranking and updated selections\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -834,6 +842,31 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--print-rd-allocation-report") == 0) {
             params.print_rd_allocation_report = true;
             params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--print-rd-refinement-report") == 0) {
+            params.print_rd_refinement_report = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
+                strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
+            const bool is_top_k = strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0;
+            int value = 0;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stoi(argv[++arg_idx]);
+                } catch (...) {
+                    value = is_top_k ? -1 : 0;
+                }
+            }
+            if ((is_top_k && value < 0) || (!is_top_k && value <= 0)) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__,
+                        is_top_k ? "--rd-local-refine-top-k" : "--rd-local-refine-rows");
+                usage(argv[0]);
+            }
+            if (is_top_k) {
+                params.rd_local_refine_top_k = value;
+            } else {
+                params.rd_local_refine_rows = value;
+            }
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-target-bpw") == 0 ||
                 strcmp(argv[arg_idx], "--rd-target-size-mib") == 0) {
             const bool is_bpw = strcmp(argv[arg_idx], "--rd-target-bpw") == 0;
@@ -978,6 +1011,14 @@ int llama_quantize(int argc, char ** argv) {
     }
     if (params.print_rd_allocation_report && params.rd_target_bpw <= 0.0f && params.rd_target_size_mib <= 0.0f) {
         fprintf(stderr, "%s: --print-rd-allocation-report requires --rd-target-bpw or --rd-target-size-mib\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.print_rd_refinement_report && params.rd_local_refine_top_k <= 0) {
+        fprintf(stderr, "%s: --print-rd-refinement-report requires --rd-local-refine-top-k\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.rd_local_refine_top_k > 0 && params.rd_local_refine_rows <= params.rd_sample_rows) {
+        fprintf(stderr, "%s: --rd-local-refine-rows must exceed --rd-sample-rows when local refinement is enabled\n", __func__);
         usage(argv[0]);
     }
 
