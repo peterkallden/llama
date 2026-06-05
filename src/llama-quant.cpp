@@ -577,8 +577,10 @@ static void load_tensor_as_f32(
             read_data.resize(tensor_size);
         }
         tensor->data = read_data.data();
+        ml.load_data_for(tensor);
+    } else if (tensor->data == nullptr) {
+        ml.load_data_for(tensor);
     }
-    ml.load_data_for(tensor);
 
     const int64_t nelements = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32) {
@@ -810,7 +812,9 @@ static void init_layer_delta_analysis(
     for (size_t i = 0; i < metadata.size(); ++i) {
         tensor_metadata & tm = metadata[i];
         tm.layer = tensor_get_layer_index(tm.name);
-        if (tm.layer >= 0 && tensor_category_participates_in_layer_delta(tm.category)) {
+        if (tm.allows_quantization && tm.layer >= 0 &&
+                ggml_n_dims(tensors[i]->tensor) >= 2 &&
+                tensor_category_participates_in_layer_delta(tm.category)) {
             layer_category_to_index[{ tm.layer, (int) tm.category }] = i;
         }
     }
@@ -829,7 +833,9 @@ static void init_layer_delta_analysis(
 
     for (size_t i = 0; i < metadata.size(); ++i) {
         tensor_metadata & tm = metadata[i];
-        if (!tm.allows_quantization || tm.layer <= 0 || !tensor_category_participates_in_layer_delta(tm.category)) {
+        if (!tm.allows_quantization || tm.layer <= 0 ||
+                ggml_n_dims(tensors[i]->tensor) < 2 ||
+                !tensor_category_participates_in_layer_delta(tm.category)) {
             continue;
         }
 
@@ -840,7 +846,7 @@ static void init_layer_delta_analysis(
 
         ggml_tensor * cur_tensor = tensors[i]->tensor;
         ggml_tensor * prev_tensor = tensors[prev_it->second]->tensor;
-        if (ggml_nelements(cur_tensor) != ggml_nelements(prev_tensor)) {
+        if (!ggml_are_same_shape(cur_tensor, prev_tensor)) {
             continue;
         }
 
@@ -2634,8 +2640,10 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     read_data.resize(tensor_size);
                 }
                 tensor->data = read_data.data();
+                ml.load_data_for(tensor);
+            } else if (tensor->data == nullptr) {
+                ml.load_data_for(tensor);
             }
-            ml.load_data_for(tensor);
         }
 
         LLAMA_LOG_INFO("[%4d/%4d] %-36s - [%s], type = %6s, ",
