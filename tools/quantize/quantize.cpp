@@ -127,6 +127,7 @@ static void usage(const char * executable) {
     printf("usage: %s [--help] [--allow-requantize] [--leave-output-tensor] [--pure] [--imatrix] [--include-weights]\n", executable);
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
     printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
+    printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -171,6 +172,12 @@ static void usage(const char * executable) {
     printf("  --print-layer-delta-report\n");
     printf("                                      with --mixed-policy spqr_layer_delta, print adjacent-layer similarity metrics\n");
     printf("                                      used as a P-frame-style quantization signal; this does not change runtime format\n");
+    printf("  --adaptive-anchors\n");
+    printf("                                      with --mixed-policy spqr_layer_delta, protect first/final and scene-change layers\n");
+    printf("  --anchor-percentile P\n");
+    printf("                                      layer relative-delta percentile used for scene-change anchors (default: 90)\n");
+    printf("  --print-anchor-report\n");
+    printf("                                      print adaptive anchor layer decisions\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -583,6 +590,25 @@ int llama_quantize(int argc, char ** argv) {
             params.spqr_block_report = true;
         } else if (strcmp(argv[arg_idx], "--print-layer-delta-report") == 0) {
             params.print_layer_delta_report = true;
+        } else if (strcmp(argv[arg_idx], "--adaptive-anchors") == 0) {
+            params.adaptive_anchors = true;
+        } else if (strcmp(argv[arg_idx], "--print-anchor-report") == 0) {
+            params.print_anchor_report = true;
+            params.adaptive_anchors = true;
+        } else if (strcmp(argv[arg_idx], "--anchor-percentile") == 0) {
+            if (arg_idx < argc-1) {
+                try {
+                    params.anchor_percentile = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    params.anchor_percentile = -1.0f;
+                }
+                if (params.anchor_percentile < 0.0f || params.anchor_percentile > 100.0f) {
+                    fprintf(stderr, "%s: invalid --anchor-percentile value\n", __func__);
+                    usage(argv[0]);
+                }
+            } else {
+                usage(argv[0]);
+            }
         } else if (strcmp(argv[arg_idx], "--spqr-block-size") == 0) {
             if (arg_idx < argc-1) {
                 try {
@@ -645,6 +671,11 @@ int llama_quantize(int argc, char ** argv) {
     }
     if (params.spqr_block_scoring && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         fprintf(stderr, "%s: --spqr-block-scoring requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
+        usage(argv[0]);
+    }
+    if ((params.adaptive_anchors || params.print_anchor_report) &&
+            params.mixed_quant_policy != LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
+        fprintf(stderr, "%s: adaptive anchors require --mixed-policy spqr_layer_delta\n", __func__);
         usage(argv[0]);
     }
 

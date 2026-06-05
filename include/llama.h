@@ -427,6 +427,9 @@ extern "C" {
         int32_t spqr_block_size;                                     // values per block for block-level sensitivity reporting
         bool print_layer_delta_report;                               // report adjacent-layer similarity for spqr_layer_delta
         bool spqr_block_scoring;                                     // derive tensor sensitivity from imatrix block distributions
+        bool adaptive_anchors;                                       // protect first/final and scene-change transformer layers
+        float anchor_percentile;                                     // percentile threshold for scene-change anchors
+        bool print_anchor_report;                                    // print adaptive anchor decisions
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

@@ -73,6 +73,19 @@ Enable P-frame-style adjacent-layer analysis:
 
 `spqr_layer_delta` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra compression signal. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type.
 
+Enable adaptive I-frame-style anchors:
+
+```bash
+./build/bin/llama-quantize \
+  --mixed-policy spqr_layer_delta \
+  --adaptive-anchors \
+  --anchor-percentile 90 \
+  --print-anchor-report \
+  input-f16.gguf output-anchor-guided.gguf Q3_K_M
+```
+
+Adaptive anchors protect the first transformer layer, final transformer layer, and scene-change layers whose average adjacent-layer relative delta is at or above the configured percentile. High-sensitivity tensors in anchor layers receive at least `Q5_K`; other participating anchor tensors are not selected below `Q4_K`. Embeddings, output projection, norms, and tensors outside the transformer block layer-delta analysis are unaffected.
+
 The console report prints each quantized tensor's sensitivity bucket, score source, selected type, and estimated size. The summary includes high/medium/low tensor counts, total output size, average bits per weight, and how many tensors were promoted above the base quantization.
 
 ## Validation sequence
@@ -102,16 +115,23 @@ The console report prints each quantized tensor's sensitivity bucket, score sour
 ./build/bin/llama-quantize --mixed-policy spqr_guided --imatrix imatrix.gguf --spqr-block-scoring input-f16.gguf output-spqr-block-guided.gguf Q3_K_M
 ```
 
-6. If available, compare perplexity:
+6. Quantize using adaptive anchors:
+
+```bash
+./build/bin/llama-quantize --mixed-policy spqr_layer_delta --adaptive-anchors --print-anchor-report input-f16.gguf output-anchor-guided.gguf Q3_K_M
+```
+
+7. If available, compare perplexity:
 
 ```bash
 ./build/bin/llama-perplexity -m output-q4-k-m.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-guided.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-layer-delta.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-block-guided.gguf -f wiki.test.raw
+./build/bin/llama-perplexity -m output-anchor-guided.gguf -f wiki.test.raw
 ```
 
-7. Run a few generation sanity checks:
+8. Run a few generation sanity checks:
 
 ```bash
 ./build/bin/llama-cli -m output-spqr-guided.gguf -p "Write a short explanation of quantization." -n 64
