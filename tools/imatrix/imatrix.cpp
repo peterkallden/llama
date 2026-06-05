@@ -39,9 +39,11 @@ static const char * const LLM_KV_IMATRIX_DATASETS    = "imatrix.datasets";
 static const char * const LLM_KV_IMATRIX_CHUNK_COUNT = "imatrix.chunk_count";
 static const char * const LLM_KV_IMATRIX_CHUNK_SIZE  = "imatrix.chunk_size";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_VERSION = "imatrix.analysis.version";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_FEATURES = "imatrix.analysis.features";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.rd_types";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS = "imatrix.analysis.sample_rows";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE = "imatrix.analysis.block_size";
+static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 3;
 
 static const std::vector<ggml_type> QUANT_PROFILE_RD_TYPES = {
     GGML_TYPE_Q3_K,
@@ -830,11 +832,13 @@ void IMatrixCollector::save_imatrix(int32_t n_chunk, bool include_quant_profile)
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_COUNT, m_last_chunk);
         gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_CHUNK_SIZE, m_params.n_ctx / m_params.n_parallel);
         if (m_params.collect_quant_profile && include_quant_profile) {
+            const char * features[] = { "rd", "blocks", "layer_delta", "activity" };
             std::vector<const char *> rd_types;
             for (ggml_type type : QUANT_PROFILE_RD_TYPES) {
                 rd_types.push_back(ggml_type_name(type));
             }
-            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION, 2);
+            gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION, IMATRIX_ANALYSIS_VERSION);
+            gguf_set_arr_str(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_FEATURES, features, sizeof(features) / sizeof(features[0]));
             gguf_set_arr_str(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_RD_TYPES, rd_types.data(), rd_types.size());
             gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS, m_params.quant_profile_sample_rows);
             gguf_set_val_u32(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE, m_params.quant_profile_block_size);
