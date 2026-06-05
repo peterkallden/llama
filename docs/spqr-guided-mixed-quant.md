@@ -171,13 +171,15 @@ Precompute reusable analysis while generating an imatrix:
   -f calibration-data.txt \
   --collect-quant-profile \
   --quant-profile-sample-rows 8 \
+  --quant-profile-refine-top-k 16 \
+  --quant-profile-refine-rows 32 \
   --quant-profile-block-size 256 \
   -o imatrix-profile.gguf
 ```
 
 The optional profile stores namespaced GGUF tensors containing raw `Q3_K`/`Q4_K`/`Q5_K`/`Q6_K` candidate distortions, block importance summaries, sampled adjacent-layer delta metrics, and activity-mask statistics. Existing imatrix consumers ignore them and continue using the unchanged `.in_sum2` and `.counts` entries. `llama-quantize` automatically reuses compatible RD and layer-delta entries and falls back to its existing analysis when entries are absent, incompatible, or the requested base type is not represented.
 
-Analysis profile version 4 declares the block-aggregated RD semantics through the `block_rd` feature. The reader checks the supported version range, feature metadata, RD candidate types, profile tensor shapes, and finite values. Version 2 and 3 profiles remain readable. Unsupported or malformed analysis entries are ignored without discarding the standard imatrix activation data. Profiles do not yet include a model-content fingerprint, so use them with the exact model weights that generated them.
+Analysis profile version 5 adds selective high-fidelity RD refinement through the `rd_refinement` feature. The coarse pass uses `quant-profile-sample-rows` and adaptive candidate evaluation for every tensor. It ranks hotspots using tail distortion, Q3-to-Q5 curve gain, and activity risk, then reevaluates top-K tensors with all candidates over `quant-profile-refine-rows`. Refined curves replace their coarse curves before storage, while metadata records the refinement score and row counts. Version 2 through 4 profiles remain readable. Unsupported or malformed analysis entries are ignored without discarding the standard imatrix activation data.
 
 Activity masking uses mean squared activity, cross-channel variance, peak-to-mean ratio, and active-channel fraction to create a bounded rare-event risk multiplier for RD distortion. This can protect tensors where average importance hides a small number of highly active channels. Adaptive anchors combine layer-delta with changes in activity statistics, then require scene-change candidates to pass both the configured percentile and a robust median-absolute-deviation threshold. The profile stores the raw signals; weighting and anchor selection remain adjustable quantization policy.
 

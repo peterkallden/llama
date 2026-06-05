@@ -32,6 +32,8 @@ The parameters in square brackets are optional and have the following meaning:
 * `--collect-quant-profile` stores optional sampled rate-distortion curves, block statistics, and sampled adjacent-layer delta metrics in the GGUF imatrix. Existing imatrix consumers ignore these namespaced tensors.
 * `--quant-profile-sample-rows` controls sampled weight rows per tensor for the optional profile. Default is 8.
 * `--quant-profile-block-size` controls the number of imatrix values summarized per optional analysis block. Default is 256.
+* `--quant-profile-refine-top-k` enables high-fidelity RD refinement for the top-K hotspot tensors. Default is 0, disabled.
+* `--quant-profile-refine-rows` controls retained and evaluated weight rows for refined tensors. Default is 32 and must exceed `--quant-profile-sample-rows`.
 
 For faster computation, make sure to use GPU offloading via the `-ngl | --n-gpu-layers` argument.
 
@@ -50,7 +52,9 @@ Recent versions of `llama-imatrix` store data in GGUF format by default. For the
 ```bash
 # generate a reusable quantization-analysis profile alongside the normal imatrix
 ./llama-imatrix -m ggml-model-f16.gguf -f calibration-data.txt \
-  --collect-quant-profile --quant-profile-sample-rows 8 -o imatrix-profile.gguf -ngl 99
+  --collect-quant-profile --quant-profile-sample-rows 8 \
+  --quant-profile-refine-top-k 16 --quant-profile-refine-rows 32 \
+  -o imatrix-profile.gguf -ngl 99
 
 # spqr-layer-delta and rd-guided reuse compatible profile entries automatically
 ./llama-quantize --imatrix imatrix-profile.gguf --mixed-policy spqr_layer_delta \
@@ -59,7 +63,7 @@ Recent versions of `llama-imatrix` store data in GGUF format by default. For the
 
 The profile is optional and policy-neutral: it stores raw candidate distortion and similarity metrics, not selected quantization types or sensitivity buckets. It also stores activity-mask statistics per tensor: mean squared activity, variance across channels, peak-to-mean ratio, and active-channel fraction. RD profile reuse currently covers `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K`. Profile generation from F16, BF16, or F32 model weights is supported; other source weight types are skipped.
 
-Quantization analysis profile version 4 declares its available features in `imatrix.analysis.features`, including `block_rd`. Deterministically selected weight rows act as analysis blocks; per-candidate distortion combines mean, p90, and worst-block distortion. Q3 and Q5 are always evaluated, while Q4 and Q6 are evaluated adaptively when the coarse curve indicates that their extra cost may be useful. `llama-quantize` validates the profile version, feature declarations, RD candidate metadata, tensor shapes, and finite values before reuse. Version 2 and 3 profiles remain readable. Unsupported or malformed profile data is ignored while the standard imatrix activation data remains available, so guided quantization can fall back to local analysis. Profiles are still model-bound and do not yet contain a model-content fingerprint; use them with the exact model weights that generated them.
+Quantization analysis profile version 5 declares its available features in `imatrix.analysis.features`, including `block_rd` and `rd_refinement`. Deterministically selected weight rows act as analysis blocks; per-candidate distortion combines mean, p90, and worst-block distortion. Q3 and Q5 are always evaluated during the coarse pass, while Q4 and Q6 are evaluated adaptively. When refinement is enabled, tensors are ranked by tail distortion, Q3-to-Q5 curve gain, and activity risk. The top-K tensors are then reevaluated over more retained rows with all Q3/Q4/Q5/Q6 candidates. This increases temporary imatrix memory use but avoids a second model pass. `llama-quantize` validates and reports refined profile entries automatically. Version 2 through 4 profiles remain readable.
 
 The guided quantizer converts activity statistics into a bounded rare-event risk multiplier for RD distortion. Adaptive anchors combine adjacent-layer weight delta with changes in activity statistics and use a conservative robust-MAD scene-change threshold. These choices remain quantization-time policy decisions; the stored profile contains only reusable raw statistics.
 

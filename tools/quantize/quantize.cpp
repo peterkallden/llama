@@ -88,8 +88,10 @@ static const char * const LLM_KV_IMATRIX_ANALYSIS_FEATURES = "imatrix.analysis.f
 static const char * const LLM_KV_IMATRIX_ANALYSIS_RD_TYPES = "imatrix.analysis.rd_types";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_SAMPLE_ROWS = "imatrix.analysis.sample_rows";
 static const char * const LLM_KV_IMATRIX_ANALYSIS_BLOCK_SIZE = "imatrix.analysis.block_size";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_REFINE_TOP_K = "imatrix.analysis.refine_top_k";
+static const char * const LLM_KV_IMATRIX_ANALYSIS_REFINE_ROWS = "imatrix.analysis.refine_rows";
 static constexpr uint32_t IMATRIX_ANALYSIS_MIN_VERSION = 2;
-static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 4;
+static constexpr uint32_t IMATRIX_ANALYSIS_VERSION = 5;
 
 struct loaded_rd_profile {
     std::vector<ggml_type> types;
@@ -366,12 +368,14 @@ static int load_imatrix(
     const std::string layer_delta_suffix{ ".analysis.layer_delta" };
     const std::string blocks_suffix{ ".analysis.blocks" };
     const std::string activity_suffix{ ".analysis.activity" };
+    const std::string refinement_suffix{ ".analysis.refinement" };
     std::vector<ggml_type> rd_types;
     std::unordered_set<std::string> analysis_features;
     bool accept_analysis_profile = false;
     bool rd_metadata_valid = false;
     bool block_metadata_valid = false;
     int block_profile_count = 0;
+    int refined_profile_count = 0;
     int skipped_profile_count = 0;
 
     const int analysis_version_idx = gguf_find_key(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_VERSION);
@@ -396,7 +400,7 @@ static int load_imatrix(
             accept_analysis_profile = false;
         } else {
             const int64_t n = gguf_get_arr_n(ctx_gguf, features_idx);
-            const std::unordered_set<std::string> known_features = { "rd", "block_rd", "blocks", "layer_delta", "activity" };
+            const std::unordered_set<std::string> known_features = { "rd", "block_rd", "rd_refinement", "blocks", "layer_delta", "activity" };
             accept_analysis_profile = n > 0;
             for (int64_t i = 0; i < n; ++i) {
                 const std::string feature = gguf_get_arr_str(ctx_gguf, features_idx, i);
@@ -428,6 +432,17 @@ static int load_imatrix(
             block_metadata_valid = true;
         } else if (analysis_features.count("blocks")) {
             fprintf(stderr, "%s: ignoring block profile entries with invalid block-size metadata\n", __func__);
+        }
+    }
+    if (accept_analysis_profile && analysis_version >= 5 && analysis_features.count("rd_refinement")) {
+        const int top_k_idx = gguf_find_key(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_REFINE_TOP_K);
+        const int rows_idx = gguf_find_key(ctx_gguf, LLM_KV_IMATRIX_ANALYSIS_REFINE_ROWS);
+        if (top_k_idx < 0 || rows_idx < 0 ||
+                gguf_get_kv_type(ctx_gguf, top_k_idx) != GGUF_TYPE_UINT32 ||
+                gguf_get_kv_type(ctx_gguf, rows_idx) != GGUF_TYPE_UINT32 ||
+                gguf_get_val_u32(ctx_gguf, rows_idx) == 0) {
+            fprintf(stderr, "%s: ignoring RD refinement metadata with invalid top-K or row settings\n", __func__);
+            analysis_features.erase("rd_refinement");
         }
     }
 
@@ -515,6 +530,14 @@ static int load_imatrix(
             } else {
                 ++skipped_profile_count;
             }
+        } else if (string_remove_suffix(name, refinement_suffix)) {
+            if (accept_analysis_profile && analysis_features.count("rd_refinement") &&
+                    cur->type == GGML_TYPE_F32 && ggml_nelements(cur) == 4 &&
+                    all_finite((const float *) cur->data, 4)) {
+                refined_profile_count += ((const float *) cur->data)[1] > 0.5f;
+            } else {
+                ++skipped_profile_count;
+            }
         } else {
             // ignore other tensors
         }
@@ -574,8 +597,8 @@ static int load_imatrix(
 
     printf("%s: loaded %d importance matrix entries from %s computed on %d chunks\n", __func__, int(imatrix_data.size()), imatrix_file.c_str(), m_last_chunk);
     if (!rd_profiles.empty() || !layer_delta_profiles.empty() || block_profile_count > 0 || !activity_profiles.empty()) {
-        printf("%s: loaded quantization profile version %u with %d RD curves, %d block summaries, %d layer-delta entries, and %d activity entries\n",
-                __func__, analysis_version, int(rd_profiles.size()), block_profile_count,
+        printf("%s: loaded quantization profile version %u with %d RD curves (%d refined), %d block summaries, %d layer-delta entries, and %d activity entries\n",
+                __func__, analysis_version, int(rd_profiles.size()), refined_profile_count, block_profile_count,
                 int(layer_delta_profiles.size()), int(activity_profiles.size()));
     }
     if (skipped_profile_count > 0) {

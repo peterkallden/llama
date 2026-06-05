@@ -681,6 +681,8 @@ struct common_params {
     bool collect_quant_profile = false; // collect reusable quantization analysis in the imatrix GGUF
     int32_t quant_profile_sample_rows = 8; // sampled weight rows per tensor
     int32_t quant_profile_block_size = 256; // imatrix values per analysis block
+    int32_t quant_profile_refine_top_k = 0; // tensors receiving high-fidelity RD analysis, 0 disables
+    int32_t quant_profile_refine_rows = 32; // sampled weight rows for high-fidelity RD analysis
 
     // cvector-generator params
     int n_pca_batch = 100;

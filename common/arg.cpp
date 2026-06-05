@@ -2787,6 +2787,28 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg(
+        {"--quant-profile-refine-top-k"}, "N",
+        string_format("high-fidelity RD refinement for the top-K tensors, 0 disables (default: %d)", params.quant_profile_refine_top_k),
+        [](common_params & params, int value) {
+            if (value < 0) {
+                throw std::invalid_argument("quant profile refine top-K must be non-negative");
+            }
+            params.quant_profile_refine_top_k = value;
+            params.collect_quant_profile = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
+        {"--quant-profile-refine-rows"}, "N",
+        string_format("sampled weight rows for high-fidelity RD refinement (default: %d)", params.quant_profile_refine_rows),
+        [](common_params & params, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument("quant profile refine rows must be positive");
+            }
+            params.quant_profile_refine_rows = value;
+            params.collect_quant_profile = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--parse-special"},
         string_format("parse special tokens (chat, tool, etc) (default: %s)", params.parse_special ? "true" : "false"),
         [](common_params & params) {
