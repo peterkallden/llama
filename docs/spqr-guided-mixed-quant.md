@@ -51,6 +51,17 @@ Enable report-only block sensitivity counts:
 
 With imatrix data, `--spqr-block-report` buckets imatrix value blocks by percentile. Without imatrix data, it reports the tensor-level bucket as a one-block fallback. The flag does not change the output GGUF.
 
+Use block distributions to drive tensor quantization choices:
+
+```bash
+./build/bin/llama-quantize --mixed-policy spqr_guided \
+  --imatrix imatrix.gguf \
+  --spqr-block-scoring \
+  input-f16.gguf output-spqr-block-guided.gguf Q3_K_M
+```
+
+`--spqr-block-scoring` replaces the tensor-average imatrix bucket with a bucket derived from the tensor's block distribution. These v1 blocks are contiguous groups of imatrix input-dimension values, not independently encoded weight blocks. A tensor is protected when a meaningful fraction of its blocks are highly sensitive. The selected quant type still applies to the complete tensor because this POC does not introduce a mixed-type block encoding. If insufficient imatrix block data is available, the tool keeps tensor-level scoring.
+
 Enable P-frame-style adjacent-layer analysis:
 
 ```bash
@@ -85,15 +96,22 @@ The console report prints each quantized tensor's sensitivity bucket, score sour
 ./build/bin/llama-quantize --mixed-policy spqr_layer_delta --print-layer-delta-report input-f16.gguf output-spqr-layer-delta.gguf Q3_K_M
 ```
 
-5. If available, compare perplexity:
+5. Quantize using block-derived sensitivity:
+
+```bash
+./build/bin/llama-quantize --mixed-policy spqr_guided --imatrix imatrix.gguf --spqr-block-scoring input-f16.gguf output-spqr-block-guided.gguf Q3_K_M
+```
+
+6. If available, compare perplexity:
 
 ```bash
 ./build/bin/llama-perplexity -m output-q4-k-m.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-guided.gguf -f wiki.test.raw
 ./build/bin/llama-perplexity -m output-spqr-layer-delta.gguf -f wiki.test.raw
+./build/bin/llama-perplexity -m output-spqr-block-guided.gguf -f wiki.test.raw
 ```
 
-6. Run a few generation sanity checks:
+7. Run a few generation sanity checks:
 
 ```bash
 ./build/bin/llama-cli -m output-spqr-guided.gguf -p "Write a short explanation of quantization." -n 64

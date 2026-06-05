@@ -126,7 +126,7 @@ static bool try_parse_ftype(const std::string & ftype_str_in, llama_ftype & ftyp
 static void usage(const char * executable) {
     printf("usage: %s [--help] [--allow-requantize] [--leave-output-tensor] [--pure] [--imatrix] [--include-weights]\n", executable);
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
-    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-size] [--print-layer-delta-report]\n");
+    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -163,6 +163,9 @@ static void usage(const char * executable) {
     printf("  --spqr-block-report\n");
     printf("                                      with --mixed-policy spqr_guided, print block-level sensitivity bucket counts\n");
     printf("                                      for each tensor without changing the output quantization\n");
+    printf("  --spqr-block-scoring\n");
+    printf("                                      derive each tensor sensitivity bucket from its imatrix block distribution\n");
+    printf("                                      and use that bucket to select one existing quant type for the tensor\n");
     printf("  --spqr-block-size N\n");
     printf("                                      number of imatrix values per block for --spqr-block-report (default: 256)\n");
     printf("  --print-layer-delta-report\n");
@@ -575,6 +578,9 @@ int llama_quantize(int argc, char ** argv) {
             }
         } else if (strcmp(argv[arg_idx], "--spqr-block-report") == 0) {
             params.spqr_block_report = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-block-scoring") == 0) {
+            params.spqr_block_scoring = true;
+            params.spqr_block_report = true;
         } else if (strcmp(argv[arg_idx], "--print-layer-delta-report") == 0) {
             params.print_layer_delta_report = true;
         } else if (strcmp(argv[arg_idx], "--spqr-block-size") == 0) {
@@ -635,6 +641,10 @@ int llama_quantize(int argc, char ** argv) {
         usage(argv[0]);
     }
     if (!included_weights.empty() && !excluded_weights.empty()) {
+        usage(argv[0]);
+    }
+    if (params.spqr_block_scoring && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        fprintf(stderr, "%s: --spqr-block-scoring requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
         usage(argv[0]);
     }
 

@@ -49,6 +49,7 @@ enum class sensitivity_source {
     NONE,
     HEURISTIC,
     IMATRIX,
+    IMATRIX_BLOCKS,
 };
 
 enum class layer_similarity_bucket {
@@ -199,6 +200,7 @@ static const char * sensitivity_source_name(sensitivity_source source) {
     switch (source) {
         case sensitivity_source::HEURISTIC: return "heuristic";
         case sensitivity_source::IMATRIX:   return "imatrix";
+        case sensitivity_source::IMATRIX_BLOCKS: return "imatrix-blocks";
         case sensitivity_source::NONE:      return "none";
     }
     return "none";
@@ -374,6 +376,7 @@ struct quantize_state_impl {
     int n_spqr_medium   = 0;
     int n_spqr_high     = 0;
     int n_spqr_promoted = 0;
+    int n_spqr_block_scored = 0;
     int n_delta_low     = 0;
     int n_delta_medium  = 0;
     int n_delta_high    = 0;
@@ -1307,10 +1310,12 @@ static sensitivity_bucket bucket_from_score(float score, float medium_threshold,
     return sensitivity_bucket::LOW;
 }
 
-static void init_spqr_guided_block_report(
+static void init_spqr_guided_block_scoring(
+        quantize_state_impl & qs,
         std::vector<tensor_metadata> & metadata,
         const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
-        int32_t block_size) {
+        int32_t block_size,
+        bool apply_scoring) {
     if (block_size <= 0) {
         block_size = 256;
     }
@@ -1392,10 +1397,50 @@ static void init_spqr_guided_block_report(
         }
     }
 
-    LLAMA_LOG_INFO("%s: SPQR-guided block sensitivity report enabled (block_size=%d, %s)\n",
+    if (apply_scoring && use_imatrix_blocks) {
+        qs.n_spqr_low = qs.n_spqr_medium = qs.n_spqr_high = 0;
+        qs.n_spqr_block_scored = 0;
+
+        for (auto & tm : metadata) {
+            if (!tm.allows_quantization) {
+                continue;
+            }
+
+            if (tm.block_count > 1) {
+                const float high_fraction = (float) tm.block_high / tm.block_count;
+                const float elevated_fraction = (float) (tm.block_high + tm.block_medium) / tm.block_count;
+
+                // A small sensitive region should protect the tensor, but a single
+                // noisy block should not promote the entire tensor.
+                if (high_fraction >= 0.35f) {
+                    tm.sensitivity = sensitivity_bucket::HIGH;
+                } else if (high_fraction >= 0.15f || elevated_fraction >= 0.50f) {
+                    tm.sensitivity = sensitivity_bucket::MEDIUM;
+                } else {
+                    tm.sensitivity = sensitivity_bucket::LOW;
+                }
+                tm.sensitivity_score = 2.0f * high_fraction + elevated_fraction;
+                tm.sensitivity_from = sensitivity_source::IMATRIX_BLOCKS;
+                ++qs.n_spqr_block_scored;
+            }
+
+            switch (tm.sensitivity) {
+                case sensitivity_bucket::LOW:    ++qs.n_spqr_low;    break;
+                case sensitivity_bucket::MEDIUM: ++qs.n_spqr_medium; break;
+                case sensitivity_bucket::HIGH:   ++qs.n_spqr_high;   break;
+                case sensitivity_bucket::UNKNOWN: break;
+            }
+        }
+    }
+
+    LLAMA_LOG_INFO("%s: SPQR-guided block sensitivity %s enabled (block_size=%d, %s)\n",
             __func__,
+            apply_scoring ? "scoring" : "report",
             block_size,
             use_imatrix_blocks ? "imatrix block percentiles" : "tensor-bucket fallback");
+    if (apply_scoring && !use_imatrix_blocks) {
+        LLAMA_LOG_WARN("%s: block scoring requested but insufficient imatrix block data; keeping tensor-level sensitivity\n", __func__);
+    }
 }
 
 static void init_spqr_guided_sensitivity(
@@ -1609,8 +1654,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
             params->print_layer_delta_report) {
         init_spqr_guided_sensitivity(qs, metadata, imatrix_data);
-        if (params->spqr_block_report) {
-            init_spqr_guided_block_report(metadata, imatrix_data, params->spqr_block_size);
+        if (params->spqr_block_report || params->spqr_block_scoring) {
+            init_spqr_guided_block_scoring(qs, metadata, imatrix_data, params->spqr_block_size, params->spqr_block_scoring);
         }
     }
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA || params->print_layer_delta_report) {
@@ -1919,11 +1964,12 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
-        LLAMA_LOG_INFO("%s: spqr-guided summary: high=%d medium=%d low=%d promoted=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
+        LLAMA_LOG_INFO("%s: spqr-guided summary: high=%d medium=%d low=%d block_scored=%d promoted=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
                 __func__,
                 qs.n_spqr_high,
                 qs.n_spqr_medium,
                 qs.n_spqr_low,
+                qs.n_spqr_block_scored,
                 qs.n_spqr_promoted,
                 total_size_new/1024.0/1024.0,
                 total_size_new*8.0/ml.n_elements);
@@ -1969,6 +2015,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.spqr_block_report           =*/ false,
         /*.spqr_block_size             =*/ 256,
         /*.print_layer_delta_report    =*/ false,
+        /*.spqr_block_scoring          =*/ false,
     };
 
     return result;
@@ -2056,6 +2103,7 @@ void llama_quant_compute_types(
     qs->n_spqr_medium       = 0;
     qs->n_spqr_high         = 0;
     qs->n_spqr_promoted     = 0;
+    qs->n_spqr_block_scored = 0;
     qs->n_delta_low         = 0;
     qs->n_delta_medium      = 0;
     qs->n_delta_high        = 0;
@@ -2081,8 +2129,8 @@ void llama_quant_compute_types(
     if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
         init_spqr_guided_sensitivity(*qs, metadata, nullptr);
-        if (local_params.spqr_block_report) {
-            init_spqr_guided_block_report(metadata, nullptr, local_params.spqr_block_size);
+        if (local_params.spqr_block_report || local_params.spqr_block_scoring) {
+            init_spqr_guided_block_scoring(*qs, metadata, nullptr, local_params.spqr_block_size, local_params.spqr_block_scoring);
         }
     }
 

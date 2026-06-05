@@ -482,6 +482,18 @@ static bool run_spqr_guided_smoke() {
         }
     }
 
+    qparams.spqr_block_scoring = true;
+    llama_quant_compute_types(qs, LLAMA_FTYPE_MOSTLY_Q3_K_M, tensors.data(), result_types.data(), tensors.size());
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        if (result_types[i] != expected[i].second) {
+            printf("  FAIL  spqr block fallback %-22s expected %s, got %s\n",
+                    expected[i].first,
+                    ggml_type_name(expected[i].second),
+                    ggml_type_name(result_types[i]));
+            ok = false;
+        }
+    }
+
     llama_quant_free(qs);
     llama_model_free(model);
 
