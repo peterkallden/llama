@@ -248,6 +248,8 @@ static void usage(const char * executable) {
     printf("                                      absolute weighted-error ceiling for repair candidates (default: 0.001)\n");
     printf("  --spqr-teacher-repair\n");
     printf("                                      try clipping repair for aggressive tensors using FP weights as teacher proxy\n");
+    printf("  --spqr-layer-output-repair\n");
+    printf("                                      enable teacher repair with imatrix-weighted layer-output proxy and source-gain sweep\n");
     printf("  --spqr-teacher-repair-min-error X\n");
     printf("                                      proxy-error threshold before teacher repair is attempted (default: 0.002)\n");
     printf("  --spqr-teacher-repair-min-improvement X\n");
@@ -897,6 +899,10 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair") == 0) {
             params.spqr_teacher_repair = true;
             params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-layer-output-repair") == 0) {
+            params.spqr_teacher_repair = true;
+            params.spqr_layer_output_repair = true;
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0 ||
                 strcmp(argv[arg_idx], "--spqr-teacher-repair-min-improvement") == 0) {
             const bool is_error = strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0;
@@ -1081,7 +1087,7 @@ int llama_quantize(int argc, char ** argv) {
         usage(argv[0]);
     }
     if (params.spqr_teacher_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
-        fprintf(stderr, "%s: --spqr-teacher-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
+        fprintf(stderr, "%s: --spqr-teacher-repair/--spqr-layer-output-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {

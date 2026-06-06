@@ -171,12 +171,19 @@ Teacher repair is a separate aggressive-bitrate repair probe:
   --mixed-policy spqr_layer_delta \
   --rd-guided \
   --spqr-teacher-repair \
+  --spqr-layer-output-repair \
   --spqr-teacher-repair-min-error 0.002 \
   --spqr-teacher-repair-min-improvement 0.05 \
   input-f16.gguf output-teacher-repaired.gguf Q3_K_M
 ```
 
-This is loosely OmniQuant-inspired because it tries a cheap clipping repair before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a proxy. When the selected type has high proxy error, it sweeps a few clipping percentiles and accepts clipping only if the proxy error improves by the configured fraction. The exported model still uses normal GGUF tensor types; no residual, codebook, or runtime format is introduced.
+This is loosely OmniQuant-inspired because it tries a cheap repair before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
+
+```text
+E[||X(W - Wq)||^2] ~= sum_j imatrix[j] * (W[j] - Wq[j])^2
+```
+
+When the selected type has high proxy error, it sweeps a few clipping percentiles. With `--spqr-layer-output-repair`, it also sweeps small source-gain multipliers before quantization. Accepted repairs are exportable because they are applied to the source values before writing the normal quantized tensor. No residual, codebook, learned transform, or runtime format is introduced. Without imatrix data, the pass falls back to an unweighted reconstruction proxy.
 
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 
