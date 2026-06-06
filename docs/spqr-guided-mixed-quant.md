@@ -162,9 +162,11 @@ SPQR repair can be enabled as an additional experimental repair-before-promote p
   input-f16.gguf output-spqr-repair.gguf Q3_K_M
 ```
 
-This pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected. Clipping, gain correction, rotation, residual, and codebook repair are intentionally left as future probe/report-only extensions.
+This is the main opt-in repair flag. It combines the cheaper-candidate pass with the aggressive teacher-repair pass below. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
 
-Teacher repair is a separate aggressive-bitrate repair probe:
+The aggressive teacher-repair side is used when the selected type is already low-bit, has high proxy error, or when a soft size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, the repair threshold is lowered internally so the aggressive repair probe runs more often before the policy spends extra precision. `--spqr-aggressive-repair` is kept as an alias for `--spqr-repair` when it is useful to make that intent explicit in scripts.
+
+Teacher repair can still be controlled explicitly:
 
 ```bash
 ./build/bin/llama-quantize \
@@ -177,7 +179,7 @@ Teacher repair is a separate aggressive-bitrate repair probe:
   input-f16.gguf output-teacher-repaired.gguf Q3_K_M
 ```
 
-This is loosely OmniQuant-inspired because it tries a cheap repair before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
+This side is loosely OmniQuant-inspired because it tries a cheap repair before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
 
 ```text
 E[||X(W - Wq)||^2] ~= sum_j imatrix[j] * (W[j] - Wq[j])^2

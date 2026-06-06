@@ -241,13 +241,15 @@ static void usage(const char * executable) {
     printf("  --print-rd-refinement-report\n");
     printf("                                      print local refinement ranking and updated selections\n");
     printf("  --spqr-repair\n");
-    printf("                                      inspect selected types and accept cheaper safe repair candidates when RD error is low\n");
+    printf("                                      enable repair-before-promote: cheaper safe candidates plus aggressive teacher repair\n");
     printf("  --spqr-repair-accept-ratio X\n");
     printf("                                      accept repair candidate if error <= selected-type error * X (default: 1.05)\n");
     printf("  --spqr-repair-max-error X\n");
     printf("                                      absolute weighted-error ceiling for repair candidates (default: 0.001)\n");
     printf("  --spqr-teacher-repair\n");
     printf("                                      try clipping repair for aggressive tensors using FP weights as teacher proxy\n");
+    printf("  --spqr-aggressive-repair\n");
+    printf("                                      alias for --spqr-repair; kept to make aggressive bitrate repair explicit\n");
     printf("  --spqr-layer-output-repair\n");
     printf("                                      enable teacher repair with imatrix-weighted layer-output proxy and source-gain sweep\n");
     printf("  --spqr-teacher-repair-min-error X\n");
@@ -861,10 +863,13 @@ int llama_quantize(int argc, char ** argv) {
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--spqr-repair") == 0 ||
                 strcmp(argv[arg_idx], "--sqpr-repair") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-aggressive-repair") == 0 ||
                 strcmp(argv[arg_idx], "--spqr-rbp") == 0 ||
                 strcmp(argv[arg_idx], "--spqr-repair-before-promote") == 0 ||
                 strcmp(argv[arg_idx], "--spqr-q8-prevention") == 0) {
             params.spqr_repair = true;
+            params.spqr_teacher_repair = true;
+            params.spqr_layer_output_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--spqr-repair-accept-ratio") == 0 ||
                 strcmp(argv[arg_idx], "--spqr-repair-max-error") == 0 ||
@@ -895,6 +900,8 @@ int llama_quantize(int argc, char ** argv) {
                 params.spqr_repair_max_error = value;
             }
             params.spqr_repair = true;
+            params.spqr_teacher_repair = true;
+            params.spqr_layer_output_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair") == 0) {
             params.spqr_teacher_repair = true;

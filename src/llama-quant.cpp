@@ -2437,9 +2437,18 @@ static void apply_spqr_teacher_repair(
         const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
         int nthread) {
     const llama_model_quantize_params * params = qs.params;
-    if (!params->spqr_teacher_repair || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+    const bool repair_enabled = params->spqr_teacher_repair || params->spqr_repair;
+    if (!repair_enabled || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
+    const bool budget_limited = params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
+    const bool layer_output_proxy = params->spqr_layer_output_repair || params->spqr_repair;
+    const float effective_min_error = params->spqr_repair && budget_limited ?
+        params->spqr_teacher_repair_min_error * 0.05f :
+        params->spqr_teacher_repair_min_error;
+    const float effective_min_improvement = params->spqr_repair && budget_limited ?
+        std::min(params->spqr_teacher_repair_min_improvement, 0.001f) :
+        params->spqr_teacher_repair_min_improvement;
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -2464,9 +2473,9 @@ static void apply_spqr_teacher_repair(
         }
 
         const bool aggressive_candidate =
-            params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
+            budget_limited ||
             ggml_type_is_below_q4_for_policy(tm.target_type) ||
-            tm.rd_distortion >= params->spqr_teacher_repair_min_error;
+            tm.rd_distortion >= effective_min_error;
         if (!aggressive_candidate) {
             continue;
         }
@@ -2484,8 +2493,8 @@ static void apply_spqr_teacher_repair(
         const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
         const spqr_teacher_repair_result repair = evaluate_teacher_repair_clipping(
                 tensor, data, imatrix, tm.target_type, sample_rows,
-                params->spqr_teacher_repair_min_error, params->spqr_teacher_repair_min_improvement,
-                params->spqr_layer_output_repair);
+                effective_min_error, effective_min_improvement,
+                layer_output_proxy);
 
         if (repair.base_error < 0.0f) {
             continue;
@@ -2494,7 +2503,7 @@ static void apply_spqr_teacher_repair(
         ++evaluated;
         tm.teacher_repair_error_before = repair.base_error;
         tm.teacher_repair_error_after = repair.repaired_error;
-        if (repair.base_error < params->spqr_teacher_repair_min_error) {
+        if (repair.base_error < effective_min_error) {
             ++skipped_low_error;
         }
         if (repair.clip_abs > 0.0f) {
@@ -2518,10 +2527,12 @@ static void apply_spqr_teacher_repair(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: spqr-teacher-repair evaluated=%d repaired=%d skipped_low_error=%d layer_output_proxy=%s min_error=%g min_improvement=%.3f\n",
+        LLAMA_LOG_INFO("%s: spqr-teacher-repair evaluated=%d repaired=%d skipped_low_error=%d layer_output_proxy=%s budget_limited=%s min_error=%g configured_min_error=%g min_improvement=%.3f configured_min_improvement=%.3f\n",
                 __func__, evaluated, clipped, skipped_low_error,
-                params->spqr_layer_output_repair ? "yes" : "no",
-                params->spqr_teacher_repair_min_error, params->spqr_teacher_repair_min_improvement);
+                layer_output_proxy ? "yes" : "no",
+                budget_limited ? "yes" : "no",
+                effective_min_error, params->spqr_teacher_repair_min_error,
+                effective_min_improvement, params->spqr_teacher_repair_min_improvement);
     }
 }
 
