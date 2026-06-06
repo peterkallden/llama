@@ -512,6 +512,19 @@ struct tensor_metadata {
     float           teacher_repair_error_after;
 };
 
+static bool tensor_type_can_convert_to_f32(ggml_type type) {
+    if (type == GGML_TYPE_F32 ||
+            type == GGML_TYPE_F16 ||
+            type == GGML_TYPE_BF16) {
+        return true;
+    }
+    if (!ggml_is_quantized(type)) {
+        return false;
+    }
+    const ggml_type_traits * traits = ggml_get_type_traits(type);
+    return traits && traits->to_float;
+}
+
 //
 // dequantization
 //
@@ -526,12 +539,7 @@ static void llama_tensor_dequantize_impl(
     float * f32_output = (float *) output.data();
 
     const ggml_type_traits * qtype = ggml_get_type_traits(tensor->type);
-    if (ggml_is_quantized(tensor->type)) {
-        if (qtype->to_float == NULL) {
-            throw std::runtime_error(format("type %s unsupported for integer quantization: no dequantization available", ggml_type_name(tensor->type)));
-        }
-    } else if (tensor->type != GGML_TYPE_F16 &&
-               tensor->type != GGML_TYPE_BF16) {
+    if (!tensor_type_can_convert_to_f32(tensor->type) || tensor->type == GGML_TYPE_F32) {
         throw std::runtime_error(format("cannot dequantize/convert tensor type %s", ggml_type_name(tensor->type)));
     }
 
@@ -3128,6 +3136,56 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         metadata[i].teacher_repair_error_after = 0.0f;
     }
 
+    int source_f32 = 0;
+    int source_f16 = 0;
+    int source_bf16 = 0;
+    int source_quantized_convertible = 0;
+    int source_quantized_unsupported = 0;
+    int source_other = 0;
+    std::map<ggml_type, int> auto_requantize_types;
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        const ggml_tensor * tensor = tensors[i]->tensor;
+        switch (tensor->type) {
+            case GGML_TYPE_F32:  ++source_f32;  break;
+            case GGML_TYPE_F16:  ++source_f16;  break;
+            case GGML_TYPE_BF16: ++source_bf16; break;
+            default:
+                if (ggml_is_quantized(tensor->type)) {
+                    if (tensor_type_can_convert_to_f32(tensor->type)) {
+                        ++source_quantized_convertible;
+                        if (metadata[i].allows_quantization) {
+                            ++auto_requantize_types[tensor->type];
+                        }
+                    } else {
+                        ++source_quantized_unsupported;
+                        if (metadata[i].allows_quantization) {
+                            throw std::runtime_error(format(
+                                    "cannot automatically requantize tensor %s from source type %s: source type has no to_float converter",
+                                    tensor->name, ggml_type_name(tensor->type)));
+                        }
+                    }
+                } else {
+                    ++source_other;
+                    if (metadata[i].allows_quantization && !tensor_type_can_convert_to_f32(tensor->type)) {
+                        throw std::runtime_error(format(
+                                "cannot automatically requantize tensor %s from non-floating source type %s",
+                                tensor->name, ggml_type_name(tensor->type)));
+                    }
+                }
+                break;
+        }
+    }
+    if (source_f32 > 0 || source_bf16 > 0 || source_quantized_convertible > 0 ||
+            source_quantized_unsupported > 0 || source_other > 0) {
+        LLAMA_LOG_INFO("%s: source tensor types: f32=%d f16=%d bf16=%d quantized_convertible=%d quantized_unsupported=%d other=%d\n",
+                __func__, source_f32, source_f16, source_bf16,
+                source_quantized_convertible, source_quantized_unsupported, source_other);
+    }
+    for (const auto & kv : auto_requantize_types) {
+        LLAMA_LOG_WARN("%s: automatically allowing requantize from source type %s for %d quantizable tensor(s) because to_float is available\n",
+                __func__, ggml_type_name(kv.first), kv.second);
+    }
+
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
             params->print_layer_delta_report ||
@@ -3403,9 +3461,14 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
                 if (tensor->type == GGML_TYPE_F32) {
                     f32_data = (float *) tensor->data;
-                } else if (ggml_is_quantized(tensor->type) && !params->allow_requantize) {
-                    throw std::runtime_error(format("requantizing from type %s is disabled", ggml_type_name(tensor->type)));
+                } else if (!tensor_type_can_convert_to_f32(tensor->type)) {
+                    throw std::runtime_error(format(
+                            "cannot requantize tensor %s from source type %s: source type has no to_float converter",
+                            tensor->name, ggml_type_name(tensor->type)));
                 } else {
+                    if (ggml_is_quantized(tensor->type) && !params->allow_requantize) {
+                        LLAMA_LOG_WARN("auto-requantize source=%s .. ", ggml_type_name(tensor->type));
+                    }
                     llama_tensor_dequantize_impl(tensor, f32_conv_buf, workers, nelements, nthread);
                     f32_data = (float *) f32_conv_buf.data();
                 }

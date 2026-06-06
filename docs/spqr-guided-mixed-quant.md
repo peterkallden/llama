@@ -242,6 +242,8 @@ Optionally provide a soft global size target:
 
 `--rd-target-bpw` and `--rd-target-size-mib` are mutually exclusive and optional. Without either target, RD selection behaves as before. With a target, the allocator uses a bounded budget pass: it chooses one existing tensor type from each collected RD curve and increases compression pressure until the requested estimated tensor-payload size is reached, as long as the available candidates and safety floors allow it. If the target is still unreachable after every allocatable tensor has moved to its smallest allowed candidate, the report marks the run as `bounded-limit`. The report also prints an estimated quality cost, measured as the additional weighted distortion versus the highest-quality RD allocation. GGUF metadata and alignment can make the final file slightly larger than the tensor-payload target. This candidate interface is the extension point through which future compression methods can participate in the same allocation.
 
+The POC is usually run from F16/BF16/F32 GGUF inputs, but it can also analyze and requantize an already-quantized source when the source ggml type exposes a `to_float` converter. In that case the quantizer logs the source type and automatically allows requantization for that run. If a quantized or non-floating source type cannot be converted back to float, the run fails early with an explicit error instead of silently producing an invalid profile or output.
+
 Precompute reusable analysis while generating an imatrix:
 
 ```bash
