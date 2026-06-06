@@ -420,6 +420,8 @@ struct quantize_state_impl {
     int n_anchor_tensors = 0;
     int n_rd_selected = 0;
     float rd_allocation_lambda = 0.0f;
+    float rd_budget_distortion_base = 0.0f;
+    float rd_budget_distortion_selected = 0.0f;
     size_t rd_target_bytes = 0;
     size_t rd_estimated_bytes = 0;
     bool rd_quality_limited = false;
@@ -2337,6 +2339,16 @@ static void apply_spqr_repair(
     int evaluated = 0;
     int repaired = 0;
     int kept_selected = 0;
+    const bool budget_limited = params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
+    const float effective_accept_ratio = budget_limited ?
+        std::max(params->spqr_repair_accept_ratio, 1.25f) :
+        params->spqr_repair_accept_ratio;
+    const float effective_max_error = budget_limited ?
+        std::max(params->spqr_repair_max_error, 0.005f) :
+        params->spqr_repair_max_error;
+    const float cost_lambda = budget_limited ?
+        std::max(params->rd_lambda, qs.rd_allocation_lambda) :
+        params->rd_lambda;
     for (size_t i = 0; i < metadata.size(); ++i) {
         tensor_metadata & tm = metadata[i];
         ggml_tensor * tensor = tensors[i]->tensor;
@@ -2385,11 +2397,11 @@ static void apply_spqr_repair(
             }
 
             const bool under_relative_gate =
-                candidate.composite_error <= selected.composite_error * params->spqr_repair_accept_ratio;
+                candidate.composite_error <= selected.composite_error * effective_accept_ratio;
             const bool under_absolute_gate =
-                candidate.weighted_mse <= params->spqr_repair_max_error;
-            const float candidate_cost = candidate.composite_error + params->rd_lambda * candidate.bpw;
-            const float best_cost = best.composite_error + params->rd_lambda * best.bpw;
+                candidate.weighted_mse <= effective_max_error;
+            const float candidate_cost = candidate.composite_error + cost_lambda * candidate.bpw;
+            const float best_cost = best.composite_error + cost_lambda * best.bpw;
             if ((under_relative_gate || under_absolute_gate) && candidate_cost < best_cost) {
                 best = candidate;
                 accepted = true;
@@ -2409,7 +2421,7 @@ static void apply_spqr_repair(
             tm.rd_type = best.type;
             tm.rd_distortion = best.weighted_mse / std::max(1e-20f, distortion_weight);
             tm.rd_bpw = best.bpw;
-            tm.rd_cost = best.composite_error + params->rd_lambda * best.bpw;
+            tm.rd_cost = best.composite_error + cost_lambda * best.bpw;
             ++repaired;
             LLAMA_LOG_INFO("%s: spqr-repair tensor=%-36s original=%-7s repaired=%-7s original_error=%10.6g repaired_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(best.type), selected.weighted_mse,
@@ -2423,9 +2435,11 @@ static void apply_spqr_repair(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: spqr-repair evaluated=%d repaired=%d kept=%d accept_ratio=%.3f max_error=%g\n",
+        LLAMA_LOG_INFO("%s: spqr-repair evaluated=%d repaired=%d kept=%d accept_ratio=%.3f configured_accept_ratio=%.3f max_error=%g configured_max_error=%g budget_limited=%s\n",
                 __func__, evaluated, repaired, kept_selected,
-                params->spqr_repair_accept_ratio, params->spqr_repair_max_error);
+                effective_accept_ratio, params->spqr_repair_accept_ratio,
+                effective_max_error, params->spqr_repair_max_error,
+                budget_limited ? "yes" : "no");
     }
 }
 
@@ -2838,8 +2852,6 @@ static const rd_candidate * select_rd_candidate(const tensor_metadata & tm, floa
     return best;
 }
 
-// The target is deliberately soft. rd_lambda is the maximum compression pressure:
-// if that lambda cannot reach the requested size, quality wins and the output remains larger.
 static void apply_rd_soft_target(
         quantize_state_impl & qs,
         const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
@@ -2869,8 +2881,9 @@ static void apply_rd_soft_target(
         }
     }
 
-    auto estimate = [&] (float lambda, bool apply) {
+    auto estimate = [&] (float lambda, bool apply, float * distortion_out = nullptr) {
         size_t total = fixed_bytes;
+        float total_distortion = 0.0f;
         for (size_t i : allocatable) {
             tensor_metadata & tm = metadata[i];
             const rd_candidate * selected = select_rd_candidate(tm, lambda);
@@ -2878,6 +2891,7 @@ static void apply_rd_soft_target(
                 continue;
             }
             total += selected->bytes;
+            total_distortion += selected->weighted_distortion;
             if (apply) {
                 tm.rd_type = selected->type;
                 tm.target_type = selected->type;
@@ -2886,22 +2900,26 @@ static void apply_rd_soft_target(
                 tm.rd_cost = selected->weighted_distortion + lambda * selected->bpw;
             }
         }
+        if (distortion_out) {
+            *distortion_out = total_distortion;
+        }
         return total;
     };
 
-    const float max_lambda = params->rd_lambda;
-    const size_t highest_quality_size = estimate(0.0f, false);
-    const size_t quality_limit_size = estimate(max_lambda, false);
+    float base_distortion = 0.0f;
+    const size_t highest_quality_size = estimate(0.0f, false, &base_distortion);
+    float high = std::max(params->rd_lambda, 1.0e-6f);
+    size_t pressure_size = estimate(high, false);
+    while (pressure_size > target_bytes && high < 1.0e6f) {
+        high *= 2.0f;
+        pressure_size = estimate(high, false);
+    }
     float selected_lambda = 0.0f;
-    bool quality_limited = false;
+    bool budget_limited = false;
 
     if (highest_quality_size > target_bytes) {
-        if (quality_limit_size > target_bytes) {
-            selected_lambda = max_lambda;
-            quality_limited = true;
-        } else {
+        if (pressure_size <= target_bytes) {
             float low = 0.0f;
-            float high = max_lambda;
             for (int iteration = 0; iteration < 48; ++iteration) {
                 const float mid = low + (high - low) * 0.5f;
                 if (estimate(mid, false) <= target_bytes) {
@@ -2911,24 +2929,35 @@ static void apply_rd_soft_target(
                 }
             }
             selected_lambda = high;
+        } else {
+            selected_lambda = high;
+            budget_limited = true;
         }
     }
 
-    const size_t achieved_bytes = estimate(selected_lambda, true);
+    float selected_distortion = 0.0f;
+    const size_t achieved_bytes = estimate(selected_lambda, true, &selected_distortion);
     qs.rd_allocation_lambda = selected_lambda;
+    qs.rd_budget_distortion_base = base_distortion;
+    qs.rd_budget_distortion_selected = selected_distortion;
     qs.rd_target_bytes = target_bytes;
     qs.rd_estimated_bytes = achieved_bytes;
-    qs.rd_quality_limited = quality_limited;
+    qs.rd_quality_limited = budget_limited;
 
-    LLAMA_LOG_INFO("%s: soft RD budget target=%8.2f MiB estimated=%8.2f MiB difference=%+.2f MiB lambda=%.6g/%g status=%s allocatable=%d\n",
+    const float distortion_delta = selected_distortion - base_distortion;
+    const double saved_mib = highest_quality_size > achieved_bytes ?
+        (double) (highest_quality_size - achieved_bytes)/1024.0/1024.0 : 0.0;
+    LLAMA_LOG_INFO("%s: bounded RD budget target=%8.2f MiB estimated=%8.2f MiB difference=%+.2f MiB lambda=%.6g status=%s allocatable=%d quality_cost=%10.6g saved_vs_hq=%8.2f MiB cost_per_mib=%10.6g\n",
             __func__,
             target_bytes/1024.0/1024.0,
             achieved_bytes/1024.0/1024.0,
             ((double) achieved_bytes - target_bytes)/1024.0/1024.0,
             selected_lambda,
-            max_lambda,
-            quality_limited ? "quality-limit" : "target-met",
-            (int) allocatable.size());
+            budget_limited ? "bounded-limit" : "target-met",
+            (int) allocatable.size(),
+            distortion_delta,
+            saved_mib,
+            saved_mib > 0.0 ? distortion_delta / saved_mib : 0.0f);
 
     if (params->print_rd_allocation_report) {
         for (size_t i : allocatable) {
@@ -3487,18 +3516,19 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 qs.n_anchor_layers, qs.n_anchor_tensors, qs.n_delta_demoted);
     }
     if (params->rd_guided) {
-        LLAMA_LOG_INFO("%s: sampled rate-distortion summary: selected=%d lambda=%.6g sample_rows=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
+        LLAMA_LOG_INFO("%s: sampled rate-distortion summary: selected=%d base_lambda=%.6g sample_rows=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
                 __func__, qs.n_rd_selected, params->rd_lambda, params->rd_sample_rows,
                 total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
         if (qs.rd_target_bytes > 0) {
-            LLAMA_LOG_INFO("%s: soft RD budget summary: target=%8.2f MiB actual=%8.2f MiB difference=%+.2f MiB selected_lambda=%.6g max_lambda=%.6g status=%s\n",
+            const float quality_cost = qs.rd_budget_distortion_selected - qs.rd_budget_distortion_base;
+            LLAMA_LOG_INFO("%s: bounded RD budget summary: target=%8.2f MiB actual=%8.2f MiB difference=%+.2f MiB selected_lambda=%.6g quality_cost=%10.6g status=%s\n",
                     __func__,
                     qs.rd_target_bytes/1024.0/1024.0,
                     total_size_new/1024.0/1024.0,
                     ((double) total_size_new - qs.rd_target_bytes)/1024.0/1024.0,
                     qs.rd_allocation_lambda,
-                    params->rd_lambda,
-                    qs.rd_quality_limited ? "quality-limit" : "target-met");
+                    quality_cost,
+                    qs.rd_quality_limited ? "bounded-limit" : "target-met");
         }
     }
 
