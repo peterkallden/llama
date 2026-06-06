@@ -71,6 +71,8 @@ RD-guided quantization can optionally use `--rd-target-bpw` or `--rd-target-size
 
 For tensor shapes that cannot use K-quants, `llama-quantize` can reuse the imatrix-weighted RD machinery to inspect scalar fallbacks. This check is conservative and monotonic: it reports and may upgrade the fallback selected by the normal quantizer, but it does not use the imatrix profile to demote already safer scalar choices. The stored imatrix/profile statistics are shape-independent; the shape-aware decision happens in the quantizer.
 
+The quantizer also has an experimental `--spqr-repair` pass. It treats a selected tensor type as a repair-before-promote candidate, evaluates cheaper compatible types against the same imatrix-weighted samples, and accepts them only when their measured error is close to the selected type or below a conservative absolute threshold.
+
 To avoid repeating candidate evaluation during calibration, periodic and snapshot imatrix saves omit the optional profile. The final output written when calibration completes contains it.
 
 ```bash

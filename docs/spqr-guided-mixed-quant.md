@@ -150,6 +150,20 @@ This remains a normal per-tensor GGUF mixture and requires no runtime changes. T
 
 When a requested K-quant is incompatible with a tensor shape, for example a 896-column row that is not divisible by 256, the SPQR/RD path now runs a small shape-aware scalar fallback check. It evaluates only safe scalar candidates with the same sampled, imatrix-weighted reconstruction metric and logs `scalar-fallback` lines in the RD report. The check is monotonic: it may keep or upgrade llama.cpp's existing fallback, but it never demotes `Q8_0` to `Q5_*` or `Q5_1` to `Q5_0`. Embeddings and output projection remain capped at `Q8_0` in this path. This is intentionally not a mixed-row or remainder format; it still writes one normal GGUF tensor type for the whole tensor.
 
+SPQR repair can be enabled as an additional experimental repair-before-promote probe:
+
+```bash
+./build/bin/llama-quantize \
+  --mixed-policy spqr_layer_delta \
+  --rd-guided \
+  --spqr-repair \
+  --spqr-repair-accept-ratio 1.05 \
+  --spqr-repair-max-error 0.001 \
+  input-f16.gguf output-spqr-repair.gguf Q3_K_M
+```
+
+This pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected. Clipping, gain correction, rotation, residual, and codebook repair are intentionally left as future probe/report-only extensions.
+
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 
 ```bash

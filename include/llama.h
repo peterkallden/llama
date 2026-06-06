@@ -466,6 +466,9 @@ extern "C" {
         const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
         const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
         const struct llama_model_quantize_activity_data * activity_profile; // optional activity-mask statistics, null-terminated
+        bool spqr_repair;                                             // inspect selected types and accept cheaper safe repair candidates when RD error is low
+        float spqr_repair_accept_ratio;                               // accept repair candidate if error <= selected-type error * ratio
+        float spqr_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

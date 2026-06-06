@@ -452,6 +452,16 @@ struct rd_candidate {
     size_t bytes = 0;
 };
 
+struct spqr_repair_eval {
+    ggml_type type = GGML_TYPE_COUNT;
+    float weighted_mse = 0.0f;
+    float gain_error = 0.0f;
+    float shape_error = 0.0f;
+    float outlier_concentration = 0.0f;
+    float composite_error = 0.0f;
+    float bpw = 0.0f;
+};
+
 // per-tensor metadata, computed in the preliminary loop and used in the main loop
 struct tensor_metadata {
     std::string     name;
@@ -1927,6 +1937,113 @@ static bool is_scalar_fallback_type(ggml_type type) {
            type == GGML_TYPE_Q5_1 || type == GGML_TYPE_Q8_0;
 }
 
+static std::vector<ggml_type> spqr_repair_candidate_types(const ggml_tensor * tensor, ggml_type selected_type) {
+    const int64_t ncols = tensor->ne[0];
+    std::vector<ggml_type> candidates;
+    auto add = [&] (ggml_type type) {
+        if (type != selected_type &&
+                ncols % ggml_blck_size(type) == 0 &&
+                ggml_row_size(type, ncols) < ggml_row_size(selected_type, ncols) &&
+                std::find(candidates.begin(), candidates.end(), type) == candidates.end()) {
+            candidates.push_back(type);
+        }
+    };
+
+    add(GGML_TYPE_Q6_K);
+    add(GGML_TYPE_Q5_K);
+    add(GGML_TYPE_Q5_1);
+    add(GGML_TYPE_Q5_0);
+    add(GGML_TYPE_Q4_K);
+    add(GGML_TYPE_Q4_1);
+    add(GGML_TYPE_Q4_0);
+    add(GGML_TYPE_Q3_K);
+    return candidates;
+}
+
+static spqr_repair_eval evaluate_spqr_repair_candidate(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type candidate,
+        int sample_rows,
+        float distortion_weight) {
+    spqr_repair_eval result;
+    result.type = candidate;
+
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    if (!ggml_is_quantized(candidate) ||
+            ncols % ggml_blck_size(candidate) != 0 ||
+            (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
+        result.type = GGML_TYPE_COUNT;
+        return result;
+    }
+
+    const ggml_type_traits * traits = ggml_get_type_traits(candidate);
+    if (!traits || !traits->to_float) {
+        result.type = GGML_TYPE_COUNT;
+        return result;
+    }
+
+    std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
+    std::vector<float> reconstructed(ncols);
+    std::vector<double> weighted_errors;
+    weighted_errors.reserve(ncols);
+
+    double weighted_mse = 0.0;
+    double gain_error = 0.0;
+    double shape_error = 0.0;
+    double outlier_concentration = 0.0;
+
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * src = data.data() + row * ncols;
+        const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+        const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+
+        ggml_quantize_chunk(candidate, src, quantized.data(), 0, 1, ncols, row_imatrix);
+        traits->to_float(quantized.data(), reconstructed.data(), ncols);
+
+        double error_sum = 0.0;
+        double signal_sum = 0.0;
+        double src_norm = 0.0;
+        double rec_norm = 0.0;
+        double dot = 0.0;
+        weighted_errors.clear();
+        for (int64_t col = 0; col < ncols; ++col) {
+            const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+            const double src_v = src[col];
+            const double rec_v = reconstructed[col];
+            const double delta = src_v - rec_v;
+            const double weighted_error = weight * delta * delta;
+            weighted_errors.push_back(weighted_error);
+            error_sum += weighted_error;
+            signal_sum += weight * src_v * src_v;
+            src_norm += src_v * src_v;
+            rec_norm += rec_v * rec_v;
+            dot += src_v * rec_v;
+        }
+
+        weighted_mse += error_sum / (signal_sum + 1e-20);
+        gain_error += std::abs(std::sqrt(src_norm) - std::sqrt(rec_norm)) / (std::sqrt(src_norm) + 1e-20);
+        const double cosine = dot / (std::sqrt(src_norm * rec_norm) + 1e-20);
+        shape_error += std::max(0.0, 1.0 - cosine);
+
+        std::sort(weighted_errors.begin(), weighted_errors.end(), std::greater<double>());
+        const size_t top_n = std::max<size_t>(1, weighted_errors.size() / 20);
+        const double top_error = std::accumulate(weighted_errors.begin(), weighted_errors.begin() + top_n, 0.0);
+        outlier_concentration += error_sum > 0.0 ? top_error / error_sum : 0.0;
+    }
+
+    result.weighted_mse = distortion_weight * (float) (weighted_mse / sample_rows);
+    result.gain_error = (float) (gain_error / sample_rows);
+    result.shape_error = (float) (shape_error / sample_rows);
+    result.outlier_concentration = (float) (outlier_concentration / sample_rows);
+    result.composite_error = result.weighted_mse + 0.05f * result.gain_error + 0.05f * result.shape_error;
+    result.bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
+    return result;
+}
+
 static std::vector<ggml_type> scalar_fallback_candidate_types(const tensor_metadata & tm, ggml_type original_type) {
     if (tm.category == tensor_category::TOKEN_EMBD || tm.category == tensor_category::OUTPUT) {
         return { GGML_TYPE_Q8_0 };
@@ -2037,6 +2154,119 @@ static void apply_shape_aware_scalar_fallback(
     if (evaluated > 0) {
         LLAMA_LOG_INFO("%s: shape-aware scalar fallback evaluated=%d changed=%d\n",
                 __func__, evaluated, changed);
+    }
+}
+
+static void apply_spqr_repair(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->spqr_repair || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    int evaluated = 0;
+    int repaired = 0;
+    int kept_selected = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                !ggml_is_quantized(tm.target_type) ||
+                ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const ggml_type selected_type = tm.target_type;
+        const std::vector<ggml_type> candidates = spqr_repair_candidate_types(tensor, selected_type);
+        if (candidates.empty()) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        const float distortion_weight = rd_distortion_weight(tm);
+        const spqr_repair_eval selected = evaluate_spqr_repair_candidate(
+                tensor, data, imatrix, selected_type, sample_rows, distortion_weight);
+        if (selected.type == GGML_TYPE_COUNT) {
+            continue;
+        }
+
+        ++evaluated;
+        spqr_repair_eval best = selected;
+        bool accepted = false;
+        for (ggml_type candidate_type : candidates) {
+            const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
+                    tensor, data, imatrix, candidate_type, sample_rows, distortion_weight);
+            if (candidate.type == GGML_TYPE_COUNT) {
+                continue;
+            }
+
+            const bool under_relative_gate =
+                candidate.composite_error <= selected.composite_error * params->spqr_repair_accept_ratio;
+            const bool under_absolute_gate =
+                candidate.weighted_mse <= params->spqr_repair_max_error;
+            const float candidate_cost = candidate.composite_error + params->rd_lambda * candidate.bpw;
+            const float best_cost = best.composite_error + params->rd_lambda * best.bpw;
+            if ((under_relative_gate || under_absolute_gate) && candidate_cost < best_cost) {
+                best = candidate;
+                accepted = true;
+            }
+
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: spqr-repair-candidate tensor=%-36s selected=%-7s type=%-7s weighted_mse=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f selected_mse=%10.6g accepted=%s\n",
+                        __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type), candidate.weighted_mse,
+                        candidate.gain_error, candidate.shape_error, candidate.outlier_concentration,
+                        candidate.bpw, selected.weighted_mse,
+                        (candidate.type == best.type && accepted) ? "yes" : "no");
+            }
+        }
+
+        if (accepted && best.type != selected_type) {
+            tm.target_type = best.type;
+            tm.rd_type = best.type;
+            tm.rd_distortion = best.weighted_mse / std::max(1e-20f, distortion_weight);
+            tm.rd_bpw = best.bpw;
+            tm.rd_cost = best.composite_error + params->rd_lambda * best.bpw;
+            ++repaired;
+            LLAMA_LOG_INFO("%s: spqr-repair tensor=%-36s original=%-7s repaired=%-7s original_error=%10.6g repaired_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f\n",
+                    __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(best.type), selected.weighted_mse,
+                    best.weighted_mse, best.gain_error, best.shape_error, best.outlier_concentration, best.bpw);
+        } else {
+            ++kept_selected;
+            LLAMA_LOG_INFO("%s: spqr-repair tensor=%-36s selected=%-7s reason=kept selected_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f\n",
+                    __func__, tm.name.c_str(), ggml_type_name(selected.type),
+                    selected.weighted_mse, selected.gain_error, selected.shape_error, selected.outlier_concentration);
+        }
+    }
+
+    if (evaluated > 0) {
+        LLAMA_LOG_INFO("%s: spqr-repair evaluated=%d repaired=%d kept=%d accept_ratio=%.3f max_error=%g\n",
+                __func__, evaluated, repaired, kept_selected,
+                params->spqr_repair_accept_ratio, params->spqr_repair_max_error);
     }
 }
 
@@ -2681,7 +2911,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     }
 
     apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
-    if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f) {
+    apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
+    if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f || params->spqr_repair) {
         for (size_t i = 0; i < tensors.size(); ++i) {
             metadata[i].requires_imatrix = tensor_requires_imatrix(
                     tensors[i]->tensor->name, metadata[i].target_type, ftype);
@@ -3036,6 +3267,9 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.rd_profile                  =*/ nullptr,
         /*.layer_delta_profile         =*/ nullptr,
         /*.activity_profile            =*/ nullptr,
+        /*.spqr_repair                 =*/ false,
+        /*.spqr_repair_accept_ratio    =*/ 1.05f,
+        /*.spqr_repair_max_error       =*/ 0.001f,
     };
 
     return result;

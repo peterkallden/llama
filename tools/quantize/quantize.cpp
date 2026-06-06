@@ -240,6 +240,12 @@ static void usage(const char * executable) {
     printf("                                      maximum rows sampled for local high-fidelity refinement (default: 32)\n");
     printf("  --print-rd-refinement-report\n");
     printf("                                      print local refinement ranking and updated selections\n");
+    printf("  --spqr-repair\n");
+    printf("                                      inspect selected types and accept cheaper safe repair candidates when RD error is low\n");
+    printf("  --spqr-repair-accept-ratio X\n");
+    printf("                                      accept repair candidate if error <= selected-type error * X (default: 1.05)\n");
+    printf("  --spqr-repair-max-error X\n");
+    printf("                                      absolute weighted-error ceiling for repair candidates (default: 0.001)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -844,6 +850,43 @@ int llama_quantize(int argc, char ** argv) {
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--print-rd-refinement-report") == 0) {
             params.print_rd_refinement_report = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-repair") == 0 ||
+                strcmp(argv[arg_idx], "--sqpr-repair") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-rbp") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-repair-before-promote") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-q8-prevention") == 0) {
+            params.spqr_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-repair-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-repair-max-error") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-rbp-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-rbp-max-error") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-q8-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-q8-max-error") == 0) {
+            const bool is_ratio =
+                strcmp(argv[arg_idx], "--spqr-repair-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-rbp-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-q8-accept-ratio") == 0;
+            float value = 0.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = 0.0f;
+                }
+            }
+            if (!std::isfinite(value) || value <= 0.0f) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__,
+                        is_ratio ? "--spqr-repair-accept-ratio" : "--spqr-repair-max-error");
+                usage(argv[0]);
+            }
+            if (is_ratio) {
+                params.spqr_repair_accept_ratio = value;
+            } else {
+                params.spqr_repair_max_error = value;
+            }
+            params.spqr_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
                 strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
