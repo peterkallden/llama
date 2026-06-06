@@ -67,7 +67,32 @@ Without an imatrix, the policy uses conservative tensor-name defaults:
 
 ## Usage
 
-Build `llama-quantize` as usual, then run:
+Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` use RD-guided type selection plus `--spqr-repair`.
+
+```bash
+./build/bin/llama-imatrix \
+  -m input-f16.gguf \
+  -f calibration-data.txt \
+  --collect-quant-profile \
+  --quant-profile-sample-rows 8 \
+  --quant-profile-refine-top-k 16 \
+  --quant-profile-refine-rows 32 \
+  --quant-profile-block-size 256 \
+  -o imatrix-profile.gguf
+
+./build/bin/llama-quantize \
+  --imatrix imatrix-profile.gguf \
+  --mixed-policy spqr_layer_delta \
+  --spqr-block-scoring \
+  --adaptive-anchors \
+  --rd-guided \
+  --spqr-repair \
+  input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
+```
+
+In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--spqr-repair` then acts as a repair-before-promote pass. It can accept cheaper safe candidates, and in budget-limited runs it probes aggressive teacher/layer-output repairs more often before spending extra precision. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+
+For a smaller sensitivity-only smoke test, run:
 
 ```bash
 ./build/bin/llama-quantize --mixed-policy spqr_guided input-f16.gguf output-spqr-guided.gguf Q3_K_M
@@ -150,7 +175,7 @@ This remains a normal per-tensor GGUF mixture and requires no runtime changes. T
 
 When a requested K-quant is incompatible with a tensor shape, for example a 896-column row that is not divisible by 256, the SPQR/RD path now runs a small shape-aware scalar fallback check. It evaluates only safe scalar candidates with the same sampled, imatrix-weighted reconstruction metric and logs `scalar-fallback` lines in the RD report. The check is monotonic: it may keep or upgrade llama.cpp's existing fallback, but it never demotes `Q8_0` to `Q5_*` or `Q5_1` to `Q5_0`. Embeddings and output projection remain capped at `Q8_0` in this path. This is intentionally not a mixed-row or remainder format; it still writes one normal GGUF tensor type for the whole tensor.
 
-SPQR repair can be enabled as an additional experimental repair-before-promote probe:
+After RD selection, enable SPQR repair as the repair-before-promote step:
 
 ```bash
 ./build/bin/llama-quantize \
@@ -159,7 +184,7 @@ SPQR repair can be enabled as an additional experimental repair-before-promote p
   --spqr-repair \
   --spqr-repair-accept-ratio 1.05 \
   --spqr-repair-max-error 0.001 \
-  input-f16.gguf output-spqr-repair.gguf Q3_K_M
+  input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
 This is the main opt-in repair flag. It combines the cheaper-candidate pass with the aggressive teacher-repair pass below. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
