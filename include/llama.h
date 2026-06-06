@@ -469,6 +469,9 @@ extern "C" {
         bool spqr_repair;                                             // inspect selected types and accept cheaper safe repair candidates when RD error is low
         float spqr_repair_accept_ratio;                               // accept repair candidate if error <= selected-type error * ratio
         float spqr_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
+        bool spqr_teacher_repair;                                      // try clipping repair for aggressively quantized tensors using FP weights as teacher
+        float spqr_teacher_repair_min_error;                           // run teacher repair only when selected-type proxy error exceeds this value
+        float spqr_teacher_repair_min_improvement;                     // require this fractional proxy-error improvement before accepting repair
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

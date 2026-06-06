@@ -246,6 +246,12 @@ static void usage(const char * executable) {
     printf("                                      accept repair candidate if error <= selected-type error * X (default: 1.05)\n");
     printf("  --spqr-repair-max-error X\n");
     printf("                                      absolute weighted-error ceiling for repair candidates (default: 0.001)\n");
+    printf("  --spqr-teacher-repair\n");
+    printf("                                      try clipping repair for aggressive tensors using FP weights as teacher proxy\n");
+    printf("  --spqr-teacher-repair-min-error X\n");
+    printf("                                      proxy-error threshold before teacher repair is attempted (default: 0.002)\n");
+    printf("  --spqr-teacher-repair-min-improvement X\n");
+    printf("                                      required fractional proxy-error improvement to accept clipping (default: 0.05)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -888,6 +894,32 @@ int llama_quantize(int argc, char ** argv) {
             }
             params.spqr_repair = true;
             params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair") == 0) {
+            params.spqr_teacher_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0 ||
+                strcmp(argv[arg_idx], "--spqr-teacher-repair-min-improvement") == 0) {
+            const bool is_error = strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0;
+            float value = 0.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = 0.0f;
+                }
+            }
+            if (!std::isfinite(value) || value <= 0.0f) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__,
+                        is_error ? "--spqr-teacher-repair-min-error" : "--spqr-teacher-repair-min-improvement");
+                usage(argv[0]);
+            }
+            if (is_error) {
+                params.spqr_teacher_repair_min_error = value;
+            } else {
+                params.spqr_teacher_repair_min_improvement = value;
+            }
+            params.spqr_teacher_repair = true;
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
                 strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
             const bool is_top_k = strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0;
@@ -1046,6 +1078,10 @@ int llama_quantize(int argc, char ** argv) {
     }
     if (params.rd_guided && params.pure) {
         fprintf(stderr, "%s: --rd-guided cannot be combined with --pure because it selects mixed tensor types\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.spqr_teacher_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        fprintf(stderr, "%s: --spqr-teacher-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {

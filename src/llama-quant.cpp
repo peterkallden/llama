@@ -462,6 +462,13 @@ struct spqr_repair_eval {
     float bpw = 0.0f;
 };
 
+struct spqr_teacher_repair_result {
+    float clip_abs = 0.0f;
+    float base_error = 0.0f;
+    float repaired_error = 0.0f;
+    float improvement = 0.0f;
+};
+
 // per-tensor metadata, computed in the preliminary loop and used in the main loop
 struct tensor_metadata {
     std::string     name;
@@ -495,6 +502,9 @@ struct tensor_metadata {
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
+    float           teacher_repair_clip_abs;
+    float           teacher_repair_error_before;
+    float           teacher_repair_error_after;
 };
 
 //
@@ -1917,6 +1927,116 @@ static rd_block_stats sample_rd_candidate(
     return aggregate_rd_block_distortions(std::move(block_distortions));
 }
 
+static float sample_teacher_proxy_error(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type candidate,
+        int sample_rows,
+        float clip_abs) {
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    if (!ggml_is_quantized(candidate) ||
+            ncols % ggml_blck_size(candidate) != 0 ||
+            (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
+        return -1.0f;
+    }
+
+    const ggml_type_traits * traits = ggml_get_type_traits(candidate);
+    if (!traits || !traits->to_float) {
+        return -1.0f;
+    }
+
+    std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
+    std::vector<float> source(ncols);
+    std::vector<float> reconstructed(ncols);
+
+    double total_error = 0.0;
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * teacher = data.data() + row * ncols;
+        const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+        const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+
+        if (clip_abs > 0.0f) {
+            for (int64_t col = 0; col < ncols; ++col) {
+                source[col] = std::max(-clip_abs, std::min(clip_abs, teacher[col]));
+            }
+        } else {
+            std::copy(teacher, teacher + ncols, source.begin());
+        }
+
+        ggml_quantize_chunk(candidate, source.data(), quantized.data(), 0, 1, ncols, row_imatrix);
+        traits->to_float(quantized.data(), reconstructed.data(), ncols);
+
+        double error_sum = 0.0;
+        double signal_sum = 0.0;
+        for (int64_t col = 0; col < ncols; ++col) {
+            const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+            const double delta = (double) teacher[col] - reconstructed[col];
+            error_sum += weight * delta * delta;
+            signal_sum += weight * teacher[col] * teacher[col];
+        }
+        total_error += error_sum / (signal_sum + 1e-20);
+    }
+
+    return (float) (total_error / sample_rows);
+}
+
+static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type target_type,
+        int sample_rows,
+        float min_error,
+        float min_improvement) {
+    spqr_teacher_repair_result result;
+    result.base_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, 0.0f);
+    result.repaired_error = result.base_error;
+    if (result.base_error < min_error) {
+        return result;
+    }
+
+    std::vector<float> abs_values;
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    abs_values.reserve((size_t) sample_rows * (size_t) ncols);
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * src = data.data() + row * ncols;
+        for (int64_t col = 0; col < ncols; ++col) {
+            abs_values.push_back(std::abs(src[col]));
+        }
+    }
+    if (abs_values.empty()) {
+        return result;
+    }
+
+    std::sort(abs_values.begin(), abs_values.end());
+    const float percentiles[] = { 0.999f, 0.995f, 0.990f, 0.980f };
+    for (float p : percentiles) {
+        const size_t index = std::min(abs_values.size() - 1, (size_t) std::floor(p * (abs_values.size() - 1)));
+        const float clip_abs = abs_values[index];
+        if (clip_abs <= 0.0f) {
+            continue;
+        }
+        const float repaired_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, clip_abs);
+        if (repaired_error >= 0.0f && repaired_error < result.repaired_error) {
+            result.repaired_error = repaired_error;
+            result.clip_abs = clip_abs;
+        }
+    }
+
+    if (result.clip_abs > 0.0f && result.base_error > 0.0f) {
+        result.improvement = (result.base_error - result.repaired_error) / result.base_error;
+        if (result.improvement < min_improvement) {
+            result.clip_abs = 0.0f;
+        }
+    }
+    return result;
+}
+
 static float rd_distortion_weight(const tensor_metadata & tm) {
     float weight = 1.0f;
     if (tm.sensitivity == sensitivity_bucket::HIGH) {
@@ -2267,6 +2387,93 @@ static void apply_spqr_repair(
         LLAMA_LOG_INFO("%s: spqr-repair evaluated=%d repaired=%d kept=%d accept_ratio=%.3f max_error=%g\n",
                 __func__, evaluated, repaired, kept_selected,
                 params->spqr_repair_accept_ratio, params->spqr_repair_max_error);
+    }
+}
+
+static void apply_spqr_teacher_repair(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->spqr_teacher_repair || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    int evaluated = 0;
+    int clipped = 0;
+    int skipped_low_error = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                !ggml_is_quantized(tm.target_type) ||
+                ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const bool aggressive_candidate =
+            params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
+            ggml_type_is_below_q4_for_policy(tm.target_type) ||
+            tm.rd_distortion >= params->spqr_teacher_repair_min_error;
+        if (!aggressive_candidate) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        const spqr_teacher_repair_result repair = evaluate_teacher_repair_clipping(
+                tensor, data, imatrix, tm.target_type, sample_rows,
+                params->spqr_teacher_repair_min_error, params->spqr_teacher_repair_min_improvement);
+
+        if (repair.base_error < 0.0f) {
+            continue;
+        }
+
+        ++evaluated;
+        tm.teacher_repair_error_before = repair.base_error;
+        tm.teacher_repair_error_after = repair.repaired_error;
+        if (repair.base_error < params->spqr_teacher_repair_min_error) {
+            ++skipped_low_error;
+        }
+        if (repair.clip_abs > 0.0f) {
+            tm.teacher_repair_clip_abs = repair.clip_abs;
+            ++clipped;
+            LLAMA_LOG_INFO("%s: spqr-teacher-repair tensor=%-36s type=%-7s clip_abs=%10.6g proxy_error=%10.6g -> %10.6g improvement=%6.3f\n",
+                    __func__, tm.name.c_str(), ggml_type_name(tm.target_type), repair.clip_abs,
+                    repair.base_error, repair.repaired_error, repair.improvement);
+        } else if (params->print_rd_report) {
+            LLAMA_LOG_INFO("%s: spqr-teacher-repair tensor=%-36s type=%-7s selected=noop proxy_error=%10.6g best_error=%10.6g\n",
+                    __func__, tm.name.c_str(), ggml_type_name(tm.target_type),
+                    repair.base_error, repair.repaired_error);
+        }
+    }
+
+    if (evaluated > 0) {
+        LLAMA_LOG_INFO("%s: spqr-teacher-repair evaluated=%d clipped=%d skipped_low_error=%d min_error=%g min_improvement=%.3f\n",
+                __func__, evaluated, clipped, skipped_low_error,
+                params->spqr_teacher_repair_min_error, params->spqr_teacher_repair_min_improvement);
     }
 }
 
@@ -2827,6 +3034,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         const struct ggml_tensor * tensor = tensors[i]->tensor;
         metadata[i].allows_quantization = tensor_allows_quantization(params, model->arch, tensor);
         metadata[i].remapped_imatrix_name = params->imatrix ? remap_imatrix(tensor->name, mapped) : metadata[i].name;
+        metadata[i].teacher_repair_clip_abs = 0.0f;
+        metadata[i].teacher_repair_error_before = 0.0f;
+        metadata[i].teacher_repair_error_after = 0.0f;
     }
 
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
@@ -2912,7 +3122,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
-    if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f || params->spqr_repair) {
+    apply_spqr_teacher_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
+    if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
+            params->spqr_repair || params->spqr_teacher_repair) {
         for (size_t i = 0; i < tensors.size(); ++i) {
             metadata[i].requires_imatrix = tensor_requires_imatrix(
                     tensors[i]->tensor->name, metadata[i].target_type, ftype);
@@ -2937,6 +3149,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<uint8_t>> work;
     std::vector<no_init<float>> f32_conv_buf;
+    std::vector<no_init<float>> f32_repair_buf;
 
     int cur_split = -1;
     std::ofstream fout;
@@ -3108,6 +3321,18 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     f32_data = (float *) f32_conv_buf.data();
                 }
 
+                if (tm.teacher_repair_clip_abs > 0.0f) {
+                    f32_repair_buf.resize((size_t) nelements);
+                    float * repair_data = (float *) f32_repair_buf.data();
+                    for (int64_t k = 0; k < nelements; ++k) {
+                        repair_data[k] = std::max(-tm.teacher_repair_clip_abs,
+                                std::min(tm.teacher_repair_clip_abs, f32_data[k]));
+                    }
+                    f32_data = repair_data;
+                    LLAMA_LOG_INFO("teacher-repair clip_abs=%g .. ", tm.teacher_repair_clip_abs);
+                    fflush(stdout);
+                }
+
                 LLAMA_LOG_INFO("converting to %s .. ", ggml_type_name(new_type));
                 fflush(stdout);
 
@@ -3270,6 +3495,9 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.spqr_repair                 =*/ false,
         /*.spqr_repair_accept_ratio    =*/ 1.05f,
         /*.spqr_repair_max_error       =*/ 0.001f,
+        /*.spqr_teacher_repair         =*/ false,
+        /*.spqr_teacher_repair_min_error =*/ 0.002f,
+        /*.spqr_teacher_repair_min_improvement =*/ 0.05f,
     };
 
     return result;
@@ -3382,6 +3610,9 @@ void llama_quant_compute_types(
     for (size_t i = 0; i < n_tensors; i++) {
         metadata[i].allows_quantization = tensor_allows_quantization(&local_params, qs->model.arch, tensors[i]);
         metadata[i].remapped_imatrix_name = metadata[i].name;
+        metadata[i].teacher_repair_clip_abs = 0.0f;
+        metadata[i].teacher_repair_error_before = 0.0f;
+        metadata[i].teacher_repair_error_after = 0.0f;
     }
     if (local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
