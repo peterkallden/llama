@@ -148,6 +148,8 @@ sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda 
 
 This remains a normal per-tensor GGUF mixture and requires no runtime changes. Token embeddings, output projection, and adaptive anchor tensors retain the existing safety policies instead of using the sampled selection. Use `--print-rd-report` to inspect every candidate. A dry run still reads tensor data and quantizes the sampled rows because estimated size alone cannot provide a distortion signal.
 
+When a requested K-quant is incompatible with a tensor shape, for example a 896-column row that is not divisible by 256, the SPQR/RD path now runs a small shape-aware scalar fallback check. It evaluates only safe scalar candidates with the same sampled, imatrix-weighted reconstruction metric and logs `scalar-fallback` lines in the RD report. The check is monotonic: it may keep or upgrade llama.cpp's existing fallback, but it never demotes `Q8_0` to `Q5_*` or `Q5_1` to `Q5_0`. Embeddings and output projection remain capped at `Q8_0` in this path. This is intentionally not a mixed-row or remainder format; it still writes one normal GGUF tensor type for the whole tensor.
+
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 
 ```bash

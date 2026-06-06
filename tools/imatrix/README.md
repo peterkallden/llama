@@ -69,6 +69,8 @@ The guided quantizer converts activity statistics into a bounded rare-event risk
 
 RD-guided quantization can optionally use `--rd-target-bpw` or `--rd-target-size-mib` as a soft global model-size target. The profile's candidate curves are allocated globally, while `--rd-lambda` limits compression pressure. If reaching the target would exceed that quality limit, the quantizer keeps the larger model and reports the difference.
 
+For tensor shapes that cannot use K-quants, `llama-quantize` can reuse the imatrix-weighted RD machinery to inspect scalar fallbacks. This check is conservative and monotonic: it reports and may upgrade the fallback selected by the normal quantizer, but it does not use the imatrix profile to demote already safer scalar choices. The stored imatrix/profile statistics are shape-independent; the shape-aware decision happens in the quantizer.
+
 To avoid repeating candidate evaluation during calibration, periodic and snapshot imatrix saves omit the optional profile. The final output written when calibration completes contains it.
 
 ```bash

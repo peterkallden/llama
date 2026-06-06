@@ -1922,6 +1922,124 @@ static float rd_distortion_weight(const tensor_metadata & tm) {
     return weight * tm.activity_risk;
 }
 
+static bool is_scalar_fallback_type(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q5_0 ||
+           type == GGML_TYPE_Q5_1 || type == GGML_TYPE_Q8_0;
+}
+
+static std::vector<ggml_type> scalar_fallback_candidate_types(const tensor_metadata & tm, ggml_type original_type) {
+    if (tm.category == tensor_category::TOKEN_EMBD || tm.category == tensor_category::OUTPUT) {
+        return { GGML_TYPE_Q8_0 };
+    }
+
+    switch (original_type) {
+        case GGML_TYPE_Q4_0:
+            return { GGML_TYPE_Q5_0, GGML_TYPE_Q5_1, GGML_TYPE_Q8_0 };
+        case GGML_TYPE_Q5_0:
+            return { GGML_TYPE_Q5_0, GGML_TYPE_Q5_1, GGML_TYPE_Q8_0 };
+        case GGML_TYPE_Q5_1:
+            return { GGML_TYPE_Q5_1, GGML_TYPE_Q8_0 };
+        case GGML_TYPE_Q8_0:
+            return { GGML_TYPE_Q8_0 };
+        default:
+            return { original_type };
+    }
+}
+
+static void apply_shape_aware_scalar_fallback(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->rd_guided || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    int evaluated = 0;
+    int changed = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+
+        if (!tm.allows_quantization || !is_scalar_fallback_type(tm.target_type) ||
+                ncols <= 0 || nrows <= 0 || ncols % 256 == 0) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const ggml_type original_type = tm.target_type;
+        const float distortion_weight = rd_distortion_weight(tm);
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        ggml_type best_type = GGML_TYPE_COUNT;
+        float best_cost = std::numeric_limits<float>::infinity();
+        float best_distortion = 0.0f;
+        float best_bpw = 0.0f;
+
+        for (ggml_type candidate : scalar_fallback_candidate_types(tm, original_type)) {
+            const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
+            if (stats.aggregate < 0.0f) {
+                continue;
+            }
+            const float bpw = (float) ggml_row_size(candidate, ncols) * 8.0f / ncols;
+            const float cost = distortion_weight * stats.aggregate + params->rd_lambda * bpw;
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_type = candidate;
+                best_distortion = stats.aggregate;
+                best_bpw = bpw;
+            }
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: scalar-fallback-candidate tensor=%-36s shape=%" PRId64 "x%" PRId64 " type=%-7s distortion=%10.6g weight=%5.2f bpw=%6.3f cost=%10.6g\n",
+                        __func__, tm.name.c_str(), nrows, ncols, ggml_type_name(candidate),
+                        stats.aggregate, distortion_weight, bpw, cost);
+            }
+        }
+
+        if (best_type == GGML_TYPE_COUNT) {
+            continue;
+        }
+
+        ++evaluated;
+        tm.target_type = best_type;
+        if (tm.rd_type == original_type || tm.rd_type == GGML_TYPE_COUNT) {
+            tm.rd_type = best_type;
+            tm.rd_distortion = best_distortion;
+            tm.rd_bpw = best_bpw;
+            tm.rd_cost = best_cost;
+        }
+        changed += best_type != original_type;
+
+        LLAMA_LOG_INFO("%s: scalar-fallback tensor=%-36s shape=%" PRId64 "x%" PRId64 " original=%-7s selected=%-7s distortion=%10.6g bpw=%6.3f source=%s\n",
+                __func__, tm.name.c_str(), nrows, ncols, ggml_type_name(original_type), ggml_type_name(best_type),
+                best_distortion, best_bpw, imatrix ? "imatrix-weighted" : "unweighted");
+    }
+
+    if (evaluated > 0) {
+        LLAMA_LOG_INFO("%s: shape-aware scalar fallback evaluated=%d changed=%d\n",
+                __func__, evaluated, changed);
+    }
+}
+
 static void init_rate_distortion_analysis(
         quantize_state_impl & qs,
         llama_model_loader & ml,
@@ -2539,7 +2657,12 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         } else {
             metadata[i].target_type = tensor->type;
         }
+    }
 
+    apply_shape_aware_scalar_fallback(qs, ml, tensors, metadata, imatrix_data, nthread);
+
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        const struct ggml_tensor * tensor = tensors[i]->tensor;
         metadata[i].requires_imatrix = tensor_requires_imatrix(tensor->name, metadata[i].target_type, ftype);
 
         if (!params->imatrix && metadata[i].allows_quantization && metadata[i].requires_imatrix) {
