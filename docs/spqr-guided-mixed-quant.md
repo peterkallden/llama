@@ -67,7 +67,7 @@ Without an imatrix, the policy uses conservative tensor-name defaults:
 
 ## Usage
 
-Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` use RD-guided type selection plus `--quant-repair`.
+Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` run the full POC path: block scoring, adaptive anchors, RD-guided allocation, local RD refinement, and quant repair.
 
 ```bash
 ./build/bin/llama-imatrix \
@@ -86,11 +86,16 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
   --spqr-block-scoring \
   --adaptive-anchors \
   --rd-guided \
+  --rd-local-refine-top-k 16 \
+  --rd-local-refine-rows 32 \
   --quant-repair \
+  --quant-repair-methods clipping,gain,scale \
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale`. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--rd-local-refine-top-k 16` enables the second-stage local RD refinement pass over the most uncertain tensors, and `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale`. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+
+With `--collect-quant-profile`, the imatrix profile also carries activity statistics. When those entries are present, `llama-quantize` uses them automatically during RD-guided scoring, anchor selection, and layer-delta guidance; there is no separate public `--activity-*` flag in this POC.
 
 For a smaller sensitivity-only smoke test, run:
 
