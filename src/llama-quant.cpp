@@ -1174,6 +1174,23 @@ static std::string format_type_list(const std::vector<ggml_type> & types) {
     return result;
 }
 
+// Primary K-quant ladder used by the experimental RD-guided mixed-quant path.
+// This keeps the coarse candidate space explicit and stable: start from a
+// compact Q3/Q4/Q5/Q6 progression, then also evaluate the requested base type
+// if it falls outside the ladder.
+static std::vector<ggml_type> rd_primary_k_ladder(ggml_type base_type) {
+    std::vector<ggml_type> result = {
+        GGML_TYPE_Q3_K,
+        GGML_TYPE_Q4_K,
+        GGML_TYPE_Q5_K,
+        GGML_TYPE_Q6_K,
+    };
+    if (std::find(result.begin(), result.end(), base_type) == result.end()) {
+        result.push_back(base_type);
+    }
+    return result;
+}
+
 // internal standard logic for selecting the target tensor type based on tensor category, ftype, and model arch
 static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type new_type, const ggml_tensor * tensor, llama_ftype ftype, tensor_category category) {
     const std::string name = ggml_get_name(tensor);
@@ -2761,6 +2778,7 @@ static void init_rate_distortion_analysis(
         };
 
         if (!used_precomputed) {
+            const std::vector<ggml_type> primary_ladder = rd_primary_k_ladder(default_type);
             evaluate_candidate(GGML_TYPE_Q3_K);
             evaluate_candidate(GGML_TYPE_Q5_K);
             evaluate_candidate(default_type);
@@ -2773,6 +2791,10 @@ static void init_rate_distortion_analysis(
             }
             if (q5 < 0.0f || q5 > 0.003f) {
                 evaluate_candidate(GGML_TYPE_Q6_K);
+            }
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: rd-ladder    tensor=%-36s ladder=%s\n",
+                        __func__, tm.name.c_str(), format_type_list(primary_ladder).c_str());
             }
             const rd_block_stats q3_stats = sampled_distortions.count(GGML_TYPE_Q3_K) ?
                 sampled_distortions[GGML_TYPE_Q3_K] : rd_block_stats {};
@@ -2845,12 +2867,7 @@ static void init_rate_distortion_analysis(
             ggml_type best_type = GGML_TYPE_COUNT;
             float best_distortion = 0.0f;
             float best_bpw = 0.0f;
-            std::vector<ggml_type> candidate_types = {
-                GGML_TYPE_Q3_K, GGML_TYPE_Q4_K, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
-            };
-            if (std::find(candidate_types.begin(), candidate_types.end(), default_type) == candidate_types.end()) {
-                candidate_types.push_back(default_type);
-            }
+            std::vector<ggml_type> candidate_types = rd_primary_k_ladder(default_type);
             for (ggml_type candidate : candidate_types) {
                 const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
                 if (stats.aggregate < 0.0f) {

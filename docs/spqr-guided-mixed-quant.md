@@ -170,7 +170,7 @@ Enable sampled rate-distortion type selection:
   input-f16.gguf output-rd-guided.gguf Q3_K_M
 ```
 
-`--rd-guided` treats deterministically selected, evenly spaced tensor rows as analysis blocks while still choosing one existing GGUF type for the complete tensor. Block distortions are aggregated as `50% mean + 30% p90 + 20% worst`, which protects small difficult regions better than a single combined average. Q3 and Q5 establish a coarse curve; Q4 is evaluated when Q3 distortion or the Q3-to-Q5 improvement is meaningful, and Q6 is evaluated when Q5 distortion remains high. The requested base type is always evaluated by the local fallback. It selects the existing type with the lowest sampled cost:
+`--rd-guided` treats deterministically selected, evenly spaced tensor rows as analysis blocks while still choosing one existing GGUF type for the complete tensor. Block distortions are aggregated as `50% mean + 30% p90 + 20% worst`, which protects small difficult regions better than a single combined average. The primary K-quant candidate ladder is explicitly `Q3_K -> Q4_K -> Q5_K -> Q6_K`; Q3 and Q5 establish the coarse curve, Q4 is evaluated when Q3 distortion or the Q3-to-Q5 improvement is meaningful, and Q6 is evaluated when Q5 distortion remains high. The requested base type is also evaluated when it falls outside that ladder. It selects the existing type with the lowest sampled cost:
 
 ```text
 sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda * bits_per_weight
