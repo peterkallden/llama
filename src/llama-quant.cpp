@@ -477,6 +477,8 @@ struct spqr_teacher_repair_result {
 struct tensor_metadata {
     std::string     name;
     ggml_type       target_type;
+    ggml_type       requested_type;
+    ggml_type       compatibility_fallback_type;
     tensor_category category;
     sensitivity_bucket sensitivity;
     sensitivity_source sensitivity_from;
@@ -506,6 +508,9 @@ struct tensor_metadata {
     std::string     remapped_imatrix_name;
     bool            allows_quantization;
     bool            requires_imatrix;
+    bool            had_shape_fallback;
+    int64_t         fallback_ncols;
+    int64_t         fallback_required_block_size;
     float           teacher_repair_clip_abs;
     float           teacher_repair_source_gain;
     float           teacher_repair_error_before;
@@ -1154,6 +1159,21 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
     return return_type;
 }
 
+static std::string format_shape_fallback_reason(int64_t ncols, int64_t required_block_size) {
+    return format("incompatible_ncols_%" PRId64 "_not_multiple_of_%" PRId64, ncols, required_block_size);
+}
+
+static std::string format_type_list(const std::vector<ggml_type> & types) {
+    std::string result;
+    for (size_t i = 0; i < types.size(); ++i) {
+        if (i > 0) {
+            result += ",";
+        }
+        result += ggml_type_name(types[i]);
+    }
+    return result;
+}
+
 // internal standard logic for selecting the target tensor type based on tensor category, ftype, and model arch
 static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type new_type, const ggml_tensor * tensor, llama_ftype ftype, tensor_category category) {
     const std::string name = ggml_get_name(tensor);
@@ -1405,7 +1425,7 @@ static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type 
 }
 
 // outer wrapper: determine the ggml_type that this tensor should be quantized to
-static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_model_quantize_params * params, const ggml_tensor * tensor, ggml_type default_type, const tensor_metadata & tm) {
+static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_model_quantize_params * params, const ggml_tensor * tensor, ggml_type default_type, tensor_metadata & tm) {
     if (!tensor_allows_quantization(params, qs.model.arch, tensor)) {
         return tensor->type;
     }
@@ -1451,8 +1471,16 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
             }
         }
 
+        tm.requested_type = new_type;
+        tm.had_shape_fallback = false;
+        tm.compatibility_fallback_type = new_type;
+        tm.fallback_ncols = tensor->ne[0];
+        tm.fallback_required_block_size = ggml_blck_size(new_type);
+
         // incompatible tensor shapes are handled here - fallback to a compatible type
         new_type = tensor_type_fallback(qs, tensor, new_type);
+        tm.compatibility_fallback_type = new_type;
+        tm.had_shape_fallback = new_type != tm.requested_type;
 
         if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
                     params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && !manual) {
@@ -2289,6 +2317,7 @@ static void apply_shape_aware_scalar_fallback(
         load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
 
         const ggml_type original_type = tm.target_type;
+        const ggml_type requested_type = tm.requested_type == GGML_TYPE_COUNT ? original_type : tm.requested_type;
         const float distortion_weight = rd_distortion_weight(tm);
         const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
         ggml_type best_type = GGML_TYPE_COUNT;
@@ -2329,6 +2358,15 @@ static void apply_shape_aware_scalar_fallback(
             tm.rd_cost = best_cost;
         }
         changed += best_type != original_type;
+
+        const std::vector<ggml_type> effective_candidates = scalar_fallback_candidate_types(tm, original_type);
+        const std::string reason = tm.had_shape_fallback ?
+                format_shape_fallback_reason(tm.fallback_ncols, tm.fallback_required_block_size) :
+                "scalar_fallback_policy";
+        LLAMA_LOG_INFO("%s: fallback-report tensor=%-36s shape=[%" PRId64 ", %" PRId64 "] requested=%-7s base=%-7s reason=%s effective_candidates=%s selected=%-7s source=%s\n",
+                __func__, tm.name.c_str(), ncols, nrows, ggml_type_name(requested_type), ggml_type_name(original_type),
+                reason.c_str(), format_type_list(effective_candidates).c_str(), ggml_type_name(best_type),
+                imatrix ? "imatrix-weighted" : "unweighted");
 
         LLAMA_LOG_INFO("%s: scalar-fallback tensor=%-36s shape=%" PRId64 "x%" PRId64 " original=%-7s selected=%-7s distortion=%10.6g bpw=%6.3f source=%s\n",
                 __func__, tm.name.c_str(), nrows, ncols, ggml_type_name(original_type), ggml_type_name(best_type),
@@ -3147,6 +3185,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         const struct ggml_tensor * tensor = tensors[i]->tensor;
         metadata[i].allows_quantization = tensor_allows_quantization(params, model->arch, tensor);
         metadata[i].remapped_imatrix_name = params->imatrix ? remap_imatrix(tensor->name, mapped) : metadata[i].name;
+        metadata[i].requested_type = GGML_TYPE_COUNT;
+        metadata[i].compatibility_fallback_type = GGML_TYPE_COUNT;
+        metadata[i].had_shape_fallback = false;
+        metadata[i].fallback_ncols = 0;
+        metadata[i].fallback_required_block_size = 0;
         metadata[i].teacher_repair_clip_abs = 0.0f;
         metadata[i].teacher_repair_source_gain = 1.0f;
         metadata[i].teacher_repair_error_before = 0.0f;
@@ -3785,6 +3828,11 @@ void llama_quant_compute_types(
     for (size_t i = 0; i < n_tensors; i++) {
         metadata[i].allows_quantization = tensor_allows_quantization(&local_params, qs->model.arch, tensors[i]);
         metadata[i].remapped_imatrix_name = metadata[i].name;
+        metadata[i].requested_type = GGML_TYPE_COUNT;
+        metadata[i].compatibility_fallback_type = GGML_TYPE_COUNT;
+        metadata[i].had_shape_fallback = false;
+        metadata[i].fallback_ncols = 0;
+        metadata[i].fallback_required_block_size = 0;
         metadata[i].teacher_repair_clip_abs = 0.0f;
         metadata[i].teacher_repair_source_gain = 1.0f;
         metadata[i].teacher_repair_error_before = 0.0f;
