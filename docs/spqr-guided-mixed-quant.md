@@ -67,7 +67,7 @@ Without an imatrix, the policy uses conservative tensor-name defaults:
 
 ## Usage
 
-Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` use RD-guided type selection plus `--spqr-repair`.
+Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` use RD-guided type selection plus `--quant-repair`.
 
 ```bash
 ./build/bin/llama-imatrix \
@@ -86,11 +86,11 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
   --spqr-block-scoring \
   --adaptive-anchors \
   --rd-guided \
-  --spqr-repair \
+  --quant-repair \
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--spqr-repair` then acts as a repair-before-promote pass. It can accept cheaper safe candidates, and in budget-limited runs it probes aggressive teacher/layer-output repairs more often before spending extra precision. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale`. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
 
 For a smaller sensitivity-only smoke test, run:
 
@@ -175,42 +175,43 @@ This remains a normal per-tensor GGUF mixture and requires no runtime changes. T
 
 When a requested K-quant is incompatible with a tensor shape, for example a 896-column row that is not divisible by 256, the SPQR/RD path now runs a small shape-aware scalar fallback check. It evaluates only safe scalar candidates with the same sampled, imatrix-weighted reconstruction metric and logs `scalar-fallback` lines in the RD report. The check is monotonic: it may keep or upgrade llama.cpp's existing fallback, but it never demotes `Q8_0` to `Q5_*` or `Q5_1` to `Q5_0`. Embeddings and output projection remain capped at `Q8_0` in this path. This is intentionally not a mixed-row or remainder format; it still writes one normal GGUF tensor type for the whole tensor.
 
-After RD selection, enable SPQR repair as the repair-before-promote step:
+After RD selection, enable quant repair as the repair-before-promote step:
 
 ```bash
 ./build/bin/llama-quantize \
   --mixed-policy spqr_layer_delta \
   --rd-guided \
-  --spqr-repair \
-  --spqr-repair-accept-ratio 1.05 \
-  --spqr-repair-max-error 0.001 \
+  --quant-repair \
+  --quant-repair-methods clipping,gain,scale \
+  --quant-repair-accept-ratio 1.05 \
+  --quant-repair-max-error 0.001 \
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-This is the main opt-in repair flag. It combines the cheaper-candidate pass with the aggressive teacher-repair pass below. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
+This is the main opt-in repair flag. It combines cheaper-candidate repair with exportable source-value repairs. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
 
-The aggressive teacher-repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: cheaper-candidate repair uses looser acceptance gates, and the aggressive repair threshold is lowered internally so the probe runs more often before the policy spends extra precision. `--spqr-aggressive-repair` is kept as an alias for `--spqr-repair` when it is useful to make that intent explicit in scripts.
+The source-value repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: cheaper-candidate repair uses looser acceptance gates, and the proxy-error threshold is lowered internally so the probe runs more often before the policy spends extra precision.
 
-Teacher repair can still be controlled explicitly:
+Repair methods can be controlled explicitly:
 
 ```bash
 ./build/bin/llama-quantize \
   --mixed-policy spqr_layer_delta \
   --rd-guided \
-  --spqr-teacher-repair \
-  --spqr-layer-output-repair \
-  --spqr-teacher-repair-min-error 0.002 \
-  --spqr-teacher-repair-min-improvement 0.05 \
+  --quant-repair \
+  --quant-repair-methods clipping,scale \
+  --quant-repair-min-error 0.002 \
+  --quant-repair-min-improvement 0.05 \
   input-f16.gguf output-teacher-repaired.gguf Q3_K_M
 ```
 
-This side is loosely OmniQuant-inspired because it tries a cheap repair before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
+This side is loosely OmniQuant-inspired because it tries cheap repairs before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
 
 ```text
 E[||X(W - Wq)||^2] ~= sum_j imatrix[j] * (W[j] - Wq[j])^2
 ```
 
-When the selected type has high proxy error, it sweeps a few clipping percentiles. With `--spqr-layer-output-repair`, it also sweeps small source-gain multipliers before quantization. Accepted repairs are exportable because they are applied to the source values before writing the normal quantized tensor. No residual, codebook, learned transform, or runtime format is introduced. Without imatrix data, the pass falls back to an unweighted reconstruction proxy.
+When the selected type has high proxy error, `clipping` sweeps a few clipping percentiles and `scale` sweeps small source multipliers before quantization. `gain` keeps the cheaper-candidate repair and gain-error diagnostics enabled. Accepted repairs are exportable because they are applied to the source values before writing the normal quantized tensor. No residual, codebook, learned transform, or runtime format is introduced. Without imatrix data, the pass falls back to an unweighted reconstruction proxy.
 
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 

@@ -466,13 +466,14 @@ extern "C" {
         const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
         const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
         const struct llama_model_quantize_activity_data * activity_profile; // optional activity-mask statistics, null-terminated
-        bool spqr_repair;                                             // inspect selected types and accept cheaper safe repair candidates when RD error is low
-        float spqr_repair_accept_ratio;                               // accept repair candidate if error <= selected-type error * ratio
-        float spqr_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
-        bool spqr_teacher_repair;                                      // try clipping repair for aggressively quantized tensors using FP weights as teacher
-        bool spqr_layer_output_repair;                                 // use imatrix-weighted layer-output proxy and source-gain sweep in teacher repair
-        float spqr_teacher_repair_min_error;                           // run teacher repair only when selected-type proxy error exceeds this value
-        float spqr_teacher_repair_min_improvement;                     // require this fractional proxy-error improvement before accepting repair
+        bool quant_repair;                                             // inspect selected types and try exportable repair before spending more bits
+        bool quant_repair_clipping;                                    // try clipping repair for aggressively quantized tensors
+        bool quant_repair_gain;                                        // keep gain-error diagnostics and cheaper-candidate repair enabled
+        bool quant_repair_scale;                                       // try source scale/gain sweep with imatrix-weighted layer-output proxy
+        float quant_repair_accept_ratio;                               // accept repair candidate if error <= selected-type error * ratio
+        float quant_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
+        float quant_repair_min_error;                                  // run teacher repair only when selected-type proxy error exceeds this value
+        float quant_repair_min_improvement;                            // require this fractional proxy-error improvement before accepting repair
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

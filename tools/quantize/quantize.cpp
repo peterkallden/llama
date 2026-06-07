@@ -240,22 +240,18 @@ static void usage(const char * executable) {
     printf("                                      maximum rows sampled for local high-fidelity refinement (default: 32)\n");
     printf("  --print-rd-refinement-report\n");
     printf("                                      print local refinement ranking and updated selections\n");
-    printf("  --spqr-repair\n");
-    printf("                                      enable repair-before-promote: cheaper safe candidates plus aggressive teacher repair\n");
-    printf("  --spqr-repair-accept-ratio X\n");
-    printf("                                      accept repair candidate if error <= selected-type error * X (default: 1.05)\n");
-    printf("  --spqr-repair-max-error X\n");
-    printf("                                      absolute weighted-error ceiling for repair candidates (default: 0.001)\n");
-    printf("  --spqr-teacher-repair\n");
-    printf("                                      try clipping repair for aggressive tensors using FP weights as teacher proxy\n");
-    printf("  --spqr-aggressive-repair\n");
-    printf("                                      alias for --spqr-repair; kept to make aggressive bitrate repair explicit\n");
-    printf("  --spqr-layer-output-repair\n");
-    printf("                                      enable teacher repair with imatrix-weighted layer-output proxy and source-gain sweep\n");
-    printf("  --spqr-teacher-repair-min-error X\n");
-    printf("                                      proxy-error threshold before teacher repair is attempted (default: 0.002)\n");
-    printf("  --spqr-teacher-repair-min-improvement X\n");
-    printf("                                      required fractional proxy-error improvement to accept clipping (default: 0.05)\n");
+    printf("  --quant-repair\n");
+    printf("                                      enable repair-before-promote with methods clipping,gain,scale by default\n");
+    printf("  --quant-repair-methods LIST\n");
+    printf("                                      comma-separated repair methods to use exactly: clipping,gain,scale\n");
+    printf("  --quant-repair-accept-ratio X\n");
+    printf("                                      accept cheaper repair candidate if error <= selected-type error * X (default: 1.05)\n");
+    printf("  --quant-repair-max-error X\n");
+    printf("                                      absolute weighted-error ceiling for cheaper repair candidates (default: 0.001)\n");
+    printf("  --quant-repair-min-error X\n");
+    printf("                                      proxy-error threshold before clipping/scale repair is attempted (default: 0.002)\n");
+    printf("  --quant-repair-min-improvement X\n");
+    printf("                                      required fractional proxy-error improvement to accept clipping/scale repair (default: 0.05)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -712,6 +708,44 @@ static bool parse_mixed_policy(const char * arg, llama_mixed_quant_policy & poli
     return false;
 }
 
+static bool parse_quant_repair_methods(const char * arg, llama_model_quantize_params & params) {
+    bool clipping = false;
+    bool gain = false;
+    bool scale = false;
+
+    const auto methods = string_split<std::string>(arg, ',');
+    for (std::string method : methods) {
+        method.erase(std::remove_if(method.begin(), method.end(), [](unsigned char ch) {
+            return std::isspace(ch);
+        }), method.end());
+        std::transform(method.begin(), method.end(), method.begin(), [](unsigned char ch) {
+            return (char) std::tolower(ch);
+        });
+
+        if (method == "clipping" || method == "clip") {
+            clipping = true;
+        } else if (method == "gain") {
+            gain = true;
+        } else if (method == "scale" || method == "scaling") {
+            scale = true;
+        } else if (!method.empty()) {
+            fprintf(stderr, "\n%s: invalid --quant-repair-methods entry '%s' (expected clipping,gain,scale)\n\n",
+                    __func__, method.c_str());
+            return false;
+        }
+    }
+
+    if (!clipping && !gain && !scale) {
+        fprintf(stderr, "\n%s: --quant-repair-methods must enable at least one method\n\n", __func__);
+        return false;
+    }
+
+    params.quant_repair_clipping = clipping;
+    params.quant_repair_gain = gain;
+    params.quant_repair_scale = scale;
+    return true;
+}
+
 static bool parse_tensor_type(const char * data, std::vector<tensor_type_option> & tensor_type) {
     const char * sep = strchr(data, '=');
     if (sep == nullptr) {
@@ -861,26 +895,19 @@ int llama_quantize(int argc, char ** argv) {
         } else if (strcmp(argv[arg_idx], "--print-rd-refinement-report") == 0) {
             params.print_rd_refinement_report = true;
             params.rd_guided = true;
-        } else if (strcmp(argv[arg_idx], "--spqr-repair") == 0 ||
-                strcmp(argv[arg_idx], "--sqpr-repair") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-aggressive-repair") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-rbp") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-repair-before-promote") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-q8-prevention") == 0) {
-            params.spqr_repair = true;
-            params.spqr_teacher_repair = true;
-            params.spqr_layer_output_repair = true;
+        } else if (strcmp(argv[arg_idx], "--quant-repair") == 0) {
+            params.quant_repair = true;
             params.rd_guided = true;
-        } else if (strcmp(argv[arg_idx], "--spqr-repair-accept-ratio") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-repair-max-error") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-rbp-accept-ratio") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-rbp-max-error") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-q8-accept-ratio") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-q8-max-error") == 0) {
+        } else if (strcmp(argv[arg_idx], "--quant-repair-methods") == 0) {
+            if (arg_idx >= argc - 1 || !parse_quant_repair_methods(argv[++arg_idx], params)) {
+                usage(argv[0]);
+            }
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-repair-accept-ratio") == 0 ||
+                strcmp(argv[arg_idx], "--quant-repair-max-error") == 0) {
             const bool is_ratio =
-                strcmp(argv[arg_idx], "--spqr-repair-accept-ratio") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-rbp-accept-ratio") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-q8-accept-ratio") == 0;
+                strcmp(argv[arg_idx], "--quant-repair-accept-ratio") == 0;
             float value = 0.0f;
             if (arg_idx < argc-1) {
                 try {
@@ -891,28 +918,19 @@ int llama_quantize(int argc, char ** argv) {
             }
             if (!std::isfinite(value) || value <= 0.0f) {
                 fprintf(stderr, "%s: invalid %s value\n", __func__,
-                        is_ratio ? "--spqr-repair-accept-ratio" : "--spqr-repair-max-error");
+                        is_ratio ? "--quant-repair-accept-ratio" : "--quant-repair-max-error");
                 usage(argv[0]);
             }
             if (is_ratio) {
-                params.spqr_repair_accept_ratio = value;
+                params.quant_repair_accept_ratio = value;
             } else {
-                params.spqr_repair_max_error = value;
+                params.quant_repair_max_error = value;
             }
-            params.spqr_repair = true;
-            params.spqr_teacher_repair = true;
-            params.spqr_layer_output_repair = true;
+            params.quant_repair = true;
             params.rd_guided = true;
-        } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair") == 0) {
-            params.spqr_teacher_repair = true;
-            params.rd_guided = true;
-        } else if (strcmp(argv[arg_idx], "--spqr-layer-output-repair") == 0) {
-            params.spqr_teacher_repair = true;
-            params.spqr_layer_output_repair = true;
-            params.rd_guided = true;
-        } else if (strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0 ||
-                strcmp(argv[arg_idx], "--spqr-teacher-repair-min-improvement") == 0) {
-            const bool is_error = strcmp(argv[arg_idx], "--spqr-teacher-repair-min-error") == 0;
+        } else if (strcmp(argv[arg_idx], "--quant-repair-min-error") == 0 ||
+                strcmp(argv[arg_idx], "--quant-repair-min-improvement") == 0) {
+            const bool is_error = strcmp(argv[arg_idx], "--quant-repair-min-error") == 0;
             float value = 0.0f;
             if (arg_idx < argc-1) {
                 try {
@@ -923,15 +941,15 @@ int llama_quantize(int argc, char ** argv) {
             }
             if (!std::isfinite(value) || value <= 0.0f) {
                 fprintf(stderr, "%s: invalid %s value\n", __func__,
-                        is_error ? "--spqr-teacher-repair-min-error" : "--spqr-teacher-repair-min-improvement");
+                        is_error ? "--quant-repair-min-error" : "--quant-repair-min-improvement");
                 usage(argv[0]);
             }
             if (is_error) {
-                params.spqr_teacher_repair_min_error = value;
+                params.quant_repair_min_error = value;
             } else {
-                params.spqr_teacher_repair_min_improvement = value;
+                params.quant_repair_min_improvement = value;
             }
-            params.spqr_teacher_repair = true;
+            params.quant_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
                 strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
@@ -1093,8 +1111,8 @@ int llama_quantize(int argc, char ** argv) {
         fprintf(stderr, "%s: --rd-guided cannot be combined with --pure because it selects mixed tensor types\n", __func__);
         usage(argv[0]);
     }
-    if (params.spqr_teacher_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
-        fprintf(stderr, "%s: --spqr-teacher-repair/--spqr-layer-output-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
+    if (params.quant_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        fprintf(stderr, "%s: --quant-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {
