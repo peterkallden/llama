@@ -32,9 +32,9 @@ The branch currently implements:
 - Opt-in `spqr_guided` mixed quantization using tensor-name heuristics and optional imatrix percentile sensitivity.
 - Block-distribution sensitivity reports and block-derived tensor scoring.
 - Adjacent-layer weight-delta analysis using relative delta norm and cosine similarity.
-- P-frame-inspired `spqr_layer_delta` guidance that treats similar layers as more compression-friendly.
+- P-frame-inspired `spqr_layer_delta` guidance that measures adjacent-layer similarity and currently works primarily as a protection and anchoring signal.
 - Adaptive I-frame-style anchors for first, final, and robustly detected scene-change layers.
-- Sampled rate-distortion candidate evaluation across the requested base type and compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` types.
+- Sampled rate-distortion candidate evaluation across the requested base type and compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` types, with optional `IQ3_S` / `IQ3_M`-family probing for lower-bitrate experiments.
 - An optional reusable quantization profile stored alongside normal imatrix data.
 - Activity masking based on mean activity, variance, peak-to-mean ratio, and active-channel fraction.
 - Robust scene-change detection combining layer delta, activity-profile changes, percentile filtering, and median absolute deviation.
@@ -95,6 +95,10 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
 
 In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--rd-local-refine-top-k 16` enables the second-stage local RD refinement pass over the most uncertain tensors, and `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale`. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
 
+For lower-bitrate experiments, `--rd-include-iq3` opt-ins `IQ3_S` as an additional RD / repair candidate while still keeping the main K-ladder behavior unchanged by default. `IQ3_M` remains a recipe/output target rather than a single concrete tensor type, so this flag is mainly a way to probe whether the allocator starts preferring the `IQ3` family at all.
+
+When `--rd-target-bpw` or `--rd-target-size-mib` is present, the repair flow now flips into a budget-first path: after bounded RD allocation, the quantizer first tries a one-step cheaper type cap for eligible tensors and only then runs `quant-repair` on the capped choice. This keeps the quality-first path unchanged when no explicit size target is set, while making target-driven runs behave more like "constrain then rescue" than "promote then trim".
+
 With `--collect-quant-profile`, the imatrix profile also carries activity statistics. When those entries are present, `llama-quantize` uses them automatically during RD-guided scoring, anchor selection, and layer-delta guidance; there is no separate public `--activity-*` flag in this POC.
 
 For a smaller sensitivity-only smoke test, run:
@@ -143,7 +147,7 @@ Enable P-frame-style adjacent-layer analysis:
   input-f16.gguf Q3_K_M
 ```
 
-`spqr_layer_delta` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra compression signal. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type.
+`spqr_layer_delta` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra allocation signal. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type. In the current POC, this signal has been more useful for deciding what to protect than for unlocking additional compression by itself, so it should be read as a conservative P-frame-inspired guidance pass rather than a delta-coding path.
 
 Enable adaptive I-frame-style anchors:
 
@@ -170,7 +174,7 @@ Enable sampled rate-distortion type selection:
   input-f16.gguf output-rd-guided.gguf Q3_K_M
 ```
 
-`--rd-guided` treats deterministically selected, evenly spaced tensor rows as analysis blocks while still choosing one existing GGUF type for the complete tensor. Block distortions are aggregated as `50% mean + 30% p90 + 20% worst`, which protects small difficult regions better than a single combined average. The primary K-quant candidate ladder is explicitly `Q3_K -> Q4_K -> Q5_K -> Q6_K`; Q3 and Q5 establish the coarse curve, Q4 is evaluated when Q3 distortion or the Q3-to-Q5 improvement is meaningful, and Q6 is evaluated when Q5 distortion remains high. The requested base type is also evaluated when it falls outside that ladder. It selects the existing type with the lowest sampled cost:
+`--rd-guided` treats deterministically selected, evenly spaced tensor rows as analysis blocks while still choosing one existing GGUF type for the complete tensor. Block distortions are aggregated as `50% mean + 30% p90 + 20% worst`, which protects small difficult regions better than a single combined average. The primary K-quant candidate ladder is explicitly `Q3_K -> Q4_K -> Q5_K -> Q6_K`; Q3 and Q5 establish the coarse curve, Q4 is evaluated when Q3 distortion or the Q3-to-Q5 improvement is meaningful, and Q6 is evaluated when Q5 distortion remains high. The requested base type is also evaluated when it falls outside that ladder. With `--rd-include-iq3`, `IQ3_S` is also sampled as an extra low-bitrate candidate. It selects the existing type with the lowest sampled cost:
 
 ```text
 sensitivity_and_similarity_weight * normalized_reconstruction_error + rd_lambda * bits_per_weight
@@ -193,9 +197,9 @@ After RD selection, enable quant repair as the repair-before-promote step:
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-This is the main opt-in repair flag. It combines cheaper-candidate repair with exportable source-value repairs. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
+This is the main opt-in repair flag. It combines cheaper-candidate repair with exportable source-value repairs. The cheaper-candidate pass treats a selected tensor type as a candidate that can still be repaired downward if a cheaper compatible type measures as safe. It evaluates lower-rate candidates such as `Q6_K`, `Q5_K`, scalar `Q5_*`, `Q4_K`, scalar `Q4_*`, and `Q3_K` when their shape is compatible. With `--rd-include-iq3`, it also considers `IQ3_S` as an extra downward step. It reports weighted MSE, gain error, cosine/shape error, and outlier concentration. A cheaper candidate is accepted only if its composite error is close to the selected type or below the configured absolute weighted-error ceiling. Token embeddings and output projection remain protected.
 
-The source-value repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: cheaper-candidate repair uses looser acceptance gates, and the proxy-error threshold is lowered internally so the probe runs more often before the policy spends extra precision.
+The source-value repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: a one-step budget-first type cap is attempted before the regular repair pass, cheaper-candidate repair uses looser acceptance gates, and the proxy-error threshold is lowered internally so the probe runs more often before the policy spends extra precision.
 
 Repair methods can be controlled explicitly:
 

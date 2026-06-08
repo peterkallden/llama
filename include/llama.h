@@ -454,6 +454,7 @@ extern "C" {
         float anchor_percentile;                                     // percentile threshold for scene-change anchors
         bool print_anchor_report;                                    // print adaptive anchor decisions
         bool rd_guided;                                               // select existing tensor types using sampled rate-distortion analysis
+        bool rd_include_iq3;                                          // opt-in IQ3_S/IQ3_M-family candidates in experimental RD / repair passes
         float rd_lambda;                                              // size penalty used by sampled rate-distortion analysis
         int32_t rd_sample_rows;                                       // maximum sampled rows per tensor and candidate type
         bool print_rd_report;                                         // print sampled rate-distortion candidates and selections

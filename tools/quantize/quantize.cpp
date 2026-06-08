@@ -166,7 +166,7 @@ static void usage(const char * executable) {
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
     printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
-    printf("       [--rd-guided] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
+    printf("       [--rd-guided] [--rd-include-iq3] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
     printf("       [--rd-local-refine-top-k] [--rd-local-refine-rows] [--print-rd-refinement-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
@@ -221,6 +221,9 @@ static void usage(const char * executable) {
     printf("  --rd-guided\n");
     printf("                                      sample tensor rows and select an existing quant type by rate-distortion cost\n");
     printf("                                      embeddings, output, and adaptive anchor layers keep existing safety policies\n");
+    printf("  --rd-include-iq3\n");
+    printf("                                      opt-in IQ3_S / IQ3_M-family candidates for experimental RD-guided and repair passes\n");
+    printf("                                      useful for testing lower-bitrate allocation behavior without changing default paths\n");
     printf("  --rd-lambda X\n");
     printf("                                      size penalty in distortion + lambda * bits-per-weight (default: 0.002)\n");
     printf("  --rd-sample-rows N\n");
@@ -885,6 +888,9 @@ int llama_quantize(int argc, char ** argv) {
             params.print_anchor_report = true;
             params.adaptive_anchors = true;
         } else if (strcmp(argv[arg_idx], "--rd-guided") == 0) {
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--rd-include-iq3") == 0) {
+            params.rd_include_iq3 = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--print-rd-report") == 0) {
             params.print_rd_report = true;

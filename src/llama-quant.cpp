@@ -1178,16 +1178,22 @@ static std::string format_type_list(const std::vector<ggml_type> & types) {
 // This keeps the coarse candidate space explicit and stable: start from a
 // compact Q3/Q4/Q5/Q6 progression, then also evaluate the requested base type
 // if it falls outside the ladder.
-static std::vector<ggml_type> rd_primary_k_ladder(ggml_type base_type) {
-    std::vector<ggml_type> result = {
-        GGML_TYPE_Q3_K,
-        GGML_TYPE_Q4_K,
-        GGML_TYPE_Q5_K,
-        GGML_TYPE_Q6_K,
+static std::vector<ggml_type> rd_primary_k_ladder(const llama_model_quantize_params * params, ggml_type base_type) {
+    std::vector<ggml_type> result;
+    auto add = [&result] (ggml_type type) {
+        if (std::find(result.begin(), result.end(), type) == result.end()) {
+            result.push_back(type);
+        }
     };
-    if (std::find(result.begin(), result.end(), base_type) == result.end()) {
-        result.push_back(base_type);
+
+    if (params->rd_include_iq3) {
+        add(GGML_TYPE_IQ3_S);
     }
+    add(GGML_TYPE_Q3_K);
+    add(GGML_TYPE_Q4_K);
+    add(GGML_TYPE_Q5_K);
+    add(GGML_TYPE_Q6_K);
+    add(base_type);
     return result;
 }
 
@@ -2166,7 +2172,10 @@ static bool is_scalar_fallback_type(ggml_type type) {
            type == GGML_TYPE_Q5_1 || type == GGML_TYPE_Q8_0;
 }
 
-static std::vector<ggml_type> spqr_repair_candidate_types(const ggml_tensor * tensor, ggml_type selected_type) {
+static std::vector<ggml_type> spqr_repair_candidate_types(
+        const llama_model_quantize_params * params,
+        const ggml_tensor * tensor,
+        ggml_type selected_type) {
     const int64_t ncols = tensor->ne[0];
     std::vector<ggml_type> candidates;
     auto add = [&] (ggml_type type) {
@@ -2180,6 +2189,9 @@ static std::vector<ggml_type> spqr_repair_candidate_types(const ggml_tensor * te
 
     add(GGML_TYPE_Q6_K);
     add(GGML_TYPE_Q5_K);
+    if (params->rd_include_iq3) {
+        add(GGML_TYPE_IQ3_S);
+    }
     add(GGML_TYPE_Q5_1);
     add(GGML_TYPE_Q5_0);
     add(GGML_TYPE_Q4_K);
@@ -2187,6 +2199,10 @@ static std::vector<ggml_type> spqr_repair_candidate_types(const ggml_tensor * te
     add(GGML_TYPE_Q4_0);
     add(GGML_TYPE_Q3_K);
     return candidates;
+}
+
+static bool quant_budget_limited(const llama_model_quantize_params * params) {
+    return params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
 }
 
 static spqr_repair_eval evaluate_spqr_repair_candidate(
@@ -2417,7 +2433,7 @@ static void apply_spqr_repair(
     int evaluated = 0;
     int repaired = 0;
     int kept_selected = 0;
-    const bool budget_limited = params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
+    const bool budget_limited = quant_budget_limited(params);
     const float effective_accept_ratio = budget_limited ?
         std::max(params->quant_repair_accept_ratio, 1.25f) :
         params->quant_repair_accept_ratio;
@@ -2441,7 +2457,7 @@ static void apply_spqr_repair(
         }
 
         const ggml_type selected_type = tm.target_type;
-        const std::vector<ggml_type> candidates = spqr_repair_candidate_types(tensor, selected_type);
+        const std::vector<ggml_type> candidates = spqr_repair_candidate_types(params, tensor, selected_type);
         if (candidates.empty()) {
             continue;
         }
@@ -2521,6 +2537,105 @@ static void apply_spqr_repair(
     }
 }
 
+static void apply_budget_first_type_cap(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->quant_repair || !quant_budget_limited(params) ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    int evaluated = 0;
+    int capped = 0;
+    int kept = 0;
+    const float effective_accept_ratio = std::max(params->quant_repair_accept_ratio, 1.25f);
+    const float effective_max_error = std::max(params->quant_repair_max_error, 0.005f);
+    const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                !ggml_is_quantized(tm.target_type) ||
+                ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const ggml_type selected_type = tm.target_type;
+        const std::vector<ggml_type> candidates = spqr_repair_candidate_types(params, tensor, selected_type);
+        if (candidates.empty()) {
+            continue;
+        }
+
+        const ggml_type capped_type = candidates.front();
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        const float distortion_weight = rd_distortion_weight(tm);
+        const spqr_repair_eval selected = evaluate_spqr_repair_candidate(
+                tensor, data, imatrix, selected_type, sample_rows, distortion_weight);
+        const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
+                tensor, data, imatrix, capped_type, sample_rows, distortion_weight);
+        if (selected.type == GGML_TYPE_COUNT || candidate.type == GGML_TYPE_COUNT) {
+            continue;
+        }
+
+        ++evaluated;
+        const bool under_relative_gate =
+            candidate.composite_error <= selected.composite_error * effective_accept_ratio;
+        const bool under_absolute_gate =
+            candidate.weighted_mse <= effective_max_error;
+        const float selected_cost = selected.composite_error + cost_lambda * selected.bpw;
+        const float candidate_cost = candidate.composite_error + cost_lambda * candidate.bpw;
+        if ((under_relative_gate || under_absolute_gate) && candidate_cost < selected_cost) {
+            tm.target_type = candidate.type;
+            tm.rd_type = candidate.type;
+            tm.rd_distortion = candidate.weighted_mse / std::max(1e-20f, distortion_weight);
+            tm.rd_bpw = candidate.bpw;
+            tm.rd_cost = candidate.composite_error + cost_lambda * candidate.bpw;
+            ++capped;
+            LLAMA_LOG_INFO("%s: budget-first tensor=%-36s original=%-7s capped=%-7s original_error=%10.6g capped_error=%10.6g original_bpw=%6.3f capped_bpw=%6.3f\n",
+                    __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type),
+                    selected.weighted_mse, candidate.weighted_mse, selected.bpw, candidate.bpw);
+        } else {
+            ++kept;
+            if (params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: budget-first tensor=%-36s selected=%-7s capped=%-7s reason=kept selected_error=%10.6g capped_error=%10.6g selected_bpw=%6.3f capped_bpw=%6.3f\n",
+                        __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type),
+                        selected.weighted_mse, candidate.weighted_mse, selected.bpw, candidate.bpw);
+            }
+        }
+    }
+
+    if (evaluated > 0) {
+        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d accept_ratio=%.3f max_error=%g cost_lambda=%.6g\n",
+                __func__, evaluated, capped, kept, effective_accept_ratio, effective_max_error, cost_lambda);
+    }
+}
+
 static void apply_spqr_teacher_repair(
         quantize_state_impl & qs,
         llama_model_loader & ml,
@@ -2533,7 +2648,7 @@ static void apply_spqr_teacher_repair(
     if (!repair_enabled || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
-    const bool budget_limited = params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
+    const bool budget_limited = quant_budget_limited(params);
     const bool layer_output_proxy = params->quant_repair_scale;
     const float effective_min_error = budget_limited ?
         params->quant_repair_min_error * 0.05f :
@@ -2737,14 +2852,19 @@ static void init_rate_distortion_analysis(
             }
         }
 
-        if (!used_precomputed) {
+        const bool supplement_iq3_from_sampling = params->rd_include_iq3 && used_precomputed &&
+                std::none_of(tm.rd_candidates.begin(), tm.rd_candidates.end(), [] (const rd_candidate & candidate) {
+                    return candidate.type == GGML_TYPE_IQ3_S;
+                });
+
+        if (!used_precomputed || supplement_iq3_from_sampling) {
             load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
         }
 
         const int sample_rows = (int) std::min<int64_t>(nrows, max_sample_rows);
         std::map<ggml_type, rd_block_stats> sampled_distortions;
         auto evaluate_candidate = [&] (ggml_type candidate) {
-            if (used_precomputed || sampled_distortions.count(candidate)) {
+            if (sampled_distortions.count(candidate)) {
                 return;
             }
             const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
@@ -2777,8 +2897,15 @@ static void init_rate_distortion_analysis(
             }
         };
 
+        if (supplement_iq3_from_sampling) {
+            evaluate_candidate(GGML_TYPE_IQ3_S);
+        }
+
         if (!used_precomputed) {
-            const std::vector<ggml_type> primary_ladder = rd_primary_k_ladder(default_type);
+            const std::vector<ggml_type> primary_ladder = rd_primary_k_ladder(params, default_type);
+            if (params->rd_include_iq3) {
+                evaluate_candidate(GGML_TYPE_IQ3_S);
+            }
             evaluate_candidate(GGML_TYPE_Q3_K);
             evaluate_candidate(GGML_TYPE_Q5_K);
             evaluate_candidate(default_type);
@@ -2867,7 +2994,7 @@ static void init_rate_distortion_analysis(
             ggml_type best_type = GGML_TYPE_COUNT;
             float best_distortion = 0.0f;
             float best_bpw = 0.0f;
-            std::vector<ggml_type> candidate_types = rd_primary_k_ladder(default_type);
+            std::vector<ggml_type> candidate_types = rd_primary_k_ladder(params, default_type);
             for (ggml_type candidate : candidate_types) {
                 const rd_block_stats stats = sample_rd_candidate(tensor, data, imatrix, candidate, sample_rows);
                 if (stats.aggregate < 0.0f) {
@@ -3345,6 +3472,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     }
 
     apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
+    apply_budget_first_type_cap(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_teacher_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
@@ -3713,6 +3841,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.anchor_percentile           =*/ 90.0f,
         /*.print_anchor_report         =*/ false,
         /*.rd_guided                   =*/ false,
+        /*.rd_include_iq3              =*/ false,
         /*.rd_lambda                   =*/ 0.002f,
         /*.rd_sample_rows              =*/ 8,
         /*.print_rd_report             =*/ false,
