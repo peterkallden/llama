@@ -168,6 +168,7 @@ static void usage(const char * executable) {
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
     printf("       [--rd-guided] [--rd-include-iq3] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
     printf("       [--rd-local-refine-top-k] [--rd-local-refine-rows] [--print-rd-refinement-report]\n");
+    printf("       [--print-compression-opportunity-report]\n");
     printf("       [--prune-layers] [--keep-split] [--override-kv] [--dry-run]\n");
     printf("       model-f32.gguf [model-quant.gguf] type [nthreads]\n\n");
     printf("  --allow-requantize\n");
@@ -243,6 +244,9 @@ static void usage(const char * executable) {
     printf("                                      maximum rows sampled for local high-fidelity refinement (default: 32)\n");
     printf("  --print-rd-refinement-report\n");
     printf("                                      print local refinement ranking and updated selections\n");
+    printf("  --print-compression-opportunity-report\n");
+    printf("                                      after allocation and repair, rank cheaper compatible tensor types by\n");
+    printf("                                      saved bytes per estimated quality cost; useful with --dry-run\n");
     printf("  --quant-repair\n");
     printf("                                      enable repair-before-promote with methods clipping,gain,scale by default\n");
     printf("  --quant-repair-methods LIST\n");
@@ -900,6 +904,9 @@ int llama_quantize(int argc, char ** argv) {
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--print-rd-refinement-report") == 0) {
             params.print_rd_refinement_report = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--print-compression-opportunity-report") == 0) {
+            params.print_compression_opportunity_report = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--quant-repair") == 0) {
             params.quant_repair = true;

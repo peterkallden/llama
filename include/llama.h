@@ -464,6 +464,7 @@ extern "C" {
         int32_t rd_local_refine_top_k;                                // locally refine the top-K sampled RD curves, 0 disables
         int32_t rd_local_refine_rows;                                 // maximum sampled rows for local high-fidelity refinement
         bool print_rd_refinement_report;                              // print local RD refinement ranking and selections
+        bool print_compression_opportunity_report;                     // rank safe demotion candidates after allocation / repair
         const struct llama_model_quantize_rd_data * rd_profile;       // optional precomputed RD candidate curves, null-terminated
         const struct llama_model_quantize_layer_delta_data * layer_delta_profile; // optional precomputed layer-delta data, null-terminated
         const struct llama_model_quantize_activity_data * activity_profile; // optional activity-mask statistics, null-terminated

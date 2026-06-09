@@ -464,6 +464,22 @@ struct spqr_repair_eval {
     float bpw = 0.0f;
 };
 
+struct compression_opportunity {
+    std::string name;
+    ggml_type selected_type = GGML_TYPE_COUNT;
+    ggml_type candidate_type = GGML_TYPE_COUNT;
+    size_t saved_bytes = 0;
+    float selected_error = 0.0f;
+    float candidate_error = 0.0f;
+    float repaired_candidate_error = 0.0f;
+    float delta_error = 0.0f;
+    float opportunity_score = 0.0f;
+    float selected_bpw = 0.0f;
+    float candidate_bpw = 0.0f;
+    bool proxy_safe = false;
+    bool repair_potential = false;
+};
+
 struct spqr_teacher_repair_result {
     float clip_abs = 0.0f;
     float source_gain = 1.0f;
@@ -2537,6 +2553,195 @@ static void apply_spqr_repair(
     }
 }
 
+static void print_compression_opportunity_report(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        const std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->print_compression_opportunity_report ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    std::vector<compression_opportunity> opportunities;
+    int evaluated = 0;
+    int proxy_safe_count = 0;
+    int repair_potential_count = 0;
+    size_t proxy_safe_saved_bytes = 0;
+    size_t repair_potential_saved_bytes = 0;
+    size_t total_saved_bytes = 0;
+    const bool budget_limited = quant_budget_limited(params);
+    const float effective_accept_ratio = budget_limited ?
+        std::max(params->quant_repair_accept_ratio, 1.25f) :
+        params->quant_repair_accept_ratio;
+    const float effective_max_error = budget_limited ?
+        std::max(params->quant_repair_max_error, 0.005f) :
+        params->quant_repair_max_error;
+    const bool repair_probe_enabled = params->quant_repair &&
+        (params->quant_repair_clipping || params->quant_repair_scale);
+    const float effective_min_error = budget_limited ?
+        params->quant_repair_min_error * 0.05f :
+        params->quant_repair_min_error;
+    const float effective_min_improvement = budget_limited ?
+        std::min(params->quant_repair_min_improvement, 0.001f) :
+        params->quant_repair_min_improvement;
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        const tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                !ggml_is_quantized(tm.target_type) ||
+                ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const ggml_type selected_type = tm.target_type;
+        const std::vector<ggml_type> candidates = spqr_repair_candidate_types(params, tensor, selected_type);
+        if (candidates.empty()) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        const float distortion_weight = rd_distortion_weight(tm);
+        const spqr_repair_eval selected = evaluate_spqr_repair_candidate(
+                tensor, data, imatrix, selected_type, sample_rows, distortion_weight);
+        if (selected.type == GGML_TYPE_COUNT) {
+            continue;
+        }
+
+        ++evaluated;
+        compression_opportunity best;
+        for (ggml_type candidate_type : candidates) {
+            const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
+                    tensor, data, imatrix, candidate_type, sample_rows, distortion_weight);
+            if (candidate.type == GGML_TYPE_COUNT) {
+                continue;
+            }
+
+            const size_t selected_bytes = (size_t) nrows * ggml_row_size(selected.type, ncols);
+            const size_t candidate_bytes = (size_t) nrows * ggml_row_size(candidate.type, ncols);
+            if (candidate_bytes >= selected_bytes) {
+                continue;
+            }
+
+            const float delta_error = std::max(0.0f, candidate.composite_error - selected.composite_error);
+            const bool proxy_safe =
+                candidate.composite_error <= selected.composite_error * effective_accept_ratio ||
+                candidate.weighted_mse <= effective_max_error;
+            float repaired_candidate_error = candidate.composite_error;
+            bool repair_potential = false;
+            if (!proxy_safe && repair_probe_enabled) {
+                const spqr_teacher_repair_result repair = evaluate_teacher_repair_clipping(
+                        tensor, data, imatrix, candidate.type, sample_rows,
+                        effective_min_error, effective_min_improvement,
+                        params->quant_repair_clipping, params->quant_repair_scale);
+                if (repair.base_error >= 0.0f) {
+                    repaired_candidate_error = repair.repaired_error;
+                    repair_potential =
+                        repair.repaired_error <= selected.composite_error * effective_accept_ratio ||
+                        repair.repaired_error <= effective_max_error;
+                }
+            }
+            const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
+            const float score = saved_mib / std::max(delta_error, 1e-9f);
+
+            compression_opportunity opportunity;
+            opportunity.name = tm.name;
+            opportunity.selected_type = selected.type;
+            opportunity.candidate_type = candidate.type;
+            opportunity.saved_bytes = selected_bytes - candidate_bytes;
+            opportunity.selected_error = selected.composite_error;
+            opportunity.candidate_error = candidate.composite_error;
+            opportunity.repaired_candidate_error = repaired_candidate_error;
+            opportunity.delta_error = delta_error;
+            opportunity.opportunity_score = score;
+            opportunity.selected_bpw = selected.bpw;
+            opportunity.candidate_bpw = candidate.bpw;
+            opportunity.proxy_safe = proxy_safe;
+            opportunity.repair_potential = repair_potential;
+
+            if (best.candidate_type == GGML_TYPE_COUNT ||
+                    (opportunity.proxy_safe != best.proxy_safe ? opportunity.proxy_safe :
+                     opportunity.repair_potential != best.repair_potential ? opportunity.repair_potential :
+                     opportunity.opportunity_score > best.opportunity_score)) {
+                best = opportunity;
+            }
+        }
+
+        if (best.candidate_type != GGML_TYPE_COUNT) {
+            opportunities.push_back(best);
+            total_saved_bytes += best.saved_bytes;
+            if (best.proxy_safe) {
+                ++proxy_safe_count;
+                proxy_safe_saved_bytes += best.saved_bytes;
+            } else if (best.repair_potential) {
+                ++repair_potential_count;
+                repair_potential_saved_bytes += best.saved_bytes;
+            }
+        }
+    }
+
+    std::sort(opportunities.begin(), opportunities.end(), [] (const compression_opportunity & a, const compression_opportunity & b) {
+        if (a.proxy_safe != b.proxy_safe) {
+            return a.proxy_safe > b.proxy_safe;
+        }
+        if (a.repair_potential != b.repair_potential) {
+            return a.repair_potential > b.repair_potential;
+        }
+        if (a.opportunity_score != b.opportunity_score) {
+            return a.opportunity_score > b.opportunity_score;
+        }
+        return a.saved_bytes > b.saved_bytes;
+    });
+
+    const size_t report_count = std::min<size_t>(opportunities.size(), 32);
+    LLAMA_LOG_INFO("%s: compression-opportunity summary evaluated=%d candidates=%d proxy_safe=%d proxy_safe_saved=%8.2f MiB repair_potential=%d repair_potential_saved=%8.2f MiB total_best_saved=%8.2f MiB budget_limited=%s\n",
+            __func__, evaluated, (int) opportunities.size(), proxy_safe_count,
+            proxy_safe_saved_bytes/1024.0/1024.0,
+            repair_potential_count, repair_potential_saved_bytes/1024.0/1024.0,
+            total_saved_bytes/1024.0/1024.0,
+            budget_limited ? "yes" : "no");
+    for (size_t rank = 0; rank < report_count; ++rank) {
+        const compression_opportunity & opportunity = opportunities[rank];
+        LLAMA_LOG_INFO("%s: compression-opportunity rank=%3d tensor=%-36s selected=%-7s candidate=%-7s saved=%8.2f MiB delta_error=%10.6g selected_error=%10.6g candidate_error=%10.6g repaired_candidate_error=%10.6g score=%10.6g bpw=%6.3f->%6.3f proxy_safe=%s repair_potential=%s\n",
+                __func__, (int) rank + 1, opportunity.name.c_str(),
+                ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
+                opportunity.saved_bytes/1024.0/1024.0,
+                opportunity.delta_error,
+                opportunity.selected_error,
+                opportunity.candidate_error,
+                opportunity.repaired_candidate_error,
+                opportunity.opportunity_score,
+                opportunity.selected_bpw,
+                opportunity.candidate_bpw,
+                opportunity.proxy_safe ? "yes" : "no",
+                opportunity.repair_potential ? "yes" : "no");
+    }
+}
+
 static void apply_budget_first_type_cap(
         quantize_state_impl & qs,
         llama_model_loader & ml,
@@ -3475,6 +3680,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     apply_budget_first_type_cap(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_teacher_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
+    print_compression_opportunity_report(qs, ml, tensors, metadata, imatrix_data, nthread);
     if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
             params->quant_repair) {
         for (size_t i = 0; i < tensors.size(); ++i) {
@@ -3851,6 +4057,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.rd_local_refine_top_k       =*/ 0,
         /*.rd_local_refine_rows        =*/ 32,
         /*.print_rd_refinement_report  =*/ false,
+        /*.print_compression_opportunity_report =*/ false,
         /*.rd_profile                  =*/ nullptr,
         /*.layer_delta_profile         =*/ nullptr,
         /*.activity_profile            =*/ nullptr,
