@@ -201,6 +201,8 @@ This is the main opt-in repair flag. It combines cheaper-candidate repair with e
 
 The source-value repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: a one-step budget-first type cap is attempted before the regular repair pass, cheaper-candidate repair uses looser acceptance gates, and the proxy-error threshold is lowered internally so the probe runs more often before the policy spends extra precision.
 
+If the bounded RD pass and budget-first cap still leave the model above target, quant-repair now performs an extra shrink pass automatically. It ranks cheaper compatible candidates globally, prefers `proxy_safe` demotions, then allows `repair_potential` demotions when the existing clipping/scale teacher-repair probe indicates the cheaper type can likely be rescued after demotion. This is the current "aggressive repair under hard budget" path.
+
 For size-first exploration, add a compression opportunity report:
 
 ```bash

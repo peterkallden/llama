@@ -465,6 +465,7 @@ struct spqr_repair_eval {
 };
 
 struct compression_opportunity {
+    size_t tensor_index = 0;
     std::string name;
     ggml_type selected_type = GGML_TYPE_COUNT;
     ggml_type candidate_type = GGML_TYPE_COUNT;
@@ -472,6 +473,8 @@ struct compression_opportunity {
     float selected_error = 0.0f;
     float candidate_error = 0.0f;
     float repaired_candidate_error = 0.0f;
+    float effective_candidate_error = 0.0f;
+    float candidate_weighted_mse = 0.0f;
     float delta_error = 0.0f;
     float opportunity_score = 0.0f;
     float selected_bpw = 0.0f;
@@ -2553,19 +2556,21 @@ static void apply_spqr_repair(
     }
 }
 
-static void print_compression_opportunity_report(
-        quantize_state_impl & qs,
+static size_t estimate_quantized_tensor_bytes(
+        const ggml_tensor * tensor,
+        ggml_type target_type) {
+    return target_type == tensor->type ?
+        ggml_nbytes(tensor) :
+        (size_t) ggml_nrows(tensor) * ggml_row_size(target_type, tensor->ne[0]);
+}
+
+static std::vector<compression_opportunity> collect_compression_opportunities(
+        const llama_model_quantize_params * params,
         llama_model_loader & ml,
         const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
         const std::vector<tensor_metadata> & metadata,
         const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
         int nthread) {
-    const llama_model_quantize_params * params = qs.params;
-    if (!params->print_compression_opportunity_report ||
-            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
-        return;
-    }
-
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
     std::vector<float> data;
@@ -2573,12 +2578,6 @@ static void print_compression_opportunity_report(
     workers.reserve(nthread);
 
     std::vector<compression_opportunity> opportunities;
-    int evaluated = 0;
-    int proxy_safe_count = 0;
-    int repair_potential_count = 0;
-    size_t proxy_safe_saved_bytes = 0;
-    size_t repair_potential_saved_bytes = 0;
-    size_t total_saved_bytes = 0;
     const bool budget_limited = quant_budget_limited(params);
     const float effective_accept_ratio = budget_limited ?
         std::max(params->quant_repair_accept_ratio, 1.25f) :
@@ -2632,7 +2631,6 @@ static void print_compression_opportunity_report(
             continue;
         }
 
-        ++evaluated;
         compression_opportunity best;
         for (ggml_type candidate_type : candidates) {
             const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
@@ -2641,13 +2639,12 @@ static void print_compression_opportunity_report(
                 continue;
             }
 
-            const size_t selected_bytes = (size_t) nrows * ggml_row_size(selected.type, ncols);
-            const size_t candidate_bytes = (size_t) nrows * ggml_row_size(candidate.type, ncols);
+            const size_t selected_bytes = estimate_quantized_tensor_bytes(tensor, selected.type);
+            const size_t candidate_bytes = estimate_quantized_tensor_bytes(tensor, candidate.type);
             if (candidate_bytes >= selected_bytes) {
                 continue;
             }
 
-            const float delta_error = std::max(0.0f, candidate.composite_error - selected.composite_error);
             const bool proxy_safe =
                 candidate.composite_error <= selected.composite_error * effective_accept_ratio ||
                 candidate.weighted_mse <= effective_max_error;
@@ -2665,10 +2662,14 @@ static void print_compression_opportunity_report(
                         repair.repaired_error <= effective_max_error;
                 }
             }
+
+            const float effective_candidate_error = repair_potential ? repaired_candidate_error : candidate.composite_error;
+            const float delta_error = std::max(0.0f, effective_candidate_error - selected.composite_error);
             const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
             const float score = saved_mib / std::max(delta_error, 1e-9f);
 
             compression_opportunity opportunity;
+            opportunity.tensor_index = i;
             opportunity.name = tm.name;
             opportunity.selected_type = selected.type;
             opportunity.candidate_type = candidate.type;
@@ -2676,12 +2677,18 @@ static void print_compression_opportunity_report(
             opportunity.selected_error = selected.composite_error;
             opportunity.candidate_error = candidate.composite_error;
             opportunity.repaired_candidate_error = repaired_candidate_error;
+            opportunity.effective_candidate_error = effective_candidate_error;
+            opportunity.candidate_weighted_mse = candidate.weighted_mse;
             opportunity.delta_error = delta_error;
             opportunity.opportunity_score = score;
             opportunity.selected_bpw = selected.bpw;
             opportunity.candidate_bpw = candidate.bpw;
             opportunity.proxy_safe = proxy_safe;
             opportunity.repair_potential = repair_potential;
+
+            if (!opportunity.proxy_safe && !opportunity.repair_potential) {
+                continue;
+            }
 
             if (best.candidate_type == GGML_TYPE_COUNT ||
                     (opportunity.proxy_safe != best.proxy_safe ? opportunity.proxy_safe :
@@ -2693,16 +2700,32 @@ static void print_compression_opportunity_report(
 
         if (best.candidate_type != GGML_TYPE_COUNT) {
             opportunities.push_back(best);
-            total_saved_bytes += best.saved_bytes;
-            if (best.proxy_safe) {
-                ++proxy_safe_count;
-                proxy_safe_saved_bytes += best.saved_bytes;
-            } else if (best.repair_potential) {
-                ++repair_potential_count;
-                repair_potential_saved_bytes += best.saved_bytes;
-            }
         }
     }
+
+    return opportunities;
+}
+
+static void print_compression_opportunity_report(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        const std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->print_compression_opportunity_report ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+    std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
+            params, ml, tensors, metadata, imatrix_data, nthread);
+    int proxy_safe_count = 0;
+    int repair_potential_count = 0;
+    size_t proxy_safe_saved_bytes = 0;
+    size_t repair_potential_saved_bytes = 0;
+    size_t total_saved_bytes = 0;
+    const bool budget_limited = quant_budget_limited(params);
 
     std::sort(opportunities.begin(), opportunities.end(), [] (const compression_opportunity & a, const compression_opportunity & b) {
         if (a.proxy_safe != b.proxy_safe) {
@@ -2716,10 +2739,20 @@ static void print_compression_opportunity_report(
         }
         return a.saved_bytes > b.saved_bytes;
     });
+    for (const compression_opportunity & opportunity : opportunities) {
+        total_saved_bytes += opportunity.saved_bytes;
+        if (opportunity.proxy_safe) {
+            ++proxy_safe_count;
+            proxy_safe_saved_bytes += opportunity.saved_bytes;
+        } else if (opportunity.repair_potential) {
+            ++repair_potential_count;
+            repair_potential_saved_bytes += opportunity.saved_bytes;
+        }
+    }
 
     const size_t report_count = std::min<size_t>(opportunities.size(), 32);
     LLAMA_LOG_INFO("%s: compression-opportunity summary evaluated=%d candidates=%d proxy_safe=%d proxy_safe_saved=%8.2f MiB repair_potential=%d repair_potential_saved=%8.2f MiB total_best_saved=%8.2f MiB budget_limited=%s\n",
-            __func__, evaluated, (int) opportunities.size(), proxy_safe_count,
+            __func__, (int) opportunities.size(), (int) opportunities.size(), proxy_safe_count,
             proxy_safe_saved_bytes/1024.0/1024.0,
             repair_potential_count, repair_potential_saved_bytes/1024.0/1024.0,
             total_saved_bytes/1024.0/1024.0,
@@ -2739,6 +2772,130 @@ static void print_compression_opportunity_report(
                 opportunity.candidate_bpw,
                 opportunity.proxy_safe ? "yes" : "no",
                 opportunity.repair_potential ? "yes" : "no");
+    }
+}
+
+static void apply_budget_repair_shrink(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->quant_repair || !quant_budget_limited(params) ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    const size_t target_bytes = qs.rd_target_bytes > 0 ? qs.rd_target_bytes :
+        (params->rd_target_bpw > 0.0f ?
+            (size_t) std::ceil(params->rd_target_bpw * ml.n_elements / 8.0) :
+            (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0));
+    size_t current_bytes = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        current_bytes += estimate_quantized_tensor_bytes(tensors[i]->tensor, metadata[i].target_type);
+    }
+    if (current_bytes <= target_bytes) {
+        if (params->print_rd_report) {
+            LLAMA_LOG_INFO("%s: skipped current=%8.2f MiB target=%8.2f MiB reason=already_within_budget\n",
+                    __func__, current_bytes/1024.0/1024.0, target_bytes/1024.0/1024.0);
+        }
+        return;
+    }
+
+    const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
+    const int max_passes = 4;
+    int passes = 0;
+    int demoted = 0;
+    int proxy_safe_demotions = 0;
+    int repair_potential_demotions = 0;
+    float added_quality_cost = 0.0f;
+    size_t total_saved_bytes = 0;
+
+    while (current_bytes > target_bytes && passes < max_passes) {
+        std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
+                params, ml, tensors, metadata, imatrix_data, nthread);
+        if (opportunities.empty()) {
+            break;
+        }
+
+        std::sort(opportunities.begin(), opportunities.end(), [] (const compression_opportunity & a, const compression_opportunity & b) {
+            if (a.proxy_safe != b.proxy_safe) {
+                return a.proxy_safe > b.proxy_safe;
+            }
+            if (a.repair_potential != b.repair_potential) {
+                return a.repair_potential > b.repair_potential;
+            }
+            if (a.opportunity_score != b.opportunity_score) {
+                return a.opportunity_score > b.opportunity_score;
+            }
+            return a.saved_bytes > b.saved_bytes;
+        });
+
+        bool applied_in_pass = false;
+        std::vector<bool> touched(metadata.size(), false);
+        for (const compression_opportunity & opportunity : opportunities) {
+            if (current_bytes <= target_bytes) {
+                break;
+            }
+            if (touched[opportunity.tensor_index]) {
+                continue;
+            }
+
+            tensor_metadata & tm = metadata[opportunity.tensor_index];
+            if (tm.target_type != opportunity.selected_type) {
+                continue;
+            }
+
+            tm.target_type = opportunity.candidate_type;
+            tm.rd_type = opportunity.candidate_type;
+            tm.rd_distortion = opportunity.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(tm));
+            tm.rd_bpw = opportunity.candidate_bpw;
+            tm.rd_cost = opportunity.effective_candidate_error + cost_lambda * opportunity.candidate_bpw;
+            tm.teacher_repair_clip_abs = 0.0f;
+            tm.teacher_repair_source_gain = 1.0f;
+            tm.teacher_repair_error_before = 0.0f;
+            tm.teacher_repair_error_after = 0.0f;
+
+            current_bytes -= opportunity.saved_bytes;
+            total_saved_bytes += opportunity.saved_bytes;
+            added_quality_cost += opportunity.delta_error;
+            ++demoted;
+            proxy_safe_demotions += opportunity.proxy_safe ? 1 : 0;
+            repair_potential_demotions += opportunity.repair_potential ? 1 : 0;
+            touched[opportunity.tensor_index] = true;
+            applied_in_pass = true;
+
+            LLAMA_LOG_INFO("%s: shrink-pass=%d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB quality_delta=%10.6g mode=%s current=%8.2f MiB target=%8.2f MiB\n",
+                    __func__, passes + 1, tm.name.c_str(),
+                    ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
+                    opportunity.saved_bytes/1024.0/1024.0,
+                    opportunity.delta_error,
+                    opportunity.proxy_safe ? "proxy-safe" : "repair-potential",
+                    current_bytes/1024.0/1024.0,
+                    target_bytes/1024.0/1024.0);
+        }
+
+        if (!applied_in_pass) {
+            break;
+        }
+        ++passes;
+    }
+
+    if (demoted > 0 || current_bytes > target_bytes) {
+        LLAMA_LOG_INFO("%s: summary demoted=%d proxy_safe=%d repair_potential=%d saved=%8.2f MiB added_quality_cost=%10.6g actual=%8.2f MiB target=%8.2f MiB difference=%+.2f MiB passes=%d status=%s\n",
+                __func__,
+                demoted,
+                proxy_safe_demotions,
+                repair_potential_demotions,
+                total_saved_bytes/1024.0/1024.0,
+                added_quality_cost,
+                current_bytes/1024.0/1024.0,
+                target_bytes/1024.0/1024.0,
+                ((double) current_bytes - target_bytes)/1024.0/1024.0,
+                passes,
+                current_bytes <= target_bytes ? "target-met" : "still-above-target");
     }
 }
 
@@ -3679,6 +3836,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
     apply_budget_first_type_cap(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
+    apply_budget_repair_shrink(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_teacher_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     print_compression_opportunity_report(qs, ml, tensors, metadata, imatrix_data, nthread);
     if (params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f ||
