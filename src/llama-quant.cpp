@@ -2017,7 +2017,9 @@ static float sample_teacher_proxy_error(
         ggml_type candidate,
         int sample_rows,
         float clip_abs,
-        float source_gain) {
+        float source_gain,
+        const std::vector<float> * channel_weights = nullptr,
+        float output_proxy_mix = 0.0f) {
     const int64_t ncols = tensor->ne[0];
     const int64_t nrows = ggml_nrows(tensor);
     if (!ggml_is_quantized(candidate) ||
@@ -2057,16 +2059,78 @@ static float sample_teacher_proxy_error(
 
         double error_sum = 0.0;
         double signal_sum = 0.0;
+        double output_error_sum = 0.0;
+        double output_signal_sum = 0.0;
         for (int64_t col = 0; col < ncols; ++col) {
             const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+            const double channel_weight = channel_weights && (size_t) col < channel_weights->size() ?
+                std::max(0.0f, (*channel_weights)[col]) : 1.0;
             const double delta = (double) teacher[col] - reconstructed[col];
             error_sum += weight * delta * delta;
             signal_sum += weight * teacher[col] * teacher[col];
+            output_error_sum += weight * channel_weight * delta * delta;
+            output_signal_sum += weight * channel_weight * teacher[col] * teacher[col];
         }
-        total_error += error_sum / (signal_sum + 1e-20);
+        const double base_error = error_sum / (signal_sum + 1e-20);
+        if (channel_weights && output_proxy_mix > 0.0f) {
+            const double output_error = output_error_sum / (output_signal_sum + 1e-20);
+            total_error += (1.0 - output_proxy_mix) * base_error + output_proxy_mix * output_error;
+        } else {
+            total_error += base_error;
+        }
     }
 
     return (float) (total_error / sample_rows);
+}
+
+static bool tensor_name_is_ffn_repair_candidate(const char * name) {
+    const std::string tensor_name = name ? name : "";
+    return tensor_name.find("ffn_down") != std::string::npos ||
+           tensor_name.find("ffn_gate") != std::string::npos ||
+           tensor_name.find("ffn_up") != std::string::npos;
+}
+
+static std::vector<float> build_ffn_repair_channel_weights(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        int sample_rows) {
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    std::vector<float> weights;
+    if (!tensor_name_is_ffn_repair_candidate(tensor->name) || ncols <= 0 || nrows <= 0) {
+        return weights;
+    }
+
+    weights.assign(ncols, 0.0f);
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * src = data.data() + row * ncols;
+        const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+        const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+        for (int64_t col = 0; col < ncols; ++col) {
+            const float base_weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0f;
+            weights[col] += base_weight * std::abs(src[col]);
+        }
+    }
+
+    const float inv_samples = sample_rows > 0 ? 1.0f / sample_rows : 1.0f;
+    double mean_weight = 0.0;
+    for (float & weight : weights) {
+        weight *= inv_samples;
+        mean_weight += weight;
+    }
+    mean_weight /= std::max<int64_t>(1, ncols);
+    if (mean_weight <= 0.0) {
+        std::fill(weights.begin(), weights.end(), 1.0f);
+        return weights;
+    }
+
+    for (float & weight : weights) {
+        const float normalized = weight / (float) mean_weight;
+        weight = std::min(4.0f, std::max(0.5f, normalized));
+    }
+    return weights;
 }
 
 static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
@@ -2080,7 +2144,12 @@ static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
         bool use_clipping,
         bool use_scale) {
     spqr_teacher_repair_result result;
-    result.base_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, 0.0f, 1.0f);
+    const std::vector<float> channel_weights = build_ffn_repair_channel_weights(tensor, data, imatrix, sample_rows);
+    const float output_proxy_mix = channel_weights.empty() ? 0.0f : 0.35f;
+    result.base_error = sample_teacher_proxy_error(
+            tensor, data, imatrix, target_type, sample_rows, 0.0f, 1.0f,
+            channel_weights.empty() ? nullptr : &channel_weights,
+            output_proxy_mix);
     result.repaired_error = result.base_error;
     if (result.base_error < min_error) {
         return result;
@@ -2092,7 +2161,10 @@ static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
     if (use_scale) {
         const float gain_candidates[] = { 0.970f, 0.985f, 0.995f, 1.005f, 1.015f, 1.030f };
         for (float gain : gain_candidates) {
-            const float repaired_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, 0.0f, gain);
+            const float repaired_error = sample_teacher_proxy_error(
+                    tensor, data, imatrix, target_type, sample_rows, 0.0f, gain,
+                    channel_weights.empty() ? nullptr : &channel_weights,
+                    output_proxy_mix);
             if (repaired_error >= 0.0f && repaired_error < result.repaired_error) {
                 result.repaired_error = repaired_error;
                 result.source_gain = gain;
@@ -2139,7 +2211,10 @@ static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
         if (clip_abs <= 0.0f) {
             continue;
         }
-        const float repaired_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, clip_abs, 1.0f);
+        const float repaired_error = sample_teacher_proxy_error(
+                tensor, data, imatrix, target_type, sample_rows, clip_abs, 1.0f,
+                channel_weights.empty() ? nullptr : &channel_weights,
+                output_proxy_mix);
         if (repaired_error >= 0.0f && repaired_error < result.repaired_error) {
             result.repaired_error = repaired_error;
             result.clip_abs = clip_abs;
@@ -2149,7 +2224,10 @@ static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
         if (use_scale) {
             const float gain_candidates[] = { 0.985f, 0.995f, 1.005f, 1.015f };
             for (float gain : gain_candidates) {
-                const float gain_error = sample_teacher_proxy_error(tensor, data, imatrix, target_type, sample_rows, clip_abs, gain);
+                const float gain_error = sample_teacher_proxy_error(
+                        tensor, data, imatrix, target_type, sample_rows, clip_abs, gain,
+                        channel_weights.empty() ? nullptr : &channel_weights,
+                        output_proxy_mix);
                 if (gain_error >= 0.0f && gain_error < result.repaired_error) {
                     result.repaired_error = gain_error;
                     result.clip_abs = clip_abs;

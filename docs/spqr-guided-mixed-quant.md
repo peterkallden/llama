@@ -246,6 +246,8 @@ E[||X(W - Wq)||^2] ~= sum_j imatrix[j] * (W[j] - Wq[j])^2
 
 When the selected type has high proxy error, `clipping` sweeps a few clipping percentiles and `scale` sweeps small source multipliers before quantization. `gain` keeps the cheaper-candidate repair and gain-error diagnostics enabled. Accepted repairs are exportable because they are applied to the source values before writing the normal quantized tensor. No residual, codebook, learned transform, or runtime format is introduced. Without imatrix data, the pass falls back to an unweighted reconstruction proxy.
 
+For FFN tensors, the `scale` path is slightly smarter than a plain global gain sweep. It now builds a lightweight channel-importance profile from sampled activations and imatrix weights, then blends that into the teacher proxy so high-activity FFN channels count more strongly. This gives the repair pass a cheap approximation of "preserve the useful FFN output channels first" without introducing a full block reconstruction pass.
+
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 
 ```bash
