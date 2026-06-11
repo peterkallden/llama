@@ -7,9 +7,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <numeric>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -23,6 +25,8 @@ struct logit_compare_args {
     std::string student_model;
     std::string json_out;
     int top_k = 64;
+    bool layer_attribution = false;
+    int layer_sample_tokens = 8;
 };
 
 struct topk_entry {
@@ -124,6 +128,66 @@ struct metric_delta {
     double damage_score = 0.0;
 };
 
+struct attribution_sample {
+    std::string name;
+    int64_t cols = 0;
+    int64_t rows = 0;
+    int sampled_rows = 0;
+    std::vector<float> values;
+};
+
+struct attribution_capture {
+    bool enabled = false;
+    int sample_tokens = 8;
+    std::unordered_map<std::string, attribution_sample> samples;
+    std::vector<float> scratch;
+};
+
+struct attribution_record {
+    std::string key;
+    int layer = -1;
+    int compared_tensors = 0;
+    int compared_values = 0;
+    double sum_mse = 0.0;
+    double sum_cosine_error = 0.0;
+    double sum_norm_ratio_error = 0.0;
+    double sum_abs_error = 0.0;
+    double max_mse = 0.0;
+};
+
+struct attribution_group_summary {
+    std::string key;
+    int layer = -1;
+    int compared_tensors = 0;
+    int compared_values = 0;
+    double mean_mse = 0.0;
+    double mean_cosine_error = 0.0;
+    double mean_norm_ratio_error = 0.0;
+    double mean_abs_error = 0.0;
+    double max_mse = 0.0;
+};
+
+struct attribution_delta_summary {
+    std::string key;
+    int layer = -1;
+    double delta_mean_mse = 0.0;
+    double delta_mean_cosine_error = 0.0;
+    double delta_mean_norm_ratio_error = 0.0;
+    double delta_mean_abs_error = 0.0;
+    double delta_max_mse = 0.0;
+};
+
+struct attribution_report {
+    std::unordered_map<std::string, attribution_record> tensors;
+    std::unordered_map<std::string, attribution_record> families;
+    std::unordered_map<int, attribution_record> layers;
+};
+
+struct compare_result {
+    global_metrics metrics;
+    attribution_report attribution;
+};
+
 struct per_position_metrics {
     double topk_kl = 0.0;
     double topk_overlap = 0.0;
@@ -147,6 +211,8 @@ static void print_usage(int, char ** argv) {
     LOG("    --baseline MODEL       optional baseline student model for paired delta reporting\n");
     LOG("    --student MODEL        student/quantized model path\n");
     LOG("    --logit-top-k N        top-k set used for KL/overlap/rank metrics (default: 64)\n");
+    LOG("    --layer-attribution    collect sampled hidden-state attribution by tensor/family/layer\n");
+    LOG("    --layer-sample-tokens N sampled token rows per tensor when --layer-attribution is enabled (default: 8)\n");
     LOG("    --json-out FILE        optional JSON summary output path\n");
     LOG("\ncommon options:\n");
     LOG("    reuse standard evaluation flags such as -f, -c, -b, -t, -ngl, --chunks\n");
@@ -212,6 +278,16 @@ static bool parse_logit_compare_args(int argc, char ** argv, logit_compare_args 
             }
             continue;
         }
+        if (arg == "--layer-attribution") {
+            lc_args.layer_attribution = true;
+            continue;
+        }
+        if (arg == "--layer-sample-tokens") {
+            if (!take_int_arg(i, argc, argv, lc_args.layer_sample_tokens, "--layer-sample-tokens")) {
+                return false;
+            }
+            continue;
+        }
         if (arg == "-m" || arg == "--model") {
             LOG_ERR("%s: use --student instead of %s for this tool\n", __func__, arg.c_str());
             return false;
@@ -225,6 +301,10 @@ static bool parse_logit_compare_args(int argc, char ** argv, logit_compare_args 
     }
     if (lc_args.top_k <= 0) {
         LOG_ERR("%s: --logit-top-k must be positive\n", __func__);
+        return false;
+    }
+    if (lc_args.layer_sample_tokens <= 0) {
+        LOG_ERR("%s: --layer-sample-tokens must be positive\n", __func__);
         return false;
     }
 
@@ -255,6 +335,323 @@ static std::string json_escape(const std::string & s) {
             default:   out += c;      break;
         }
     }
+    return out;
+}
+
+static bool starts_with(const std::string & s, const char * prefix) {
+    const size_t n = std::strlen(prefix);
+    return s.size() >= n && s.compare(0, n, prefix) == 0;
+}
+
+static bool parse_layered_tensor_name(const std::string & name, std::string & family, int & layer) {
+    const size_t pos = name.rfind('-');
+    if (pos == std::string::npos || pos + 1 >= name.size()) {
+        family.clear();
+        layer = -1;
+        return false;
+    }
+
+    family = name.substr(0, pos);
+    try {
+        layer = std::stoi(name.substr(pos + 1));
+    } catch (const std::exception &) {
+        family.clear();
+        layer = -1;
+        return false;
+    }
+    return true;
+}
+
+static bool should_capture_attribution_tensor(const std::string & name) {
+    if (name == "result_norm") {
+        return true;
+    }
+
+    std::string family;
+    int layer = -1;
+    if (!parse_layered_tensor_name(name, family, layer)) {
+        return false;
+    }
+
+    return family == "l_out" || family == "attn_out" || family == "ffn_out";
+}
+
+static std::vector<int64_t> select_sample_rows(int64_t n_rows, int sample_rows) {
+    std::vector<int64_t> rows;
+    if (n_rows <= 0 || sample_rows <= 0) {
+        return rows;
+    }
+
+    const int take = std::min<int64_t>(n_rows, sample_rows);
+    rows.reserve(take);
+
+    if (take == 1) {
+        rows.push_back(n_rows - 1);
+        return rows;
+    }
+
+    for (int i = 0; i < take; ++i) {
+        const double t = take > 1 ? (double) i / (take - 1) : 0.0;
+        const int64_t row = std::min<int64_t>(n_rows - 1, (int64_t) std::llround(t * (n_rows - 1)));
+        if (rows.empty() || rows.back() != row) {
+            rows.push_back(row);
+        }
+    }
+
+    for (int64_t row = n_rows - 1; (int) rows.size() < take && row >= 0; --row) {
+        if (std::find(rows.begin(), rows.end(), row) == rows.end()) {
+            rows.push_back(row);
+        }
+    }
+
+    std::sort(rows.begin(), rows.end());
+    return rows;
+}
+
+static bool capture_attribution_cb(struct ggml_tensor * t, bool ask, void * user_data) {
+    auto * capture = static_cast<attribution_capture *>(user_data);
+    if (!capture->enabled) {
+        return false;
+    }
+
+    const std::string name = t->name ? t->name : "";
+    if (ask) {
+        return should_capture_attribution_tensor(name);
+    }
+
+    if (!should_capture_attribution_tensor(name) || t->type != GGML_TYPE_F32 || t->ne[0] <= 0 || t->ne[1] <= 0) {
+        return true;
+    }
+
+    const std::vector<int64_t> rows = select_sample_rows(t->ne[1], capture->sample_tokens);
+    if (rows.empty()) {
+        return true;
+    }
+
+    const size_t n_bytes = ggml_nbytes(t);
+    capture->scratch.resize(n_bytes);
+
+    const bool is_host = ggml_backend_buffer_is_host(t->buffer);
+    const uint8_t * src = nullptr;
+    if (is_host) {
+        src = static_cast<const uint8_t *>(t->data);
+    } else {
+        ggml_backend_tensor_get(t, capture->scratch.data(), 0, n_bytes);
+        src = reinterpret_cast<const uint8_t *>(capture->scratch.data());
+    }
+
+    attribution_sample & sample = capture->samples[name];
+    if (sample.values.empty()) {
+        sample.name = name;
+        sample.cols = t->ne[0];
+        sample.rows = 0;
+        sample.sampled_rows = 0;
+    }
+    if (sample.cols != t->ne[0]) {
+        return true;
+    }
+    sample.rows += t->ne[1];
+    sample.sampled_rows += (int) rows.size();
+    sample.values.reserve(sample.values.size() + (size_t) sample.cols * rows.size());
+
+    for (int64_t row : rows) {
+        const size_t offset = (size_t) row * t->nb[1];
+        const float * row_ptr = reinterpret_cast<const float *>(src + offset);
+        sample.values.insert(sample.values.end(), row_ptr, row_ptr + sample.cols);
+    }
+    return true;
+}
+
+static void add_attribution_record(
+        std::unordered_map<std::string, attribution_record> & table,
+        const std::string & key,
+        int layer,
+        int compared_values,
+        double mse,
+        double cosine_error,
+        double norm_ratio_error,
+        double abs_error) {
+    attribution_record & record = table[key];
+    record.key = key;
+    record.layer = layer;
+    record.compared_tensors += 1;
+    record.compared_values += compared_values;
+    record.sum_mse += mse * compared_values;
+    record.sum_cosine_error += cosine_error * compared_values;
+    record.sum_norm_ratio_error += norm_ratio_error * compared_values;
+    record.sum_abs_error += abs_error * compared_values;
+    record.max_mse = std::max(record.max_mse, mse);
+}
+
+static void add_attribution_record(
+        std::unordered_map<int, attribution_record> & table,
+        int key,
+        int compared_values,
+        double mse,
+        double cosine_error,
+        double norm_ratio_error,
+        double abs_error) {
+    attribution_record & record = table[key];
+    record.key = std::to_string(key);
+    record.layer = key;
+    record.compared_tensors += 1;
+    record.compared_values += compared_values;
+    record.sum_mse += mse * compared_values;
+    record.sum_cosine_error += cosine_error * compared_values;
+    record.sum_norm_ratio_error += norm_ratio_error * compared_values;
+    record.sum_abs_error += abs_error * compared_values;
+    record.max_mse = std::max(record.max_mse, mse);
+}
+
+static void accumulate_attribution(
+        attribution_report & report,
+        const attribution_capture & teacher,
+        const attribution_capture & student) {
+    for (const auto & kv : teacher.samples) {
+        const std::string & name = kv.first;
+        const attribution_sample & lhs = kv.second;
+        const auto it = student.samples.find(name);
+        if (it == student.samples.end()) {
+            continue;
+        }
+
+        const attribution_sample & rhs = it->second;
+        const size_t n = std::min(lhs.values.size(), rhs.values.size());
+        if (n == 0) {
+            continue;
+        }
+
+        double sum_diff2 = 0.0;
+        double sum_abs = 0.0;
+        double dot = 0.0;
+        double lhs_norm2 = 0.0;
+        double rhs_norm2 = 0.0;
+
+        for (size_t i = 0; i < n; ++i) {
+            const double a = lhs.values[i];
+            const double b = rhs.values[i];
+            const double diff = a - b;
+            sum_diff2 += diff * diff;
+            sum_abs += std::abs(diff);
+            dot += a * b;
+            lhs_norm2 += a * a;
+            rhs_norm2 += b * b;
+        }
+
+        const double denom = std::max<size_t>(1, n);
+        const double mse = sum_diff2 / denom;
+        const double abs_error = sum_abs / denom;
+        const double cosine = dot / std::max(1e-12, std::sqrt(lhs_norm2) * std::sqrt(rhs_norm2));
+        const double cosine_error = 1.0 - cosine;
+        const double norm_ratio_error = std::abs(std::sqrt(rhs_norm2 / std::max(lhs_norm2, 1e-12)) - 1.0);
+
+        std::string family;
+        int layer = -1;
+        if (!parse_layered_tensor_name(name, family, layer)) {
+            family = name;
+        }
+
+        add_attribution_record(report.tensors, name, layer, (int) n, mse, cosine_error, norm_ratio_error, abs_error);
+        add_attribution_record(report.families, family, -1, (int) n, mse, cosine_error, norm_ratio_error, abs_error);
+        if (layer >= 0) {
+            add_attribution_record(report.layers, layer, (int) n, mse, cosine_error, norm_ratio_error, abs_error);
+        }
+    }
+}
+
+static std::vector<attribution_group_summary> summarize_attribution(
+        const std::unordered_map<std::string, attribution_record> & table) {
+    std::vector<attribution_group_summary> out;
+    out.reserve(table.size());
+    for (const auto & kv : table) {
+        const attribution_record & record = kv.second;
+        const double denom = std::max(1, record.compared_values);
+        out.push_back({
+            record.key,
+            record.layer,
+            record.compared_tensors,
+            record.compared_values,
+            record.sum_mse / denom,
+            record.sum_cosine_error / denom,
+            record.sum_norm_ratio_error / denom,
+            record.sum_abs_error / denom,
+            record.max_mse,
+        });
+    }
+
+    std::sort(out.begin(), out.end(), [] (const attribution_group_summary & a, const attribution_group_summary & b) {
+        if (a.mean_mse != b.mean_mse) {
+            return a.mean_mse > b.mean_mse;
+        }
+        return a.key < b.key;
+    });
+    return out;
+}
+
+static std::vector<attribution_group_summary> summarize_attribution(
+        const std::unordered_map<int, attribution_record> & table) {
+    std::vector<attribution_group_summary> out;
+    out.reserve(table.size());
+    for (const auto & kv : table) {
+        const attribution_record & record = kv.second;
+        const double denom = std::max(1, record.compared_values);
+        out.push_back({
+            record.key,
+            record.layer,
+            record.compared_tensors,
+            record.compared_values,
+            record.sum_mse / denom,
+            record.sum_cosine_error / denom,
+            record.sum_norm_ratio_error / denom,
+            record.sum_abs_error / denom,
+            record.max_mse,
+        });
+    }
+
+    std::sort(out.begin(), out.end(), [] (const attribution_group_summary & a, const attribution_group_summary & b) {
+        if (a.layer != b.layer) {
+            return a.layer < b.layer;
+        }
+        return a.key < b.key;
+    });
+    return out;
+}
+
+static std::vector<attribution_delta_summary> compute_attribution_delta(
+        const std::vector<attribution_group_summary> & baseline,
+        const std::vector<attribution_group_summary> & candidate) {
+    std::unordered_map<std::string, attribution_group_summary> baseline_by_key;
+    baseline_by_key.reserve(baseline.size());
+    for (const auto & item : baseline) {
+        baseline_by_key[item.key] = item;
+    }
+
+    std::vector<attribution_delta_summary> out;
+    out.reserve(candidate.size());
+    for (const auto & item : candidate) {
+        const auto it = baseline_by_key.find(item.key);
+        if (it == baseline_by_key.end()) {
+            continue;
+        }
+
+        const attribution_group_summary & base = it->second;
+        out.push_back({
+            item.key,
+            item.layer,
+            item.mean_mse - base.mean_mse,
+            item.mean_cosine_error - base.mean_cosine_error,
+            item.mean_norm_ratio_error - base.mean_norm_ratio_error,
+            item.mean_abs_error - base.mean_abs_error,
+            item.max_mse - base.max_mse,
+        });
+    }
+
+    std::sort(out.begin(), out.end(), [] (const attribution_delta_summary & a, const attribution_delta_summary & b) {
+        if (a.delta_mean_mse != b.delta_mean_mse) {
+            return a.delta_mean_mse > b.delta_mean_mse;
+        }
+        return a.key < b.key;
+    });
     return out;
 }
 
@@ -587,7 +984,7 @@ static std::vector<float> decode_logits_for_chunk(
     return logits;
 }
 
-static global_metrics compare_models(
+static compare_result compare_models(
         llama_context * teacher_ctx,
         llama_context * student_ctx,
         const llama_vocab * teacher_vocab,
@@ -596,8 +993,11 @@ static global_metrics compare_models(
         int n_ctx,
         int n_batch,
         int n_chunks_limit,
-        int top_k) {
-    global_metrics global;
+        int top_k,
+        attribution_capture * teacher_capture,
+        attribution_capture * student_capture) {
+    compare_result result;
+    global_metrics & global = result.metrics;
     const int first = n_ctx / 2;
     const int n_vocab = llama_vocab_n_tokens(teacher_vocab);
     const int n_chunk = (tokens.size() - 1) / n_ctx;
@@ -608,6 +1008,12 @@ static global_metrics compare_models(
 
     for (int i = 0; i < n_chunk_eval; ++i) {
         const int start = i * n_ctx;
+        if (teacher_capture) {
+            teacher_capture->samples.clear();
+        }
+        if (student_capture) {
+            student_capture->samples.clear();
+        }
         std::vector<float> teacher_logits = decode_logits_for_chunk(teacher_ctx, teacher_vocab, tokens, start, n_ctx, n_batch, first);
         std::vector<float> student_logits = decode_logits_for_chunk(student_ctx, student_vocab, tokens, start, n_ctx, n_batch, first);
 
@@ -700,25 +1106,40 @@ static global_metrics compare_models(
                 chunk.mean_topk_kl, chunk.mean_topk_overlap, chunk.mean_rank_drift,
                 chunk.compared_positions > 0 ? (double) chunk.argmax_flips / chunk.compared_positions : 0.0,
                 chunk.mean_teacher_margin, chunk.weighted_topk_kl, chunk.mean_next_logprob_delta, chunk.mean_next_rank_drift);
+
+        if (teacher_capture && student_capture) {
+            accumulate_attribution(result.attribution, *teacher_capture, *student_capture);
+        }
     }
 
-    return global;
+    return result;
 }
 
 static void write_json_summary(
         const std::string & path,
         const logit_compare_args & lc_args,
         const common_params & params,
-        const global_metrics & candidate_metrics,
-        const global_metrics * baseline_metrics) {
+        const compare_result & candidate_result,
+        const compare_result * baseline_result) {
     std::ofstream out(path);
     if (!out.is_open()) {
         throw std::runtime_error("failed to open json output file");
     }
 
+    const global_metrics & candidate_metrics = candidate_result.metrics;
+    const global_metrics * baseline_metrics = baseline_result ? &baseline_result->metrics : nullptr;
     const metric_summary candidate = summarize_metrics(candidate_metrics);
     const metric_summary baseline = baseline_metrics ? summarize_metrics(*baseline_metrics) : metric_summary{};
     const metric_delta delta = baseline_metrics ? compute_metric_delta(baseline, candidate) : metric_delta{};
+    const auto candidate_tensor_attr = summarize_attribution(candidate_result.attribution.tensors);
+    const auto candidate_family_attr = summarize_attribution(candidate_result.attribution.families);
+    const auto candidate_layer_attr = summarize_attribution(candidate_result.attribution.layers);
+    const auto baseline_tensor_attr = baseline_result ? summarize_attribution(baseline_result->attribution.tensors) : std::vector<attribution_group_summary>{};
+    const auto baseline_family_attr = baseline_result ? summarize_attribution(baseline_result->attribution.families) : std::vector<attribution_group_summary>{};
+    const auto baseline_layer_attr = baseline_result ? summarize_attribution(baseline_result->attribution.layers) : std::vector<attribution_group_summary>{};
+    const auto tensor_delta_attr = baseline_result ? compute_attribution_delta(baseline_tensor_attr, candidate_tensor_attr) : std::vector<attribution_delta_summary>{};
+    const auto family_delta_attr = baseline_result ? compute_attribution_delta(baseline_family_attr, candidate_family_attr) : std::vector<attribution_delta_summary>{};
+    const auto layer_delta_attr = baseline_result ? compute_attribution_delta(baseline_layer_attr, candidate_layer_attr) : std::vector<attribution_delta_summary>{};
 
     auto write_percentiles = [&out](const char * name, const percentile_summary & p, const char * suffix) {
         out << "    \"" << name << "\": {\n";
@@ -781,6 +1202,42 @@ static void write_json_summary(
         out << "  ]" << suffix << "\n";
     };
 
+    auto write_attr_groups = [&out](const char * name, const std::vector<attribution_group_summary> & items, const char * suffix) {
+        out << "  \"" << name << "\": [\n";
+        for (size_t i = 0; i < items.size(); ++i) {
+            const auto & item = items[i];
+            out << "    {\n";
+            out << "      \"key\": \"" << json_escape(item.key) << "\",\n";
+            out << "      \"layer\": " << item.layer << ",\n";
+            out << "      \"compared_tensors\": " << item.compared_tensors << ",\n";
+            out << "      \"compared_values\": " << item.compared_values << ",\n";
+            out << "      \"mean_mse\": " << item.mean_mse << ",\n";
+            out << "      \"mean_cosine_error\": " << item.mean_cosine_error << ",\n";
+            out << "      \"mean_norm_ratio_error\": " << item.mean_norm_ratio_error << ",\n";
+            out << "      \"mean_abs_error\": " << item.mean_abs_error << ",\n";
+            out << "      \"max_mse\": " << item.max_mse << "\n";
+            out << "    }" << (i + 1 == items.size() ? "\n" : ",\n");
+        }
+        out << "  ]" << suffix << "\n";
+    };
+
+    auto write_attr_deltas = [&out](const char * name, const std::vector<attribution_delta_summary> & items, const char * suffix) {
+        out << "  \"" << name << "\": [\n";
+        for (size_t i = 0; i < items.size(); ++i) {
+            const auto & item = items[i];
+            out << "    {\n";
+            out << "      \"key\": \"" << json_escape(item.key) << "\",\n";
+            out << "      \"layer\": " << item.layer << ",\n";
+            out << "      \"delta_mean_mse\": " << item.delta_mean_mse << ",\n";
+            out << "      \"delta_mean_cosine_error\": " << item.delta_mean_cosine_error << ",\n";
+            out << "      \"delta_mean_norm_ratio_error\": " << item.delta_mean_norm_ratio_error << ",\n";
+            out << "      \"delta_mean_abs_error\": " << item.delta_mean_abs_error << ",\n";
+            out << "      \"delta_max_mse\": " << item.delta_max_mse << "\n";
+            out << "    }" << (i + 1 == items.size() ? "\n" : ",\n");
+        }
+        out << "  ]" << suffix << "\n";
+    };
+
     out << "{\n";
     out << "  \"teacher\": \"" << json_escape(lc_args.teacher_model) << "\",\n";
     if (!lc_args.baseline_model.empty()) {
@@ -790,6 +1247,8 @@ static void write_json_summary(
     out << "  \"file\": \"" << json_escape(params.prompt_file) << "\",\n";
     out << "  \"top_k\": " << lc_args.top_k << ",\n";
     out << "  \"n_ctx\": " << params.n_ctx << ",\n";
+    out << "  \"layer_attribution\": " << (lc_args.layer_attribution ? "true" : "false") << ",\n";
+    out << "  \"layer_sample_tokens\": " << lc_args.layer_sample_tokens << ",\n";
 
     if (baseline_metrics) {
         write_summary("baseline_summary", baseline, ",");
@@ -813,7 +1272,23 @@ static void write_json_summary(
         out << "  },\n";
         write_chunks("baseline_chunks", *baseline_metrics, ",");
     }
-    write_chunks("candidate_chunks", candidate_metrics, "");
+    write_chunks("candidate_chunks", candidate_metrics, ",");
+
+    if (baseline_result) {
+        write_attr_groups("baseline_tensor_attribution", baseline_tensor_attr, ",");
+        write_attr_groups("baseline_family_attribution", baseline_family_attr, ",");
+        write_attr_groups("baseline_layer_attribution", baseline_layer_attr, ",");
+    }
+    write_attr_groups("candidate_tensor_attribution", candidate_tensor_attr, ",");
+    write_attr_groups("candidate_family_attribution", candidate_family_attr, ",");
+    if (baseline_result) {
+        write_attr_groups("candidate_layer_attribution", candidate_layer_attr, ",");
+        write_attr_deltas("tensor_attribution_delta", tensor_delta_attr, ",");
+        write_attr_deltas("family_attribution_delta", family_delta_attr, ",");
+        write_attr_deltas("layer_attribution_delta", layer_delta_attr, "");
+    } else {
+        write_attr_groups("candidate_layer_attribution", candidate_layer_attr, "");
+    }
     out << "}\n";
 }
 
@@ -865,8 +1340,16 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
+    attribution_capture teacher_capture;
+    teacher_capture.enabled = lc_args.layer_attribution;
+    teacher_capture.sample_tokens = lc_args.layer_sample_tokens;
+
     common_params teacher_params = params;
     teacher_params.model.path = lc_args.teacher_model;
+    if (lc_args.layer_attribution) {
+        teacher_params.cb_eval = capture_attribution_cb;
+        teacher_params.cb_eval_user_data = &teacher_capture;
+    }
 
     common_init_result_ptr teacher_init = common_init_from_params(teacher_params);
 
@@ -890,10 +1373,21 @@ int main(int argc, char ** argv) {
     LOG_INF("%s: teacher=%s\n", __func__, lc_args.teacher_model.c_str());
     LOG_INF("%s: tokens=%zu requested_chunks=%d top_k=%d\n",
             __func__, teacher_tokens.size(), params.n_chunks, lc_args.top_k);
+    if (lc_args.layer_attribution) {
+        LOG_INF("%s: layer attribution enabled sample_tokens=%d\n",
+                __func__, lc_args.layer_sample_tokens);
+    }
 
-    auto compare_student = [&](const std::string & model_path, const char * label) -> global_metrics {
+    auto compare_student = [&](const std::string & model_path, const char * label) -> compare_result {
         common_params student_params = params;
         student_params.model.path = model_path;
+        attribution_capture student_capture;
+        student_capture.enabled = lc_args.layer_attribution;
+        student_capture.sample_tokens = lc_args.layer_sample_tokens;
+        if (lc_args.layer_attribution) {
+            student_params.cb_eval = capture_attribution_cb;
+            student_params.cb_eval_user_data = &student_capture;
+        }
         common_init_result_ptr student_init = common_init_from_params(student_params);
 
         llama_model * student_model = student_init->model();
@@ -924,37 +1418,39 @@ int main(int argc, char ** argv) {
         LOG_INF("%s: %s n_ctx=%d n_batch=%d available_chunks=%d\n",
                 __func__, label, n_ctx, n_batch, n_chunk);
 
-        global_metrics metrics = compare_models(
+        compare_result result = compare_models(
                 teacher_ctx, student_ctx,
                 teacher_vocab, student_vocab,
-                teacher_tokens, n_ctx, n_batch, params.n_chunks, lc_args.top_k);
+                teacher_tokens, n_ctx, n_batch, params.n_chunks, lc_args.top_k,
+                lc_args.layer_attribution ? &teacher_capture : nullptr,
+                lc_args.layer_attribution ? &student_capture : nullptr);
 
-        if (metrics.compared_positions == 0) {
+        if (result.metrics.compared_positions == 0) {
             throw std::runtime_error(std::string("no comparable positions were produced for ") + label);
         }
-        return metrics;
+        return result;
     };
 
-    global_metrics candidate_metrics;
-    global_metrics baseline_metrics;
-    const global_metrics * baseline_metrics_ptr = nullptr;
+    compare_result candidate_result;
+    compare_result baseline_result;
+    const compare_result * baseline_result_ptr = nullptr;
 
     try {
         if (!lc_args.baseline_model.empty()) {
-            baseline_metrics = compare_student(lc_args.baseline_model, "baseline");
-            baseline_metrics_ptr = &baseline_metrics;
+            baseline_result = compare_student(lc_args.baseline_model, "baseline");
+            baseline_result_ptr = &baseline_result;
         }
-        candidate_metrics = compare_student(lc_args.student_model, "candidate");
+        candidate_result = compare_student(lc_args.student_model, "candidate");
     } catch (const std::exception & e) {
         LOG_ERR("%s: %s\n", __func__, e.what());
         return 1;
     }
 
-    const metric_summary candidate_summary = summarize_metrics(candidate_metrics);
+    const metric_summary candidate_summary = summarize_metrics(candidate_result.metrics);
     log_metric_summary("candidate_summary", candidate_summary);
 
-    if (baseline_metrics_ptr != nullptr) {
-        const metric_summary baseline_summary = summarize_metrics(*baseline_metrics_ptr);
+    if (baseline_result_ptr != nullptr) {
+        const metric_summary baseline_summary = summarize_metrics(baseline_result_ptr->metrics);
         log_metric_summary("baseline_summary", baseline_summary);
         if (baseline_summary.compared_positions != candidate_summary.compared_positions) {
             LOG_WRN("%s: baseline/candidate compared different position counts (%d vs %d); delta is still reported but should be treated cautiously\n",
@@ -972,8 +1468,49 @@ int main(int argc, char ** argv) {
                 delta.damage_score);
     }
 
+    if (lc_args.layer_attribution) {
+        const auto candidate_layers = summarize_attribution(candidate_result.attribution.layers);
+        const auto candidate_families = summarize_attribution(candidate_result.attribution.families);
+        const auto candidate_tensors = summarize_attribution(candidate_result.attribution.tensors);
+
+        auto log_top_attr = [](
+                const char * label,
+                const std::vector<attribution_group_summary> & items,
+                size_t limit) {
+            for (size_t i = 0; i < std::min(limit, items.size()); ++i) {
+                const auto & item = items[i];
+                LOG_INF("%s: rank=%zu key=%s layer=%d mean_mse=%10.6g cosine_error=%10.6g norm_ratio_error=%10.6g compared_tensors=%d compared_values=%d\n",
+                        label, i + 1, item.key.c_str(), item.layer, item.mean_mse,
+                        item.mean_cosine_error, item.mean_norm_ratio_error,
+                        item.compared_tensors, item.compared_values);
+            }
+        };
+
+        log_top_attr("candidate_layer_attr", candidate_layers, 8);
+        log_top_attr("candidate_family_attr", candidate_families, 8);
+        log_top_attr("candidate_tensor_attr", candidate_tensors, 8);
+
+        if (baseline_result_ptr != nullptr) {
+            const auto baseline_layers = summarize_attribution(baseline_result_ptr->attribution.layers);
+            const auto baseline_families = summarize_attribution(baseline_result_ptr->attribution.families);
+            const auto layer_deltas = compute_attribution_delta(baseline_layers, candidate_layers);
+            const auto family_deltas = compute_attribution_delta(baseline_families, candidate_families);
+
+            for (size_t i = 0; i < std::min<size_t>(8, layer_deltas.size()); ++i) {
+                const auto & item = layer_deltas[i];
+                LOG_INF("paired_layer_delta: rank=%zu layer=%d delta_mean_mse=%10.6g delta_cosine_error=%10.6g delta_norm_ratio_error=%10.6g\n",
+                        i + 1, item.layer, item.delta_mean_mse, item.delta_mean_cosine_error, item.delta_mean_norm_ratio_error);
+            }
+            for (size_t i = 0; i < std::min<size_t>(8, family_deltas.size()); ++i) {
+                const auto & item = family_deltas[i];
+                LOG_INF("paired_family_delta: rank=%zu key=%s delta_mean_mse=%10.6g delta_cosine_error=%10.6g delta_norm_ratio_error=%10.6g\n",
+                        i + 1, item.key.c_str(), item.delta_mean_mse, item.delta_mean_cosine_error, item.delta_mean_norm_ratio_error);
+            }
+        }
+    }
+
     if (!lc_args.json_out.empty()) {
-        write_json_summary(lc_args.json_out, lc_args, params, candidate_metrics, baseline_metrics_ptr);
+        write_json_summary(lc_args.json_out, lc_args, params, candidate_result, baseline_result_ptr);
         LOG_INF("%s: wrote json summary to %s\n", __func__, lc_args.json_out.c_str());
     }
 

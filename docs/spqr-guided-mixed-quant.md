@@ -49,12 +49,20 @@ The teacher-aware repair path inside `llama-quantize` is still a local proxy: it
 
 This tool intentionally lives outside `llama-imatrix`. Imatrix remains a single-model analysis pass that produces reusable activation, RD, activity, and layer-delta profile data. `llama-logit-compare` is a two-model validation pass: it runs a teacher model and a student model over the same tokenized evaluation text and reports output drift metrics such as top-k KL, top-k overlap, rank drift, teacher margin, and argmax flip rate.
 
+With `--layer-attribution`, the same pass also samples hidden-state tensors during decode and reports teacher-vs-student drift at three granularities:
+
+- per tensor, for hotspot inspection such as `ffn_out-29`
+- per family, for broader patterns such as `l_out` vs `ffn_out`
+- per layer, so later quantizer decisions can attribute global logit damage back to a small set of suspect blocks
+
 Example:
 
 ```bash
 ./build/bin/llama-logit-compare \
   --teacher teacher-f16.gguf \
   --student output-spqr-rd-repair.gguf \
+  --layer-attribution \
+  --layer-sample-tokens 8 \
   --logit-top-k 64 \
   --json-out logit-impact.json \
   -f eval.txt \
@@ -71,6 +79,8 @@ For candidate-to-baseline comparisons, pass a baseline model as well:
   --teacher teacher-f16.gguf \
   --baseline standard-q4.gguf \
   --student output-spqr-rd-repair.gguf \
+  --layer-attribution \
+  --layer-sample-tokens 8 \
   --logit-top-k 64 \
   --json-out logit-delta.json \
   -f eval.txt \
@@ -79,6 +89,8 @@ For candidate-to-baseline comparisons, pass a baseline model as well:
 ```
 
 In paired mode, `baseline_summary` and `candidate_summary` are both measured against the same teacher, and `delta` is reported as `candidate - baseline`. Lower KL, lower rank drift, fewer argmax flips, higher top-k overlap, and a less negative next-token logprob delta are better. `damage_score` is a first-pass aggregate where positive values mean the candidate looks worse than the baseline and negative values mean it looks better according to this lightweight logit gate. The score is intentionally conservative and report-only; use the component metrics when deciding whether a quantization path actually improved behavior.
+
+When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribution`, `*_family_attribution`, and `*_layer_attribution`, plus paired `*_attribution_delta` arrays when a baseline is present. Those deltas are currently sorted by `delta_mean_mse`, which makes them a practical first input to later repair/promote attribution work.
 
 `llama-quantize` can now consume that report as a first-step global gate:
 
@@ -92,6 +104,8 @@ In paired mode, `baseline_summary` and `candidate_summary` are both measured aga
   --logit-gate \
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
+
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair and shrink passes. In practice that means later or more teacher-sensitive layers become harder to demote, while layers/families that looked safer in the report get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
 
 This first integration is intentionally modest. The report is parsed once at startup and used as a model-level brake, not a tensor-level allocator. If the report fails the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative. Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries.
 
