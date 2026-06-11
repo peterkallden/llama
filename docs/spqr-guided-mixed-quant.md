@@ -43,6 +43,58 @@ The branch currently implements:
 
 The reusable imatrix profile is optional. Standard imatrix files continue to work: sensitivity and block scoring use their normal activation data, while layer-delta and RD analysis fall back to being computed during quantization.
 
+## Logit comparison side tool
+
+The teacher-aware repair path inside `llama-quantize` is still a local proxy: it compares sampled FP rows against reconstructed quantized rows and uses that signal for mixed-precision decisions. A separate report-only tool, `llama-logit-compare`, can now be used when you want an actual teacher-vs-student output comparison without folding that work into imatrix generation.
+
+This tool intentionally lives outside `llama-imatrix`. Imatrix remains a single-model analysis pass that produces reusable activation, RD, activity, and layer-delta profile data. `llama-logit-compare` is a two-model validation pass: it runs a teacher model and a student model over the same tokenized evaluation text and reports output drift metrics such as top-k KL, top-k overlap, rank drift, teacher margin, and argmax flip rate.
+
+Example:
+
+```bash
+./build/bin/llama-logit-compare \
+  --teacher teacher-f16.gguf \
+  --student output-spqr-rd-repair.gguf \
+  --logit-top-k 64 \
+  --json-out logit-impact.json \
+  -f eval.txt \
+  -c 512 \
+  --chunks 4
+```
+
+The first version is report-only. It does not yet change quantization choices directly, but it gives a concrete teacher/student signal that can later be fed into mixed-precision policy decisions.
+
+For candidate-to-baseline comparisons, pass a baseline model as well:
+
+```bash
+./build/bin/llama-logit-compare \
+  --teacher teacher-f16.gguf \
+  --baseline standard-q4.gguf \
+  --student output-spqr-rd-repair.gguf \
+  --logit-top-k 64 \
+  --json-out logit-delta.json \
+  -f eval.txt \
+  -c 512 \
+  --chunks 4
+```
+
+In paired mode, `baseline_summary` and `candidate_summary` are both measured against the same teacher, and `delta` is reported as `candidate - baseline`. Lower KL, lower rank drift, fewer argmax flips, higher top-k overlap, and a less negative next-token logprob delta are better. `damage_score` is a first-pass aggregate where positive values mean the candidate looks worse than the baseline and negative values mean it looks better according to this lightweight logit gate. The score is intentionally conservative and report-only; use the component metrics when deciding whether a quantization path actually improved behavior.
+
+`llama-quantize` can now consume that report as a first-step global gate:
+
+```bash
+./build/bin/llama-quantize \
+  --imatrix imatrix-profile.gguf \
+  --mixed-policy spqr_guided \
+  --rd-guided \
+  --quant-repair \
+  --logit-report logit-delta.json \
+  --logit-gate \
+  input-f16.gguf output-q4.gguf Q4_K_M
+```
+
+This first integration is intentionally modest. The report is parsed once at startup and used as a model-level brake, not a tensor-level allocator. If the report fails the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative. Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries.
+
 ## Non-goals
 
 This POC does not implement:

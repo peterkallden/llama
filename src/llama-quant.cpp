@@ -345,6 +345,61 @@ static float teacher_feature_gate_mix(const llama_model_quantize_params * params
     return params->quant_teacher_aware ? 0.10f : 0.0f;
 }
 
+struct logit_gate_metrics {
+    bool paired = false;
+    bool has_damage = false;
+    bool has_kl = false;
+    bool has_flip = false;
+    float damage_score = 0.0f;
+    float mean_topk_kl = 0.0f;
+    float argmax_flip_rate = 0.0f;
+};
+
+static bool parse_logit_metric(const std::string & json, const char * key, float & value) {
+    const std::regex pattern(std::string("\"") + key + "\"\\s*:\\s*([-+0-9.eE]+)");
+    std::smatch match;
+    if (!std::regex_search(json, match, pattern) || match.size() < 2) {
+        return false;
+    }
+    try {
+        value = std::stof(match[1].str());
+    } catch (...) {
+        return false;
+    }
+    return std::isfinite(value);
+}
+
+static bool load_logit_gate_metrics(const char * path, logit_gate_metrics & metrics) {
+    if (path == nullptr || path[0] == '\0') {
+        return false;
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        return false;
+    }
+    std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (json.empty()) {
+        return false;
+    }
+
+    metrics.has_damage = parse_logit_metric(json, "damage_score", metrics.damage_score);
+    metrics.has_kl = parse_logit_metric(json, "delta_mean_topk_kl", metrics.mean_topk_kl);
+    metrics.has_flip = parse_logit_metric(json, "delta_argmax_flip_rate", metrics.argmax_flip_rate);
+    metrics.paired = metrics.has_damage || metrics.has_kl || metrics.has_flip;
+
+    if (!metrics.has_kl) {
+        metrics.has_kl = parse_logit_metric(json, "mean_topk_kl", metrics.mean_topk_kl);
+    }
+    if (!metrics.has_flip) {
+        metrics.has_flip = parse_logit_metric(json, "argmax_flip_rate", metrics.argmax_flip_rate);
+    }
+
+    return metrics.has_damage || metrics.has_kl || metrics.has_flip;
+}
+
+static void ensure_logit_gate_loaded(quantize_state_impl & qs);
+
 static ggml_type spqr_layer_delta_type_for_bucket(
         const llama_model_quantize_params * params,
         tensor_category category,
@@ -434,6 +489,13 @@ struct quantize_state_impl {
     size_t rd_target_bytes = 0;
     size_t rd_estimated_bytes = 0;
     bool rd_quality_limited = false;
+    bool logit_report_loaded = false;
+    bool logit_report_available = false;
+    bool logit_gate_pass = true;
+    bool logit_report_paired = false;
+    float logit_damage_score = 0.0f;
+    float logit_mean_topk_kl = 0.0f;
+    float logit_argmax_flip_rate = 0.0f;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -452,6 +514,46 @@ struct quantize_state_impl {
         }
     }
 };
+
+static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
+    if (qs.logit_report_loaded) {
+        return;
+    }
+    qs.logit_report_loaded = true;
+
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->logit_gate || params->logit_report == nullptr || params->logit_report[0] == '\0') {
+        return;
+    }
+
+    logit_gate_metrics metrics;
+    if (!load_logit_gate_metrics(params->logit_report, metrics)) {
+        LLAMA_LOG_WARN("%s: logit gate could not parse report %s; continuing without a global logit gate\n",
+                __func__, params->logit_report);
+        return;
+    }
+
+    qs.logit_report_available = true;
+    qs.logit_report_paired = metrics.paired;
+    qs.logit_damage_score = metrics.damage_score;
+    qs.logit_mean_topk_kl = metrics.mean_topk_kl;
+    qs.logit_argmax_flip_rate = metrics.argmax_flip_rate;
+    qs.logit_gate_pass =
+        (!metrics.has_damage || metrics.damage_score <= params->logit_damage_threshold) &&
+        (!metrics.has_kl || metrics.mean_topk_kl <= params->logit_kl_threshold) &&
+        (!metrics.has_flip || metrics.argmax_flip_rate <= params->logit_flip_threshold);
+
+    LLAMA_LOG_INFO("%s: logit gate report=%s mode=%s damage=%10.6g kl=%10.6g flips=%10.6g thresholds=(%g,%g,%g) status=%s\n",
+            __func__, params->logit_report,
+            qs.logit_report_paired ? "paired" : "candidate-only",
+            qs.logit_damage_score,
+            qs.logit_mean_topk_kl,
+            qs.logit_argmax_flip_rate,
+            params->logit_damage_threshold,
+            params->logit_kl_threshold,
+            params->logit_flip_threshold,
+            qs.logit_gate_pass ? "pass" : "fail");
+}
 
 // A normal GGUF tensor-type candidate. Future compression backends can participate in
 // the same global allocator by providing an equivalent rate-distortion candidate.
@@ -2756,6 +2858,7 @@ static void apply_spqr_repair(
     if (!params->quant_repair || !params->quant_repair_gain || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
+    ensure_logit_gate_loaded(qs);
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -2773,6 +2876,12 @@ static void apply_spqr_repair(
     const float effective_max_error = budget_limited ?
         std::max(params->quant_repair_max_error, 0.005f) :
         params->quant_repair_max_error;
+    float adjusted_accept_ratio = effective_accept_ratio;
+    float adjusted_max_error = effective_max_error;
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        adjusted_accept_ratio = std::min(adjusted_accept_ratio, budget_limited ? 1.10f : 1.01f);
+        adjusted_max_error = std::min(adjusted_max_error, budget_limited ? 0.0025f : 0.0005f);
+    }
     const float cost_lambda = budget_limited ?
         std::max(params->rd_lambda, qs.rd_allocation_lambda) :
         params->rd_lambda;
@@ -2829,10 +2938,10 @@ static void apply_spqr_repair(
                     params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
 
             const bool under_relative_gate =
-                candidate_gate.gate_error <= selected_gate.gate_error * effective_accept_ratio;
+                candidate_gate.gate_error <= selected_gate.gate_error * adjusted_accept_ratio;
             const bool under_absolute_gate =
-                candidate.weighted_mse <= effective_max_error ||
-                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= effective_max_error);
+                candidate.weighted_mse <= adjusted_max_error ||
+                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= adjusted_max_error);
             const float candidate_cost = candidate_gate.gate_error + cost_lambda * candidate.bpw;
             const float best_cost = best_gate.gate_error + cost_lambda * best.bpw;
             if ((under_relative_gate || under_absolute_gate) && candidate_cost < best_cost) {
@@ -2879,7 +2988,7 @@ static void apply_spqr_repair(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: quant-repair evaluated=%d repaired=%d kept=%d methods=gain teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f feature_mix=%.2f top_k=%d accept_ratio=%.3f configured_accept_ratio=%.3f max_error=%g configured_max_error=%g budget_limited=%s\n",
+        LLAMA_LOG_INFO("%s: quant-repair evaluated=%d repaired=%d kept=%d methods=gain teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f feature_mix=%.2f top_k=%d accept_ratio=%.3f configured_accept_ratio=%.3f max_error=%g configured_max_error=%g budget_limited=%s logit_gate=%s\n",
                 __func__, evaluated, repaired, kept_selected,
                 params->quant_teacher_aware ? "yes" : "no",
                 params->quant_teacher_aware_mix,
@@ -2887,9 +2996,10 @@ static void apply_spqr_repair(
                 params->quant_teacher_aware_rank_mix,
                 teacher_feature_gate_mix(params),
                 params->quant_teacher_aware_top_k,
-                effective_accept_ratio, params->quant_repair_accept_ratio,
-                effective_max_error, params->quant_repair_max_error,
-                budget_limited ? "yes" : "no");
+                adjusted_accept_ratio, params->quant_repair_accept_ratio,
+                adjusted_max_error, params->quant_repair_max_error,
+                budget_limited ? "yes" : "no",
+                (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
 }
 
@@ -2902,12 +3012,14 @@ static size_t estimate_quantized_tensor_bytes(
 }
 
 static std::vector<compression_opportunity> collect_compression_opportunities(
+        quantize_state_impl & qs,
         const llama_model_quantize_params * params,
         llama_model_loader & ml,
         const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
         const std::vector<tensor_metadata> & metadata,
         const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
         int nthread) {
+    ensure_logit_gate_loaded(qs);
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
     std::vector<float> data;
@@ -2922,6 +3034,12 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
     const float effective_max_error = budget_limited ?
         std::max(params->quant_repair_max_error, 0.005f) :
         params->quant_repair_max_error;
+    float adjusted_accept_ratio = effective_accept_ratio;
+    float adjusted_max_error = effective_max_error;
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        adjusted_accept_ratio = std::min(adjusted_accept_ratio, 1.10f);
+        adjusted_max_error = std::min(adjusted_max_error, 0.0025f);
+    }
     const bool repair_probe_enabled = params->quant_repair &&
         (params->quant_repair_clipping || params->quant_repair_scale);
     const float effective_min_error = budget_limited ?
@@ -2988,9 +3106,9 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             }
 
             const bool proxy_safe =
-                candidate_gate.gate_error <= selected_gate.gate_error * effective_accept_ratio ||
-                candidate.weighted_mse <= effective_max_error ||
-                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= effective_max_error);
+                candidate_gate.gate_error <= selected_gate.gate_error * adjusted_accept_ratio ||
+                candidate.weighted_mse <= adjusted_max_error ||
+                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= adjusted_max_error);
             float repaired_candidate_error = candidate_gate.gate_error;
             bool repair_potential = false;
             if (!proxy_safe && repair_probe_enabled) {
@@ -3001,8 +3119,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
                 if (repair.base_error >= 0.0f) {
                     repaired_candidate_error = repair.repaired_error;
                     repair_potential =
-                        repair.repaired_error <= selected_gate.gate_error * effective_accept_ratio ||
-                        repair.repaired_error <= effective_max_error;
+                        repair.repaired_error <= selected_gate.gate_error * adjusted_accept_ratio ||
+                        repair.repaired_error <= adjusted_max_error;
                 }
             }
 
@@ -3069,7 +3187,7 @@ static void print_compression_opportunity_report(
         return;
     }
     std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
-            params, ml, tensors, metadata, imatrix_data, nthread);
+            qs, params, ml, tensors, metadata, imatrix_data, nthread);
     int proxy_safe_count = 0;
     int repair_potential_count = 0;
     size_t proxy_safe_saved_bytes = 0;
@@ -3150,6 +3268,7 @@ static void apply_budget_repair_shrink(
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
+    ensure_logit_gate_loaded(qs);
 
     const size_t target_bytes = qs.rd_target_bytes > 0 ? qs.rd_target_bytes :
         (params->rd_target_bpw > 0.0f ?
@@ -3178,7 +3297,7 @@ static void apply_budget_repair_shrink(
 
     while (current_bytes > target_bytes && passes < max_passes) {
         std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
-                params, ml, tensors, metadata, imatrix_data, nthread);
+                qs, params, ml, tensors, metadata, imatrix_data, nthread);
         if (opportunities.empty()) {
             break;
         }
@@ -3275,6 +3394,7 @@ static void apply_quality_precision_validation(
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
+    ensure_logit_gate_loaded(qs);
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -3282,10 +3402,14 @@ static void apply_quality_precision_validation(
     std::vector<std::thread> workers;
     workers.reserve(nthread);
 
-    const float accept_ratio = std::max(params->quant_repair_accept_ratio, 1.15f);
-    const float max_delta = std::max(params->quant_repair_max_error, 0.0015f);
+    float accept_ratio = std::max(params->quant_repair_accept_ratio, 1.15f);
+    float max_delta = std::max(params->quant_repair_max_error, 0.0015f);
     const float max_damage_per_mib = 0.00025f;
     const float max_total_delta = 0.010f;
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        accept_ratio = std::min(accept_ratio, 1.02f);
+        max_delta = std::min(max_delta, 0.00075f);
+    }
 
     int evaluated = 0;
     int demoted = 0;
@@ -3400,9 +3524,10 @@ static void apply_quality_precision_validation(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: precision-validation evaluated=%d demoted=%d saved=%8.2f MiB added_teacher_damage=%10.6g accept_ratio=%.3f max_delta=%g max_damage_per_mib=%g feature_mix=%.2f\n",
+        LLAMA_LOG_INFO("%s: precision-validation evaluated=%d demoted=%d saved=%8.2f MiB added_teacher_damage=%10.6g accept_ratio=%.3f max_delta=%g max_damage_per_mib=%g feature_mix=%.2f logit_gate=%s\n",
                 __func__, evaluated, demoted, saved_bytes/1024.0/1024.0, added_teacher_damage,
-                accept_ratio, max_delta, max_damage_per_mib, teacher_feature_gate_mix(params));
+                accept_ratio, max_delta, max_damage_per_mib, teacher_feature_gate_mix(params),
+                (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
 }
 
@@ -3428,8 +3553,12 @@ static void apply_budget_first_type_cap(
     int evaluated = 0;
     int capped = 0;
     int kept = 0;
-    const float effective_accept_ratio = std::max(params->quant_repair_accept_ratio, 1.25f);
-    const float effective_max_error = std::max(params->quant_repair_max_error, 0.005f);
+    float effective_accept_ratio = std::max(params->quant_repair_accept_ratio, 1.25f);
+    float effective_max_error = std::max(params->quant_repair_max_error, 0.005f);
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        effective_accept_ratio = std::min(effective_accept_ratio, 1.10f);
+        effective_max_error = std::min(effective_max_error, 0.0025f);
+    }
     const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
     const int max_layer = max_transformer_layer(metadata);
 
@@ -3511,7 +3640,7 @@ static void apply_budget_first_type_cap(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f feature_mix=%.2f top_k=%d accept_ratio=%.3f max_error=%g cost_lambda=%.6g bottom_first_bias=on bias_range=0.94..1.08\n",
+        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f feature_mix=%.2f top_k=%d accept_ratio=%.3f max_error=%g cost_lambda=%.6g bottom_first_bias=on bias_range=0.94..1.08 logit_gate=%s\n",
                 __func__, evaluated, capped, kept,
                 params->quant_teacher_aware ? "yes" : "no",
                 params->quant_teacher_aware_mix,
@@ -3519,7 +3648,8 @@ static void apply_budget_first_type_cap(
                 params->quant_teacher_aware_rank_mix,
                 teacher_feature_gate_mix(params),
                 params->quant_teacher_aware_top_k,
-                effective_accept_ratio, effective_max_error, cost_lambda);
+                effective_accept_ratio, effective_max_error, cost_lambda,
+                (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
 }
 
@@ -3535,14 +3665,19 @@ static void apply_spqr_teacher_repair(
     if (!repair_enabled || params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         return;
     }
+    ensure_logit_gate_loaded(qs);
     const bool budget_limited = quant_budget_limited(params);
     const bool layer_output_proxy = params->quant_repair_scale;
-    const float effective_min_error = budget_limited ?
+    float effective_min_error = budget_limited ?
         params->quant_repair_min_error * 0.05f :
         params->quant_repair_min_error;
-    const float effective_min_improvement = budget_limited ?
+    float effective_min_improvement = budget_limited ?
         std::min(params->quant_repair_min_improvement, 0.001f) :
         params->quant_repair_min_improvement;
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        effective_min_error *= budget_limited ? 1.5f : 1.25f;
+        effective_min_improvement = std::max(effective_min_improvement, budget_limited ? 0.01f : 0.08f);
+    }
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -3621,14 +3756,15 @@ static void apply_spqr_teacher_repair(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: quant-repair teacher evaluated=%d repaired=%d skipped_low_error=%d methods=%s%s layer_output_proxy=%s budget_limited=%s min_error=%g configured_min_error=%g min_improvement=%.3f configured_min_improvement=%.3f\n",
+        LLAMA_LOG_INFO("%s: quant-repair teacher evaluated=%d repaired=%d skipped_low_error=%d methods=%s%s layer_output_proxy=%s budget_limited=%s min_error=%g configured_min_error=%g min_improvement=%.3f configured_min_improvement=%.3f logit_gate=%s\n",
                 __func__, evaluated, clipped, skipped_low_error,
                 params->quant_repair_clipping ? "clipping" : "",
                 params->quant_repair_scale ? ",scale" : "",
                 layer_output_proxy ? "yes" : "no",
                 budget_limited ? "yes" : "no",
                 effective_min_error, params->quant_repair_min_error,
-                effective_min_improvement, params->quant_repair_min_improvement);
+                effective_min_improvement, params->quant_repair_min_improvement,
+                (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
 }
 
@@ -4695,6 +4831,24 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     qs.rd_allocation_lambda > 0.0f ? "on" : "off");
         }
     }
+    if (params->logit_gate) {
+        ensure_logit_gate_loaded(qs);
+        if (qs.logit_report_available) {
+            LLAMA_LOG_INFO("%s: logit-gate summary report=%s status=%s mode=%s damage=%10.6g mean_topk_kl=%10.6g argmax_flip_rate=%10.6g thresholds=(%g,%g,%g)\n",
+                    __func__, params->logit_report,
+                    qs.logit_gate_pass ? "pass" : "fail",
+                    qs.logit_report_paired ? "paired" : "candidate-only",
+                    qs.logit_damage_score,
+                    qs.logit_mean_topk_kl,
+                    qs.logit_argmax_flip_rate,
+                    params->logit_damage_threshold,
+                    params->logit_kl_threshold,
+                    params->logit_flip_threshold);
+        } else {
+            LLAMA_LOG_WARN("%s: logit-gate summary report=%s status=unavailable\n",
+                    __func__, params->logit_report ? params->logit_report : "(null)");
+        }
+    }
 
     if (!params->imatrix && params->dry_run && will_require_imatrix) {
         LLAMA_LOG_WARN("%s: WARNING: dry run completed successfully, but actually completing this quantization will require an imatrix!\n",
@@ -4765,6 +4919,11 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.quant_repair_max_error      =*/ 0.001f,
         /*.quant_repair_min_error      =*/ 0.002f,
         /*.quant_repair_min_improvement =*/ 0.05f,
+        /*.logit_report                =*/ nullptr,
+        /*.logit_gate                  =*/ false,
+        /*.logit_damage_threshold      =*/ 0.02f,
+        /*.logit_kl_threshold          =*/ 0.01f,
+        /*.logit_flip_threshold        =*/ 0.02f,
     };
 
     return result;

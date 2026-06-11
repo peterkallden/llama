@@ -482,6 +482,11 @@ extern "C" {
         float quant_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
         float quant_repair_min_error;                                  // run teacher repair only when selected-type proxy error exceeds this value
         float quant_repair_min_improvement;                            // require this fractional proxy-error improvement before accepting repair
+        const char * logit_report;                                     // optional teacher-vs-student logit report from llama-logit-compare
+        bool logit_gate;                                               // use the logit report as a global mixed-precision quality gate
+        float logit_damage_threshold;                                  // paired-mode damage threshold above which the gate fails
+        float logit_kl_threshold;                                      // KL threshold above which the gate fails
+        float logit_flip_threshold;                                    // argmax-flip threshold above which the gate fails
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

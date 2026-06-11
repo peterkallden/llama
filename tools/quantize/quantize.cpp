@@ -276,6 +276,16 @@ static void usage(const char * executable) {
     printf("                                      proxy-error threshold before clipping/scale repair is attempted (default: 0.002)\n");
     printf("  --quant-repair-min-improvement X\n");
     printf("                                      required fractional proxy-error improvement to accept clipping/scale repair (default: 0.05)\n");
+    printf("  --logit-report FILE\n");
+    printf("                                      optional llama-logit-compare JSON report used by the global logit gate\n");
+    printf("  --logit-gate\n");
+    printf("                                      enable a global quality gate from --logit-report; tightens repair/demotion when it fails\n");
+    printf("  --logit-damage-threshold X\n");
+    printf("                                      fail the paired logit gate if damage_score exceeds X (default: 0.02)\n");
+    printf("  --logit-kl-threshold X\n");
+    printf("                                      fail the logit gate if delta/candidate mean_topk_kl exceeds X (default: 0.01)\n");
+    printf("  --logit-flip-threshold X\n");
+    printf("                                      fail the logit gate if delta/candidate argmax_flip_rate exceeds X (default: 0.02)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -874,6 +884,7 @@ int llama_quantize(int argc, char ** argv) {
 
     int arg_idx = 1;
     std::string imatrix_file;
+    std::string logit_report_file;
     std::vector<std::string> included_weights, excluded_weights;
     std::vector<llama_model_kv_override> kv_overrides;
     std::vector<tensor_type_option> tensor_type_opts;
@@ -1070,6 +1081,40 @@ int llama_quantize(int argc, char ** argv) {
             }
             params.quant_repair = true;
             params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--logit-report") == 0) {
+            if (arg_idx < argc-1) {
+                logit_report_file = argv[++arg_idx];
+                params.logit_report = logit_report_file.c_str();
+            } else {
+                usage(argv[0]);
+            }
+        } else if (strcmp(argv[arg_idx], "--logit-gate") == 0) {
+            params.logit_gate = true;
+        } else if (strcmp(argv[arg_idx], "--logit-damage-threshold") == 0 ||
+                strcmp(argv[arg_idx], "--logit-kl-threshold") == 0 ||
+                strcmp(argv[arg_idx], "--logit-flip-threshold") == 0) {
+            const char * opt_name = argv[arg_idx];
+            float value = 0.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = -1.0f;
+                }
+            } else {
+                value = -1.0f;
+            }
+            if (!std::isfinite(value) || value < 0.0f) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__, opt_name);
+                usage(argv[0]);
+            }
+            if (strcmp(opt_name, "--logit-damage-threshold") == 0) {
+                params.logit_damage_threshold = value;
+            } else if (strcmp(opt_name, "--logit-kl-threshold") == 0) {
+                params.logit_kl_threshold = value;
+            } else {
+                params.logit_flip_threshold = value;
+            }
         } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
                 strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
             const bool is_top_k = strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0;
@@ -1233,6 +1278,10 @@ int llama_quantize(int argc, char ** argv) {
     }
     if (params.quant_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
         fprintf(stderr, "%s: --quant-repair requires --mixed-policy spqr_guided\n", __func__);
+        usage(argv[0]);
+    }
+    if (params.logit_gate && logit_report_file.empty()) {
+        fprintf(stderr, "%s: --logit-gate requires --logit-report\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {
