@@ -32,7 +32,7 @@ The branch currently implements:
 - Opt-in `spqr_guided` mixed quantization using tensor-name heuristics and optional imatrix percentile sensitivity.
 - Block-distribution sensitivity reports and block-derived tensor scoring.
 - Adjacent-layer weight-delta analysis using relative delta norm and cosine similarity.
-- P-frame-inspired `spqr_layer_delta` guidance that measures adjacent-layer similarity and currently works primarily as a protection and anchoring signal.
+- P-frame-inspired `--layer-delta-guidance` that measures adjacent-layer similarity and currently works primarily as a protection and anchoring signal.
 - Adaptive I-frame-style anchors for first, final, and robustly detected scene-change layers.
 - Sampled rate-distortion candidate evaluation across the requested base type and compatible `Q3_K`, `Q4_K`, `Q5_K`, and `Q6_K` types, with optional `IQ3_S` / `IQ3_M`-family probing for lower-bitrate experiments.
 - An optional reusable quantization profile stored alongside normal imatrix data.
@@ -82,7 +82,8 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
 
 ./build/bin/llama-quantize \
   --imatrix imatrix-profile.gguf \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --spqr-block-scoring \
   --adaptive-anchors \
   --rd-guided \
@@ -93,7 +94,7 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--rd-local-refine-top-k 16` enables the second-stage local RD refinement pass over the most uncertain tensors, and `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale`. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--rd-local-refine-top-k 16` enables the second-stage local RD refinement pass over the most uncertain tensors, and `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale` and uses the teacher-aware repair depth when the needed proxy data can be computed. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
 
 For lower-bitrate experiments, `--rd-include-iq3` opt-ins `IQ3_S` as an additional RD / repair candidate while still keeping the main K-ladder behavior unchanged by default. `IQ3_M` remains a recipe/output target rather than a single concrete tensor type, so this flag is mainly a way to probe whether the allocator starts preferring the `IQ3` family at all.
 
@@ -142,18 +143,19 @@ Enable P-frame-style adjacent-layer analysis:
 
 ```bash
 ./build/bin/llama-quantize --dry-run \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --print-layer-delta-report \
   input-f16.gguf Q3_K_M
 ```
 
-`spqr_layer_delta` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra allocation signal. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type. In the current POC, this signal has been more useful for deciding what to protect than for unlocking additional compression by itself, so it should be read as a conservative P-frame-inspired guidance pass rather than a delta-coding path.
+`--layer-delta-guidance` compares matching transformer block tensors in layer `N` against layer `N-1` and uses relative delta norm plus cosine similarity as an extra allocation signal on top of `spqr_guided`. It does not store deltas, does not make layers depend on earlier layers at inference time, and does not add a new GGUF tensor type. In the current POC, this signal has been more useful for deciding what to protect than for unlocking additional compression by itself, so it should be read as a conservative P-frame-inspired guidance pass rather than a delta-coding path. The old `--mixed-policy spqr_layer_delta` spelling is still accepted as a compatibility alias for `--mixed-policy spqr_guided --layer-delta-guidance`.
 
 Enable adaptive I-frame-style anchors:
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
   --adaptive-anchors \
   --anchor-percentile 90 \
   --print-anchor-report \
@@ -166,7 +168,8 @@ Enable sampled rate-distortion type selection:
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --adaptive-anchors \
   --rd-guided \
   --rd-lambda 0.002 \
@@ -188,7 +191,8 @@ After RD selection, enable quant repair as the repair-before-promote step:
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --rd-guided \
   --quant-repair \
   --quant-repair-methods clipping,gain,scale \
@@ -209,7 +213,8 @@ For size-first exploration, add a compression opportunity report:
 ./build/bin/llama-quantize \
   --dry-run \
   --imatrix imatrix-profile.gguf \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --spqr-block-scoring \
   --adaptive-anchors \
   --rd-guided \
@@ -229,15 +234,32 @@ Repair methods can be controlled explicitly:
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --rd-guided \
   --quant-repair \
-  --quant-teacher-aware \
   --quant-repair-methods clipping,scale \
   --quant-repair-min-error 0.002 \
   --quant-repair-min-improvement 0.05 \
   input-f16.gguf output-teacher-repaired.gguf Q3_K_M
 ```
+
+`--quant-repair` defaults to `--quant-repair-depth teacher`. This means mixed-precision demotion/promotion gates use the teacher-aware proxy when it is available, then fall back to the local/basic gate for tensors or types where that proxy cannot be computed. Use `--quant-repair-depth basic` to force the older local-only behavior. The older `--quant-teacher-aware` flag remains as an alias for the teacher depth, while the `--quant-teacher-aware-*` flags are expert tuning knobs for the same path.
+
+Repair depth and repair methods are separate:
+
+| Option | Meaning |
+| --- | --- |
+| `--quant-repair-depth basic` | Uses the local tensor probe only. Candidate types are scored from sampled rows using weighted MSE, norm/gain drift, cosine/shape drift, and outlier concentration. This is enough for cheaper-candidate demotion and Q8-prevention decisions, but it does not add the teacher-aware block/rank proxy. |
+| `--quant-repair-depth teacher` | Starts from the same basic probe, then blends in the teacher-aware proxy when it can be computed. The proxy compares sampled FP source rows against reconstructed candidate rows, optionally imatrix-weighted, and adds block-local cosine/norm drift plus a small top-K rank/margin signal. If the candidate type cannot be reconstructed with `to_float`, or if required imatrix data is missing for a type that needs it, the decision falls back to the basic score for that candidate. |
+
+The method list controls which exportable repairs are attempted after a tensor/type has been selected:
+
+| Method | Current behavior |
+| --- | --- |
+| `clipping` | Sweeps sampled absolute-value clipping thresholds at roughly p99.9, p99.5, p99.0, and p98.0, then requantizes the normal tensor type and accepts the result only if the proxy error improves enough. |
+| `scale` | Sweeps small source multipliers before quantization. Standalone candidates are `0.970`, `0.985`, `0.995`, `1.005`, `1.015`, and `1.030`; when combined with clipping it tries the tighter set `0.985`, `0.995`, `1.005`, and `1.015`. For FFN tensors, the scale proxy also blends in a lightweight channel-importance profile from sampled activations and imatrix weights. |
+| `gain` | Keeps the cheaper-candidate repair path and its gain diagnostics enabled. In that pass, gain drift is measured as relative row-norm drift and contributes to the composite candidate error. It is not a separate learned gain table or runtime-side correction; source-value multiplier sweeps are controlled by `scale`. |
 
 This side is loosely OmniQuant-inspired because it tries cheap repairs before spending more bits, but it is not full OmniQuant. It does not learn clipping parameters, optimize equivalent transformations, or use runtime activation reconstruction. Instead, it treats the FP input tensor as a teacher, the selected quantized tensor as a student, and uses sampled imatrix-weighted reconstruction error as a diagonal layer-output proxy:
 
@@ -249,7 +271,7 @@ When the selected type has high proxy error, `clipping` sweeps a few clipping pe
 
 For FFN tensors, the `scale` path is slightly smarter than a plain global gain sweep. It now builds a lightweight channel-importance profile from sampled activations and imatrix weights, then blends that into the teacher proxy so high-activity FFN channels count more strongly. This gives the repair pass a cheap approximation of "preserve the useful FFN output channels first" without introducing a full block reconstruction pass.
 
-`--quant-teacher-aware` pushes this one step further for mixed-precision decisions. It blends the local RD-style proxy with the output-aware teacher proxy when evaluating cheaper candidates, so demotion and bounded shrink decisions are judged less by raw weight error alone and more by an approximation of downstream behavior. `--quant-teacher-aware-mix` controls how strongly that teacher-side signal influences the gate and cost.
+The teacher repair depth pushes this one step further for mixed-precision decisions. It blends the local RD-style proxy with the output-aware teacher proxy when evaluating cheaper candidates, so demotion and bounded shrink decisions are judged less by raw weight error alone and more by an approximation of downstream behavior. `--quant-teacher-aware-mix` controls how strongly that teacher-side signal influences the gate and cost.
 
 The teacher-aware gate also adds two lightweight second-stage signals. A block-local gate measures cosine/norm drift between sampled teacher rows and reconstructed candidate rows, approximating hidden/output drift without a full forward pass. A local rank/margin proxy compares the top-K salient dimensions before and after quantization, giving a cheap stand-in for "did the important outputs keep their ordering and margin?" These are controlled by `--quant-teacher-aware-block-mix`, `--quant-teacher-aware-rank-mix`, and `--quant-teacher-aware-top-k`.
 
@@ -257,7 +279,8 @@ When a precomputed analysis profile is unavailable, the quantizer can selectivel
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --rd-guided \
   --rd-sample-rows 8 \
   --rd-local-refine-top-k 16 \
@@ -272,7 +295,8 @@ Optionally provide a soft global size target:
 
 ```bash
 ./build/bin/llama-quantize \
-  --mixed-policy spqr_layer_delta \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
   --adaptive-anchors \
   --rd-guided \
   --rd-lambda 0.002 \
@@ -344,7 +368,7 @@ The harness writes per-stage logs, machine-readable `results.jsonl`, and a compa
 4. Quantize with SpQR plus layer-delta guidance:
 
 ```bash
-./build/bin/llama-quantize --mixed-policy spqr_layer_delta --print-layer-delta-report input-f16.gguf output-spqr-layer-delta.gguf Q3_K_M
+./build/bin/llama-quantize --mixed-policy spqr_guided --layer-delta-guidance --print-layer-delta-report input-f16.gguf output-spqr-layer-delta.gguf Q3_K_M
 ```
 
 5. Quantize using block-derived sensitivity:
@@ -356,13 +380,13 @@ The harness writes per-stage logs, machine-readable `results.jsonl`, and a compa
 6. Quantize using adaptive anchors:
 
 ```bash
-./build/bin/llama-quantize --mixed-policy spqr_layer_delta --adaptive-anchors --print-anchor-report input-f16.gguf output-anchor-guided.gguf Q3_K_M
+./build/bin/llama-quantize --mixed-policy spqr_guided --adaptive-anchors --print-anchor-report input-f16.gguf output-anchor-guided.gguf Q3_K_M
 ```
 
 7. Quantize using sampled rate-distortion selection:
 
 ```bash
-./build/bin/llama-quantize --mixed-policy spqr_layer_delta --adaptive-anchors --rd-guided --print-rd-report input-f16.gguf output-rd-guided.gguf Q3_K_M
+./build/bin/llama-quantize --mixed-policy spqr_guided --layer-delta-guidance --adaptive-anchors --rd-guided --print-rd-report input-f16.gguf output-rd-guided.gguf Q3_K_M
 ```
 
 8. If available, compare perplexity:

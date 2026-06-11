@@ -164,7 +164,8 @@ static bool try_parse_ftype(const std::string & ftype_str_in, llama_ftype & ftyp
 static void usage(const char * executable) {
     printf("usage: %s [--help] [--allow-requantize] [--leave-output-tensor] [--pure] [--imatrix] [--include-weights]\n", executable);
     printf("       [--exclude-weights] [--output-tensor-type] [--token-embedding-type] [--tensor-type] [--tensor-type-file]\n");
-    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size] [--print-layer-delta-report]\n");
+    printf("       [--mixed-policy] [--spqr-block-report] [--spqr-block-scoring] [--spqr-block-size]\n");
+    printf("       [--print-layer-delta-report] [--layer-delta-guidance]\n");
     printf("       [--adaptive-anchors] [--anchor-percentile] [--print-anchor-report]\n");
     printf("       [--rd-guided] [--rd-include-iq3] [--rd-lambda] [--rd-sample-rows] [--print-rd-report] [--rd-target-bpw] [--rd-target-size-mib]\n");
     printf("       [--rd-local-refine-top-k] [--rd-local-refine-rows] [--print-rd-refinement-report]\n");
@@ -199,9 +200,10 @@ static void usage(const char * executable) {
     printf("                                      this is an advanced option to selectively quantize a long list of tensors.\n");
     printf("                                      the file should use the same format as above, separated by spaces or newlines.\n");
     printf("  --mixed-policy policy\n");
-    printf("                                      experimental mixed quantization policy. currently supported: spqr_guided, spqr_layer_delta\n");
+    printf("                                      experimental mixed quantization policy. currently supported: spqr_guided\n");
     printf("                                      spqr_guided uses tensor sensitivity heuristics and optional imatrix percentiles\n");
     printf("                                      to choose existing ggml quant types per tensor; it is not full SpQR.\n");
+    printf("                                      legacy aliases spqr_layer_delta and pframe_guided enable --layer-delta-guidance\n");
     printf("  --spqr-block-report\n");
     printf("                                      with --mixed-policy spqr_guided, print block-level sensitivity bucket counts\n");
     printf("                                      for each tensor without changing the output quantization\n");
@@ -211,10 +213,12 @@ static void usage(const char * executable) {
     printf("  --spqr-block-size N\n");
     printf("                                      number of imatrix values per block for --spqr-block-report (default: 256)\n");
     printf("  --print-layer-delta-report\n");
-    printf("                                      with --mixed-policy spqr_layer_delta, print adjacent-layer similarity metrics\n");
+    printf("                                      print adjacent-layer similarity metrics\n");
     printf("                                      used as a P-frame-style quantization signal; this does not change runtime format\n");
+    printf("  --layer-delta-guidance\n");
+    printf("                                      with --mixed-policy spqr_guided, use adjacent-layer similarity as an extra allocation signal\n");
     printf("  --adaptive-anchors\n");
-    printf("                                      with --mixed-policy spqr_layer_delta, protect first/final and scene-change layers\n");
+    printf("                                      protect first/final and scene-change layers; implies --layer-delta-guidance\n");
     printf("  --anchor-percentile P\n");
     printf("                                      layer relative-delta percentile used for scene-change anchors (default: 90)\n");
     printf("  --print-anchor-report\n");
@@ -249,10 +253,13 @@ static void usage(const char * executable) {
     printf("                                      saved bytes per estimated quality cost; useful with --dry-run\n");
     printf("  --quant-repair\n");
     printf("                                      enable repair-before-promote with methods clipping,gain,scale by default\n");
+    printf("                                      defaults to depth=teacher and falls back to local/basic when unavailable\n");
+    printf("  --quant-repair-depth basic|teacher\n");
+    printf("                                      choose local/basic repair gating or teacher-aware gating (default: teacher)\n");
     printf("  --quant-repair-methods LIST\n");
     printf("                                      comma-separated repair methods to use exactly: clipping,gain,scale\n");
     printf("  --quant-teacher-aware\n");
-    printf("                                      enable teacher-aware mixed-precision gating using an output-aware proxy\n");
+    printf("                                      alias for --quant-repair-depth teacher\n");
     printf("  --quant-teacher-aware-mix X\n");
     printf("                                      blend factor for teacher-aware gating/cost in [0,1] (default: 0.35)\n");
     printf("  --quant-teacher-aware-block-mix X\n");
@@ -706,18 +713,19 @@ static ggml_type parse_ggml_type(const char * arg) {
     return GGML_TYPE_COUNT;
 }
 
-static bool parse_mixed_policy(const char * arg, llama_mixed_quant_policy & policy) {
+static bool parse_mixed_policy(const char * arg, llama_model_quantize_params & params) {
     if (striequals(arg, "none")) {
-        policy = LLAMA_MIXED_QUANT_POLICY_NONE;
+        params.mixed_quant_policy = LLAMA_MIXED_QUANT_POLICY_NONE;
         return true;
     }
     if (striequals(arg, "spqr_guided") || striequals(arg, "spqr-guided")) {
-        policy = LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED;
+        params.mixed_quant_policy = LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED;
         return true;
     }
     if (striequals(arg, "spqr_layer_delta") || striequals(arg, "spqr-layer-delta") ||
             striequals(arg, "pframe_guided") || striequals(arg, "pframe-guided")) {
-        policy = LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA;
+        params.mixed_quant_policy = LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED;
+        params.layer_delta_guidance = true;
         return true;
     }
 
@@ -761,6 +769,21 @@ static bool parse_quant_repair_methods(const char * arg, llama_model_quantize_pa
     params.quant_repair_gain = gain;
     params.quant_repair_scale = scale;
     return true;
+}
+
+static bool parse_quant_repair_depth(const char * arg, llama_model_quantize_params & params) {
+    if (striequals(arg, "basic") || striequals(arg, "local")) {
+        params.quant_teacher_aware = false;
+        return true;
+    }
+    if (striequals(arg, "teacher") || striequals(arg, "teacher-aware") || striequals(arg, "teacher_aware")) {
+        params.quant_teacher_aware = true;
+        return true;
+    }
+
+    fprintf(stderr, "\n%s: invalid --quant-repair-depth '%s' (expected basic or teacher)\n\n",
+            __func__, arg);
+    return false;
 }
 
 static bool parse_tensor_type(const char * data, std::vector<tensor_type_option> & tensor_type) {
@@ -886,7 +909,7 @@ int llama_quantize(int argc, char ** argv) {
                 usage(argv[0]);
             }
         } else if (strcmp(argv[arg_idx], "--mixed-policy") == 0) {
-            if (arg_idx == argc-1 || !parse_mixed_policy(argv[++arg_idx], params.mixed_quant_policy)) {
+            if (arg_idx == argc-1 || !parse_mixed_policy(argv[++arg_idx], params)) {
                 usage(argv[0]);
             }
         } else if (strcmp(argv[arg_idx], "--spqr-block-report") == 0) {
@@ -896,11 +919,16 @@ int llama_quantize(int argc, char ** argv) {
             params.spqr_block_report = true;
         } else if (strcmp(argv[arg_idx], "--print-layer-delta-report") == 0) {
             params.print_layer_delta_report = true;
+        } else if (strcmp(argv[arg_idx], "--layer-delta-guidance") == 0 ||
+                strcmp(argv[arg_idx], "--pframe-guidance") == 0) {
+            params.layer_delta_guidance = true;
         } else if (strcmp(argv[arg_idx], "--adaptive-anchors") == 0) {
             params.adaptive_anchors = true;
+            params.layer_delta_guidance = true;
         } else if (strcmp(argv[arg_idx], "--print-anchor-report") == 0) {
             params.print_anchor_report = true;
             params.adaptive_anchors = true;
+            params.layer_delta_guidance = true;
         } else if (strcmp(argv[arg_idx], "--rd-guided") == 0) {
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-include-iq3") == 0) {
@@ -919,6 +947,12 @@ int llama_quantize(int argc, char ** argv) {
             params.print_compression_opportunity_report = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--quant-repair") == 0) {
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-repair-depth") == 0) {
+            if (arg_idx >= argc - 1 || !parse_quant_repair_depth(argv[++arg_idx], params)) {
+                usage(argv[0]);
+            }
             params.quant_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--quant-teacher-aware") == 0) {
@@ -1184,12 +1218,13 @@ int llama_quantize(int argc, char ** argv) {
         usage(argv[0]);
     }
     if (params.spqr_block_scoring && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
-        fprintf(stderr, "%s: --spqr-block-scoring requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
+        fprintf(stderr, "%s: --spqr-block-scoring requires --mixed-policy spqr_guided\n", __func__);
         usage(argv[0]);
     }
-    if ((params.adaptive_anchors || params.print_anchor_report) &&
+    if ((params.layer_delta_guidance || params.adaptive_anchors || params.print_anchor_report) &&
+            params.mixed_quant_policy != LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED &&
             params.mixed_quant_policy != LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
-        fprintf(stderr, "%s: adaptive anchors require --mixed-policy spqr_layer_delta\n", __func__);
+        fprintf(stderr, "%s: layer-delta guidance and adaptive anchors require --mixed-policy spqr_guided\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_guided && params.pure) {
@@ -1197,7 +1232,7 @@ int llama_quantize(int argc, char ** argv) {
         usage(argv[0]);
     }
     if (params.quant_repair && params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
-        fprintf(stderr, "%s: --quant-repair requires --mixed-policy spqr_guided or spqr_layer_delta\n", __func__);
+        fprintf(stderr, "%s: --quant-repair requires --mixed-policy spqr_guided\n", __func__);
         usage(argv[0]);
     }
     if (params.rd_target_bpw > 0.0f && params.rd_target_size_mib > 0.0f) {

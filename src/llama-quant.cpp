@@ -336,6 +336,11 @@ static bool tensor_category_participates_in_layer_delta(tensor_category category
     }
 }
 
+static bool spqr_layer_delta_guidance_enabled(const llama_model_quantize_params * params) {
+    return params->layer_delta_guidance ||
+           params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA;
+}
+
 static ggml_type spqr_layer_delta_type_for_bucket(
         const llama_model_quantize_params * params,
         tensor_category category,
@@ -1519,11 +1524,11 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         if (!manual) {
             if (params->rd_guided && tm.rd_type != GGML_TYPE_COUNT) {
                 new_type = tm.rd_type;
-            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
-                new_type = spqr_guided_type_for_bucket(params, tm.category, default_type, tm.sensitivity);
-            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
+            } else if (spqr_layer_delta_guidance_enabled(params)) {
                 new_type = spqr_layer_delta_type_for_bucket(
                         params, tm.category, default_type, tm.sensitivity, tm.layer_similarity, tm.anchor_reason != ANCHOR_REASON_NONE);
+            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED) {
+                new_type = spqr_guided_type_for_bucket(params, tm.category, default_type, tm.sensitivity);
             } else {
                 new_type = llama_tensor_get_type_impl(qs, new_type, tensor, params->ftype, tm.category);
             }
@@ -1541,14 +1546,14 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         tm.had_shape_fallback = new_type != tm.requested_type;
 
         if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
-                    params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && !manual) {
+                    spqr_layer_delta_guidance_enabled(params)) && !manual) {
             const int64_t ncols = tensor->ne[0];
             const bool can_compare =
                 ncols % ggml_blck_size(default_type) == 0 &&
                 ncols % ggml_blck_size(new_type) == 0;
             if (can_compare && ggml_row_size(new_type, ncols) > ggml_row_size(default_type, ncols)) {
                 ++qs.n_spqr_promoted;
-            } else if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA &&
+            } else if (spqr_layer_delta_guidance_enabled(params) &&
                     can_compare && ggml_row_size(new_type, ncols) < ggml_row_size(default_type, ncols)) {
                 ++qs.n_delta_demoted;
             }
@@ -3291,10 +3296,13 @@ static void apply_budget_first_type_cap(
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d teacher_aware=%s teacher_mix=%.2f accept_ratio=%.3f max_error=%g cost_lambda=%.6g\n",
+        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f top_k=%d accept_ratio=%.3f max_error=%g cost_lambda=%.6g\n",
                 __func__, evaluated, capped, kept,
                 params->quant_teacher_aware ? "yes" : "no",
                 params->quant_teacher_aware_mix,
+                params->quant_teacher_aware_block_mix,
+                params->quant_teacher_aware_rank_mix,
+                params->quant_teacher_aware_top_k,
                 effective_accept_ratio, effective_max_error, cost_lambda);
     }
 }
@@ -4063,11 +4071,11 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         }
     }
     if (params->rd_guided ||
-            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
+            spqr_layer_delta_guidance_enabled(params) ||
             params->print_layer_delta_report) {
         init_activity_profile(metadata, params);
     }
-    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA || params->print_layer_delta_report) {
+    if (spqr_layer_delta_guidance_enabled(params) || params->print_layer_delta_report) {
         const int loaded = init_precomputed_layer_delta_analysis(qs, metadata, params->print_layer_delta_report);
         if (loaded == 0) {
             init_layer_delta_analysis(qs, ml, tensors, metadata, nthread, params->print_layer_delta_report);
@@ -4262,7 +4270,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 LLAMA_LOG_INFO("size = %8.3f MiB\n", new_size/1024.0/1024.0);
             }
             if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
-                        params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && tm.allows_quantization) {
+                        spqr_layer_delta_guidance_enabled(params)) && tm.allows_quantization) {
                 LLAMA_LOG_INFO("%s: mixed-guided %-36s bucket=%-6s source=%-9s score=%10.6g similarity=%s anchor=%s selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
@@ -4388,7 +4396,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 LLAMA_LOG_INFO("size = %8.2f MiB -> %8.2f MiB\n", tensor_size/1024.0/1024.0, new_size/1024.0/1024.0);
             }
             if ((params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
-                        params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) && tm.allows_quantization) {
+                        spqr_layer_delta_guidance_enabled(params)) && tm.allows_quantization) {
                 LLAMA_LOG_INFO("%s: mixed-guided %-36s bucket=%-6s source=%-9s score=%10.6g similarity=%s anchor=%s selected=%7s estimated_size=%8.2f MiB%s",
                         __func__,
                         ggml_get_name(tensor),
@@ -4432,7 +4440,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     LLAMA_LOG_INFO("%s: quant size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
 
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
-            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
+            spqr_layer_delta_guidance_enabled(params)) {
         LLAMA_LOG_INFO("%s: spqr-guided summary: high=%d medium=%d low=%d block_scored=%d promoted=%d total_size=%8.2f MiB avg_bpw=%.2f\n",
                 __func__,
                 qs.n_spqr_high,
@@ -4443,8 +4451,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 total_size_new/1024.0/1024.0,
                 total_size_new*8.0/ml.n_elements);
     }
-    if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA) {
-        LLAMA_LOG_INFO("%s: layer-delta-guided summary: high_similarity=%d medium_similarity=%d low_similarity=%d anchors=%d anchor_tensors=%d demoted=%d\n",
+    if (spqr_layer_delta_guidance_enabled(params)) {
+        LLAMA_LOG_INFO("%s: layer-delta-guidance summary: high_similarity=%d medium_similarity=%d low_similarity=%d anchors=%d anchor_tensors=%d demoted=%d\n",
                 __func__, qs.n_delta_high, qs.n_delta_medium, qs.n_delta_low,
                 qs.n_anchor_layers, qs.n_anchor_tensors, qs.n_delta_demoted);
     }
@@ -4501,6 +4509,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.spqr_block_report           =*/ false,
         /*.spqr_block_size             =*/ 256,
         /*.print_layer_delta_report    =*/ false,
+        /*.layer_delta_guidance        =*/ false,
         /*.spqr_block_scoring          =*/ false,
         /*.adaptive_anchors            =*/ false,
         /*.anchor_percentile           =*/ 90.0f,
@@ -4524,7 +4533,7 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.quant_repair_clipping       =*/ true,
         /*.quant_repair_gain           =*/ true,
         /*.quant_repair_scale          =*/ true,
-        /*.quant_teacher_aware        =*/ false,
+        /*.quant_teacher_aware        =*/ true,
         /*.quant_teacher_aware_mix    =*/ 0.35f,
         /*.quant_teacher_aware_block_mix =*/ 0.10f,
         /*.quant_teacher_aware_rank_mix =*/ 0.05f,
@@ -4663,7 +4672,7 @@ void llama_quant_compute_types(
         }
     }
     if (local_params.rd_guided ||
-            local_params.mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
+            spqr_layer_delta_guidance_enabled(&local_params) ||
             local_params.print_layer_delta_report) {
         init_activity_profile(metadata, &local_params);
     }

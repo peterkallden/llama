@@ -448,7 +448,8 @@ extern "C" {
         enum llama_mixed_quant_policy mixed_quant_policy;            // optional mixed quantization policy
         bool spqr_block_report;                                      // report block-level sensitivity for spqr_guided
         int32_t spqr_block_size;                                     // values per block for block-level sensitivity reporting
-        bool print_layer_delta_report;                               // report adjacent-layer similarity for spqr_layer_delta
+        bool print_layer_delta_report;                               // report adjacent-layer similarity for layer-delta guidance
+        bool layer_delta_guidance;                                   // use adjacent-layer similarity as an extra spqr_guided allocation signal
         bool spqr_block_scoring;                                     // derive tensor sensitivity from imatrix block distributions
         bool adaptive_anchors;                                       // protect first/final and scene-change transformer layers
         float anchor_percentile;                                     // percentile threshold for scene-change anchors
