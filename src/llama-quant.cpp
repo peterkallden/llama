@@ -464,6 +464,18 @@ struct spqr_repair_eval {
     float bpw = 0.0f;
 };
 
+struct teacher_gate_eval {
+    float proxy_error = -1.0f;
+    float block_error = 0.0f;
+    float rank_error = 0.0f;
+    float gate_error = 0.0f;
+};
+
+struct teacher_gate_extra {
+    float block_error = 0.0f;
+    float rank_error = 0.0f;
+};
+
 struct compression_opportunity {
     size_t tensor_index = 0;
     std::string name;
@@ -471,7 +483,11 @@ struct compression_opportunity {
     ggml_type candidate_type = GGML_TYPE_COUNT;
     size_t saved_bytes = 0;
     float selected_error = 0.0f;
+    float selected_gate_error = 0.0f;
     float candidate_error = 0.0f;
+    float candidate_gate_error = 0.0f;
+    float candidate_block_error = 0.0f;
+    float candidate_rank_error = 0.0f;
     float repaired_candidate_error = 0.0f;
     float effective_candidate_error = 0.0f;
     float candidate_weighted_mse = 0.0f;
@@ -2083,6 +2099,131 @@ static float sample_teacher_proxy_error(
     return (float) (total_error / sample_rows);
 }
 
+static teacher_gate_extra sample_teacher_gate_extra(
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type candidate,
+        int sample_rows,
+        int top_k) {
+    teacher_gate_extra result;
+    const int64_t ncols = tensor->ne[0];
+    const int64_t nrows = ggml_nrows(tensor);
+    if (!ggml_is_quantized(candidate) ||
+            ncols % ggml_blck_size(candidate) != 0 ||
+            (ggml_quantize_requires_imatrix(candidate) && !imatrix)) {
+        return result;
+    }
+
+    const ggml_type_traits * traits = ggml_get_type_traits(candidate);
+    if (!traits || !traits->to_float) {
+        return result;
+    }
+
+    std::vector<no_init<uint8_t>> quantized(ggml_row_size(candidate, ncols));
+    std::vector<float> reconstructed(ncols);
+    const int rank_k = std::max(1, std::min(top_k, (int) ncols));
+
+    double dot = 0.0;
+    double teacher_norm = 0.0;
+    double rec_norm = 0.0;
+    double rank_error = 0.0;
+    for (int sample = 0; sample < sample_rows; ++sample) {
+        const int64_t row = sample_rows == 1 ? 0 : sample * (nrows - 1) / (sample_rows - 1);
+        const float * teacher = data.data() + row * ncols;
+        const int64_t expert = tensor->ne[1] > 0 ? row / tensor->ne[1] : 0;
+        const float * row_imatrix = imatrix ? imatrix + expert * ncols : nullptr;
+
+        ggml_quantize_chunk(candidate, teacher, quantized.data(), 0, 1, ncols, row_imatrix);
+        traits->to_float(quantized.data(), reconstructed.data(), ncols);
+
+        int64_t teacher_top = 0;
+        int64_t rec_top = 0;
+        double teacher_top_abs = -1.0;
+        double teacher_second_abs = -1.0;
+        double rec_top_abs = -1.0;
+        double rec_second_abs = -1.0;
+        std::vector<std::pair<double, int64_t>> teacher_rank;
+        std::vector<std::pair<double, int64_t>> rec_rank;
+        teacher_rank.reserve((size_t) ncols);
+        rec_rank.reserve((size_t) ncols);
+
+        for (int64_t col = 0; col < ncols; ++col) {
+            const double weight = row_imatrix ? std::max(0.0f, row_imatrix[col]) : 1.0;
+            const double teacher_v = teacher[col];
+            const double rec_v = reconstructed[col];
+            dot += weight * teacher_v * rec_v;
+            teacher_norm += weight * teacher_v * teacher_v;
+            rec_norm += weight * rec_v * rec_v;
+
+            const double teacher_abs = weight * std::abs(teacher_v);
+            const double rec_abs = weight * std::abs(rec_v);
+            teacher_rank.emplace_back(teacher_abs, col);
+            rec_rank.emplace_back(rec_abs, col);
+            if (teacher_abs > teacher_top_abs) {
+                teacher_second_abs = teacher_top_abs;
+                teacher_top_abs = teacher_abs;
+                teacher_top = col;
+            } else if (teacher_abs > teacher_second_abs) {
+                teacher_second_abs = teacher_abs;
+            }
+            if (rec_abs > rec_top_abs) {
+                rec_second_abs = rec_top_abs;
+                rec_top_abs = rec_abs;
+                rec_top = col;
+            } else if (rec_abs > rec_second_abs) {
+                rec_second_abs = rec_abs;
+            }
+        }
+
+        const auto keep_top = [] (auto & values, int k) {
+            if ((int) values.size() > k) {
+                std::nth_element(values.begin(), values.begin() + k, values.end(), std::greater<>());
+                values.resize(k);
+            }
+            std::sort(values.begin(), values.end(), [] (const auto & a, const auto & b) {
+                return a.second < b.second;
+            });
+        };
+        keep_top(teacher_rank, rank_k);
+        keep_top(rec_rank, rank_k);
+
+        int overlap = 0;
+        size_t ti = 0;
+        size_t ri = 0;
+        while (ti < teacher_rank.size() && ri < rec_rank.size()) {
+            if (teacher_rank[ti].second == rec_rank[ri].second) {
+                ++overlap;
+                ++ti;
+                ++ri;
+            } else if (teacher_rank[ti].second < rec_rank[ri].second) {
+                ++ti;
+            } else {
+                ++ri;
+            }
+        }
+
+        const double overlap_loss = 1.0 - (double) overlap / rank_k;
+        const double teacher_margin = std::max(0.0, teacher_top_abs - std::max(0.0, teacher_second_abs));
+        const double rec_margin = teacher_top == rec_top ?
+            std::max(0.0, rec_top_abs - std::max(0.0, rec_second_abs)) :
+            0.0;
+        const double margin_loss = teacher_margin > 0.0 ?
+            std::max(0.0, teacher_margin - rec_margin) / (teacher_top_abs + 1e-20) :
+            0.0;
+        const double top1_flip = teacher_top == rec_top ? 0.0 : 1.0;
+        rank_error += 0.50 * overlap_loss + 0.30 * margin_loss + 0.20 * top1_flip;
+    }
+
+    const double cosine = dot / (std::sqrt(teacher_norm * rec_norm) + 1e-20);
+    const double cosine_error = std::max(0.0, 1.0 - cosine);
+    const double norm_error = std::abs(std::sqrt(teacher_norm) - std::sqrt(rec_norm)) /
+        (std::sqrt(teacher_norm) + 1e-20);
+    result.block_error = (float) (0.70 * cosine_error + 0.30 * norm_error);
+    result.rank_error = (float) (rank_error / std::max(1, sample_rows));
+    return result;
+}
+
 static bool tensor_name_is_ffn_repair_candidate(const char * name) {
     const std::string tensor_name = name ? name : "";
     return tensor_name.find("ffn_down") != std::string::npos ||
@@ -2245,6 +2386,40 @@ static spqr_teacher_repair_result evaluate_teacher_repair_clipping(
             result.source_gain = 1.0f;
             result.gain_repaired = false;
         }
+    }
+    return result;
+}
+
+static teacher_gate_eval evaluate_teacher_gate_error(
+        const llama_model_quantize_params * params,
+        const ggml_tensor * tensor,
+        const std::vector<float> & data,
+        const float * imatrix,
+        ggml_type candidate,
+        int sample_rows,
+        float local_error) {
+    teacher_gate_eval result;
+    result.gate_error = local_error;
+    if (!params->quant_teacher_aware || params->quant_teacher_aware_mix <= 0.0f) {
+        return result;
+    }
+
+    const float proxy_error = sample_teacher_proxy_error(tensor, data, imatrix, candidate, sample_rows, 0.0f, 1.0f);
+    if (proxy_error < 0.0f) {
+        return result;
+    }
+
+    const float mix = std::min(1.0f, std::max(0.0f, params->quant_teacher_aware_mix));
+    result.proxy_error = proxy_error;
+    result.gate_error = (1.0f - mix) * local_error + mix * proxy_error;
+    if (params->quant_teacher_aware_block_mix > 0.0f || params->quant_teacher_aware_rank_mix > 0.0f) {
+        const teacher_gate_extra extra = sample_teacher_gate_extra(
+                tensor, data, imatrix, candidate, sample_rows,
+                std::max(1, params->quant_teacher_aware_top_k));
+        result.block_error = extra.block_error;
+        result.rank_error = extra.rank_error;
+        result.gate_error += params->quant_teacher_aware_block_mix * result.block_error;
+        result.gate_error += params->quant_teacher_aware_rank_mix * result.rank_error;
     }
     return result;
 }
@@ -2576,9 +2751,12 @@ static void apply_spqr_repair(
         if (selected.type == GGML_TYPE_COUNT) {
             continue;
         }
+        const teacher_gate_eval selected_gate = evaluate_teacher_gate_error(
+                params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
 
         ++evaluated;
         spqr_repair_eval best = selected;
+        float best_gate_error = selected_gate.gate_error;
         bool accepted = false;
         for (ggml_type candidate_type : candidates) {
             const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
@@ -2586,23 +2764,31 @@ static void apply_spqr_repair(
             if (candidate.type == GGML_TYPE_COUNT) {
                 continue;
             }
+            const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
+                    params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
 
             const bool under_relative_gate =
-                candidate.composite_error <= selected.composite_error * effective_accept_ratio;
+                candidate_gate.gate_error <= selected_gate.gate_error * effective_accept_ratio;
             const bool under_absolute_gate =
-                candidate.weighted_mse <= effective_max_error;
-            const float candidate_cost = candidate.composite_error + cost_lambda * candidate.bpw;
-            const float best_cost = best.composite_error + cost_lambda * best.bpw;
+                candidate.weighted_mse <= effective_max_error ||
+                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= effective_max_error);
+            const float candidate_cost = candidate_gate.gate_error + cost_lambda * candidate.bpw;
+            const float best_cost = best_gate_error + cost_lambda * best.bpw;
             if ((under_relative_gate || under_absolute_gate) && candidate_cost < best_cost) {
                 best = candidate;
+                best_gate_error = candidate_gate.gate_error;
                 accepted = true;
             }
 
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: quant-repair-candidate tensor=%-36s selected=%-7s type=%-7s weighted_mse=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f selected_mse=%10.6g accepted=%s\n",
+                LLAMA_LOG_INFO("%s: quant-repair-candidate tensor=%-36s selected=%-7s type=%-7s weighted_mse=%10.6g teacher_proxy=%10.6g block=%10.6g rank=%10.6g gate_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f selected_gate=%10.6g accepted=%s\n",
                         __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type), candidate.weighted_mse,
+                        candidate_gate.proxy_error,
+                        candidate_gate.block_error,
+                        candidate_gate.rank_error,
+                        candidate_gate.gate_error,
                         candidate.gain_error, candidate.shape_error, candidate.outlier_concentration,
-                        candidate.bpw, selected.weighted_mse,
+                        candidate.bpw, selected_gate.gate_error,
                         (candidate.type == best.type && accepted) ? "yes" : "no");
             }
         }
@@ -2612,22 +2798,29 @@ static void apply_spqr_repair(
             tm.rd_type = best.type;
             tm.rd_distortion = best.weighted_mse / std::max(1e-20f, distortion_weight);
             tm.rd_bpw = best.bpw;
-            tm.rd_cost = best.composite_error + cost_lambda * best.bpw;
+            tm.rd_cost = best_gate_error + cost_lambda * best.bpw;
             ++repaired;
-            LLAMA_LOG_INFO("%s: quant-repair tensor=%-36s original=%-7s repaired=%-7s original_error=%10.6g repaired_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f\n",
+            LLAMA_LOG_INFO("%s: quant-repair tensor=%-36s original=%-7s repaired=%-7s original_error=%10.6g repaired_error=%10.6g original_gate=%10.6g repaired_gate=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(best.type), selected.weighted_mse,
-                    best.weighted_mse, best.gain_error, best.shape_error, best.outlier_concentration, best.bpw);
+                    best.weighted_mse, selected_gate.gate_error, best_gate_error,
+                    best.gain_error, best.shape_error, best.outlier_concentration, best.bpw);
         } else {
             ++kept_selected;
-            LLAMA_LOG_INFO("%s: quant-repair tensor=%-36s selected=%-7s reason=kept selected_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f\n",
+            LLAMA_LOG_INFO("%s: quant-repair tensor=%-36s selected=%-7s reason=kept selected_error=%10.6g selected_gate=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type),
-                    selected.weighted_mse, selected.gain_error, selected.shape_error, selected.outlier_concentration);
+                    selected.weighted_mse, selected_gate.gate_error,
+                    selected.gain_error, selected.shape_error, selected.outlier_concentration);
         }
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: quant-repair evaluated=%d repaired=%d kept=%d methods=gain accept_ratio=%.3f configured_accept_ratio=%.3f max_error=%g configured_max_error=%g budget_limited=%s\n",
+        LLAMA_LOG_INFO("%s: quant-repair evaluated=%d repaired=%d kept=%d methods=gain teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f top_k=%d accept_ratio=%.3f configured_accept_ratio=%.3f max_error=%g configured_max_error=%g budget_limited=%s\n",
                 __func__, evaluated, repaired, kept_selected,
+                params->quant_teacher_aware ? "yes" : "no",
+                params->quant_teacher_aware_mix,
+                params->quant_teacher_aware_block_mix,
+                params->quant_teacher_aware_rank_mix,
+                params->quant_teacher_aware_top_k,
                 effective_accept_ratio, params->quant_repair_accept_ratio,
                 effective_max_error, params->quant_repair_max_error,
                 budget_limited ? "yes" : "no");
@@ -2708,6 +2901,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
         if (selected.type == GGML_TYPE_COUNT) {
             continue;
         }
+        const teacher_gate_eval selected_gate = evaluate_teacher_gate_error(
+                params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
 
         compression_opportunity best;
         for (ggml_type candidate_type : candidates) {
@@ -2716,6 +2911,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             if (candidate.type == GGML_TYPE_COUNT) {
                 continue;
             }
+            const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
+                    params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
 
             const size_t selected_bytes = estimate_quantized_tensor_bytes(tensor, selected.type);
             const size_t candidate_bytes = estimate_quantized_tensor_bytes(tensor, candidate.type);
@@ -2724,9 +2921,10 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             }
 
             const bool proxy_safe =
-                candidate.composite_error <= selected.composite_error * effective_accept_ratio ||
-                candidate.weighted_mse <= effective_max_error;
-            float repaired_candidate_error = candidate.composite_error;
+                candidate_gate.gate_error <= selected_gate.gate_error * effective_accept_ratio ||
+                candidate.weighted_mse <= effective_max_error ||
+                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= effective_max_error);
+            float repaired_candidate_error = candidate_gate.gate_error;
             bool repair_potential = false;
             if (!proxy_safe && repair_probe_enabled) {
                 const spqr_teacher_repair_result repair = evaluate_teacher_repair_clipping(
@@ -2736,13 +2934,13 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
                 if (repair.base_error >= 0.0f) {
                     repaired_candidate_error = repair.repaired_error;
                     repair_potential =
-                        repair.repaired_error <= selected.composite_error * effective_accept_ratio ||
+                        repair.repaired_error <= selected_gate.gate_error * effective_accept_ratio ||
                         repair.repaired_error <= effective_max_error;
                 }
             }
 
-            const float effective_candidate_error = repair_potential ? repaired_candidate_error : candidate.composite_error;
-            const float delta_error = std::max(0.0f, effective_candidate_error - selected.composite_error);
+            const float effective_candidate_error = repair_potential ? repaired_candidate_error : candidate_gate.gate_error;
+            const float delta_error = std::max(0.0f, effective_candidate_error - selected_gate.gate_error);
             const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
             const float score = saved_mib / std::max(delta_error, 1e-9f);
 
@@ -2753,7 +2951,11 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             opportunity.candidate_type = candidate.type;
             opportunity.saved_bytes = selected_bytes - candidate_bytes;
             opportunity.selected_error = selected.composite_error;
+            opportunity.selected_gate_error = selected_gate.gate_error;
             opportunity.candidate_error = candidate.composite_error;
+            opportunity.candidate_gate_error = candidate_gate.gate_error;
+            opportunity.candidate_block_error = candidate_gate.block_error;
+            opportunity.candidate_rank_error = candidate_gate.rank_error;
             opportunity.repaired_candidate_error = repaired_candidate_error;
             opportunity.effective_candidate_error = effective_candidate_error;
             opportunity.candidate_weighted_mse = candidate.weighted_mse;
@@ -2829,21 +3031,30 @@ static void print_compression_opportunity_report(
     }
 
     const size_t report_count = std::min<size_t>(opportunities.size(), 32);
-    LLAMA_LOG_INFO("%s: compression-opportunity summary evaluated=%d candidates=%d proxy_safe=%d proxy_safe_saved=%8.2f MiB repair_potential=%d repair_potential_saved=%8.2f MiB total_best_saved=%8.2f MiB budget_limited=%s\n",
+    LLAMA_LOG_INFO("%s: compression-opportunity summary evaluated=%d candidates=%d proxy_safe=%d proxy_safe_saved=%8.2f MiB repair_potential=%d repair_potential_saved=%8.2f MiB total_best_saved=%8.2f MiB teacher_aware=%s teacher_mix=%.2f block_mix=%.2f rank_mix=%.2f top_k=%d budget_limited=%s\n",
             __func__, (int) opportunities.size(), (int) opportunities.size(), proxy_safe_count,
             proxy_safe_saved_bytes/1024.0/1024.0,
             repair_potential_count, repair_potential_saved_bytes/1024.0/1024.0,
             total_saved_bytes/1024.0/1024.0,
+            params->quant_teacher_aware ? "yes" : "no",
+            params->quant_teacher_aware_mix,
+            params->quant_teacher_aware_block_mix,
+            params->quant_teacher_aware_rank_mix,
+            params->quant_teacher_aware_top_k,
             budget_limited ? "yes" : "no");
     for (size_t rank = 0; rank < report_count; ++rank) {
         const compression_opportunity & opportunity = opportunities[rank];
-        LLAMA_LOG_INFO("%s: compression-opportunity rank=%3d tensor=%-36s selected=%-7s candidate=%-7s saved=%8.2f MiB delta_error=%10.6g selected_error=%10.6g candidate_error=%10.6g repaired_candidate_error=%10.6g score=%10.6g bpw=%6.3f->%6.3f proxy_safe=%s repair_potential=%s\n",
+        LLAMA_LOG_INFO("%s: compression-opportunity rank=%3d tensor=%-36s selected=%-7s candidate=%-7s saved=%8.2f MiB delta_error=%10.6g selected_error=%10.6g selected_gate=%10.6g candidate_error=%10.6g candidate_gate=%10.6g block=%10.6g rank=%10.6g repaired_candidate_error=%10.6g score=%10.6g bpw=%6.3f->%6.3f proxy_safe=%s repair_potential=%s\n",
                 __func__, (int) rank + 1, opportunity.name.c_str(),
                 ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
                 opportunity.saved_bytes/1024.0/1024.0,
                 opportunity.delta_error,
                 opportunity.selected_error,
+                opportunity.selected_gate_error,
                 opportunity.candidate_error,
+                opportunity.candidate_gate_error,
+                opportunity.candidate_block_error,
+                opportunity.candidate_rank_error,
                 opportunity.repaired_candidate_error,
                 opportunity.opportunity_score,
                 opportunity.selected_bpw,
@@ -3042,37 +3253,49 @@ static void apply_budget_first_type_cap(
         if (selected.type == GGML_TYPE_COUNT || candidate.type == GGML_TYPE_COUNT) {
             continue;
         }
+        const teacher_gate_eval selected_gate = evaluate_teacher_gate_error(
+                params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
+        const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
+                params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
 
         ++evaluated;
         const bool under_relative_gate =
-            candidate.composite_error <= selected.composite_error * effective_accept_ratio;
+            candidate_gate.gate_error <= selected_gate.gate_error * effective_accept_ratio;
         const bool under_absolute_gate =
-            candidate.weighted_mse <= effective_max_error;
-        const float selected_cost = selected.composite_error + cost_lambda * selected.bpw;
-        const float candidate_cost = candidate.composite_error + cost_lambda * candidate.bpw;
+            candidate.weighted_mse <= effective_max_error ||
+            (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= effective_max_error);
+        const float selected_cost = selected_gate.gate_error + cost_lambda * selected.bpw;
+        const float candidate_cost = candidate_gate.gate_error + cost_lambda * candidate.bpw;
         if ((under_relative_gate || under_absolute_gate) && candidate_cost < selected_cost) {
             tm.target_type = candidate.type;
             tm.rd_type = candidate.type;
             tm.rd_distortion = candidate.weighted_mse / std::max(1e-20f, distortion_weight);
             tm.rd_bpw = candidate.bpw;
-            tm.rd_cost = candidate.composite_error + cost_lambda * candidate.bpw;
+            tm.rd_cost = candidate_gate.gate_error + cost_lambda * candidate.bpw;
             ++capped;
-            LLAMA_LOG_INFO("%s: budget-first tensor=%-36s original=%-7s capped=%-7s original_error=%10.6g capped_error=%10.6g original_bpw=%6.3f capped_bpw=%6.3f\n",
+            LLAMA_LOG_INFO("%s: budget-first tensor=%-36s original=%-7s capped=%-7s original_error=%10.6g capped_error=%10.6g original_gate=%10.6g capped_gate=%10.6g original_bpw=%6.3f capped_bpw=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type),
-                    selected.weighted_mse, candidate.weighted_mse, selected.bpw, candidate.bpw);
+                    selected.weighted_mse, candidate.weighted_mse,
+                    selected_gate.gate_error, candidate_gate.gate_error,
+                    selected.bpw, candidate.bpw);
         } else {
             ++kept;
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: budget-first tensor=%-36s selected=%-7s capped=%-7s reason=kept selected_error=%10.6g capped_error=%10.6g selected_bpw=%6.3f capped_bpw=%6.3f\n",
+                LLAMA_LOG_INFO("%s: budget-first tensor=%-36s selected=%-7s capped=%-7s reason=kept selected_error=%10.6g capped_error=%10.6g selected_gate=%10.6g capped_gate=%10.6g selected_bpw=%6.3f capped_bpw=%6.3f\n",
                         __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type),
-                        selected.weighted_mse, candidate.weighted_mse, selected.bpw, candidate.bpw);
+                        selected.weighted_mse, candidate.weighted_mse,
+                        selected_gate.gate_error, candidate_gate.gate_error,
+                        selected.bpw, candidate.bpw);
             }
         }
     }
 
     if (evaluated > 0) {
-        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d accept_ratio=%.3f max_error=%g cost_lambda=%.6g\n",
-                __func__, evaluated, capped, kept, effective_accept_ratio, effective_max_error, cost_lambda);
+        LLAMA_LOG_INFO("%s: budget-first evaluated=%d capped=%d kept=%d teacher_aware=%s teacher_mix=%.2f accept_ratio=%.3f max_error=%g cost_lambda=%.6g\n",
+                __func__, evaluated, capped, kept,
+                params->quant_teacher_aware ? "yes" : "no",
+                params->quant_teacher_aware_mix,
+                effective_accept_ratio, effective_max_error, cost_lambda);
     }
 }
 
@@ -4301,6 +4524,11 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.quant_repair_clipping       =*/ true,
         /*.quant_repair_gain           =*/ true,
         /*.quant_repair_scale          =*/ true,
+        /*.quant_teacher_aware        =*/ false,
+        /*.quant_teacher_aware_mix    =*/ 0.35f,
+        /*.quant_teacher_aware_block_mix =*/ 0.10f,
+        /*.quant_teacher_aware_rank_mix =*/ 0.05f,
+        /*.quant_teacher_aware_top_k  =*/ 8,
         /*.quant_repair_accept_ratio   =*/ 1.05f,
         /*.quant_repair_max_error      =*/ 0.001f,
         /*.quant_repair_min_error      =*/ 0.002f,

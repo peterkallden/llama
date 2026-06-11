@@ -251,6 +251,16 @@ static void usage(const char * executable) {
     printf("                                      enable repair-before-promote with methods clipping,gain,scale by default\n");
     printf("  --quant-repair-methods LIST\n");
     printf("                                      comma-separated repair methods to use exactly: clipping,gain,scale\n");
+    printf("  --quant-teacher-aware\n");
+    printf("                                      enable teacher-aware mixed-precision gating using an output-aware proxy\n");
+    printf("  --quant-teacher-aware-mix X\n");
+    printf("                                      blend factor for teacher-aware gating/cost in [0,1] (default: 0.35)\n");
+    printf("  --quant-teacher-aware-block-mix X\n");
+    printf("                                      weight for block-local cosine/norm drift in teacher-aware gating (default: 0.10)\n");
+    printf("  --quant-teacher-aware-rank-mix X\n");
+    printf("                                      weight for local top-k rank/margin drift in teacher-aware gating (default: 0.05)\n");
+    printf("  --quant-teacher-aware-top-k N\n");
+    printf("                                      top-k channels for local rank/margin proxy (default: 8)\n");
     printf("  --quant-repair-accept-ratio X\n");
     printf("                                      accept cheaper repair candidate if error <= selected-type error * X (default: 1.05)\n");
     printf("  --quant-repair-max-error X\n");
@@ -909,6 +919,68 @@ int llama_quantize(int argc, char ** argv) {
             params.print_compression_opportunity_report = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--quant-repair") == 0) {
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-teacher-aware") == 0) {
+            params.quant_teacher_aware = true;
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-teacher-aware-mix") == 0) {
+            float value = -1.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = -1.0f;
+                }
+            }
+            if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
+                fprintf(stderr, "%s: invalid --quant-teacher-aware-mix value\n", __func__);
+                usage(argv[0]);
+            }
+            params.quant_teacher_aware = true;
+            params.quant_teacher_aware_mix = value;
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-teacher-aware-block-mix") == 0 ||
+                strcmp(argv[arg_idx], "--quant-teacher-aware-rank-mix") == 0) {
+            const bool is_block = strcmp(argv[arg_idx], "--quant-teacher-aware-block-mix") == 0;
+            float value = -1.0f;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stof(argv[++arg_idx]);
+                } catch (...) {
+                    value = -1.0f;
+                }
+            }
+            if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
+                fprintf(stderr, "%s: invalid %s value\n", __func__,
+                        is_block ? "--quant-teacher-aware-block-mix" : "--quant-teacher-aware-rank-mix");
+                usage(argv[0]);
+            }
+            if (is_block) {
+                params.quant_teacher_aware_block_mix = value;
+            } else {
+                params.quant_teacher_aware_rank_mix = value;
+            }
+            params.quant_teacher_aware = true;
+            params.quant_repair = true;
+            params.rd_guided = true;
+        } else if (strcmp(argv[arg_idx], "--quant-teacher-aware-top-k") == 0) {
+            int value = 0;
+            if (arg_idx < argc-1) {
+                try {
+                    value = std::stoi(argv[++arg_idx]);
+                } catch (...) {
+                    value = 0;
+                }
+            }
+            if (value <= 0) {
+                fprintf(stderr, "%s: invalid --quant-teacher-aware-top-k value\n", __func__);
+                usage(argv[0]);
+            }
+            params.quant_teacher_aware_top_k = value;
+            params.quant_teacher_aware = true;
             params.quant_repair = true;
             params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--quant-repair-methods") == 0) {

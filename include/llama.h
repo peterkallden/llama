@@ -472,6 +472,11 @@ extern "C" {
         bool quant_repair_clipping;                                    // try clipping repair for aggressively quantized tensors
         bool quant_repair_gain;                                        // keep gain-error diagnostics and cheaper-candidate repair enabled
         bool quant_repair_scale;                                       // try source scale/gain sweep with imatrix-weighted layer-output proxy
+        bool quant_teacher_aware;                                      // blend an output-aware teacher proxy into mixed-precision gating
+        float quant_teacher_aware_mix;                                 // how strongly teacher proxy affects candidate gating/cost, 0 disables
+        float quant_teacher_aware_block_mix;                           // weight for block-local cosine/norm drift in teacher-aware gating
+        float quant_teacher_aware_rank_mix;                            // weight for local top-k rank/margin drift in teacher-aware gating
+        int32_t quant_teacher_aware_top_k;                              // top-k channels used by the rank/margin proxy
         float quant_repair_accept_ratio;                               // accept repair candidate if error <= selected-type error * ratio
         float quant_repair_max_error;                                  // absolute weighted-error ceiling for repair candidates
         float quant_repair_min_error;                                  // run teacher repair only when selected-type proxy error exceeds this value

@@ -232,6 +232,7 @@ Repair methods can be controlled explicitly:
   --mixed-policy spqr_layer_delta \
   --rd-guided \
   --quant-repair \
+  --quant-teacher-aware \
   --quant-repair-methods clipping,scale \
   --quant-repair-min-error 0.002 \
   --quant-repair-min-improvement 0.05 \
@@ -247,6 +248,10 @@ E[||X(W - Wq)||^2] ~= sum_j imatrix[j] * (W[j] - Wq[j])^2
 When the selected type has high proxy error, `clipping` sweeps a few clipping percentiles and `scale` sweeps small source multipliers before quantization. `gain` keeps the cheaper-candidate repair and gain-error diagnostics enabled. Accepted repairs are exportable because they are applied to the source values before writing the normal quantized tensor. No residual, codebook, learned transform, or runtime format is introduced. Without imatrix data, the pass falls back to an unweighted reconstruction proxy.
 
 For FFN tensors, the `scale` path is slightly smarter than a plain global gain sweep. It now builds a lightweight channel-importance profile from sampled activations and imatrix weights, then blends that into the teacher proxy so high-activity FFN channels count more strongly. This gives the repair pass a cheap approximation of "preserve the useful FFN output channels first" without introducing a full block reconstruction pass.
+
+`--quant-teacher-aware` pushes this one step further for mixed-precision decisions. It blends the local RD-style proxy with the output-aware teacher proxy when evaluating cheaper candidates, so demotion and bounded shrink decisions are judged less by raw weight error alone and more by an approximation of downstream behavior. `--quant-teacher-aware-mix` controls how strongly that teacher-side signal influences the gate and cost.
+
+The teacher-aware gate also adds two lightweight second-stage signals. A block-local gate measures cosine/norm drift between sampled teacher rows and reconstructed candidate rows, approximating hidden/output drift without a full forward pass. A local rank/margin proxy compares the top-K salient dimensions before and after quantization, giving a cheap stand-in for "did the important outputs keep their ordering and margin?" These are controlled by `--quant-teacher-aware-block-mix`, `--quant-teacher-aware-rank-mix`, and `--quant-teacher-aware-top-k`.
 
 When a precomputed analysis profile is unavailable, the quantizer can selectively refine the most uncertain local curves before global allocation:
 
