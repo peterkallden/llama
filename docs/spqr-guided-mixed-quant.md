@@ -105,9 +105,14 @@ When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribut
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
 
-If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair and shrink passes. In practice that means later or more teacher-sensitive layers become harder to demote, while layers/families that looked safer in the report get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. In practice that means later or more teacher-sensitive layers become harder to demote, while layers/families that looked safer in the report get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
 
-This first integration is intentionally modest. The report is parsed once at startup and used as a model-level brake, not a tensor-level allocator. If the report fails the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative. Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries.
+This first integration is still intentionally modest. The report is parsed once at startup and produces two effects:
+
+- a model-level brake: if the paired or candidate-only metrics fail the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative
+- a tensor-local prior: when paired attribution deltas are available, layer and family drift are folded into the local repair/shrink scoring so risky regions pay a higher quality cost per saved byte
+
+Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries, and successful paired reports also show `layer_deltas`, `family_deltas`, and `local_allocator_prior=on` in the final quantization summary.
 
 ## Non-goals
 
@@ -376,6 +381,27 @@ Optionally provide a soft global size target:
 `--rd-target-bpw` and `--rd-target-size-mib` are mutually exclusive and optional. Without either target, RD selection behaves as before. With a target, the allocator uses a bounded budget pass: it chooses one existing tensor type from each collected RD curve and increases compression pressure until the requested estimated tensor-payload size is reached, as long as the available candidates and safety floors allow it. If the target is still unreachable after every allocatable tensor has moved to its smallest allowed candidate, the report marks the run as `bounded-limit`. The report also prints an estimated quality cost, measured as the additional weighted distortion versus the highest-quality RD allocation. GGUF metadata and alignment can make the final file slightly larger than the tensor-payload target. This candidate interface is the extension point through which future compression methods can participate in the same allocation.
 
 Budget-limited runs also apply a mild bottom-first prior when scores are otherwise close: earlier transformer layers get a small compression bias and later layers get a small protection bias. This is inspired by feature-distillation compression work such as [Lillama](https://arxiv.org/pdf/2412.16719), where local feature matching makes layer-wise compression/recovery practical. In this POC it remains only a soft ranking multiplier (`0.94..1.08`) and is reported as `bottom_first_bias`; quality-first runs without a requested size target do not use it.
+
+A practical budget-first teacher-aware run looks like this:
+
+```bash
+./build/bin/llama-quantize \
+  --imatrix imatrix-profile.gguf \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
+  --spqr-block-scoring \
+  --adaptive-anchors \
+  --rd-guided \
+  --rd-local-refine-top-k 16 \
+  --rd-local-refine-rows 32 \
+  --rd-target-bpw 4.4 \
+  --quant-repair \
+  --logit-report logit-delta.json \
+  --logit-gate \
+  input-f16.gguf output-budget-q4.gguf Q4_K_M
+```
+
+In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior try to spend the remaining quality budget where it matters most instead of treating every later promotion or demotion equally.
 
 The POC is usually run from F16/BF16/F32 GGUF inputs, but it can also analyze and requantize an already-quantized source when the source ggml type exposes a `to_float` converter. In that case the quantizer logs the source type and automatically allows requantization for that run. If a quantized or non-floating source type cannot be converted back to float, the run fails early with an explicit error instead of silently producing an invalid profile or output.
 
