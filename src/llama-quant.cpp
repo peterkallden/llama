@@ -701,6 +701,19 @@ struct compression_opportunity {
     bool repair_potential = false;
 };
 
+static bool compression_opportunity_better(const compression_opportunity & a, const compression_opportunity & b) {
+    if (a.proxy_safe != b.proxy_safe) {
+        return a.proxy_safe > b.proxy_safe;
+    }
+    if (a.repair_potential != b.repair_potential) {
+        return a.repair_potential > b.repair_potential;
+    }
+    if (a.opportunity_score != b.opportunity_score) {
+        return a.opportunity_score > b.opportunity_score;
+    }
+    return a.saved_bytes > b.saved_bytes;
+}
+
 struct spqr_teacher_repair_result {
     float clip_abs = 0.0f;
     float source_gain = 1.0f;
@@ -3165,7 +3178,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
         const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
         const std::vector<tensor_metadata> & metadata,
         const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
-        int nthread) {
+        int nthread,
+        bool best_per_tensor) {
     ensure_logit_gate_loaded(qs);
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
@@ -3309,15 +3323,18 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
                 continue;
             }
 
+            if (!best_per_tensor) {
+                opportunities.push_back(opportunity);
+                continue;
+            }
+
             if (best.candidate_type == GGML_TYPE_COUNT ||
-                    (opportunity.proxy_safe != best.proxy_safe ? opportunity.proxy_safe :
-                     opportunity.repair_potential != best.repair_potential ? opportunity.repair_potential :
-                     opportunity.opportunity_score > best.opportunity_score)) {
+                    compression_opportunity_better(opportunity, best)) {
                 best = opportunity;
             }
         }
 
-        if (best.candidate_type != GGML_TYPE_COUNT) {
+        if (best_per_tensor && best.candidate_type != GGML_TYPE_COUNT) {
             opportunities.push_back(best);
         }
     }
@@ -3338,7 +3355,7 @@ static void print_compression_opportunity_report(
         return;
     }
     std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
-            qs, params, ml, tensors, metadata, imatrix_data, nthread);
+            qs, params, ml, tensors, metadata, imatrix_data, nthread, true);
     int proxy_safe_count = 0;
     int repair_potential_count = 0;
     size_t proxy_safe_saved_bytes = 0;
@@ -3346,18 +3363,7 @@ static void print_compression_opportunity_report(
     size_t total_saved_bytes = 0;
     const bool budget_limited = quant_budget_limited(params);
 
-    std::sort(opportunities.begin(), opportunities.end(), [] (const compression_opportunity & a, const compression_opportunity & b) {
-        if (a.proxy_safe != b.proxy_safe) {
-            return a.proxy_safe > b.proxy_safe;
-        }
-        if (a.repair_potential != b.repair_potential) {
-            return a.repair_potential > b.repair_potential;
-        }
-        if (a.opportunity_score != b.opportunity_score) {
-            return a.opportunity_score > b.opportunity_score;
-        }
-        return a.saved_bytes > b.saved_bytes;
-    });
+    std::sort(opportunities.begin(), opportunities.end(), compression_opportunity_better);
     for (const compression_opportunity & opportunity : opportunities) {
         total_saved_bytes += opportunity.saved_bytes;
         if (opportunity.proxy_safe) {
@@ -3446,30 +3452,23 @@ static void apply_budget_repair_shrink(
     int repair_potential_demotions = 0;
     float added_quality_cost = 0.0f;
     size_t total_saved_bytes = 0;
+    int auction_candidates = 0;
+    int auction_selected = 0;
 
     while (current_bytes > target_bytes && passes < max_passes) {
         std::vector<compression_opportunity> opportunities = collect_compression_opportunities(
-                qs, params, ml, tensors, metadata, imatrix_data, nthread);
+                qs, params, ml, tensors, metadata, imatrix_data, nthread, false);
         if (opportunities.empty()) {
             break;
         }
 
-        std::sort(opportunities.begin(), opportunities.end(), [] (const compression_opportunity & a, const compression_opportunity & b) {
-            if (a.proxy_safe != b.proxy_safe) {
-                return a.proxy_safe > b.proxy_safe;
-            }
-            if (a.repair_potential != b.repair_potential) {
-                return a.repair_potential > b.repair_potential;
-            }
-            if (a.opportunity_score != b.opportunity_score) {
-                return a.opportunity_score > b.opportunity_score;
-            }
-            return a.saved_bytes > b.saved_bytes;
-        });
+        auction_candidates += (int) opportunities.size();
+        std::sort(opportunities.begin(), opportunities.end(), compression_opportunity_better);
 
         bool applied_in_pass = false;
         std::vector<bool> touched(metadata.size(), false);
-        for (const compression_opportunity & opportunity : opportunities) {
+        for (size_t rank = 0; rank < opportunities.size(); ++rank) {
+            const compression_opportunity & opportunity = opportunities[rank];
             if (current_bytes <= target_bytes) {
                 break;
             }
@@ -3496,16 +3495,18 @@ static void apply_budget_repair_shrink(
             total_saved_bytes += opportunity.saved_bytes;
             added_quality_cost += opportunity.delta_error;
             ++demoted;
+            ++auction_selected;
             proxy_safe_demotions += opportunity.proxy_safe ? 1 : 0;
             repair_potential_demotions += opportunity.repair_potential ? 1 : 0;
             touched[opportunity.tensor_index] = true;
             applied_in_pass = true;
 
-            LLAMA_LOG_INFO("%s: shrink-pass=%d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB quality_delta=%10.6g teacher_risk=%6.3f budget_bias=%5.3f mode=%s current=%8.2f MiB target=%8.2f MiB\n",
-                    __func__, passes + 1, tm.name.c_str(),
+            LLAMA_LOG_INFO("%s: shrink-pass=%d auction-rank=%3d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB quality_delta=%10.6g value=%10.6g teacher_risk=%6.3f budget_bias=%5.3f mode=%s current=%8.2f MiB target=%8.2f MiB\n",
+                    __func__, passes + 1, (int) rank + 1, tm.name.c_str(),
                     ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
                     opportunity.saved_bytes/1024.0/1024.0,
                     opportunity.delta_error,
+                    opportunity.opportunity_score,
                     opportunity.teacher_risk,
                     opportunity.budget_bias,
                     opportunity.proxy_safe ? "proxy-safe" : "repair-potential",
@@ -3520,13 +3521,16 @@ static void apply_budget_repair_shrink(
     }
 
     if (demoted > 0 || current_bytes > target_bytes) {
-        LLAMA_LOG_INFO("%s: summary demoted=%d proxy_safe=%d repair_potential=%d saved=%8.2f MiB added_quality_cost=%10.6g actual=%8.2f MiB target=%8.2f MiB difference=%+.2f MiB passes=%d status=%s bottom_first_bias=on bias_range=0.94..1.08\n",
+        LLAMA_LOG_INFO("%s: summary mode=auction demoted=%d proxy_safe=%d repair_potential=%d candidates=%d selected=%d saved=%8.2f MiB added_quality_cost=%10.6g cost_per_mib=%10.6g actual=%8.2f MiB target=%8.2f MiB difference=%+.2f MiB passes=%d status=%s bottom_first_bias=on bias_range=0.94..1.08\n",
                 __func__,
                 demoted,
                 proxy_safe_demotions,
                 repair_potential_demotions,
+                auction_candidates,
+                auction_selected,
                 total_saved_bytes/1024.0/1024.0,
                 added_quality_cost,
+                total_saved_bytes > 0 ? added_quality_cost / ((float) total_saved_bytes/1024.0f/1024.0f) : 0.0f,
                 current_bytes/1024.0/1024.0,
                 target_bytes/1024.0/1024.0,
                 ((double) current_bytes - target_bytes)/1024.0/1024.0,

@@ -276,7 +276,9 @@ This is the main opt-in repair flag. It combines cheaper-candidate repair with e
 
 The source-value repair side is used when the selected type is already low-bit, has high proxy error, or when a size target prevents simply promoting/upscaling tensors. In budget-limited runs using `--rd-target-bpw` or `--rd-target-size-mib`, repair becomes more permissive: a one-step budget-first type cap is attempted before the regular repair pass, cheaper-candidate repair uses looser acceptance gates, and the proxy-error threshold is lowered internally so the probe runs more often before the policy spends extra precision.
 
-If the bounded RD pass and budget-first cap still leave the model above target, quant-repair now performs an extra shrink pass automatically. It ranks cheaper compatible candidates globally, prefers `proxy_safe` demotions, then allows `repair_potential` demotions when the existing clipping/scale teacher-repair probe indicates the cheaper type can likely be rescued after demotion. This is the current "aggressive repair under hard budget" path.
+If the bounded RD pass and budget-first cap still leave the model above target, quant-repair now performs an extra shrink pass automatically. This pass now behaves as a small global demotion auction: every eligible tensor can contribute more than one cheaper candidate, those candidates are ranked globally by saved MiB versus estimated added quality cost, `proxy_safe` demotions are preferred first, and `repair_potential` demotions are admitted when the clipping/scale teacher-repair probe indicates the cheaper type can likely be rescued after demotion. This is the current "aggressive repair under hard budget" path.
+
+The auction is budget-only. Quality-first runs without `--rd-target-bpw` or `--rd-target-size-mib` keep their earlier local validation behavior. In the console report, the shrink summary now includes `mode=auction`, the number of candidate bids considered, how many bids were selected, total MiB saved, total estimated quality cost, and `cost_per_mib` for the accepted demotions.
 
 For size-first exploration, add a compression opportunity report:
 
@@ -401,7 +403,7 @@ A practical budget-first teacher-aware run looks like this:
   input-f16.gguf output-budget-q4.gguf Q4_K_M
 ```
 
-In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior try to spend the remaining quality budget where it matters most instead of treating every later promotion or demotion equally.
+In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior spend the remaining quality budget through a global demotion auction rather than treating every later demotion equally. The current implementation is still one-way in this phase: it is a budget rescue auction over cheaper candidates, not yet a full promote/demote market over the whole ladder.
 
 The POC is usually run from F16/BF16/F32 GGUF inputs, but it can also analyze and requantize an already-quantized source when the source ggml type exposes a `to_float` converter. In that case the quantizer logs the source type and automatically allows requantization for that run. If a quantized or non-floating source type cannot be converted back to float, the run fails early with an explicit error instead of silently producing an invalid profile or output.
 
