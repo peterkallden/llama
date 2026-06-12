@@ -354,9 +354,18 @@ struct logit_gate_metrics {
     float mean_topk_kl = 0.0f;
     float argmax_flip_rate = 0.0f;
     std::unordered_map<std::string, float> tensor_delta_mean_mse;
+    std::unordered_map<std::string, float> tensor_delta_confidence;
     std::unordered_map<int, float> layer_delta_mean_mse;
+    std::unordered_map<int, float> layer_delta_confidence;
     std::unordered_map<std::string, float> family_delta_mean_mse;
+    std::unordered_map<std::string, float> family_delta_confidence;
 };
+
+static float logit_attribution_confidence(int compared_tensors, int compared_values) {
+    const float tensor_cov = std::min(1.0f, compared_tensors / 4.0f);
+    const float value_cov = std::min(1.0f, std::sqrt(std::max(0, compared_values) / 4096.0f));
+    return std::clamp(0.25f + 0.35f * tensor_cov + 0.40f * value_cov, 0.25f, 1.0f);
+}
 
 static bool parse_logit_metric(const std::string & json, const char * key, float & value) {
     const std::regex pattern(std::string("\"") + key + "\"\\s*:\\s*([-+0-9.eE]+)");
@@ -405,37 +414,53 @@ static void parse_logit_attribution_deltas(
         const std::string & json,
         const char * key,
         std::unordered_map<std::string, float> * tensor_out,
+        std::unordered_map<std::string, float> * tensor_confidence_out,
         std::unordered_map<int, float> * layer_out,
-        std::unordered_map<std::string, float> * family_out) {
+        std::unordered_map<int, float> * layer_confidence_out,
+        std::unordered_map<std::string, float> * family_out,
+        std::unordered_map<std::string, float> * family_confidence_out) {
     std::string array_json;
     if (!extract_named_json_array(json, key, array_json)) {
         return;
     }
 
     const std::regex entry_pattern(
-        R"json(\{\s*"key"\s*:\s*"([^"]+)"\s*,\s*"layer"\s*:\s*(-?\d+)\s*,[\s\S]*?"delta_mean_mse"\s*:\s*([-+0-9.eE]+))json");
+        R"json(\{\s*"key"\s*:\s*"([^"]+)"\s*,\s*"layer"\s*:\s*(-?\d+)\s*,(?:\s*"compared_tensors"\s*:\s*(\d+)\s*,\s*"compared_values"\s*:\s*(\d+)\s*,)?[\s\S]*?"delta_mean_mse"\s*:\s*([-+0-9.eE]+))json");
 
-    for (std::sregex_iterator it(array_json.begin(), array_json.end(), entry_pattern), end; it != end; ++it) {
+    for (std::sregex_iterator it(array_json.begin(), array_json.end(), entry_pattern), end;
+            it != end; ++it) {
         const std::smatch & match = *it;
-        if (match.size() < 4) {
+        if (match.size() < 6) {
             continue;
         }
 
         try {
             const std::string name = match[1].str();
             const int layer = std::stoi(match[2].str());
-            const float delta = std::stof(match[3].str());
+            const int compared_tensors = match[3].matched ? std::stoi(match[3].str()) : 4;
+            const int compared_values = match[4].matched ? std::stoi(match[4].str()) : 4096;
+            const float delta = std::stof(match[5].str());
             if (!std::isfinite(delta)) {
                 continue;
             }
+            const float confidence = logit_attribution_confidence(compared_tensors, compared_values);
             if (layer_out != nullptr && layer >= 0) {
                 (*layer_out)[layer] = delta;
+            }
+            if (layer_confidence_out != nullptr && layer >= 0) {
+                (*layer_confidence_out)[layer] = confidence;
             }
             if (tensor_out != nullptr) {
                 (*tensor_out)[name] = delta;
             }
+            if (tensor_confidence_out != nullptr) {
+                (*tensor_confidence_out)[name] = confidence;
+            }
             if (family_out != nullptr) {
                 (*family_out)[name] = delta;
+            }
+            if (family_confidence_out != nullptr) {
+                (*family_confidence_out)[name] = confidence;
             }
         } catch (...) {
             continue;
@@ -470,9 +495,17 @@ static bool load_logit_gate_metrics(const char * path, logit_gate_metrics & metr
     }
 
     if (metrics.paired) {
-        parse_logit_attribution_deltas(json, "tensor_attribution_delta", &metrics.tensor_delta_mean_mse, nullptr, nullptr);
-        parse_logit_attribution_deltas(json, "layer_attribution_delta", nullptr, &metrics.layer_delta_mean_mse, nullptr);
-        parse_logit_attribution_deltas(json, "family_attribution_delta", nullptr, nullptr, &metrics.family_delta_mean_mse);
+        parse_logit_attribution_deltas(json, "tensor_attribution_delta",
+                &metrics.tensor_delta_mean_mse, &metrics.tensor_delta_confidence,
+                nullptr, nullptr, nullptr, nullptr);
+        parse_logit_attribution_deltas(json, "layer_attribution_delta",
+                nullptr, nullptr,
+                &metrics.layer_delta_mean_mse, &metrics.layer_delta_confidence,
+                nullptr, nullptr);
+        parse_logit_attribution_deltas(json, "family_attribution_delta",
+                nullptr, nullptr,
+                nullptr, nullptr,
+                &metrics.family_delta_mean_mse, &metrics.family_delta_confidence);
     }
 
     return metrics.has_damage || metrics.has_kl || metrics.has_flip;
@@ -577,8 +610,11 @@ struct quantize_state_impl {
     float logit_mean_topk_kl = 0.0f;
     float logit_argmax_flip_rate = 0.0f;
     std::unordered_map<std::string, float> logit_tensor_delta_mean_mse;
+    std::unordered_map<std::string, float> logit_tensor_delta_confidence;
     std::unordered_map<int, float> logit_layer_delta_mean_mse;
+    std::unordered_map<int, float> logit_layer_delta_confidence;
     std::unordered_map<std::string, float> logit_family_delta_mean_mse;
+    std::unordered_map<std::string, float> logit_family_delta_confidence;
 
     // used to figure out if a model has tied embeddings (tok_embd shares weights with output)
     bool has_tied_embeddings = true; // assume tied until we see output.weight
@@ -622,8 +658,11 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
     qs.logit_mean_topk_kl = metrics.mean_topk_kl;
     qs.logit_argmax_flip_rate = metrics.argmax_flip_rate;
     qs.logit_tensor_delta_mean_mse = std::move(metrics.tensor_delta_mean_mse);
+    qs.logit_tensor_delta_confidence = std::move(metrics.tensor_delta_confidence);
     qs.logit_layer_delta_mean_mse = std::move(metrics.layer_delta_mean_mse);
+    qs.logit_layer_delta_confidence = std::move(metrics.layer_delta_confidence);
     qs.logit_family_delta_mean_mse = std::move(metrics.family_delta_mean_mse);
+    qs.logit_family_delta_confidence = std::move(metrics.family_delta_confidence);
     qs.logit_gate_pass = true;
     if (params->logit_gate) {
         qs.logit_gate_pass =
@@ -704,6 +743,8 @@ struct compression_opportunity {
     float teacher_risk_tensor = 0.0f;
     float teacher_risk_layer = 0.0f;
     float teacher_risk_family = 0.0f;
+    float teacher_safe_pressure = 0.0f;
+    float teacher_promotion_pressure = 0.0f;
     float budget_bias = 1.0f;
     float repaired_candidate_error = 0.0f;
     float effective_candidate_error = 0.0f;
@@ -835,6 +876,31 @@ static std::string tensor_logit_group_key(const tensor_metadata & tm) {
     return {};
 }
 
+static float lookup_logit_tensor_confidence(const quantize_state_impl & qs, const tensor_metadata & tm) {
+    auto it = qs.logit_tensor_delta_confidence.find(tm.name);
+    if (it != qs.logit_tensor_delta_confidence.end()) {
+        return it->second;
+    }
+    const std::string tensor_group = tensor_logit_group_key(tm);
+    if (!tensor_group.empty()) {
+        it = qs.logit_tensor_delta_confidence.find(tensor_group);
+        if (it != qs.logit_tensor_delta_confidence.end()) {
+            return it->second;
+        }
+    }
+    return 1.0f;
+}
+
+static float lookup_logit_layer_confidence(const quantize_state_impl & qs, int layer) {
+    auto it = qs.logit_layer_delta_confidence.find(layer);
+    return it != qs.logit_layer_delta_confidence.end() ? it->second : 1.0f;
+}
+
+static float lookup_logit_family_confidence(const quantize_state_impl & qs, const std::string & family) {
+    auto it = qs.logit_family_delta_confidence.find(family);
+    return it != qs.logit_family_delta_confidence.end() ? it->second : 1.0f;
+}
+
 static float logit_delta_to_risk_component(float delta, float scale) {
     if (!std::isfinite(delta) || delta == 0.0f) {
         return 0.0f;
@@ -865,31 +931,35 @@ static logit_teacher_risk_breakdown logit_local_teacher_risk_breakdown(
     }
 
     const bool has_tensor_delta = tensor_it != qs.logit_tensor_delta_mean_mse.end();
+    const float tensor_confidence = lookup_logit_tensor_confidence(qs, tm);
     const float tensor_scale = has_tensor_delta ? 0.28f : 0.18f;
     const float layer_scale = has_tensor_delta ? 0.06f : 0.12f;
     const float l_out_scale = has_tensor_delta ? 0.025f : 0.05f;
     const float family_scale = has_tensor_delta ? 0.04f : 0.08f;
 
     if (tensor_it != qs.logit_tensor_delta_mean_mse.end()) {
-        out.tensor += logit_delta_to_risk_component(tensor_it->second, tensor_scale);
+        out.tensor += tensor_confidence * logit_delta_to_risk_component(tensor_it->second, tensor_scale);
     }
 
     if (tm.layer >= 0) {
         auto it = qs.logit_layer_delta_mean_mse.find(tm.layer);
         if (it != qs.logit_layer_delta_mean_mse.end()) {
-            out.layer += logit_delta_to_risk_component(it->second, layer_scale);
+            const float layer_confidence = lookup_logit_layer_confidence(qs, tm.layer);
+            out.layer += layer_confidence * logit_delta_to_risk_component(it->second, layer_scale);
         }
 
         auto l_out = qs.logit_family_delta_mean_mse.find("l_out");
         if (l_out != qs.logit_family_delta_mean_mse.end()) {
-            out.family += logit_delta_to_risk_component(l_out->second, l_out_scale);
+            const float l_out_confidence = lookup_logit_family_confidence(qs, "l_out");
+            out.family += l_out_confidence * logit_delta_to_risk_component(l_out->second, l_out_scale);
         }
     }
 
     if (const char * family = tensor_logit_family_key(tm.category)) {
         auto it = qs.logit_family_delta_mean_mse.find(family);
         if (it != qs.logit_family_delta_mean_mse.end()) {
-            out.family += logit_delta_to_risk_component(it->second, family_scale);
+            const float family_confidence = lookup_logit_family_confidence(qs, family);
+            out.family += family_confidence * logit_delta_to_risk_component(it->second, family_scale);
         }
     }
 
@@ -3384,6 +3454,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
                 params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
+        const float safe_pressure = logit_local_safe_compression_pressure(teacher_risk_parts);
+        const float promotion_pressure = logit_local_promotion_pressure(teacher_risk_parts);
         const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
         const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, demotion_risk);
         const float local_max_error = logit_local_error_limit(adjusted_max_error, demotion_risk);
@@ -3427,7 +3499,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             const float delta_error = demotion_risk * std::max(0.0f, effective_candidate_error - selected_gate.gate_error);
             const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
             const float budget_bias = budget_limited ? budget_layer_position_bias(tm, max_layer) : 1.0f;
-            const float score = budget_bias * saved_mib / std::max(delta_error, 1e-9f);
+            const float score = budget_bias * (1.0f + 0.75f * safe_pressure) * saved_mib /
+                std::max(delta_error * (1.0f + 0.50f * promotion_pressure), 1e-9f);
 
             compression_opportunity opportunity;
             opportunity.tensor_index = i;
@@ -3446,6 +3519,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             opportunity.teacher_risk_tensor = teacher_risk_parts.tensor;
             opportunity.teacher_risk_layer = teacher_risk_parts.layer;
             opportunity.teacher_risk_family = teacher_risk_parts.family;
+            opportunity.teacher_safe_pressure = safe_pressure;
+            opportunity.teacher_promotion_pressure = promotion_pressure;
             opportunity.budget_bias = budget_bias;
             opportunity.repaired_candidate_error = repaired_candidate_error;
             opportunity.effective_candidate_error = effective_candidate_error;
@@ -3529,7 +3604,7 @@ static void print_compression_opportunity_report(
             budget_limited ? "on" : "off");
     for (size_t rank = 0; rank < report_count; ++rank) {
         const compression_opportunity & opportunity = opportunities[rank];
-        LLAMA_LOG_INFO("%s: compression-opportunity rank=%3d tensor=%-36s selected=%-7s candidate=%-7s saved=%8.2f MiB delta_error=%10.6g selected_error=%10.6g selected_gate=%10.6g candidate_error=%10.6g candidate_gate=%10.6g block=%10.6g rank=%10.6g feature=%10.6g repaired_candidate_error=%10.6g score=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) budget_bias=%5.3f bpw=%6.3f->%6.3f proxy_safe=%s repair_potential=%s\n",
+        LLAMA_LOG_INFO("%s: compression-opportunity rank=%3d tensor=%-36s selected=%-7s candidate=%-7s saved=%8.2f MiB delta_error=%10.6g selected_error=%10.6g selected_gate=%10.6g candidate_error=%10.6g candidate_gate=%10.6g block=%10.6g rank=%10.6g feature=%10.6g repaired_candidate_error=%10.6g score=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) safe_pressure=%5.3f promotion_pressure=%5.3f budget_bias=%5.3f bpw=%6.3f->%6.3f proxy_safe=%s repair_potential=%s\n",
                 __func__, (int) rank + 1, opportunity.name.c_str(),
                 ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
                 opportunity.saved_bytes/1024.0/1024.0,
@@ -3547,6 +3622,8 @@ static void print_compression_opportunity_report(
                 opportunity.teacher_risk_tensor,
                 opportunity.teacher_risk_layer,
                 opportunity.teacher_risk_family,
+                opportunity.teacher_safe_pressure,
+                opportunity.teacher_promotion_pressure,
                 opportunity.budget_bias,
                 opportunity.selected_bpw,
                 opportunity.candidate_bpw,
@@ -3642,7 +3719,7 @@ static void apply_budget_repair_shrink(
             touched[opportunity.tensor_index] = true;
             applied_in_pass = true;
 
-            LLAMA_LOG_INFO("%s: shrink-pass=%d auction-rank=%3d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB quality_delta=%10.6g value=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) budget_bias=%5.3f mode=%s current=%8.2f MiB target=%8.2f MiB\n",
+            LLAMA_LOG_INFO("%s: shrink-pass=%d auction-rank=%3d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB quality_delta=%10.6g value=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) safe_pressure=%5.3f promotion_pressure=%5.3f budget_bias=%5.3f mode=%s current=%8.2f MiB target=%8.2f MiB\n",
                     __func__, passes + 1, (int) rank + 1, tm.name.c_str(),
                     ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
                     opportunity.saved_bytes/1024.0/1024.0,
@@ -3652,6 +3729,8 @@ static void apply_budget_repair_shrink(
                     opportunity.teacher_risk_tensor,
                     opportunity.teacher_risk_layer,
                     opportunity.teacher_risk_family,
+                    opportunity.teacher_safe_pressure,
+                    opportunity.teacher_promotion_pressure,
                     opportunity.budget_bias,
                     opportunity.proxy_safe ? "proxy-safe" : "repair-potential",
                     current_bytes/1024.0/1024.0,
