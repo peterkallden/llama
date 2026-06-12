@@ -105,7 +105,7 @@ When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribut
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
 
-If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name match exists, then layer and family deltas act as broader fallback signals. In practice that means tensors, layers, or families that looked more teacher-sensitive in the report become harder to demote, while safer regions get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name or tensor-group match exists, and in the current implementation they are weighted more strongly than the broader layer and family fallback signals. In practice that means tensors, layers, or families that looked more teacher-sensitive in the report become harder to demote, while safer regions get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
 
 This first integration is still intentionally modest. The report is parsed once at startup and produces two effects:
 

@@ -605,7 +605,7 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
     qs.logit_report_loaded = true;
 
     const llama_model_quantize_params * params = qs.params;
-    if (!params->logit_gate || params->logit_report == nullptr || params->logit_report[0] == '\0') {
+    if (params->logit_report == nullptr || params->logit_report[0] == '\0') {
         return;
     }
 
@@ -624,10 +624,13 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
     qs.logit_tensor_delta_mean_mse = std::move(metrics.tensor_delta_mean_mse);
     qs.logit_layer_delta_mean_mse = std::move(metrics.layer_delta_mean_mse);
     qs.logit_family_delta_mean_mse = std::move(metrics.family_delta_mean_mse);
-    qs.logit_gate_pass =
-        (!metrics.has_damage || metrics.damage_score <= params->logit_damage_threshold) &&
-        (!metrics.has_kl || metrics.mean_topk_kl <= params->logit_kl_threshold) &&
-        (!metrics.has_flip || metrics.argmax_flip_rate <= params->logit_flip_threshold);
+    qs.logit_gate_pass = true;
+    if (params->logit_gate) {
+        qs.logit_gate_pass =
+            (!metrics.has_damage || metrics.damage_score <= params->logit_damage_threshold) &&
+            (!metrics.has_kl || metrics.mean_topk_kl <= params->logit_kl_threshold) &&
+            (!metrics.has_flip || metrics.argmax_flip_rate <= params->logit_flip_threshold);
+    }
 
     LLAMA_LOG_INFO("%s: logit gate report=%s mode=%s damage=%10.6g kl=%10.6g flips=%10.6g thresholds=(%g,%g,%g) status=%s tensor_deltas=%zu layer_deltas=%zu family_deltas=%zu\n",
             __func__, params->logit_report,
@@ -638,7 +641,7 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
             params->logit_damage_threshold,
             params->logit_kl_threshold,
             params->logit_flip_threshold,
-            qs.logit_gate_pass ? "pass" : "fail",
+            params->logit_gate ? (qs.logit_gate_pass ? "pass" : "fail") : "report-only",
             qs.logit_tensor_delta_mean_mse.size(),
             qs.logit_layer_delta_mean_mse.size(),
             qs.logit_family_delta_mean_mse.size());
@@ -822,6 +825,16 @@ static const char * tensor_logit_family_key(tensor_category category) {
     }
 }
 
+static std::string tensor_logit_group_key(const tensor_metadata & tm) {
+    if (tm.layer < 0) {
+        return {};
+    }
+    if (const char * family = tensor_logit_family_key(tm.category)) {
+        return std::string(family) + "-" + std::to_string(tm.layer);
+    }
+    return {};
+}
+
 static float logit_delta_to_risk_component(float delta, float scale) {
     if (!std::isfinite(delta) || delta == 0.0f) {
         return 0.0f;
@@ -845,31 +858,43 @@ static logit_teacher_risk_breakdown logit_local_teacher_risk_breakdown(
         return out;
     }
 
+    const std::string tensor_group = tensor_logit_group_key(tm);
     auto tensor_it = qs.logit_tensor_delta_mean_mse.find(tm.name);
+    if (tensor_it == qs.logit_tensor_delta_mean_mse.end() && !tensor_group.empty()) {
+        tensor_it = qs.logit_tensor_delta_mean_mse.find(tensor_group);
+    }
+
+    const bool has_tensor_delta = tensor_it != qs.logit_tensor_delta_mean_mse.end();
+    const float tensor_scale = has_tensor_delta ? 0.28f : 0.18f;
+    const float layer_scale = has_tensor_delta ? 0.06f : 0.12f;
+    const float l_out_scale = has_tensor_delta ? 0.025f : 0.05f;
+    const float family_scale = has_tensor_delta ? 0.04f : 0.08f;
+
     if (tensor_it != qs.logit_tensor_delta_mean_mse.end()) {
-        out.tensor += logit_delta_to_risk_component(tensor_it->second, 0.18f);
+        out.tensor += logit_delta_to_risk_component(tensor_it->second, tensor_scale);
     }
 
     if (tm.layer >= 0) {
         auto it = qs.logit_layer_delta_mean_mse.find(tm.layer);
         if (it != qs.logit_layer_delta_mean_mse.end()) {
-            out.layer += logit_delta_to_risk_component(it->second, 0.12f);
+            out.layer += logit_delta_to_risk_component(it->second, layer_scale);
         }
 
         auto l_out = qs.logit_family_delta_mean_mse.find("l_out");
         if (l_out != qs.logit_family_delta_mean_mse.end()) {
-            out.family += logit_delta_to_risk_component(l_out->second, 0.05f);
+            out.family += logit_delta_to_risk_component(l_out->second, l_out_scale);
         }
     }
 
     if (const char * family = tensor_logit_family_key(tm.category)) {
         auto it = qs.logit_family_delta_mean_mse.find(family);
         if (it != qs.logit_family_delta_mean_mse.end()) {
-            out.family += logit_delta_to_risk_component(it->second, 0.08f);
+            out.family += logit_delta_to_risk_component(it->second, family_scale);
         }
     }
 
-    out.total = std::clamp(1.0f + out.tensor + out.layer + out.family, 0.80f, 1.45f);
+    const float risk_cap = has_tensor_delta ? 1.60f : 1.45f;
+    out.total = std::clamp(1.0f + out.tensor + out.layer + out.family, 0.80f, risk_cap);
     return out;
 }
 
