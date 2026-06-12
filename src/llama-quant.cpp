@@ -353,6 +353,7 @@ struct logit_gate_metrics {
     float damage_score = 0.0f;
     float mean_topk_kl = 0.0f;
     float argmax_flip_rate = 0.0f;
+    std::unordered_map<std::string, float> tensor_delta_mean_mse;
     std::unordered_map<int, float> layer_delta_mean_mse;
     std::unordered_map<std::string, float> family_delta_mean_mse;
 };
@@ -403,6 +404,7 @@ static bool extract_named_json_array(const std::string & json, const char * key,
 static void parse_logit_attribution_deltas(
         const std::string & json,
         const char * key,
+        std::unordered_map<std::string, float> * tensor_out,
         std::unordered_map<int, float> * layer_out,
         std::unordered_map<std::string, float> * family_out) {
     std::string array_json;
@@ -428,6 +430,9 @@ static void parse_logit_attribution_deltas(
             }
             if (layer_out != nullptr && layer >= 0) {
                 (*layer_out)[layer] = delta;
+            }
+            if (tensor_out != nullptr) {
+                (*tensor_out)[name] = delta;
             }
             if (family_out != nullptr) {
                 (*family_out)[name] = delta;
@@ -465,8 +470,9 @@ static bool load_logit_gate_metrics(const char * path, logit_gate_metrics & metr
     }
 
     if (metrics.paired) {
-        parse_logit_attribution_deltas(json, "layer_attribution_delta", &metrics.layer_delta_mean_mse, nullptr);
-        parse_logit_attribution_deltas(json, "family_attribution_delta", nullptr, &metrics.family_delta_mean_mse);
+        parse_logit_attribution_deltas(json, "tensor_attribution_delta", &metrics.tensor_delta_mean_mse, nullptr, nullptr);
+        parse_logit_attribution_deltas(json, "layer_attribution_delta", nullptr, &metrics.layer_delta_mean_mse, nullptr);
+        parse_logit_attribution_deltas(json, "family_attribution_delta", nullptr, nullptr, &metrics.family_delta_mean_mse);
     }
 
     return metrics.has_damage || metrics.has_kl || metrics.has_flip;
@@ -570,6 +576,7 @@ struct quantize_state_impl {
     float logit_damage_score = 0.0f;
     float logit_mean_topk_kl = 0.0f;
     float logit_argmax_flip_rate = 0.0f;
+    std::unordered_map<std::string, float> logit_tensor_delta_mean_mse;
     std::unordered_map<int, float> logit_layer_delta_mean_mse;
     std::unordered_map<std::string, float> logit_family_delta_mean_mse;
 
@@ -614,6 +621,7 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
     qs.logit_damage_score = metrics.damage_score;
     qs.logit_mean_topk_kl = metrics.mean_topk_kl;
     qs.logit_argmax_flip_rate = metrics.argmax_flip_rate;
+    qs.logit_tensor_delta_mean_mse = std::move(metrics.tensor_delta_mean_mse);
     qs.logit_layer_delta_mean_mse = std::move(metrics.layer_delta_mean_mse);
     qs.logit_family_delta_mean_mse = std::move(metrics.family_delta_mean_mse);
     qs.logit_gate_pass =
@@ -621,7 +629,7 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
         (!metrics.has_kl || metrics.mean_topk_kl <= params->logit_kl_threshold) &&
         (!metrics.has_flip || metrics.argmax_flip_rate <= params->logit_flip_threshold);
 
-    LLAMA_LOG_INFO("%s: logit gate report=%s mode=%s damage=%10.6g kl=%10.6g flips=%10.6g thresholds=(%g,%g,%g) status=%s layer_deltas=%zu family_deltas=%zu\n",
+    LLAMA_LOG_INFO("%s: logit gate report=%s mode=%s damage=%10.6g kl=%10.6g flips=%10.6g thresholds=(%g,%g,%g) status=%s tensor_deltas=%zu layer_deltas=%zu family_deltas=%zu\n",
             __func__, params->logit_report,
             qs.logit_report_paired ? "paired" : "candidate-only",
             qs.logit_damage_score,
@@ -631,6 +639,7 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
             params->logit_kl_threshold,
             params->logit_flip_threshold,
             qs.logit_gate_pass ? "pass" : "fail",
+            qs.logit_tensor_delta_mean_mse.size(),
             qs.logit_layer_delta_mean_mse.size(),
             qs.logit_family_delta_mean_mse.size());
 }
@@ -824,6 +833,10 @@ static float logit_local_teacher_risk(const quantize_state_impl & qs, const tens
     }
 
     float risk = 1.0f;
+    auto tensor_it = qs.logit_tensor_delta_mean_mse.find(tm.name);
+    if (tensor_it != qs.logit_tensor_delta_mean_mse.end()) {
+        risk += logit_delta_to_risk_component(tensor_it->second, 0.18f);
+    }
 
     if (tm.layer >= 0) {
         auto it = qs.logit_layer_delta_mean_mse.find(tm.layer);
@@ -5003,7 +5016,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     if (params->logit_gate) {
         ensure_logit_gate_loaded(qs);
         if (qs.logit_report_available) {
-            LLAMA_LOG_INFO("%s: logit-gate summary report=%s status=%s mode=%s damage=%10.6g mean_topk_kl=%10.6g argmax_flip_rate=%10.6g thresholds=(%g,%g,%g) layer_deltas=%zu family_deltas=%zu local_allocator_prior=%s\n",
+            LLAMA_LOG_INFO("%s: logit-gate summary report=%s status=%s mode=%s damage=%10.6g mean_topk_kl=%10.6g argmax_flip_rate=%10.6g thresholds=(%g,%g,%g) tensor_deltas=%zu layer_deltas=%zu family_deltas=%zu local_allocator_prior=%s\n",
                     __func__, params->logit_report,
                     qs.logit_gate_pass ? "pass" : "fail",
                     qs.logit_report_paired ? "paired" : "candidate-only",
@@ -5013,9 +5026,10 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                     params->logit_damage_threshold,
                     params->logit_kl_threshold,
                     params->logit_flip_threshold,
+                    qs.logit_tensor_delta_mean_mse.size(),
                     qs.logit_layer_delta_mean_mse.size(),
                     qs.logit_family_delta_mean_mse.size(),
-                    (qs.logit_report_paired && (!qs.logit_layer_delta_mean_mse.empty() || !qs.logit_family_delta_mean_mse.empty())) ? "on" : "off");
+                    (qs.logit_report_paired && (!qs.logit_tensor_delta_mean_mse.empty() || !qs.logit_layer_delta_mean_mse.empty() || !qs.logit_family_delta_mean_mse.empty())) ? "on" : "off");
         } else {
             LLAMA_LOG_WARN("%s: logit-gate summary report=%s status=unavailable\n",
                     __func__, params->logit_report ? params->logit_report : "(null)");

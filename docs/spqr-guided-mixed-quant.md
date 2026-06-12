@@ -90,7 +90,7 @@ For candidate-to-baseline comparisons, pass a baseline model as well:
 
 In paired mode, `baseline_summary` and `candidate_summary` are both measured against the same teacher, and `delta` is reported as `candidate - baseline`. Lower KL, lower rank drift, fewer argmax flips, higher top-k overlap, and a less negative next-token logprob delta are better. `damage_score` is a first-pass aggregate where positive values mean the candidate looks worse than the baseline and negative values mean it looks better according to this lightweight logit gate. The score is intentionally conservative and report-only; use the component metrics when deciding whether a quantization path actually improved behavior.
 
-When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribution`, `*_family_attribution`, and `*_layer_attribution`, plus paired `*_attribution_delta` arrays when a baseline is present. Those deltas are currently sorted by `delta_mean_mse`, which makes them a practical first input to later repair/promote attribution work.
+When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribution`, `*_family_attribution`, and `*_layer_attribution`, plus paired `*_attribution_delta` arrays when a baseline is present. Those deltas are sorted by `delta_mean_mse`. `llama-quantize` currently consumes the paired tensor, family, and layer delta summaries as a local teacher-aware prior, while the full arrays remain useful for offline inspection and future allocator work.
 
 `llama-quantize` can now consume that report as a first-step global gate:
 
@@ -105,14 +105,14 @@ When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribut
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
 
-If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. In practice that means later or more teacher-sensitive layers become harder to demote, while layers/families that looked safer in the report get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name match exists, then layer and family deltas act as broader fallback signals. In practice that means tensors, layers, or families that looked more teacher-sensitive in the report become harder to demote, while safer regions get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
 
 This first integration is still intentionally modest. The report is parsed once at startup and produces two effects:
 
 - a model-level brake: if the paired or candidate-only metrics fail the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative
 - a tensor-local prior: when paired attribution deltas are available, layer and family drift are folded into the local repair/shrink scoring so risky regions pay a higher quality cost per saved byte
 
-Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries, and successful paired reports also show `layer_deltas`, `family_deltas`, and `local_allocator_prior=on` in the final quantization summary.
+Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries, and successful paired reports also show `tensor_deltas`, `layer_deltas`, `family_deltas`, and `local_allocator_prior=on` in the final quantization summary.
 
 ## Non-goals
 
