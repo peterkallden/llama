@@ -105,12 +105,12 @@ When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribut
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
 
-If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name or tensor-group match exists, and in the current implementation they are weighted more strongly than the broader layer and family fallback signals. In practice that means tensors, layers, or families that looked more teacher-sensitive in the report become harder to demote, while safer regions get a looser local accept ratio and a lower effective quality cost per saved byte. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name or tensor-group match exists, and in the current implementation they are weighted more strongly than the broader layer and family fallback signals. The sign now matters more explicitly too: positive tensor deltas raise the local cost of demotion and can justify a one-step repair-time promotion in quality-first runs, while negative tensor deltas make the same tensor easier to compress in the later shrink and budget paths. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
 
 This first integration is still intentionally modest. The report is parsed once at startup and produces two effects:
 
 - a model-level brake: if the paired or candidate-only metrics fail the configured thresholds, quant-repair, budget-first capping, budget shrink, and quality-validation demotion all become more conservative
-- a tensor-local prior: when paired attribution deltas are available, layer and family drift are folded into the local repair/shrink scoring so risky regions pay a higher quality cost per saved byte
+- a tensor-local prior: when paired attribution deltas are available, tensor/layer/family drift are folded into the local repair, shrink, and budget scoring; positive tensor deltas act like a "protect or rescue" signal, while negative tensor deltas act like a "safe to compress" signal
 
 Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries, and successful paired reports also show `tensor_deltas`, `layer_deltas`, `family_deltas`, and `local_allocator_prior=on` in the final quantization summary.
 
@@ -403,7 +403,7 @@ A practical budget-first teacher-aware run looks like this:
   input-f16.gguf output-budget-q4.gguf Q4_K_M
 ```
 
-In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior spend the remaining quality budget through a global demotion auction rather than treating every later demotion equally. The current implementation is still one-way in this phase: it is a budget rescue auction over cheaper candidates, not yet a full promote/demote market over the whole ladder.
+In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior spend the remaining quality budget through a global demotion auction rather than treating every later demotion equally. The budget phase is still one-way today: it is a budget rescue auction over cheaper candidates, not yet a full promote/demote market over the whole ladder, even though the quality-first repair pass can now use positive tensor deltas to justify a limited one-step promotion.
 
 The POC is usually run from F16/BF16/F32 GGUF inputs, but it can also analyze and requantize an already-quantized source when the source ggml type exposes a `to_float` converter. In that case the quantizer logs the source type and automatically allows requantization for that run. If a quantized or non-floating source type cannot be converted back to float, the run fails early with an explicit error instead of silently producing an invalid profile or output.
 

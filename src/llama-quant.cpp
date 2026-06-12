@@ -902,6 +902,36 @@ static float logit_local_teacher_risk(const quantize_state_impl & qs, const tens
     return logit_local_teacher_risk_breakdown(qs, tm).total;
 }
 
+static float logit_positive_risk(float x) {
+    return std::max(0.0f, x);
+}
+
+static float logit_negative_risk(float x) {
+    return std::max(0.0f, -x);
+}
+
+static float logit_local_promotion_pressure(const logit_teacher_risk_breakdown & risk) {
+    const float weighted =
+        1.75f * logit_positive_risk(risk.tensor) +
+        0.75f * logit_positive_risk(risk.layer) +
+        0.50f * logit_positive_risk(risk.family);
+    return std::clamp(weighted, 0.0f, 1.0f);
+}
+
+static float logit_local_safe_compression_pressure(const logit_teacher_risk_breakdown & risk) {
+    const float weighted =
+        1.25f * logit_negative_risk(risk.tensor) +
+        0.50f * logit_negative_risk(risk.layer) +
+        0.25f * logit_negative_risk(risk.family);
+    return std::clamp(weighted, 0.0f, 1.0f);
+}
+
+static float logit_local_demotion_risk(const logit_teacher_risk_breakdown & risk) {
+    const float promotion_pressure = logit_local_promotion_pressure(risk);
+    const float safe_pressure = logit_local_safe_compression_pressure(risk);
+    return std::clamp(risk.total + 0.35f * promotion_pressure - 0.20f * safe_pressure, 0.70f, 1.90f);
+}
+
 static float logit_local_accept_ratio(float base_accept_ratio, float risk) {
     return 1.0f + (base_accept_ratio - 1.0f) / std::max(0.80f, risk);
 }
@@ -2848,6 +2878,31 @@ static std::vector<ggml_type> spqr_repair_candidate_types(
     return candidates;
 }
 
+static std::vector<ggml_type> spqr_repair_promotion_candidate_types(
+        const llama_model_quantize_params * params,
+        const ggml_tensor * tensor,
+        ggml_type selected_type) {
+    GGML_UNUSED(params);
+    const int64_t ncols = tensor->ne[0];
+    std::vector<ggml_type> candidates;
+    auto add = [&] (ggml_type type) {
+        if (type != selected_type &&
+                ncols % ggml_blck_size(type) == 0 &&
+                ggml_row_size(type, ncols) > ggml_row_size(selected_type, ncols) &&
+                std::find(candidates.begin(), candidates.end(), type) == candidates.end()) {
+            candidates.push_back(type);
+        }
+    };
+
+    add(GGML_TYPE_Q4_K);
+    add(GGML_TYPE_Q5_0);
+    add(GGML_TYPE_Q5_1);
+    add(GGML_TYPE_Q5_K);
+    add(GGML_TYPE_Q6_K);
+    add(GGML_TYPE_Q8_0);
+    return candidates;
+}
+
 static bool quant_budget_limited(const llama_model_quantize_params * params) {
     return params->rd_target_bpw > 0.0f || params->rd_target_size_mib > 0.0f;
 }
@@ -3137,14 +3192,22 @@ static void apply_spqr_repair(
                 params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
-        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, teacher_risk);
-        const float local_max_error = logit_local_error_limit(adjusted_max_error, teacher_risk);
+        const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
+        const float promotion_pressure = logit_local_promotion_pressure(teacher_risk_parts);
+        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(adjusted_max_error, demotion_risk);
 
         ++evaluated;
         spqr_repair_eval best = selected;
         teacher_gate_eval best_gate = selected_gate;
         bool accepted = false;
-        for (ggml_type candidate_type : candidates) {
+        std::vector<ggml_type> all_candidates = candidates;
+        if (!budget_limited && promotion_pressure > 0.02f) {
+            const std::vector<ggml_type> promote_candidates =
+                spqr_repair_promotion_candidate_types(params, tensor, selected_type);
+            all_candidates.insert(all_candidates.end(), promote_candidates.begin(), promote_candidates.end());
+        }
+        for (ggml_type candidate_type : all_candidates) {
             const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
                     tensor, data, imatrix, candidate_type, sample_rows, distortion_weight);
             if (candidate.type == GGML_TYPE_COUNT) {
@@ -3153,22 +3216,36 @@ static void apply_spqr_repair(
             const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
                     params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
 
-            const bool under_relative_gate =
-                candidate_gate.gate_error <= selected_gate.gate_error * local_accept_ratio;
-            const bool under_absolute_gate =
-                candidate.weighted_mse <= local_max_error ||
-                (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= local_max_error);
-            const float candidate_cost = teacher_risk * candidate_gate.gate_error + cost_lambda * candidate.bpw;
-            const float best_cost = teacher_risk * best_gate.gate_error + cost_lambda * best.bpw;
-            if ((under_relative_gate || under_absolute_gate) && candidate_cost < best_cost) {
+            const bool is_promotion = candidate.bpw > selected.bpw + 1e-6f;
+            bool choose_candidate = false;
+            if (is_promotion) {
+                const float promotion_lambda = cost_lambda / (1.0f + 2.5f * promotion_pressure);
+                const float min_promotion_gain = std::max(0.0001f, selected_gate.gate_error * (0.01f + 0.04f * (1.0f - promotion_pressure)));
+                const bool meaningful_promotion =
+                    selected_gate.gate_error - candidate_gate.gate_error >= min_promotion_gain;
+                const float candidate_cost = candidate_gate.gate_error + promotion_lambda * candidate.bpw;
+                const float best_cost = best_gate.gate_error + promotion_lambda * best.bpw;
+                choose_candidate = promotion_pressure > 0.0f && meaningful_promotion && candidate_cost < best_cost;
+            } else {
+                const bool under_relative_gate =
+                    candidate_gate.gate_error <= selected_gate.gate_error * local_accept_ratio;
+                const bool under_absolute_gate =
+                    candidate.weighted_mse <= local_max_error ||
+                    (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= local_max_error);
+                const float candidate_cost = demotion_risk * candidate_gate.gate_error + cost_lambda * candidate.bpw;
+                const float best_cost = demotion_risk * best_gate.gate_error + cost_lambda * best.bpw;
+                choose_candidate = (under_relative_gate || under_absolute_gate) && candidate_cost < best_cost;
+            }
+            if (choose_candidate) {
                 best = candidate;
                 best_gate = candidate_gate;
                 accepted = true;
             }
 
             if (params->print_rd_report) {
-                LLAMA_LOG_INFO("%s: quant-repair-candidate tensor=%-36s selected=%-7s type=%-7s weighted_mse=%10.6g teacher_proxy=%10.6g block=%10.6g rank=%10.6g feature=%10.6g feature_l1=%10.6g feature_cos=%10.6g feature_norm=%10.6g gate_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f selected_gate=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) local_accept_ratio=%.3f local_max_error=%10.6g accepted=%s\n",
+                LLAMA_LOG_INFO("%s: quant-repair-candidate tensor=%-36s selected=%-7s type=%-7s mode=%-8s weighted_mse=%10.6g teacher_proxy=%10.6g block=%10.6g rank=%10.6g feature=%10.6g feature_l1=%10.6g feature_cos=%10.6g feature_norm=%10.6g gate_error=%10.6g gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f selected_gate=%10.6g teacher_risk=%6.3f demotion_risk=%6.3f promotion_pressure=%5.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) local_accept_ratio=%.3f local_max_error=%10.6g accepted=%s\n",
                         __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type), candidate.weighted_mse,
+                        is_promotion ? "promote" : "demote",
                         candidate_gate.proxy_error,
                         candidate_gate.block_error,
                         candidate_gate.rank_error,
@@ -3178,7 +3255,7 @@ static void apply_spqr_repair(
                         candidate_gate.feature_norm_error,
                         candidate_gate.gate_error,
                         candidate.gain_error, candidate.shape_error, candidate.outlier_concentration,
-                        candidate.bpw, selected_gate.gate_error, teacher_risk, teacher_risk_parts.tensor, teacher_risk_parts.layer, teacher_risk_parts.family, local_accept_ratio, local_max_error,
+                        candidate.bpw, selected_gate.gate_error, teacher_risk, demotion_risk, promotion_pressure, teacher_risk_parts.tensor, teacher_risk_parts.layer, teacher_risk_parts.family, local_accept_ratio, local_max_error,
                         (candidate.type == best.type && accepted) ? "yes" : "no");
             }
         }
@@ -3307,8 +3384,9 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
                 params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
-        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, teacher_risk);
-        const float local_max_error = logit_local_error_limit(adjusted_max_error, teacher_risk);
+        const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
+        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(adjusted_max_error, demotion_risk);
 
         compression_opportunity best;
         for (ggml_type candidate_type : candidates) {
@@ -3346,7 +3424,7 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
             }
 
             const float effective_candidate_error = repair_potential ? repaired_candidate_error : candidate_gate.gate_error;
-            const float delta_error = teacher_risk * std::max(0.0f, effective_candidate_error - selected_gate.gate_error);
+            const float delta_error = demotion_risk * std::max(0.0f, effective_candidate_error - selected_gate.gate_error);
             const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
             const float budget_bias = budget_limited ? budget_layer_position_bias(tm, max_layer) : 1.0f;
             const float score = budget_bias * saved_mib / std::max(delta_error, 1e-9f);
@@ -3679,10 +3757,11 @@ static void apply_quality_precision_validation(
                 params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
-        const float local_accept_ratio = logit_local_accept_ratio(accept_ratio, teacher_risk);
-        const float local_max_delta = max_delta / std::max(0.80f, teacher_risk);
-        const float local_max_total_delta = max_total_delta / std::max(0.80f, teacher_risk);
-        const float local_max_damage_per_mib = max_damage_per_mib / std::max(0.80f, teacher_risk);
+        const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
+        const float local_accept_ratio = logit_local_accept_ratio(accept_ratio, demotion_risk);
+        const float local_max_delta = max_delta / std::max(0.80f, demotion_risk);
+        const float local_max_total_delta = max_total_delta / std::max(0.80f, demotion_risk);
+        const float local_max_damage_per_mib = max_damage_per_mib / std::max(0.80f, demotion_risk);
 
         ++evaluated;
         ggml_type best_type = GGML_TYPE_COUNT;
@@ -3708,7 +3787,7 @@ static void apply_quality_precision_validation(
             const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
                     params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
             const float raw_delta = std::max(0.0f, candidate_gate.gate_error - selected_gate.gate_error);
-            const float delta = teacher_risk * raw_delta;
+            const float delta = demotion_risk * raw_delta;
             const float saved_mib = (float) (selected_bytes - candidate_bytes) / 1024.0f / 1024.0f;
             const float damage_per_mib = delta / std::max(saved_mib, 1e-9f);
             const bool low_relative_damage = candidate_gate.gate_error <= selected_gate.gate_error * local_accept_ratio;
@@ -3837,8 +3916,9 @@ static void apply_budget_first_type_cap(
                 params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
-        const float local_accept_ratio = logit_local_accept_ratio(effective_accept_ratio, teacher_risk);
-        const float local_max_error = logit_local_error_limit(effective_max_error, teacher_risk);
+        const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
+        const float local_accept_ratio = logit_local_accept_ratio(effective_accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(effective_max_error, demotion_risk);
 
         ++evaluated;
         const bool under_relative_gate =
@@ -3847,8 +3927,8 @@ static void apply_budget_first_type_cap(
             candidate.weighted_mse <= local_max_error ||
             (candidate_gate.proxy_error >= 0.0f && candidate_gate.proxy_error <= local_max_error);
         const float budget_bias = budget_layer_position_bias(tm, max_layer);
-        const float selected_cost = teacher_risk * selected_gate.gate_error + cost_lambda * budget_bias * selected.bpw;
-        const float candidate_cost = teacher_risk * candidate_gate.gate_error + cost_lambda * budget_bias * candidate.bpw;
+        const float selected_cost = demotion_risk * selected_gate.gate_error + cost_lambda * budget_bias * selected.bpw;
+        const float candidate_cost = demotion_risk * candidate_gate.gate_error + cost_lambda * budget_bias * candidate.bpw;
         if ((under_relative_gate || under_absolute_gate) && candidate_cost < selected_cost) {
             tm.target_type = candidate.type;
             tm.rd_type = candidate.type;
