@@ -1,14 +1,18 @@
-# SpQR-guided mixed quantization POC
+# Teacher-aware PTQ allocator POC
 
-This POC explores whether more informed quantization decisions can improve the quality-to-size tradeoff of ordinary llama.cpp GGUF models without introducing a new runtime tensor format.
+This POC started as SpQR-guided mixed quantization, but it has grown into a teacher-aware post-training quantization allocator. SpQR/RD-style sensitivity analysis is still the foundation: the quantizer uses imatrix, block, layer-delta, activity, and rate-distortion signals to decide which existing `ggml_type` each tensor should receive. The newer direction adds teacher/student validation and budget-aware promotion/demotion search on top of that base.
 
 The central hypothesis is that uniform or mostly name-based quantization leaves useful quality on the table. Different tensors and transformer layers tolerate quantization differently, and calibration-time analysis can expose those differences before the model is written. The quantizer can then spend existing quantization types more deliberately: protect sensitive, unusual, or rare-event-heavy regions and compress redundant-looking regions more aggressively.
+
+The current allocator asks a slightly stronger question than the original SpQR/RD framing: not only "which tensors look sensitive locally?", but "which quantization choices appear to damage model behavior, and where do extra bytes buy the most teacher-aligned recovery?" That is why the POC now includes a separate logit comparison tool, local teacher-aware repair proxies, and a budgeted buyback path that can trade safe demotions for targeted promotions.
 
 The work borrows selected ideas from several compression approaches:
 
 - SpQR: use sensitivity and outlier-like signals to steer precision, without sparse outlier storage.
 - MPEG-style compression: identify anchor/I-frame-like layers, detect scene changes, and use activity masking.
 - Rate-distortion optimization: compare candidate quantization types by reconstruction error versus bits per weight.
+- Teacher-aware PTQ: validate and rank allocator choices using teacher/student output drift, local hidden/output proxies, and attribution deltas.
+- Budgeted mixed precision allocation: buy back precision where teacher-attributed damage per byte is highest, and fund it with safer demotions when a hard target is present.
 - Two-pass encoding: an optional profile-enabled imatrix run acts as the first pass, collecting reusable calibration, weight-sample, RD, activity, and layer-delta analysis. `llama-quantize` acts as the second pass and uses that profile to choose existing tensor types.
 
 The result is still a normal GGUF containing existing `ggml_type` tensor encodings. Inference does not reconstruct deltas, consult an imatrix, dynamically allocate bits, or require new CPU/GPU kernels.
@@ -19,7 +23,7 @@ The POC has three practical goals:
 
 1. Determine which inexpensive analysis signals predict quantization tolerance.
 2. Reuse those signals across repeated quantization experiments.
-3. Evaluate mixed quantization policies while keeping storage, runtime, and removal cost low.
+3. Evaluate teacher-aware mixed quantization policies while keeping storage, runtime, and removal cost low.
 
 It intentionally separates measurement from policy. The optional imatrix quantization profile stores reusable raw statistics. `llama-quantize` interprets those statistics using adjustable policies and safety rules. This allows the same profile to support multiple base formats, RD lambdas, anchor thresholds, and future experiments.
 
@@ -39,6 +43,8 @@ The branch currently implements:
 - Activity masking based on mean activity, variance, peak-to-mean ratio, and active-channel fraction.
 - Robust scene-change detection combining layer delta, activity-profile changes, percentile filtering, and median absolute deviation.
 - Conservative safety floors for token embeddings, output projection, and anchor layers.
+- Teacher-aware repair-before-promote using local output proxies, gain/scale/clipping repair, and optional paired logit attribution reports.
+- Logit-guided buyback search that can promote teacher-sensitive tensors under a budget, including budget-neutral packages where promotions are funded by safer demotions.
 - Reports for sensitivity, blocks, layer similarity, anchors, candidate RD costs, selected types, estimated size, and average bits per weight.
 
 The reusable imatrix profile is optional. Standard imatrix files continue to work: sensitivity and block scoring use their normal activation data, while layer-delta and RD analysis fall back to being computed during quantization.
@@ -70,7 +76,7 @@ Example:
   --chunks 4
 ```
 
-The first version is report-only. It does not yet change quantization choices directly, but it gives a concrete teacher/student signal that can later be fed into mixed-precision policy decisions.
+The tool can be used as report-only validation, and paired reports with attribution can also be fed back into `llama-quantize` through `--logit-report` for teacher-aware gating, local allocator priors, and budgeted buyback search.
 
 For candidate-to-baseline comparisons, pass a baseline model as well:
 
@@ -105,7 +111,7 @@ When `--layer-attribution` is enabled, the JSON also includes `*_tensor_attribut
   input-f16.gguf output-q4.gguf Q4_K_M
 ```
 
-If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, and shrink passes. Tensor deltas are used first when a direct tensor-name or tensor-group match exists, and in the current implementation they are weighted more strongly than the broader layer and family fallback signals. The sign now matters more explicitly too: positive tensor deltas raise the local cost of demotion and can justify a one-step repair-time promotion in quality-first runs, while negative tensor deltas make the same tensor easier to compress in the later shrink and budget paths. Attribution coverage also matters: when the report includes comparison counts, those tensor/layer/family priors are scaled by a simple confidence estimate instead of being treated as equally certain. This is still not a full promotion auction, but it moves the current implementation from "global gate only" toward a lightweight teacher-aware allocator.
+If the report is paired and includes attribution deltas, `llama-quantize` now also uses it as a local prior inside the existing repair, demotion, budget-cap, shrink, and buyback passes. Tensor deltas are used first when a direct tensor-name or tensor-group match exists, and in the current implementation they are weighted more strongly than the broader layer and family fallback signals. The sign now matters more explicitly too: positive tensor deltas raise the local cost of demotion and can justify repair-time or budgeted buyback promotion, while negative tensor deltas make the same tensor easier to compress in the later shrink and budget paths. Attribution coverage also matters: when the report includes comparison counts, those tensor/layer/family priors are scaled by a simple confidence estimate instead of being treated as equally certain. This is now a lightweight teacher-aware allocator with bounded local package search, not a full global optimizer or training-based distillation pass.
 
 This first integration is still intentionally modest. The report is parsed once at startup and produces two effects:
 
@@ -404,10 +410,11 @@ A practical budget-first teacher-aware run looks like this:
   --quant-repair \
   --logit-report logit-delta.json \
   --logit-gate \
+  --logit-guided-search \
   input-f16.gguf output-budget-q4.gguf Q4_K_M
 ```
 
-In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior spend the remaining quality budget through a global demotion auction rather than treating every later demotion equally. The budget phase is still one-way today: it is a budget rescue auction over cheaper candidates, not yet a full promote/demote market over the whole ladder, even though the quality-first repair pass can now use positive tensor deltas to justify a limited one-step promotion. In the report this now shows up as `safe_pressure`, `promotion_pressure`, and `budget_bias` on the ranked shrink opportunities, which makes it easier to see why one demotion bid beat another.
+In this mode the bounded RD allocator chooses the first budget-feasible profile, then `quant-repair` and the teacher-aware local prior spend the remaining quality budget through global demotion and buyback auctions rather than treating every later change equally. The shrink side ranks cheaper candidates with `safe_pressure`, `promotion_pressure`, and `budget_bias`; the buyback side ranks promotions by estimated teacher damage reduction per extra MiB and can finance them with small packages of safer demotions. Set `--logit-search-promote-budget-mib 0` to force strictly budget-neutral swaps, or leave the default headroom when you want a capped quality-buyback budget above the tensor-payload target.
 
 The POC is usually run from F16/BF16/F32 GGUF inputs, but it can also analyze and requantize an already-quantized source when the source ggml type exposes a `to_float` converter. In that case the quantizer logs the source type and automatically allows requantization for that run. If a quantized or non-floating source type cannot be converted back to float, the run fails early with an explicit error instead of silently producing an invalid profile or output.
 
