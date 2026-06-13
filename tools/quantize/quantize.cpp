@@ -286,6 +286,22 @@ static void usage(const char * executable) {
     printf("                                      fail the logit gate if delta/candidate mean_topk_kl exceeds X (default: 0.01)\n");
     printf("  --logit-flip-threshold X\n");
     printf("                                      fail the logit gate if delta/candidate argmax_flip_rate exceeds X (default: 0.02)\n");
+    printf("  --logit-guided-search\n");
+    printf("                                      after budget shrink, spend a small extra MiB budget on the highest-value\n");
+    printf("                                      teacher-attributed promotion opportunities\n");
+    printf("  --logit-search-top-k N\n");
+    printf("                                      maximum ranked promotion opportunities considered per pass (default: 24)\n");
+    printf("  --logit-search-promote-budget-mib X\n");
+    printf("                                      extra MiB budget available to the logit-guided buyback pass (default: 64,\n");
+    printf("                                      use 0 for a fully budget-neutral search)\n");
+    printf("  --logit-search-package-max-items N\n");
+    printf("                                      maximum number of demotions allowed to finance one promotion (default: 3)\n");
+    printf("  --logit-search-package-pool-size N\n");
+    printf("                                      number of demotion candidates searched per promotion package (default: 24)\n");
+    printf("  --logit-search-package-overshoot-weight X\n");
+    printf("                                      penalty weight for excess financed MiB inside a package (default: 0.05)\n");
+    printf("  --logit-search-package-same-layer-penalty X\n");
+    printf("                                      penalty weight when a package clusters demotions in one layer (default: 0.01)\n");
     printf("  --prune-layers L0,L1,L2...\n");
     printf("                                      comma-separated list of layer numbers to prune from the model\n");
     printf("                                      WARNING: this is an advanced option, use with care.\n");
@@ -1090,6 +1106,11 @@ int llama_quantize(int argc, char ** argv) {
             }
         } else if (strcmp(argv[arg_idx], "--logit-gate") == 0) {
             params.logit_gate = true;
+        } else if (strcmp(argv[arg_idx], "--logit-guided-search") == 0) {
+            params.logit_guided_search = true;
+            params.quant_teacher_aware = true;
+            params.quant_repair = true;
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--logit-damage-threshold") == 0 ||
                 strcmp(argv[arg_idx], "--logit-kl-threshold") == 0 ||
                 strcmp(argv[arg_idx], "--logit-flip-threshold") == 0) {
@@ -1115,6 +1136,62 @@ int llama_quantize(int argc, char ** argv) {
             } else {
                 params.logit_flip_threshold = value;
             }
+        } else if (strcmp(argv[arg_idx], "--logit-search-top-k") == 0 ||
+                strcmp(argv[arg_idx], "--logit-search-promote-budget-mib") == 0 ||
+                strcmp(argv[arg_idx], "--logit-search-package-max-items") == 0 ||
+                strcmp(argv[arg_idx], "--logit-search-package-pool-size") == 0 ||
+                strcmp(argv[arg_idx], "--logit-search-package-overshoot-weight") == 0 ||
+                strcmp(argv[arg_idx], "--logit-search-package-same-layer-penalty") == 0) {
+            const bool is_top_k = strcmp(argv[arg_idx], "--logit-search-top-k") == 0;
+            const bool is_package_max = strcmp(argv[arg_idx], "--logit-search-package-max-items") == 0;
+            const bool is_package_pool = strcmp(argv[arg_idx], "--logit-search-package-pool-size") == 0;
+            const bool is_package_overshoot = strcmp(argv[arg_idx], "--logit-search-package-overshoot-weight") == 0;
+            const bool is_package_same_layer = strcmp(argv[arg_idx], "--logit-search-package-same-layer-penalty") == 0;
+            if (is_top_k || is_package_max || is_package_pool) {
+                int value = 0;
+                if (arg_idx < argc-1) {
+                    try {
+                        value = std::stoi(argv[++arg_idx]);
+                    } catch (...) {
+                        value = 0;
+                    }
+                }
+                if (value <= 0) {
+                    fprintf(stderr, "%s: invalid %s value\n", __func__, argv[arg_idx - 1]);
+                    usage(argv[0]);
+                }
+                if (is_top_k) {
+                    params.logit_search_top_k = value;
+                } else if (is_package_max) {
+                    params.logit_search_package_max_items = value;
+                } else {
+                    params.logit_search_package_pool_size = value;
+                }
+            } else {
+                float value = -1.0f;
+                if (arg_idx < argc-1) {
+                    try {
+                        value = std::stof(argv[++arg_idx]);
+                    } catch (...) {
+                        value = -1.0f;
+                    }
+                }
+                if (!std::isfinite(value) || value < 0.0f) {
+                    fprintf(stderr, "%s: invalid %s value\n", __func__, argv[arg_idx - 1]);
+                    usage(argv[0]);
+                }
+                if (is_package_overshoot) {
+                    params.logit_search_package_overshoot_weight = value;
+                } else if (is_package_same_layer) {
+                    params.logit_search_package_same_layer_penalty = value;
+                } else {
+                    params.logit_search_promote_budget_mib = value;
+                }
+            }
+            params.logit_guided_search = true;
+            params.quant_teacher_aware = true;
+            params.quant_repair = true;
+            params.rd_guided = true;
         } else if (strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0 ||
                 strcmp(argv[arg_idx], "--rd-local-refine-rows") == 0) {
             const bool is_top_k = strcmp(argv[arg_idx], "--rd-local-refine-top-k") == 0;

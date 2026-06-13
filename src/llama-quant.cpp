@@ -757,6 +757,46 @@ struct compression_opportunity {
     bool repair_potential = false;
 };
 
+struct promotion_opportunity {
+    size_t tensor_index = 0;
+    std::string name;
+    ggml_type selected_type = GGML_TYPE_COUNT;
+    ggml_type candidate_type = GGML_TYPE_COUNT;
+    size_t extra_bytes = 0;
+    float selected_error = 0.0f;
+    float selected_gate_error = 0.0f;
+    float candidate_error = 0.0f;
+    float candidate_gate_error = 0.0f;
+    float candidate_block_error = 0.0f;
+    float candidate_rank_error = 0.0f;
+    float candidate_feature_error = 0.0f;
+    float candidate_weighted_mse = 0.0f;
+    float teacher_risk = 1.0f;
+    float teacher_risk_tensor = 0.0f;
+    float teacher_risk_layer = 0.0f;
+    float teacher_risk_family = 0.0f;
+    float teacher_safe_pressure = 0.0f;
+    float teacher_promotion_pressure = 0.0f;
+    float quality_bias = 1.0f;
+    float damage_reduction = 0.0f;
+    float opportunity_score = 0.0f;
+    float selected_bpw = 0.0f;
+    float candidate_bpw = 0.0f;
+};
+
+struct promotion_package {
+    promotion_opportunity promotion;
+    std::vector<compression_opportunity> demotions;
+    size_t saved_bytes = 0;
+    float package_damage = 0.0f;
+    float overshoot_mib = 0.0f;
+    float correlation_penalty = 0.0f;
+    float uncertainty_penalty = 0.0f;
+    float net_gain = 0.0f;
+    float package_score = 0.0f;
+    bool valid = false;
+};
+
 static bool compression_opportunity_better(const compression_opportunity & a, const compression_opportunity & b) {
     if (a.proxy_safe != b.proxy_safe) {
         return a.proxy_safe > b.proxy_safe;
@@ -768,6 +808,32 @@ static bool compression_opportunity_better(const compression_opportunity & a, co
         return a.opportunity_score > b.opportunity_score;
     }
     return a.saved_bytes > b.saved_bytes;
+}
+
+static bool promotion_opportunity_better(const promotion_opportunity & a, const promotion_opportunity & b) {
+    if (a.opportunity_score != b.opportunity_score) {
+        return a.opportunity_score > b.opportunity_score;
+    }
+    if (a.damage_reduction != b.damage_reduction) {
+        return a.damage_reduction > b.damage_reduction;
+    }
+    return a.extra_bytes < b.extra_bytes;
+}
+
+static bool promotion_package_better(const promotion_package & a, const promotion_package & b) {
+    if (a.valid != b.valid) {
+        return a.valid > b.valid;
+    }
+    if (a.package_score != b.package_score) {
+        return a.package_score > b.package_score;
+    }
+    if (a.net_gain != b.net_gain) {
+        return a.net_gain > b.net_gain;
+    }
+    if (a.promotion.opportunity_score != b.promotion.opportunity_score) {
+        return a.promotion.opportunity_score > b.promotion.opportunity_score;
+    }
+    return a.promotion.extra_bytes < b.promotion.extra_bytes;
 }
 
 struct spqr_teacher_repair_result {
@@ -838,6 +904,111 @@ static float budget_layer_position_bias(const tensor_metadata & tm, int max_laye
         return 0.94f;
     }
     return 1.0f;
+}
+
+static float quality_layer_position_bias(const tensor_metadata & tm, int max_layer) {
+    if (tm.layer < 0 || max_layer <= 0) {
+        return 1.0f;
+    }
+    const float pos = (float) tm.layer / std::max(1, max_layer);
+    if (pos <= 0.25f) {
+        return 0.94f;
+    }
+    if (pos >= 0.75f) {
+        return 1.08f;
+    }
+    return 1.0f;
+}
+
+static bool demotion_package_conflicts_with_promotion(
+        const compression_opportunity & demotion,
+        const promotion_opportunity & promotion,
+        const std::vector<tensor_metadata> & metadata) {
+    if (demotion.tensor_index == promotion.tensor_index) {
+        return true;
+    }
+    const tensor_metadata & demotion_tm = metadata[demotion.tensor_index];
+    const tensor_metadata & promotion_tm = metadata[promotion.tensor_index];
+    if (demotion_tm.layer >= 0 && promotion_tm.layer >= 0 && demotion_tm.layer == promotion_tm.layer) {
+        return true;
+    }
+    return false;
+}
+
+static float evaluate_promotion_package(
+        const llama_model_quantize_params * params,
+        const promotion_opportunity & promotion,
+        const std::vector<compression_opportunity> & demotions,
+        const std::vector<tensor_metadata> & metadata,
+        size_t required_financing_bytes,
+        promotion_package & out) {
+    size_t saved_bytes = 0;
+    float package_damage = 0.0f;
+    float uncertainty_penalty = 0.0f;
+    std::unordered_map<int, int> layer_counts;
+    std::unordered_map<int, int> adjacent_counts;
+    std::unordered_map<int, int> category_counts;
+
+    for (const compression_opportunity & demotion : demotions) {
+        saved_bytes += demotion.saved_bytes;
+        package_damage += demotion.delta_error;
+        if (!demotion.proxy_safe) {
+            uncertainty_penalty += 0.25f * demotion.delta_error;
+        }
+        const tensor_metadata & tm = metadata[demotion.tensor_index];
+        if (tm.layer >= 0) {
+            layer_counts[tm.layer] += 1;
+            adjacent_counts[tm.layer / 2] += 1;
+        }
+        category_counts[(int) tm.category] += 1;
+    }
+
+    if (saved_bytes < required_financing_bytes) {
+        return -std::numeric_limits<float>::infinity();
+    }
+
+    float correlation_penalty = 0.0f;
+    for (const auto & [layer, count] : layer_counts) {
+        GGML_UNUSED(layer);
+        if (count >= 2) {
+            correlation_penalty += params->logit_search_package_same_layer_penalty * (float) (count - 1);
+        }
+    }
+    for (const auto & [group, count] : adjacent_counts) {
+        GGML_UNUSED(group);
+        if (count >= 2) {
+            correlation_penalty += 0.5f * params->logit_search_package_same_layer_penalty * (float) (count - 1);
+        }
+    }
+    for (const auto & [category, count] : category_counts) {
+        GGML_UNUSED(category);
+        if (count >= 2) {
+            correlation_penalty += 0.4f * params->logit_search_package_same_layer_penalty * (float) (count - 1);
+        }
+    }
+
+    const float overshoot_mib =
+        saved_bytes > required_financing_bytes ?
+        (float) (saved_bytes - required_financing_bytes) / 1024.0f / 1024.0f :
+        0.0f;
+    const float overshoot_penalty = params->logit_search_package_overshoot_weight * overshoot_mib;
+    const float total_package_cost = package_damage + uncertainty_penalty + correlation_penalty + overshoot_penalty;
+    const float net_gain = promotion.damage_reduction - total_package_cost;
+    const float package_score = net_gain / std::max(
+            (float) promotion.extra_bytes / 1024.0f / 1024.0f,
+            1e-9f);
+
+    out.promotion = promotion;
+    out.demotions = demotions;
+    out.saved_bytes = saved_bytes;
+    out.package_damage = package_damage;
+    out.overshoot_mib = overshoot_mib;
+    out.correlation_penalty = correlation_penalty;
+    out.uncertainty_penalty = uncertainty_penalty;
+    out.net_gain = net_gain;
+    out.package_score = package_score;
+    out.valid = net_gain > std::max(0.00005f, 0.10f * promotion.damage_reduction);
+    return package_score;
 }
 
 static int max_transformer_layer(const std::vector<tensor_metadata> & metadata) {
@@ -3632,6 +3803,241 @@ static void print_compression_opportunity_report(
     }
 }
 
+static std::vector<promotion_opportunity> collect_promotion_opportunities(
+        quantize_state_impl & qs,
+        const llama_model_quantize_params * params,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        const std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    std::vector<promotion_opportunity> opportunities;
+    if (!params->logit_guided_search || !params->quant_teacher_aware ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return opportunities;
+    }
+
+    ensure_logit_gate_loaded(qs);
+    if (!qs.logit_report_available || !qs.logit_report_paired) {
+        return opportunities;
+    }
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<float>> f32_conv;
+    std::vector<float> data;
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+
+    int max_layer = 0;
+    for (const tensor_metadata & tm : metadata) {
+        max_layer = std::max(max_layer, tm.layer);
+    }
+
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        const tensor_metadata & tm = metadata[i];
+        ggml_tensor * tensor = tensors[i]->tensor;
+        const int64_t ncols = tensor->ne[0];
+        const int64_t nrows = ggml_nrows(tensor);
+        if (!tm.allows_quantization ||
+                tm.category == tensor_category::TOKEN_EMBD ||
+                tm.category == tensor_category::OUTPUT ||
+                !ggml_is_quantized(tm.target_type) ||
+                ncols <= 0 || nrows <= 0) {
+            continue;
+        }
+
+        const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
+        const float promotion_pressure = logit_local_promotion_pressure(teacher_risk_parts);
+        if (promotion_pressure <= 0.02f) {
+            continue;
+        }
+
+        const ggml_type selected_type = tm.target_type;
+        const std::vector<ggml_type> candidates =
+            spqr_repair_promotion_candidate_types(params, tensor, selected_type);
+        if (candidates.empty()) {
+            continue;
+        }
+
+        const float * imatrix = nullptr;
+        if (imatrix_data) {
+            auto it = imatrix_data->find(tm.remapped_imatrix_name);
+            if (it != imatrix_data->end() && it->second.size() == (size_t) ncols * tensor->ne[2]) {
+                imatrix = it->second.data();
+            }
+        }
+
+        load_tensor_as_f32(ml, tensor, read_data, f32_conv, data, workers, nthread);
+
+        const int sample_rows = (int) std::min<int64_t>(nrows, std::max(1, params->rd_sample_rows));
+        const float distortion_weight = rd_distortion_weight(tm);
+        const spqr_repair_eval selected = evaluate_spqr_repair_candidate(
+                tensor, data, imatrix, selected_type, sample_rows, distortion_weight);
+        if (selected.type == GGML_TYPE_COUNT) {
+            continue;
+        }
+        const teacher_gate_eval selected_gate = evaluate_teacher_gate_error(
+                params, tensor, data, imatrix, selected.type, sample_rows, selected.composite_error);
+
+        promotion_opportunity best;
+        for (ggml_type candidate_type : candidates) {
+            const spqr_repair_eval candidate = evaluate_spqr_repair_candidate(
+                    tensor, data, imatrix, candidate_type, sample_rows, distortion_weight);
+            if (candidate.type == GGML_TYPE_COUNT) {
+                continue;
+            }
+            const size_t selected_bytes = estimate_quantized_tensor_bytes(tensor, selected.type);
+            const size_t candidate_bytes = estimate_quantized_tensor_bytes(tensor, candidate.type);
+            if (candidate_bytes <= selected_bytes) {
+                continue;
+            }
+
+            const teacher_gate_eval candidate_gate = evaluate_teacher_gate_error(
+                    params, tensor, data, imatrix, candidate.type, sample_rows, candidate.composite_error);
+            const float raw_damage_reduction = std::max(0.0f, selected_gate.gate_error - candidate_gate.gate_error);
+            if (raw_damage_reduction <= 0.0f) {
+                continue;
+            }
+
+            const float min_promotion_gain = std::max(
+                    0.00005f,
+                    selected_gate.gate_error * (0.01f + 0.03f * (1.0f - promotion_pressure)));
+            if (raw_damage_reduction < min_promotion_gain) {
+                continue;
+            }
+
+            const float safe_pressure = logit_local_safe_compression_pressure(teacher_risk_parts);
+            const float quality_bias = quality_layer_position_bias(tm, max_layer);
+            const float effective_damage_reduction =
+                raw_damage_reduction *
+                (1.0f + 1.25f * promotion_pressure) *
+                (1.0f - 0.20f * safe_pressure) *
+                quality_bias;
+            const float extra_mib = (float) (candidate_bytes - selected_bytes) / 1024.0f / 1024.0f;
+            const float score = effective_damage_reduction / std::max(extra_mib, 1e-9f);
+
+            promotion_opportunity opportunity;
+            opportunity.tensor_index = i;
+            opportunity.name = tm.name;
+            opportunity.selected_type = selected.type;
+            opportunity.candidate_type = candidate.type;
+            opportunity.extra_bytes = candidate_bytes - selected_bytes;
+            opportunity.selected_error = selected.composite_error;
+            opportunity.selected_gate_error = selected_gate.gate_error;
+            opportunity.candidate_error = candidate.composite_error;
+            opportunity.candidate_gate_error = candidate_gate.gate_error;
+            opportunity.candidate_block_error = candidate_gate.block_error;
+            opportunity.candidate_rank_error = candidate_gate.rank_error;
+            opportunity.candidate_feature_error = candidate_gate.feature_error;
+            opportunity.candidate_weighted_mse = candidate.weighted_mse;
+            opportunity.teacher_risk = teacher_risk_parts.total;
+            opportunity.teacher_risk_tensor = teacher_risk_parts.tensor;
+            opportunity.teacher_risk_layer = teacher_risk_parts.layer;
+            opportunity.teacher_risk_family = teacher_risk_parts.family;
+            opportunity.teacher_safe_pressure = safe_pressure;
+            opportunity.teacher_promotion_pressure = promotion_pressure;
+            opportunity.quality_bias = quality_bias;
+            opportunity.damage_reduction = effective_damage_reduction;
+            opportunity.opportunity_score = score;
+            opportunity.selected_bpw = selected.bpw;
+            opportunity.candidate_bpw = candidate.bpw;
+
+            if (best.candidate_type == GGML_TYPE_COUNT || promotion_opportunity_better(opportunity, best)) {
+                best = opportunity;
+            }
+        }
+
+        if (best.candidate_type != GGML_TYPE_COUNT) {
+            opportunities.push_back(best);
+        }
+    }
+
+    return opportunities;
+}
+
+static promotion_package build_best_promotion_package(
+        const llama_model_quantize_params * params,
+        const promotion_opportunity & promotion,
+        const std::vector<compression_opportunity> & financing_pool,
+        const std::vector<tensor_metadata> & metadata,
+        size_t headroom_bytes) {
+    promotion_package best;
+    const size_t required_financing_bytes =
+        promotion.extra_bytes > headroom_bytes ? (promotion.extra_bytes - headroom_bytes) : 0;
+
+    if (required_financing_bytes == 0) {
+        evaluate_promotion_package(params, promotion, {}, metadata, required_financing_bytes, best);
+        return best;
+    }
+
+    std::vector<compression_opportunity> eligible;
+    eligible.reserve(financing_pool.size());
+    for (const compression_opportunity & demotion : financing_pool) {
+        if (demotion.teacher_promotion_pressure > 0.05f) {
+            continue;
+        }
+        if (demotion.teacher_risk > 1.05f && !demotion.proxy_safe) {
+            continue;
+        }
+        if (demotion_package_conflicts_with_promotion(demotion, promotion, metadata)) {
+            continue;
+        }
+        eligible.push_back(demotion);
+        if ((int) eligible.size() >= std::max(1, params->logit_search_package_pool_size)) {
+            break;
+        }
+    }
+
+    promotion_package candidate;
+    for (size_t i = 0; i < eligible.size(); ++i) {
+        candidate = {};
+        evaluate_promotion_package(params, promotion, { eligible[i] }, metadata, required_financing_bytes, candidate);
+        if (promotion_package_better(candidate, best)) {
+            best = candidate;
+        }
+    }
+
+    if (params->logit_search_package_max_items >= 2) {
+        for (size_t i = 0; i < eligible.size(); ++i) {
+            for (size_t j = i + 1; j < eligible.size(); ++j) {
+                if (eligible[i].tensor_index == eligible[j].tensor_index) {
+                    continue;
+                }
+                candidate = {};
+                evaluate_promotion_package(params, promotion, { eligible[i], eligible[j] }, metadata, required_financing_bytes, candidate);
+                if (promotion_package_better(candidate, best)) {
+                    best = candidate;
+                }
+            }
+        }
+    }
+
+    if (params->logit_search_package_max_items >= 3) {
+        for (size_t i = 0; i < eligible.size(); ++i) {
+            for (size_t j = i + 1; j < eligible.size(); ++j) {
+                if (eligible[i].tensor_index == eligible[j].tensor_index) {
+                    continue;
+                }
+                for (size_t k = j + 1; k < eligible.size(); ++k) {
+                    if (eligible[k].tensor_index == eligible[i].tensor_index ||
+                            eligible[k].tensor_index == eligible[j].tensor_index) {
+                        continue;
+                    }
+                    candidate = {};
+                    evaluate_promotion_package(
+                            params, promotion, { eligible[i], eligible[j], eligible[k] },
+                            metadata, required_financing_bytes, candidate);
+                    if (promotion_package_better(candidate, best)) {
+                        best = candidate;
+                    }
+                }
+            }
+        }
+    }
+
+    return best;
+}
+
 static void apply_budget_repair_shrink(
         quantize_state_impl & qs,
         llama_model_loader & ml,
@@ -3759,6 +4165,245 @@ static void apply_budget_repair_shrink(
                 ((double) current_bytes - target_bytes)/1024.0/1024.0,
                 passes,
                 current_bytes <= target_bytes ? "target-met" : "still-above-target");
+    }
+}
+
+static void apply_logit_guided_budget_buyback(
+        quantize_state_impl & qs,
+        llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        std::vector<tensor_metadata> & metadata,
+        const std::unordered_map<std::string, std::vector<float>> * imatrix_data,
+        int nthread) {
+    const llama_model_quantize_params * params = qs.params;
+    if (!params->logit_guided_search || !quant_budget_limited(params) ||
+            !params->quant_repair || !params->quant_teacher_aware ||
+            params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_NONE) {
+        return;
+    }
+
+    ensure_logit_gate_loaded(qs);
+    if (!qs.logit_report_available || !qs.logit_report_paired) {
+        if (params->print_rd_report) {
+            LLAMA_LOG_INFO("%s: skipped reason=no_paired_logit_report\n", __func__);
+        }
+        return;
+    }
+
+    const size_t target_bytes = qs.rd_target_bytes > 0 ? qs.rd_target_bytes :
+        (params->rd_target_bpw > 0.0f ?
+            (size_t) std::ceil(params->rd_target_bpw * ml.n_elements / 8.0) :
+            (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0));
+    const size_t extra_budget_bytes = (size_t) std::llround(
+            std::max(0.0f, params->logit_search_promote_budget_mib) * 1024.0f * 1024.0f);
+
+    size_t current_bytes = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        current_bytes += estimate_quantized_tensor_bytes(tensors[i]->tensor, metadata[i].target_type);
+    }
+
+    const size_t max_bytes = target_bytes + extra_budget_bytes;
+    const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
+    if (current_bytes >= max_bytes) {
+        if (params->print_rd_report) {
+            LLAMA_LOG_INFO("%s: skipped current=%8.2f MiB target=%8.2f MiB ceiling=%8.2f MiB reason=no_buyback_budget_left\n",
+                    __func__, current_bytes/1024.0/1024.0, target_bytes/1024.0/1024.0, max_bytes/1024.0/1024.0);
+        }
+        return;
+    }
+
+    const int max_passes = 2;
+    int passes = 0;
+    int promoted = 0;
+    int financed_demotions = 0;
+    int auction_candidates = 0;
+    int auction_selected = 0;
+    float recovered_damage = 0.0f;
+    float financing_cost = 0.0f;
+    size_t spent_bytes = 0;
+    size_t financed_saved_bytes = 0;
+
+    while (current_bytes < max_bytes && passes < max_passes) {
+        std::vector<promotion_opportunity> opportunities = collect_promotion_opportunities(
+                qs, params, ml, tensors, metadata, imatrix_data, nthread);
+        if (opportunities.empty()) {
+            break;
+        }
+        std::vector<compression_opportunity> financing_opportunities = collect_compression_opportunities(
+                qs, params, ml, tensors, metadata, imatrix_data, nthread, false);
+        std::sort(financing_opportunities.begin(), financing_opportunities.end(), compression_opportunity_better);
+        std::sort(opportunities.begin(), opportunities.end(), promotion_opportunity_better);
+        const size_t consider_count = std::min<size_t>(opportunities.size(), std::max(1, params->logit_search_top_k));
+        auction_candidates += (int) consider_count;
+
+        const size_t headroom_bytes = current_bytes < max_bytes ? (max_bytes - current_bytes) : 0;
+        std::vector<promotion_package> packages;
+        packages.reserve(consider_count);
+        for (size_t rank = 0; rank < consider_count; ++rank) {
+            const promotion_opportunity & opportunity = opportunities[rank];
+            promotion_package best_package = build_best_promotion_package(
+                    params, opportunity, financing_opportunities, metadata, headroom_bytes);
+            if (!best_package.valid && params->print_rd_report) {
+                LLAMA_LOG_INFO("%s: package-rejected rank=%3d tensor=%-36s selected=%-7s promoted=%-7s required=%8.2f MiB best_saved=%8.2f MiB package_damage=%10.6g overshoot=%7.3f correlation_penalty=%10.6g uncertainty_penalty=%10.6g net_gain=%10.6g reason=no_package_with_positive_net_value\n",
+                        __func__, (int) rank + 1, opportunity.name.c_str(),
+                        ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
+                        opportunity.extra_bytes/1024.0/1024.0,
+                        best_package.saved_bytes/1024.0/1024.0,
+                        best_package.package_damage,
+                        best_package.overshoot_mib,
+                        best_package.correlation_penalty,
+                        best_package.uncertainty_penalty,
+                        best_package.net_gain);
+            }
+            packages.push_back(best_package);
+        }
+        std::sort(packages.begin(), packages.end(), promotion_package_better);
+
+        bool applied_in_pass = false;
+        std::vector<bool> touched(metadata.size(), false);
+        for (size_t rank = 0; rank < packages.size(); ++rank) {
+            const promotion_package & package = packages[rank];
+            if (!package.valid) {
+                continue;
+            }
+            const promotion_opportunity & opportunity = package.promotion;
+            if (touched[opportunity.tensor_index]) {
+                continue;
+            }
+            if (metadata[opportunity.tensor_index].target_type != opportunity.selected_type) {
+                continue;
+            }
+
+            bool package_conflict = false;
+            size_t package_saved_bytes = 0;
+            float package_financing_cost = 0.0f;
+            for (const compression_opportunity & demotion : package.demotions) {
+                if (touched[demotion.tensor_index] ||
+                        metadata[demotion.tensor_index].target_type != demotion.selected_type) {
+                    package_conflict = true;
+                    break;
+                }
+                package_saved_bytes += demotion.saved_bytes;
+                package_financing_cost += demotion.delta_error;
+            }
+            if (package_conflict) {
+                continue;
+            }
+
+            const size_t dynamic_headroom_bytes = current_bytes < max_bytes ? (max_bytes - current_bytes) : 0;
+            const size_t required_financing_bytes =
+                opportunity.extra_bytes > dynamic_headroom_bytes ? (opportunity.extra_bytes - dynamic_headroom_bytes) : 0;
+            if (package_saved_bytes < required_financing_bytes) {
+                continue;
+            }
+
+            for (const compression_opportunity & demotion : package.demotions) {
+                tensor_metadata & funding_tm = metadata[demotion.tensor_index];
+                funding_tm.target_type = demotion.candidate_type;
+                funding_tm.rd_type = demotion.candidate_type;
+                funding_tm.rd_distortion = demotion.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(funding_tm));
+                funding_tm.rd_bpw = demotion.candidate_bpw;
+                funding_tm.rd_cost = demotion.effective_candidate_error + cost_lambda * demotion.budget_bias * demotion.candidate_bpw;
+                funding_tm.teacher_repair_clip_abs = 0.0f;
+                funding_tm.teacher_repair_source_gain = 1.0f;
+                funding_tm.teacher_repair_error_before = 0.0f;
+                funding_tm.teacher_repair_error_after = 0.0f;
+
+                current_bytes -= demotion.saved_bytes;
+                financed_saved_bytes += demotion.saved_bytes;
+                financing_cost += demotion.delta_error;
+                ++financed_demotions;
+                touched[demotion.tensor_index] = true;
+            }
+
+            if (current_bytes + opportunity.extra_bytes > max_bytes) {
+                for (const compression_opportunity & demotion : package.demotions) {
+                    touched[demotion.tensor_index] = false;
+                }
+                break;
+            }
+
+            tensor_metadata & tm = metadata[opportunity.tensor_index];
+            tm.target_type = opportunity.candidate_type;
+            tm.rd_type = opportunity.candidate_type;
+            tm.rd_distortion = opportunity.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(tm));
+            tm.rd_bpw = opportunity.candidate_bpw;
+            tm.rd_cost = opportunity.candidate_gate_error + cost_lambda * opportunity.candidate_bpw;
+            tm.teacher_repair_clip_abs = 0.0f;
+            tm.teacher_repair_source_gain = 1.0f;
+            tm.teacher_repair_error_before = 0.0f;
+            tm.teacher_repair_error_after = 0.0f;
+
+            current_bytes += opportunity.extra_bytes;
+            spent_bytes += opportunity.extra_bytes;
+            recovered_damage += opportunity.damage_reduction;
+            ++promoted;
+            ++auction_selected;
+            touched[opportunity.tensor_index] = true;
+            applied_in_pass = true;
+
+            LLAMA_LOG_INFO("%s: buyback-pass=%d auction-rank=%3d tensor=%-36s selected=%-7s promoted=%-7s spent=%8.2f MiB financed_by=%d financed_saved=%8.2f MiB finance_cost=%10.6g net_gain=%10.6g overshoot=%7.3f correlation_penalty=%10.6g uncertainty_penalty=%10.6g damage_reduction=%10.6g value=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) safe_pressure=%5.3f promotion_pressure=%5.3f quality_bias=%5.3f current=%8.2f MiB target=%8.2f MiB ceiling=%8.2f MiB\n",
+                    __func__, passes + 1, (int) rank + 1, tm.name.c_str(),
+                    ggml_type_name(opportunity.selected_type), ggml_type_name(opportunity.candidate_type),
+                    opportunity.extra_bytes/1024.0/1024.0,
+                    (int) package.demotions.size(),
+                    package_saved_bytes/1024.0/1024.0,
+                    package_financing_cost,
+                    package.net_gain,
+                    package.overshoot_mib,
+                    package.correlation_penalty,
+                    package.uncertainty_penalty,
+                    opportunity.damage_reduction,
+                    package.package_score,
+                    opportunity.teacher_risk,
+                    opportunity.teacher_risk_tensor,
+                    opportunity.teacher_risk_layer,
+                    opportunity.teacher_risk_family,
+                    opportunity.teacher_safe_pressure,
+                    opportunity.teacher_promotion_pressure,
+                    opportunity.quality_bias,
+                    current_bytes/1024.0/1024.0,
+                    target_bytes/1024.0/1024.0,
+                    max_bytes/1024.0/1024.0);
+            for (size_t i = 0; i < package.demotions.size(); ++i) {
+                const compression_opportunity & demotion = package.demotions[i];
+                LLAMA_LOG_INFO("%s: buyback-funding pass=%d rank=%3d item=%d tensor=%-36s selected=%-7s demoted=%-7s saved=%8.2f MiB damage=%10.6g safe_pressure=%5.3f promotion_pressure=%5.3f budget_bias=%5.3f\n",
+                        __func__, passes + 1, (int) rank + 1, (int) i + 1, demotion.name.c_str(),
+                        ggml_type_name(demotion.selected_type), ggml_type_name(demotion.candidate_type),
+                        demotion.saved_bytes/1024.0/1024.0,
+                        demotion.delta_error,
+                        demotion.teacher_safe_pressure,
+                        demotion.teacher_promotion_pressure,
+                        demotion.budget_bias);
+            }
+        }
+
+        if (!applied_in_pass) {
+            break;
+        }
+        ++passes;
+    }
+
+    if (promoted > 0 || params->print_rd_report) {
+        LLAMA_LOG_INFO("%s: summary mode=buyback promoted=%d financed_demotions=%d candidates=%d selected=%d spent=%8.2f MiB financed_saved=%8.2f MiB financing_cost=%10.6g recovered_damage=%10.6g net_gain=%10.6g damage_per_mib=%10.6g actual=%8.2f MiB target=%8.2f MiB ceiling=%8.2f MiB difference_vs_target=%+.2f MiB passes=%d status=%s top_k=%d\n",
+                __func__,
+                promoted,
+                financed_demotions,
+                auction_candidates,
+                auction_selected,
+                spent_bytes/1024.0/1024.0,
+                financed_saved_bytes/1024.0/1024.0,
+                financing_cost,
+                recovered_damage,
+                recovered_damage - financing_cost,
+                spent_bytes > 0 ? (recovered_damage - financing_cost) / ((float) spent_bytes/1024.0f/1024.0f) : 0.0f,
+                current_bytes/1024.0/1024.0,
+                target_bytes/1024.0/1024.0,
+                max_bytes/1024.0/1024.0,
+                ((double) current_bytes - target_bytes)/1024.0/1024.0,
+                passes,
+                promoted > 0 ? "buyback-applied" : "no-opportunities",
+                params->logit_search_top_k);
     }
 }
 
@@ -4899,6 +5544,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     apply_budget_first_type_cap(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_budget_repair_shrink(qs, ml, tensors, metadata, imatrix_data, nthread);
+    apply_logit_guided_budget_buyback(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_quality_precision_validation(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_teacher_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
     print_compression_opportunity_report(qs, ml, tensors, metadata, imatrix_data, nthread);
@@ -5324,6 +5970,13 @@ llama_model_quantize_params llama_model_quantize_default_params() {
         /*.logit_damage_threshold      =*/ 0.02f,
         /*.logit_kl_threshold          =*/ 0.01f,
         /*.logit_flip_threshold        =*/ 0.02f,
+        /*.logit_guided_search         =*/ false,
+        /*.logit_search_top_k          =*/ 24,
+        /*.logit_search_promote_budget_mib =*/ 64.0f,
+        /*.logit_search_package_max_items =*/ 3,
+        /*.logit_search_package_pool_size =*/ 24,
+        /*.logit_search_package_overshoot_weight =*/ 0.05f,
+        /*.logit_search_package_same_layer_penalty =*/ 0.01f,
     };
 
     return result;

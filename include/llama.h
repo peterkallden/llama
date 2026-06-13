@@ -487,6 +487,13 @@ extern "C" {
         float logit_damage_threshold;                                  // paired-mode damage threshold above which the gate fails
         float logit_kl_threshold;                                      // KL threshold above which the gate fails
         float logit_flip_threshold;                                    // argmax-flip threshold above which the gate fails
+        bool logit_guided_search;                                      // opt-in budgeted quality buyback using local teacher attribution
+        int32_t logit_search_top_k;                                    // maximum ranked promotion opportunities to consider per pass
+        float logit_search_promote_budget_mib;                         // extra MiB budget available to spend on quality buyback
+        int32_t logit_search_package_max_items;                        // maximum number of demotions allowed to finance one promotion
+        int32_t logit_search_package_pool_size;                        // demotion pool size searched per promotion package
+        float logit_search_package_overshoot_weight;                   // penalty applied to package MiB overshoot
+        float logit_search_package_same_layer_penalty;                 // penalty applied when a package clusters demotions in one layer
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {

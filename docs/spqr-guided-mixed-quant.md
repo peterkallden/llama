@@ -114,6 +114,8 @@ This first integration is still intentionally modest. The report is parsed once 
 
 Current knobs are `--logit-damage-threshold`, `--logit-kl-threshold`, and `--logit-flip-threshold`. The resulting pass/fail status is reported in the repair and RD summaries, and successful paired reports also show `tensor_deltas`, `layer_deltas`, `family_deltas`, and `local_allocator_prior=on` in the final quantization summary.
 
+When the run is also budget-limited, `--logit-guided-search` enables a small second auction in the opposite direction: after the shrink pass reaches the target, the quantizer can spend back a capped amount of extra space on the highest-value teacher-attributed promotions. `--logit-search-top-k` limits how many ranked tensor opportunities are considered per pass, and `--logit-search-promote-budget-mib` controls the extra MiB ceiling above the original budget target. Setting that budget to `0` turns the pass into a budget-neutral search where every accepted promotion must be financed by additional safe demotions elsewhere.
+
 ## Non-goals
 
 This POC does not implement:
@@ -279,6 +281,8 @@ The source-value repair side is used when the selected type is already low-bit, 
 If the bounded RD pass and budget-first cap still leave the model above target, quant-repair now performs an extra shrink pass automatically. This pass now behaves as a small global demotion auction: every eligible tensor can contribute more than one cheaper candidate, those candidates are ranked globally by saved MiB versus estimated added quality cost, `proxy_safe` demotions are preferred first, and `repair_potential` demotions are admitted when the clipping/scale teacher-repair probe indicates the cheaper type can likely be rescued after demotion. When a teacher report is present, the bid score is also nudged by the local attribution prior: tensors with negative or low-confidence teacher pressure become easier to shrink, while tensors with stronger positive promotion pressure become more expensive to demote. This is the current "aggressive repair under hard budget" path.
 
 The auction is budget-only. Quality-first runs without `--rd-target-bpw` or `--rd-target-size-mib` keep their earlier local validation behavior. In the console report, the shrink summary now includes `mode=auction`, the number of candidate bids considered, how many bids were selected, total MiB saved, total estimated quality cost, and `cost_per_mib` for the accepted demotions.
+
+With `--logit-guided-search`, a follow-up `mode=buyback` summary is printed after shrink. This pass uses the same local teacher proxy and logit attribution priors to rank one-step promotions by estimated damage reduction per extra MiB, then tries to finance them with the best remaining demotion opportunities before consuming any optional extra MiB headroom. The summary now reports both the gross promotion spend and the financing demotions selected for it. The intent is to keep hard-budget runs from getting stuck in a one-way "only demote" loop once a few obviously harmful tensor choices have been identified.
 
 For size-first exploration, add a compression opportunity report:
 
