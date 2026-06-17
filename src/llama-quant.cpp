@@ -889,6 +889,112 @@ struct tensor_metadata {
     float           teacher_repair_error_after;
 };
 
+struct quant_budget_state {
+    size_t target_bytes = 0;
+    size_t current_bytes = 0;
+};
+
+struct repair_gate_settings {
+    float accept_ratio = 0.0f;
+    float max_error = 0.0f;
+    float min_error = 0.0f;
+    float min_improvement = 0.0f;
+};
+
+static size_t estimate_quantized_tensor_bytes(
+        const ggml_tensor * tensor,
+        ggml_type target_type) {
+    return target_type == tensor->type ?
+        ggml_nbytes(tensor) :
+        (size_t) ggml_nrows(tensor) * ggml_row_size(target_type, tensor->ne[0]);
+}
+
+static size_t estimate_quantized_model_bytes(
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        const std::vector<tensor_metadata> & metadata) {
+    size_t total = 0;
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        total += estimate_quantized_tensor_bytes(tensors[i]->tensor, metadata[i].target_type);
+    }
+    return total;
+}
+
+static size_t quant_target_bytes(
+        const quantize_state_impl & qs,
+        const llama_model_quantize_params * params,
+        const llama_model_loader & ml) {
+    if (qs.rd_target_bytes > 0) {
+        return qs.rd_target_bytes;
+    }
+    return params->rd_target_bpw > 0.0f ?
+        (size_t) std::ceil(params->rd_target_bpw * ml.n_elements / 8.0) :
+        (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0);
+}
+
+static quant_budget_state quant_budget_snapshot(
+        const quantize_state_impl & qs,
+        const llama_model_quantize_params * params,
+        const llama_model_loader & ml,
+        const std::vector<const llama_model_loader::llama_tensor_weight *> & tensors,
+        const std::vector<tensor_metadata> & metadata) {
+    return {
+        quant_target_bytes(qs, params, ml),
+        estimate_quantized_model_bytes(tensors, metadata),
+    };
+}
+
+static void reset_teacher_repair_state(tensor_metadata & tm) {
+    tm.teacher_repair_clip_abs = 0.0f;
+    tm.teacher_repair_source_gain = 1.0f;
+    tm.teacher_repair_error_before = 0.0f;
+    tm.teacher_repair_error_after = 0.0f;
+}
+
+static void apply_quant_transition(
+        tensor_metadata & tm,
+        ggml_type type,
+        float weighted_mse,
+        float distortion_weight,
+        float bpw,
+        float rd_cost) {
+    tm.target_type = type;
+    tm.rd_type = type;
+    tm.rd_distortion = weighted_mse / std::max(1e-20f, distortion_weight);
+    tm.rd_bpw = bpw;
+    tm.rd_cost = rd_cost;
+    reset_teacher_repair_state(tm);
+}
+
+static repair_gate_settings repair_gate_for_context(
+        const quantize_state_impl & qs,
+        bool budget_limited,
+        bool include_minimums) {
+    const llama_model_quantize_params * params = qs.params;
+    repair_gate_settings settings;
+    settings.accept_ratio = budget_limited ?
+        std::max(params->quant_repair_accept_ratio, 1.25f) :
+        params->quant_repair_accept_ratio;
+    settings.max_error = budget_limited ?
+        std::max(params->quant_repair_max_error, 0.005f) :
+        params->quant_repair_max_error;
+    settings.min_error = budget_limited ?
+        params->quant_repair_min_error * 0.05f :
+        params->quant_repair_min_error;
+    settings.min_improvement = budget_limited ?
+        std::min(params->quant_repair_min_improvement, 0.001f) :
+        params->quant_repair_min_improvement;
+
+    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
+        settings.accept_ratio = std::min(settings.accept_ratio, budget_limited ? 1.10f : 1.01f);
+        settings.max_error = std::min(settings.max_error, budget_limited ? 0.0025f : 0.0005f);
+        if (include_minimums) {
+            settings.min_error *= budget_limited ? 1.5f : 1.25f;
+            settings.min_improvement = std::max(settings.min_improvement, budget_limited ? 0.01f : 0.08f);
+        }
+    }
+    return settings;
+}
+
 static float budget_layer_position_bias(const tensor_metadata & tm, int max_layer) {
     if (tm.layer < 0 || max_layer <= 0) {
         return 1.0f;
@@ -3378,18 +3484,7 @@ static void apply_spqr_repair(
     int repaired = 0;
     int kept_selected = 0;
     const bool budget_limited = quant_budget_limited(params);
-    const float effective_accept_ratio = budget_limited ?
-        std::max(params->quant_repair_accept_ratio, 1.25f) :
-        params->quant_repair_accept_ratio;
-    const float effective_max_error = budget_limited ?
-        std::max(params->quant_repair_max_error, 0.005f) :
-        params->quant_repair_max_error;
-    float adjusted_accept_ratio = effective_accept_ratio;
-    float adjusted_max_error = effective_max_error;
-    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
-        adjusted_accept_ratio = std::min(adjusted_accept_ratio, budget_limited ? 1.10f : 1.01f);
-        adjusted_max_error = std::min(adjusted_max_error, budget_limited ? 0.0025f : 0.0005f);
-    }
+    const repair_gate_settings gate_settings = repair_gate_for_context(qs, budget_limited, false);
     const float cost_lambda = budget_limited ?
         std::max(params->rd_lambda, qs.rd_allocation_lambda) :
         params->rd_lambda;
@@ -3435,8 +3530,8 @@ static void apply_spqr_repair(
         const float teacher_risk = teacher_risk_parts.total;
         const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
         const float promotion_pressure = logit_local_promotion_pressure(teacher_risk_parts);
-        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, demotion_risk);
-        const float local_max_error = logit_local_error_limit(adjusted_max_error, demotion_risk);
+        const float local_accept_ratio = logit_local_accept_ratio(gate_settings.accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(gate_settings.max_error, demotion_risk);
 
         ++evaluated;
         spqr_repair_eval best = selected;
@@ -3502,11 +3597,7 @@ static void apply_spqr_repair(
         }
 
         if (accepted && best.type != selected_type) {
-            tm.target_type = best.type;
-            tm.rd_type = best.type;
-            tm.rd_distortion = best.weighted_mse / std::max(1e-20f, distortion_weight);
-            tm.rd_bpw = best.bpw;
-            tm.rd_cost = best_gate.gate_error + cost_lambda * best.bpw;
+            apply_quant_transition(tm, best.type, best.weighted_mse, distortion_weight, best.bpw, best_gate.gate_error + cost_lambda * best.bpw);
             ++repaired;
             LLAMA_LOG_INFO("%s: quant-repair tensor=%-36s original=%-7s repaired=%-7s original_error=%10.6g repaired_error=%10.6g original_gate=%10.6g repaired_gate=%10.6g repaired_feature=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) gain=%9.6g shape=%9.6g outlier=%6.3f bpw=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(best.type), selected.weighted_mse,
@@ -3530,19 +3621,11 @@ static void apply_spqr_repair(
                 params->quant_teacher_aware_rank_mix,
                 teacher_feature_gate_mix(params),
                 params->quant_teacher_aware_top_k,
-                adjusted_accept_ratio, params->quant_repair_accept_ratio,
-                adjusted_max_error, params->quant_repair_max_error,
+                gate_settings.accept_ratio, params->quant_repair_accept_ratio,
+                gate_settings.max_error, params->quant_repair_max_error,
                 budget_limited ? "yes" : "no",
                 (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
-}
-
-static size_t estimate_quantized_tensor_bytes(
-        const ggml_tensor * tensor,
-        ggml_type target_type) {
-    return target_type == tensor->type ?
-        ggml_nbytes(tensor) :
-        (size_t) ggml_nrows(tensor) * ggml_row_size(target_type, tensor->ne[0]);
 }
 
 static std::vector<compression_opportunity> collect_compression_opportunities(
@@ -3563,26 +3646,11 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
 
     std::vector<compression_opportunity> opportunities;
     const bool budget_limited = quant_budget_limited(params);
-    const float effective_accept_ratio = budget_limited ?
-        std::max(params->quant_repair_accept_ratio, 1.25f) :
-        params->quant_repair_accept_ratio;
-    const float effective_max_error = budget_limited ?
-        std::max(params->quant_repair_max_error, 0.005f) :
-        params->quant_repair_max_error;
-    float adjusted_accept_ratio = effective_accept_ratio;
-    float adjusted_max_error = effective_max_error;
-    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
-        adjusted_accept_ratio = std::min(adjusted_accept_ratio, 1.10f);
-        adjusted_max_error = std::min(adjusted_max_error, 0.0025f);
-    }
+    const repair_gate_settings gate_settings = repair_gate_for_context(qs, budget_limited, false);
     const bool repair_probe_enabled = params->quant_repair &&
         (params->quant_repair_clipping || params->quant_repair_scale);
-    const float effective_min_error = budget_limited ?
-        params->quant_repair_min_error * 0.05f :
-        params->quant_repair_min_error;
-    const float effective_min_improvement = budget_limited ?
-        std::min(params->quant_repair_min_improvement, 0.001f) :
-        params->quant_repair_min_improvement;
+    const float effective_min_error = gate_settings.min_error;
+    const float effective_min_improvement = gate_settings.min_improvement;
     const int max_layer = max_transformer_layer(metadata);
 
     for (size_t i = 0; i < metadata.size(); ++i) {
@@ -3628,8 +3696,8 @@ static std::vector<compression_opportunity> collect_compression_opportunities(
         const float safe_pressure = logit_local_safe_compression_pressure(teacher_risk_parts);
         const float promotion_pressure = logit_local_promotion_pressure(teacher_risk_parts);
         const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
-        const float local_accept_ratio = logit_local_accept_ratio(adjusted_accept_ratio, demotion_risk);
-        const float local_max_error = logit_local_error_limit(adjusted_max_error, demotion_risk);
+        const float local_accept_ratio = logit_local_accept_ratio(gate_settings.accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(gate_settings.max_error, demotion_risk);
 
         compression_opportunity best;
         for (ggml_type candidate_type : candidates) {
@@ -4052,14 +4120,9 @@ static void apply_budget_repair_shrink(
     }
     ensure_logit_gate_loaded(qs);
 
-    const size_t target_bytes = qs.rd_target_bytes > 0 ? qs.rd_target_bytes :
-        (params->rd_target_bpw > 0.0f ?
-            (size_t) std::ceil(params->rd_target_bpw * ml.n_elements / 8.0) :
-            (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0));
-    size_t current_bytes = 0;
-    for (size_t i = 0; i < metadata.size(); ++i) {
-        current_bytes += estimate_quantized_tensor_bytes(tensors[i]->tensor, metadata[i].target_type);
-    }
+    const quant_budget_state budget = quant_budget_snapshot(qs, params, ml, tensors, metadata);
+    const size_t target_bytes = budget.target_bytes;
+    size_t current_bytes = budget.current_bytes;
     if (current_bytes <= target_bytes) {
         if (params->print_rd_report) {
             LLAMA_LOG_INFO("%s: skipped current=%8.2f MiB target=%8.2f MiB reason=already_within_budget\n",
@@ -4105,15 +4168,13 @@ static void apply_budget_repair_shrink(
                 continue;
             }
 
-            tm.target_type = opportunity.candidate_type;
-            tm.rd_type = opportunity.candidate_type;
-            tm.rd_distortion = opportunity.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(tm));
-            tm.rd_bpw = opportunity.candidate_bpw;
-            tm.rd_cost = opportunity.effective_candidate_error + cost_lambda * opportunity.budget_bias * opportunity.candidate_bpw;
-            tm.teacher_repair_clip_abs = 0.0f;
-            tm.teacher_repair_source_gain = 1.0f;
-            tm.teacher_repair_error_before = 0.0f;
-            tm.teacher_repair_error_after = 0.0f;
+            apply_quant_transition(
+                    tm,
+                    opportunity.candidate_type,
+                    opportunity.candidate_weighted_mse,
+                    rd_distortion_weight(tm),
+                    opportunity.candidate_bpw,
+                    opportunity.effective_candidate_error + cost_lambda * opportunity.budget_bias * opportunity.candidate_bpw);
 
             current_bytes -= opportunity.saved_bytes;
             total_saved_bytes += opportunity.saved_bytes;
@@ -4190,17 +4251,11 @@ static void apply_logit_guided_budget_buyback(
         return;
     }
 
-    const size_t target_bytes = qs.rd_target_bytes > 0 ? qs.rd_target_bytes :
-        (params->rd_target_bpw > 0.0f ?
-            (size_t) std::ceil(params->rd_target_bpw * ml.n_elements / 8.0) :
-            (size_t) std::ceil(params->rd_target_size_mib * 1024.0 * 1024.0));
+    const quant_budget_state budget = quant_budget_snapshot(qs, params, ml, tensors, metadata);
+    const size_t target_bytes = budget.target_bytes;
     const size_t extra_budget_bytes = (size_t) std::llround(
             std::max(0.0f, params->logit_search_promote_budget_mib) * 1024.0f * 1024.0f);
-
-    size_t current_bytes = 0;
-    for (size_t i = 0; i < metadata.size(); ++i) {
-        current_bytes += estimate_quantized_tensor_bytes(tensors[i]->tensor, metadata[i].target_type);
-    }
+    size_t current_bytes = budget.current_bytes;
 
     const size_t max_bytes = target_bytes + extra_budget_bytes;
     const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
@@ -4299,15 +4354,13 @@ static void apply_logit_guided_budget_buyback(
 
             for (const compression_opportunity & demotion : package.demotions) {
                 tensor_metadata & funding_tm = metadata[demotion.tensor_index];
-                funding_tm.target_type = demotion.candidate_type;
-                funding_tm.rd_type = demotion.candidate_type;
-                funding_tm.rd_distortion = demotion.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(funding_tm));
-                funding_tm.rd_bpw = demotion.candidate_bpw;
-                funding_tm.rd_cost = demotion.effective_candidate_error + cost_lambda * demotion.budget_bias * demotion.candidate_bpw;
-                funding_tm.teacher_repair_clip_abs = 0.0f;
-                funding_tm.teacher_repair_source_gain = 1.0f;
-                funding_tm.teacher_repair_error_before = 0.0f;
-                funding_tm.teacher_repair_error_after = 0.0f;
+                apply_quant_transition(
+                        funding_tm,
+                        demotion.candidate_type,
+                        demotion.candidate_weighted_mse,
+                        rd_distortion_weight(funding_tm),
+                        demotion.candidate_bpw,
+                        demotion.effective_candidate_error + cost_lambda * demotion.budget_bias * demotion.candidate_bpw);
 
                 current_bytes -= demotion.saved_bytes;
                 financed_saved_bytes += demotion.saved_bytes;
@@ -4324,15 +4377,13 @@ static void apply_logit_guided_budget_buyback(
             }
 
             tensor_metadata & tm = metadata[opportunity.tensor_index];
-            tm.target_type = opportunity.candidate_type;
-            tm.rd_type = opportunity.candidate_type;
-            tm.rd_distortion = opportunity.candidate_weighted_mse / std::max(1e-20f, rd_distortion_weight(tm));
-            tm.rd_bpw = opportunity.candidate_bpw;
-            tm.rd_cost = opportunity.candidate_gate_error + cost_lambda * opportunity.candidate_bpw;
-            tm.teacher_repair_clip_abs = 0.0f;
-            tm.teacher_repair_source_gain = 1.0f;
-            tm.teacher_repair_error_before = 0.0f;
-            tm.teacher_repair_error_after = 0.0f;
+            apply_quant_transition(
+                    tm,
+                    opportunity.candidate_type,
+                    opportunity.candidate_weighted_mse,
+                    rd_distortion_weight(tm),
+                    opportunity.candidate_bpw,
+                    opportunity.candidate_gate_error + cost_lambda * opportunity.candidate_bpw);
 
             current_bytes += opportunity.extra_bytes;
             spent_bytes += opportunity.extra_bytes;
@@ -4538,15 +4589,13 @@ static void apply_quality_precision_validation(
             continue;
         }
 
-        tm.target_type = best_type;
-        tm.rd_type = best_type;
-        tm.rd_distortion = best_eval.weighted_mse / std::max(1e-20f, distortion_weight);
-        tm.rd_bpw = best_eval.bpw;
-        tm.rd_cost = best_gate.gate_error + params->rd_lambda * best_eval.bpw;
-        tm.teacher_repair_clip_abs = 0.0f;
-        tm.teacher_repair_source_gain = 1.0f;
-        tm.teacher_repair_error_before = 0.0f;
-        tm.teacher_repair_error_after = 0.0f;
+        apply_quant_transition(
+                tm,
+                best_type,
+                best_eval.weighted_mse,
+                distortion_weight,
+                best_eval.bpw,
+                best_gate.gate_error + params->rd_lambda * best_eval.bpw);
 
         ++demoted;
         saved_bytes += best_saved_bytes;
@@ -4586,12 +4635,8 @@ static void apply_budget_first_type_cap(
     int evaluated = 0;
     int capped = 0;
     int kept = 0;
-    float effective_accept_ratio = std::max(params->quant_repair_accept_ratio, 1.25f);
-    float effective_max_error = std::max(params->quant_repair_max_error, 0.005f);
-    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
-        effective_accept_ratio = std::min(effective_accept_ratio, 1.10f);
-        effective_max_error = std::min(effective_max_error, 0.0025f);
-    }
+    ensure_logit_gate_loaded(qs);
+    const repair_gate_settings gate_settings = repair_gate_for_context(qs, true, false);
     const float cost_lambda = std::max(params->rd_lambda, qs.rd_allocation_lambda);
     const int max_layer = max_transformer_layer(metadata);
 
@@ -4641,8 +4686,8 @@ static void apply_budget_first_type_cap(
         const logit_teacher_risk_breakdown teacher_risk_parts = logit_local_teacher_risk_breakdown(qs, tm);
         const float teacher_risk = teacher_risk_parts.total;
         const float demotion_risk = logit_local_demotion_risk(teacher_risk_parts);
-        const float local_accept_ratio = logit_local_accept_ratio(effective_accept_ratio, demotion_risk);
-        const float local_max_error = logit_local_error_limit(effective_max_error, demotion_risk);
+        const float local_accept_ratio = logit_local_accept_ratio(gate_settings.accept_ratio, demotion_risk);
+        const float local_max_error = logit_local_error_limit(gate_settings.max_error, demotion_risk);
 
         ++evaluated;
         const bool under_relative_gate =
@@ -4654,11 +4699,13 @@ static void apply_budget_first_type_cap(
         const float selected_cost = demotion_risk * selected_gate.gate_error + cost_lambda * budget_bias * selected.bpw;
         const float candidate_cost = demotion_risk * candidate_gate.gate_error + cost_lambda * budget_bias * candidate.bpw;
         if ((under_relative_gate || under_absolute_gate) && candidate_cost < selected_cost) {
-            tm.target_type = candidate.type;
-            tm.rd_type = candidate.type;
-            tm.rd_distortion = candidate.weighted_mse / std::max(1e-20f, distortion_weight);
-            tm.rd_bpw = candidate.bpw;
-            tm.rd_cost = candidate_gate.gate_error + cost_lambda * budget_bias * candidate.bpw;
+            apply_quant_transition(
+                    tm,
+                    candidate.type,
+                    candidate.weighted_mse,
+                    distortion_weight,
+                    candidate.bpw,
+                    candidate_gate.gate_error + cost_lambda * budget_bias * candidate.bpw);
             ++capped;
             LLAMA_LOG_INFO("%s: budget-first tensor=%-36s original=%-7s capped=%-7s original_error=%10.6g capped_error=%10.6g original_gate=%10.6g capped_gate=%10.6g capped_feature=%10.6g teacher_risk=%6.3f risk_parts=(t=%+.3f l=%+.3f f=%+.3f) budget_bias=%5.3f original_bpw=%6.3f capped_bpw=%6.3f\n",
                     __func__, tm.name.c_str(), ggml_type_name(selected.type), ggml_type_name(candidate.type),
@@ -4686,7 +4733,7 @@ static void apply_budget_first_type_cap(
                 params->quant_teacher_aware_rank_mix,
                 teacher_feature_gate_mix(params),
                 params->quant_teacher_aware_top_k,
-                effective_accept_ratio, effective_max_error, cost_lambda,
+                gate_settings.accept_ratio, gate_settings.max_error, cost_lambda,
                 (params->logit_gate && qs.logit_report_available) ? (qs.logit_gate_pass ? "pass" : "fail") : "off");
     }
 }
@@ -4706,16 +4753,9 @@ static void apply_spqr_teacher_repair(
     ensure_logit_gate_loaded(qs);
     const bool budget_limited = quant_budget_limited(params);
     const bool layer_output_proxy = params->quant_repair_scale;
-    float effective_min_error = budget_limited ?
-        params->quant_repair_min_error * 0.05f :
-        params->quant_repair_min_error;
-    float effective_min_improvement = budget_limited ?
-        std::min(params->quant_repair_min_improvement, 0.001f) :
-        params->quant_repair_min_improvement;
-    if (params->logit_gate && qs.logit_report_available && !qs.logit_gate_pass) {
-        effective_min_error *= budget_limited ? 1.5f : 1.25f;
-        effective_min_improvement = std::max(effective_min_improvement, budget_limited ? 0.01f : 0.08f);
-    }
+    const repair_gate_settings gate_settings = repair_gate_for_context(qs, budget_limited, true);
+    const float effective_min_error = gate_settings.min_error;
+    const float effective_min_improvement = gate_settings.min_improvement;
 
     std::vector<no_init<uint8_t>> read_data;
     std::vector<no_init<float>> f32_conv;
