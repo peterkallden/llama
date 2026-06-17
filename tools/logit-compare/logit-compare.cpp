@@ -29,6 +29,10 @@ struct logit_compare_args {
     int layer_sample_tokens = 8;
 };
 
+static void logit_log_section(const char * title) {
+    LOG_INF("\n==== %s ====\n", title);
+}
+
 struct topk_entry {
     llama_token token;
     float logit;
@@ -1293,20 +1297,22 @@ static void write_json_summary(
 }
 
 static void log_metric_summary(const char * label, const metric_summary & summary) {
-    LOG_INF("%s: positions=%d mean_topk_kl=%10.6g weighted_topk_kl=%10.6g mean_topk_overlap=%7.4f mean_rank_drift=%7.4f argmax_flip_rate=%7.4f teacher_margin_mean=%8.6f next_logprob_delta=%9.6f next_rank_drift=%7.4f teacher_winner_topk=%7.4f next_in_student_topk=%7.4f kl_p95=%10.6g rank_p95=%7.4f\n",
+    LOG_INF("%s: positions=%d topk_kl=%10.6g weighted_kl=%10.6g overlap=%7.4f rank_drift=%7.4f flips=%7.4f kl_p95=%10.6g rank_p95=%7.4f\n",
             label, summary.compared_positions,
             summary.mean_topk_kl,
             summary.weighted_topk_kl,
             summary.mean_topk_overlap,
             summary.mean_rank_drift,
             summary.argmax_flip_rate,
+            summary.topk_kl_percentiles.p95,
+            summary.rank_drift_percentiles.p95);
+    LOG_INF("%s: teacher_margin=%8.6f next_logprob_delta=%9.6f next_rank_drift=%7.4f teacher_winner_topk=%7.4f next_in_student_topk=%7.4f\n",
+            label,
             summary.teacher_margin_mean,
             summary.mean_next_logprob_delta,
             summary.mean_next_rank_drift,
             summary.teacher_winner_in_student_topk,
-            summary.next_token_in_student_topk,
-            summary.topk_kl_percentiles.p95,
-            summary.rank_drift_percentiles.p95);
+            summary.next_token_in_student_topk);
 }
 
 int main(int argc, char ** argv) {
@@ -1370,6 +1376,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    logit_log_section("Logit compare setup");
     LOG_INF("%s: teacher=%s\n", __func__, lc_args.teacher_model.c_str());
     LOG_INF("%s: tokens=%zu requested_chunks=%d top_k=%d\n",
             __func__, teacher_tokens.size(), params.n_chunks, lc_args.top_k);
@@ -1414,6 +1421,7 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("input does not contain enough tokens for one comparison chunk");
         }
 
+        logit_log_section(label);
         LOG_INF("%s: %s=%s\n", __func__, label, model_path.c_str());
         LOG_INF("%s: %s n_ctx=%d n_batch=%d available_chunks=%d\n",
                 __func__, label, n_ctx, n_batch, n_chunk);
@@ -1447,6 +1455,7 @@ int main(int argc, char ** argv) {
     }
 
     const metric_summary candidate_summary = summarize_metrics(candidate_result.metrics);
+    logit_log_section("Metric summary");
     log_metric_summary("candidate_summary", candidate_summary);
 
     if (baseline_result_ptr != nullptr) {
@@ -1457,7 +1466,7 @@ int main(int argc, char ** argv) {
                     __func__, baseline_summary.compared_positions, candidate_summary.compared_positions);
         }
         const metric_delta delta = compute_metric_delta(baseline_summary, candidate_summary);
-        LOG_INF("%s: paired_delta delta_topk_kl=%10.6g delta_weighted_topk_kl=%10.6g delta_topk_overlap=%9.6f delta_argmax_flip_rate=%9.6f delta_next_logprob_delta=%9.6f delta_kl_p95=%10.6g damage_score=%10.6g\n",
+        LOG_INF("%s: paired_delta topk_kl=%+10.6g weighted_kl=%+10.6g overlap=%+9.6f flips=%+9.6f next_logprob=%+9.6f kl_p95=%+10.6g damage=%+10.6g\n",
                 __func__,
                 delta.delta_mean_topk_kl,
                 delta.delta_weighted_topk_kl,
@@ -1469,6 +1478,7 @@ int main(int argc, char ** argv) {
     }
 
     if (lc_args.layer_attribution) {
+        logit_log_section("Attribution summary");
         const auto candidate_layers = summarize_attribution(candidate_result.attribution.layers);
         const auto candidate_families = summarize_attribution(candidate_result.attribution.families);
         const auto candidate_tensors = summarize_attribution(candidate_result.attribution.tensors);
@@ -1510,6 +1520,7 @@ int main(int argc, char ** argv) {
     }
 
     if (!lc_args.json_out.empty()) {
+        logit_log_section("Output");
         write_json_summary(lc_args.json_out, lc_args, params, candidate_result, baseline_result_ptr);
         LOG_INF("%s: wrote json summary to %s\n", __func__, lc_args.json_out.c_str());
     }

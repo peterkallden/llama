@@ -55,6 +55,10 @@ static const std::vector<ggml_type> QUANT_PROFILE_RD_TYPES = {
     GGML_TYPE_Q6_K,
 };
 
+static void imatrix_log_section(const char * title) {
+    LOG_INF("\n==== %s ====\n", title);
+}
+
 struct Stats {
     std::vector<float>   values;
     std::vector<int64_t> counts;
@@ -1323,12 +1327,15 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
     }
 
     auto tim1 = std::chrono::high_resolution_clock::now();
+    imatrix_log_section("Input tokenization");
     LOG_INF("%s: tokenizing the input ..\n", __func__);
 
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true, params.parse_special);
 
     auto tim2 = std::chrono::high_resolution_clock::now();
-    LOG_INF("%s: tokenization took %g ms\n",__func__,1e-3*std::chrono::duration_cast<std::chrono::microseconds>(tim2-tim1).count());
+    LOG_INF("%s: tokenization took %g ms, tokens=%zu, ctx=%d\n",
+            __func__, 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(tim2-tim1).count(),
+            tokens.size(), n_ctx);
 
     if (params.i_chunk > 0) {
         if (size_t((params.i_chunk + 2)*n_ctx) >= tokens.size()) {
@@ -1376,7 +1383,11 @@ static bool compute_imatrix(llama_context * ctx, const common_params & params, c
         logits.reserve((size_t)n_ctx * n_vocab);
     }
 
-    LOG_INF("%s: computing over %d chunks, n_ctx=%d, batch_size=%d, n_seq=%d\n", __func__, n_chunk, n_ctx, n_batch, n_seq);
+    imatrix_log_section("Activation collection");
+    LOG_INF("%s: chunks=%d/%d n_ctx=%d batch_size=%d n_seq=%d ppl=%s quant_profile=%s\n",
+            __func__, n_chunk, n_chunk_max, n_ctx, n_batch, n_seq,
+            params.compute_ppl ? "on" : "off",
+            params.collect_quant_profile ? "on" : "off");
 
     std::vector<std::thread> workers(std::thread::hardware_concurrency() - 1);
 
@@ -1646,6 +1657,7 @@ int main(int argc, char ** argv) {
     g_collector.set_params(params);
 
     for (const auto & in_file : params.in_files) {
+        imatrix_log_section("Load existing imatrix");
         LOG_INF("%s : loading imatrix from '%s'\n", __func__, in_file.c_str());
         if (!g_collector.load_imatrix(in_file.c_str())) {
             LOG_ERR("%s : failed to load %s\n", __func__, in_file.c_str());
@@ -1654,6 +1666,7 @@ int main(int argc, char ** argv) {
     }
 
     if (params.prompt.empty()) {
+        imatrix_log_section("Combine imatrix files");
         LOG_INF("No prompt provided; combining precomputed matrices only.\n");
 
         if (params.in_files.empty()) {
@@ -1682,6 +1695,7 @@ int main(int argc, char ** argv) {
     params.warmup = false;
 
     // init
+    imatrix_log_section("Model initialization");
     auto llama_init = common_init_from_params(params);
 
     auto * model = llama_init->model();
@@ -1708,6 +1722,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    imatrix_log_section("Save imatrix");
     g_collector.save_imatrix();
 
     LOG("\n");

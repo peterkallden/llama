@@ -686,6 +686,10 @@ static void ensure_logit_gate_loaded(quantize_state_impl & qs) {
             qs.logit_family_delta_mean_mse.size());
 }
 
+static void quant_log_section(const char * title) {
+    LLAMA_LOG_INFO("\n==== %s ====\n", title);
+}
+
 // A normal GGUF tensor-type candidate. Future compression backends can participate in
 // the same global allocator by providing an equivalent rate-distortion candidate.
 struct rd_candidate {
@@ -5333,6 +5337,15 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     if (params->only_copy) {
         ftype = ml.ftype;
     }
+    quant_log_section("Quant input");
+    LLAMA_LOG_INFO("%s: output_ftype=%d dry_run=%s mixed_policy=%d rd_guided=%s repair=%s logit_search=%s\n",
+            __func__,
+            ftype,
+            params->dry_run ? "yes" : "no",
+            (int) params->mixed_quant_policy,
+            params->rd_guided ? "yes" : "no",
+            params->quant_repair ? "yes" : "no",
+            params->logit_guided_search ? "yes" : "no");
     std::unordered_map<std::string, std::vector<float>> i_data;
     const std::unordered_map<std::string, std::vector<float>> * imatrix_data = nullptr;
     if (params->imatrix) {
@@ -5499,6 +5512,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 __func__, ggml_type_name(kv.first), kv.second);
     }
 
+    quant_log_section("Analysis and allocation");
     if (params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_GUIDED ||
             params->mixed_quant_policy == LLAMA_MIXED_QUANT_POLICY_SPQR_LAYER_DELTA ||
             params->print_layer_delta_report ||
@@ -5542,6 +5556,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     // preliminary iteration over all weights
     //
 
+    quant_log_section("Initial tensor type selection");
     for (size_t i = 0; i < tensors.size(); ++i) {
         const auto * it = tensors[i];
         const struct ggml_tensor * tensor = it->tensor;
@@ -5580,6 +5595,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         }
     }
 
+    quant_log_section("Repair and budget passes");
     apply_rd_soft_target(qs, tensors, metadata, ml.n_elements);
     apply_budget_first_type_cap(qs, ml, tensors, metadata, imatrix_data, nthread);
     apply_spqr_repair(qs, ml, tensors, metadata, imatrix_data, nthread);
@@ -5654,6 +5670,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     // main loop: iterate over all weights
     //
 
+    quant_log_section(params->dry_run ? "Dry-run tensor accounting" : "Tensor quantization");
     for (size_t i = 0; i < tensors.size(); ++i) {
         const auto & weight = *tensors[i];
         const auto & tm = metadata[i];
@@ -5876,6 +5893,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         close_ofstream();
     }
 
+    quant_log_section("Quant summary");
     LLAMA_LOG_INFO("%s: model size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_org/1024.0/1024.0, total_size_org*8.0/ml.n_elements);
     LLAMA_LOG_INFO("%s: quant size  = %8.2f MiB (%.2f BPW)\n", __func__, total_size_new/1024.0/1024.0, total_size_new*8.0/ml.n_elements);
 
