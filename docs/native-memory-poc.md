@@ -35,6 +35,8 @@ Verified locally:
 - Console debug logging when chat fallback is activated, including the loaded model path and the embedding failure reason.
 - End-to-end local embedding smoke test using `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` for chat and `nomic-embed-text-v1.5.Q4_K_M.gguf` for embeddings: `add` persisted a 768-dimensional vector in Cozo, `search` retrieved it across processes, and Qwen called `memory_search` and answered from the returned memory.
 - The chat smoke test confirmed that the second embedding request reuses the already loaded Nomic model for the model-initiated `memory_search` call.
+- The PoC now includes a first `memory_remember` tool path: the model may propose one bounded memory candidate per chat turn, native policy decides whether to store it, and every decision is audit-logged to stderr for later policy tuning.
+- A local Qwen + Nomic smoke test exercised both remember outcomes: one model proposal as `goal` was rejected by policy and logged, then a second proposal as `fact` was accepted, stored in Cozo, and retrieved successfully by semantic search.
 
 The verified Qwen + Nomic configuration uses a dedicated embedding model. A separate smoke test is still needed before claiming that any individual chat GGUF is suitable for both generation and embeddings.
 
@@ -282,19 +284,36 @@ Stored memory is untrusted. The PoC:
 
 ## Policy-Gated Memory Remember
 
-`memory_remember` should be a proposal tool, not a direct database write. A model call may propose a bounded JSON object containing `kind`, `content`, `importance`, `confidence`, and a short rationale, but native code must make the write decision.
+`memory_remember` is implemented as a proposal tool, not a direct database write. A model call may propose a bounded JSON object containing `kind`, `content`, `importance`, `confidence`, and a short rationale, but native code makes the write decision and logs the outcome.
 
-The first implementation should apply this deterministic sequence:
+The current deterministic sequence is:
 
 1. Validate a strict schema, size limits, supported memory kinds, and finite numeric ranges.
-2. Require explicit session-level user opt-in before allowing any model-initiated proposal to become durable.
-3. Reject system-like instructions, credentials, secrets, untrusted third-party directives, and content that attempts to alter policy or tool behavior.
-4. Search for near-duplicate or contradictory memories before writing; return a proposal or conflict instead of silently overwriting existing knowledge.
-5. Auto-store only low-risk user facts, preferences, and explicitly requested procedures with adequate confidence. Require user confirmation for sensitive, ambiguous, or consequential content.
-6. Store provenance: source role, source turn identifier, model-assistance marker, policy version, decision reason, and timestamp.
-7. Emit an audit event for every accepted, rejected, deferred, or confirmation-required proposal.
+2. Allow automatic storage only for low-risk `fact`, `preference`, and `procedure` memories. Other kinds are rejected by policy in this first version.
+3. Reject system-like instructions, credentials, secrets, and content that attempts to alter policy or tool behavior.
+4. Search for near-duplicate or possibly conflicting memories before writing; return `duplicate` or `conflict` instead of silently overwriting existing knowledge.
+5. Auto-store accepted memories immediately, with native-generated IDs and provenance metadata including policy version, decision, reason, source role, and timestamp.
+6. Emit an audit log event for every accepted, rejected, duplicate, or conflict decision so we can calibrate the policy using real traces.
 
-The chat tool executor should follow the existing `memory_search` pattern: parse one constrained call, invoke a native policy evaluator, return a structured result to the model, and perform a final tool-free answer turn. The model must never receive direct Cozo access or choose an arbitrary record ID to overwrite.
+The chat tool executor follows the existing `memory_search` pattern: parse one constrained call, invoke a native policy evaluator, return a structured result to the model, and perform a final tool-free answer turn. The model never receives direct Cozo access or chooses an arbitrary record ID to overwrite.
+
+Enable it with `--memory-remember-tool`:
+
+```powershell
+.\build-cozo\bin\Release\llama-memory-poc.exe chat `
+  --backend cozo `
+  --memory-db .\work\memory.db `
+  --model .\models\poc-qwen15b\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
+  --embedding-model .\models\poc-nomic-embed\nomic-embed-text-v1.5.Q4_K_M.gguf `
+  --prompt "Kom ihåg att projektets kodnamn är SkyNet." `
+  --memory-remember-tool
+```
+
+When the tool is enabled and embeddings are available, the console now emits audit lines such as:
+
+```text
+audit: memory_remember decision=accept kind=fact reason=accepted low-risk memory related=0 content="The project codename is SkyNet."
+```
 
 ## Known Limitations
 
@@ -302,19 +321,22 @@ The chat tool executor should follow the existing `memory_search` pattern: parse
 - Cozo graph expansion is intentionally minimal in this first adapter; generic graph behavior is covered by the in-memory backend.
 - The PoC schema does not yet include an automated migration path; recreate pre-fix Cozo databases rather than attempting to reuse them.
 - `memory_search` is available only inside `llama-memory-poc chat`; it is not a server endpoint or an OpenAI-compatible server-side tool executor.
+- `memory_remember` is also chat-only in this PoC; it is not yet exposed through a server endpoint.
 - Tool use requires both a chat template that supports tool calls and query embeddings. The validated local setup uses Qwen2.5-1.5B-Instruct for chat plus the dedicated Nomic embedding GGUF; models that cannot provide an embedding still log the fallback reason and continue with ordinary chat.
 - Embedding model reuse is process-local; separate CLI invocations still load the model independently.
 - For pooling-free models, the PoC falls back to averaging token embeddings before normalization; this is pragmatic rather than benchmarked.
 - A dedicated embedding GGUF must be loaded with llama.cpp embedding outputs enabled. The PoC enables this on its local embedding context so encoder models such as `nomic-embed-text-v1.5` can provide their pooled sequence embedding.
+- The first remember policy is intentionally conservative and lexical in places; conflict detection is useful enough for a PoC but not yet benchmarked against a real memory corpus.
 
 ## What Remains
 
 Recommended next implementation steps:
 
-1. Design and implement a policy-gated `memory_remember` flow; do not write unrestricted model prose directly into memory.
+1. Improve the first policy-gated `memory_remember` flow; it now exists, but it still needs stronger contradiction handling and better risk classification.
 2. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
-3. Decide whether a long-lived embedding service or server endpoint is warranted for reuse across CLI invocations.
-4. Benchmark embedding quality and retrieval thresholds on a representative memory corpus; the current weights and prompts are pragmatic PoC defaults.
+3. Improve `memory_remember` policy quality with stronger contradiction handling, better sensitive-data detection, and benchmarked thresholds.
+4. Decide whether a long-lived embedding service or server endpoint is warranted for reuse across CLI invocations.
+5. Benchmark embedding quality and retrieval thresholds on a representative memory corpus; the current weights and prompts are pragmatic PoC defaults.
 
 ## Future Work
 

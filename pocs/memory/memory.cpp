@@ -1,5 +1,6 @@
 #include "memory/memory-context.h"
 #include "memory/memory-in-memory.h"
+#include "memory/memory-policy.h"
 #include "memory/memory-retrieval.h"
 
 #include "common.h"
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <sstream>
 
@@ -45,6 +47,7 @@ struct args {
     int n_gpu_layers = 99;
     bool record_episode = false;
     bool enable_memory_search_tool = false;
+    bool enable_memory_remember_tool = false;
 };
 
 static void usage(const char * argv0) {
@@ -53,7 +56,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -129,6 +132,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             out.record_episode = true;
         } else if (strcmp(argv[i], "--memory-search-tool") == 0) {
             out.enable_memory_search_tool = true;
+        } else if (strcmp(argv[i], "--memory-remember-tool") == 0) {
+            out.enable_memory_remember_tool = true;
         } else {
             fprintf(stderr, "unknown argument: %s\n", argv[i]);
             return false;
@@ -139,6 +144,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
 
 static constexpr size_t k_memory_search_max_limit = 8;
 static constexpr size_t k_memory_search_max_query_chars = 1024;
+static constexpr size_t k_memory_remember_max_content_chars = 512;
+static constexpr size_t k_memory_remember_max_rationale_chars = 240;
 
 static bool ensure_embedding(
         const args & a,
@@ -152,6 +159,14 @@ static common_chat_tool memory_search_tool_definition() {
     tool.name = "memory_search";
     tool.description = "Search the user's stored memory for relevant factual context. This is read-only. Use it only when stored memory could answer the user's question.";
     tool.parameters = R"({"type":"object","properties":{"query":{"type":"string","description":"Focused natural-language memory query.","maxLength":1024},"limit":{"type":"integer","description":"Maximum number of memories to return.","minimum":1,"maximum":8}},"required":["query"],"additionalProperties":false})";
+    return tool;
+}
+
+static common_chat_tool memory_remember_tool_definition() {
+    common_chat_tool tool;
+    tool.name = "memory_remember";
+    tool.description = "Propose a low-risk durable memory based on what the user explicitly stated. Native policy may reject, deduplicate, or store it.";
+    tool.parameters = R"({"type":"object","properties":{"kind":{"type":"string","description":"Memory kind to propose.","enum":["fact","preference","procedure","goal","observation","reflection","episode"]},"content":{"type":"string","description":"Single durable memory candidate stated as a concise sentence.","maxLength":512},"importance":{"type":"number","description":"Estimated importance from 0 to 1.","minimum":0.0,"maximum":1.0},"confidence":{"type":"number","description":"Estimated confidence from 0 to 1.","minimum":0.0,"maximum":1.0},"rationale":{"type":"string","description":"Short reason this might be worth remembering.","maxLength":240}},"required":["kind","content"],"additionalProperties":false})";
     return tool;
 }
 
@@ -224,6 +239,137 @@ static std::string memory_search_tool_result(
         result["count"] = hits.size();
         result["context"] = common_memory_render_context(hits, context_config);
         fprintf(stderr, "debug: memory_search returned %zu result(s)\n", hits.size());
+    } catch (const std::exception & e) {
+        result["error"] = std::string("invalid tool arguments: ") + e.what();
+    }
+
+    return result.dump();
+}
+
+static void log_memory_remember_audit(
+        common_memory_remember_decision decision,
+        const common_memory_remember_request & request,
+        const common_memory_remember_result & result) {
+    fprintf(stderr,
+        "audit: memory_remember decision=%s kind=%s reason=%s related=%zu content=\"%s\"\n",
+        common_memory_remember_decision_name(decision),
+        common_memory_kind_name(request.kind),
+        result.reason.c_str(),
+        result.related_hits.size(),
+        request.content.c_str());
+}
+
+static std::string memory_remember_tool_result(
+        common_memory_store & store,
+        const args & a,
+        const std::string & arguments) {
+    json result = json::object();
+    result["ok"] = false;
+
+    try {
+        const json request = json::parse(arguments);
+        if (!request.is_object()) {
+            result["error"] = "arguments must be a JSON object";
+            return result.dump();
+        }
+        for (const auto & item : request.items()) {
+            if (item.key() != "kind" && item.key() != "content" && item.key() != "importance" &&
+                    item.key() != "confidence" && item.key() != "rationale") {
+                result["error"] = "unsupported argument: " + item.key();
+                return result.dump();
+            }
+        }
+        if (!request.contains("kind") || !request.at("kind").is_string()) {
+            result["error"] = "kind must be a string";
+            return result.dump();
+        }
+        if (!request.contains("content") || !request.at("content").is_string()) {
+            result["error"] = "content must be a string";
+            return result.dump();
+        }
+
+        common_memory_remember_request proposal;
+        if (!common_memory_kind_parse(request.at("kind").get<std::string>(), proposal.kind)) {
+            result["error"] = "unsupported memory kind";
+            return result.dump();
+        }
+        proposal.content = request.at("content").get<std::string>();
+        if (proposal.content.empty() || proposal.content.size() > k_memory_remember_max_content_chars) {
+            result["error"] = "content must contain between 1 and 512 characters";
+            return result.dump();
+        }
+
+        if (request.contains("importance")) {
+            if (!request.at("importance").is_number()) {
+                result["error"] = "importance must be a number";
+                return result.dump();
+            }
+            proposal.importance = request.at("importance").get<float>();
+        }
+        if (request.contains("confidence")) {
+            if (!request.at("confidence").is_number()) {
+                result["error"] = "confidence must be a number";
+                return result.dump();
+            }
+            proposal.confidence = request.at("confidence").get<float>();
+        }
+        if (request.contains("rationale")) {
+            if (!request.at("rationale").is_string()) {
+                result["error"] = "rationale must be a string";
+                return result.dump();
+            }
+            proposal.rationale = request.at("rationale").get<std::string>();
+            if (proposal.rationale.size() > k_memory_remember_max_rationale_chars) {
+                result["error"] = "rationale must contain at most 240 characters";
+                return result.dump();
+            }
+        }
+
+        std::vector<float> embedding;
+        std::string error;
+        if (!ensure_embedding(a, proposal.content, embedding, "tool memory", error)) {
+            result["error"] = "unable to generate a memory embedding: " + error;
+            return result.dump();
+        }
+
+        const auto decision = common_memory_evaluate_remember_request(
+            store, proposal, embedding, std::time(nullptr), error);
+        if (!error.empty()) {
+            result["error"] = "memory policy evaluation failed: " + error;
+            return result.dump();
+        }
+
+        result["ok"] = true;
+        result["decision"] = common_memory_remember_decision_name(decision.decision);
+        result["reason"] = decision.reason;
+        result["kind"] = common_memory_kind_name(proposal.kind);
+        result["content"] = proposal.content;
+        result["related_count"] = decision.related_hits.size();
+        if (!decision.related_hits.empty()) {
+            json related = json::array();
+            for (const auto & hit : decision.related_hits) {
+                related.push_back({
+                    {"id", hit.memory.id},
+                    {"kind", common_memory_kind_name(hit.memory.kind)},
+                    {"score", hit.final_score},
+                    {"content", hit.memory.content},
+                });
+            }
+            result["related"] = std::move(related);
+        }
+
+        if (decision.record.has_value()) {
+            if (!store.put(*decision.record, error)) {
+                result["ok"] = false;
+                result["decision"] = "reject";
+                result["error"] = "failed to persist accepted memory: " + error;
+            } else {
+                result["id"] = decision.record->id;
+                fprintf(stderr, "debug: memory_remember stored %s\n", decision.record->id.c_str());
+            }
+        }
+
+        log_memory_remember_audit(decision.decision, proposal, decision);
     } catch (const std::exception & e) {
         result["error"] = std::string("invalid tool arguments: ") + e.what();
     }
@@ -542,7 +688,7 @@ static int run_chat(common_memory_store & store, const args & a) {
 
     common_chat_templates_ptr chat_templates = common_chat_templates_init(model, "");
     std::vector<common_chat_msg> messages;
-    if (!memory_context.empty() || (a.enable_memory_search_tool && memory_enabled)) {
+    if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool) && memory_enabled)) {
         common_chat_msg system_msg;
         system_msg.role = "system";
         system_msg.content =
@@ -565,6 +711,12 @@ static int run_chat(common_memory_store & store, const args & a) {
     } else if (a.enable_memory_search_tool) {
         fprintf(stderr, "debug: memory_search tool disabled because query embeddings are unavailable\n");
     }
+    if (a.enable_memory_remember_tool && memory_enabled) {
+        tools.push_back(memory_remember_tool_definition());
+        fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
+    } else if (a.enable_memory_remember_tool) {
+        fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
+    }
 
     std::string output;
     common_chat_params chat_params;
@@ -586,15 +738,22 @@ static int run_chat(common_memory_store & store, const args & a) {
     if (!assistant_msg.tool_calls.empty()) {
         common_chat_msg tool_msg;
         tool_msg.role = "tool";
-        if (assistant_msg.tool_calls.size() != 1 || assistant_msg.tool_calls.front().name != "memory_search") {
-            tool_msg.content = R"({"ok":false,"error":"only one memory_search call is allowed per chat turn"})";
+        if (assistant_msg.tool_calls.size() != 1) {
+            tool_msg.content = R"({"ok":false,"error":"only one memory tool call is allowed per chat turn"})";
             fprintf(stderr, "warning: rejected unsupported memory tool call\n");
         } else {
             const common_chat_tool_call & call = assistant_msg.tool_calls.front();
             tool_msg.tool_name = call.name;
-            tool_msg.tool_call_id = call.id.empty() ? "memory-search-1" : call.id;
+            tool_msg.tool_call_id = call.id.empty() ? "memory-tool-1" : call.id;
             assistant_msg.tool_calls.front().id = tool_msg.tool_call_id;
-            tool_msg.content = memory_search_tool_result(store, a, call.arguments);
+            if (call.name == "memory_search") {
+                tool_msg.content = memory_search_tool_result(store, a, call.arguments);
+            } else if (call.name == "memory_remember") {
+                tool_msg.content = memory_remember_tool_result(store, a, call.arguments);
+            } else {
+                tool_msg.content = R"({"ok":false,"error":"unsupported memory tool"})";
+                fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
+            }
         }
         messages.push_back(std::move(assistant_msg));
         messages.push_back(std::move(tool_msg));

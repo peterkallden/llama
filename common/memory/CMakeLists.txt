@@ -5,6 +5,8 @@ add_library(${TARGET}
     memory-context.h
     memory-in-memory.cpp
     memory-in-memory.h
+    memory-policy.cpp
+    memory-policy.h
     memory-retrieval.cpp
     memory-retrieval.h
     memory-store.h
