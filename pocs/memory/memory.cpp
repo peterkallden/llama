@@ -290,19 +290,23 @@ static int run_chat(common_memory_store & store, const args & a) {
     query.embedding = a.embedding;
     query.limit = a.limit;
     query.token_budget = a.memory_token_budget;
-    if (!ensure_embedding(a, a.prompt, query.embedding, "query", error)) {
-        fprintf(stderr, "failed to generate query embedding: %s\n", error.c_str());
-        return 1;
+    bool memory_enabled = true;
+    if (query.embedding.empty() && !ensure_embedding(a, a.prompt, query.embedding, "query", error)) {
+        fprintf(stderr, "warning: memory retrieval disabled: %s\n", error.c_str());
+        memory_enabled = false;
     }
 
-    common_memory_retrieval retrieval(store);
-    auto hits = retrieval.retrieve(query, error);
-    if (!error.empty()) {
-        fprintf(stderr, "memory retrieval failed: %s\n", error.c_str());
-        return 1;
-    }
-    for (const auto & hit : hits) {
-        fprintf(stderr, "memory: id=%s score=%.4f provenance=%s\n", hit.memory.id.c_str(), hit.final_score, hit.provenance.c_str());
+    std::vector<common_memory_hit> hits;
+    if (memory_enabled) {
+        common_memory_retrieval retrieval(store);
+        hits = retrieval.retrieve(query, error);
+        if (!error.empty()) {
+            fprintf(stderr, "memory retrieval failed: %s\n", error.c_str());
+            return 1;
+        }
+        for (const auto & hit : hits) {
+            fprintf(stderr, "memory: id=%s score=%.4f provenance=%s\n", hit.memory.id.c_str(), hit.final_score, hit.provenance.c_str());
+        }
     }
 
     common_memory_context_config ctx_cfg;
@@ -389,6 +393,10 @@ static int run_chat(common_memory_store & store, const args & a) {
     printf("\n");
 
     if (a.record_episode) {
+        if (!memory_enabled) {
+            fprintf(stderr, "warning: skipping episode recording because no query embedding could be generated\n");
+            goto done;
+        }
         common_memory_record episode;
         episode.id = "episode-" + std::to_string(std::time(nullptr));
         episode.kind = common_memory_kind::episode;
@@ -402,6 +410,7 @@ static int run_chat(common_memory_store & store, const args & a) {
         }
     }
 
+done:
     fprintf(stderr, "decoded %d tokens\n", n_decode);
     llama_sampler_free(smpl);
     llama_free(ctx);

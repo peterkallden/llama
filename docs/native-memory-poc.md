@@ -30,11 +30,12 @@ Verified locally:
 - `llama-memory-poc.exe` produced from the Cozo-enabled build.
 - Cozo-backed integration test covering `open`, `put`, `get`, `search`, `relate`, `close`, `reopen`, and `erase` with release-safe checks.
 - Direct Windows CLI smoke using `add`, `relate`, and `search` across separate Cozo-backed processes.
+- Chat smoke test with `llama-memory-poc chat` against `Phi-3.5-mini-instruct-confidence-q4-v5.gguf`, with the chat path falling back to prompt-only mode when the model does not expose token embeddings.
 
 Not verified locally:
 
-- Inference-backed local embedding generation with a real GGUF model.
-- Inference smoke test with a real model through `llama-memory-poc chat`.
+- Inference-backed local embedding generation with a GGUF model that exposes token embeddings.
+- Chat-mode memory retrieval with a real embedding-capable GGUF model.
 
 ```mermaid
 flowchart TD
