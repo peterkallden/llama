@@ -4,6 +4,31 @@ This proof of concept adds a small native long-term memory layer outside `liblla
 
 The model consumes retrieved memory only as prompt context. Memory content is treated as untrusted data and is never rendered as system instructions.
 
+## Current Status
+
+Implemented in this branch:
+
+- `LLAMA_MEMORY` and `LLAMA_MEMORY_COZO` CMake options.
+- Backend-neutral memory records, queries, hits, and store interface.
+- Deterministic in-memory backend for tests and single-process experiments.
+- Retrieval service with configurable PoC scoring weights.
+- Safe context renderer that emits a clearly delimited `<runtime_memory>` block.
+- Optional CozoDB backend, isolated behind `LLAMA_MEMORY_COZO`.
+- `llama-memory-poc` executable with `add`, `search`, `relate`, and `chat` commands.
+- Unit tests for the generic memory layer and in-memory backend.
+
+Verified locally:
+
+- Generic memory build without Cozo.
+- Focused memory tests.
+- Core `llama` build with memory disabled.
+- Configure-time failure when `LLAMA_MEMORY_COZO=ON` is requested without Cozo headers.
+
+Not verified locally:
+
+- Cozo persistence and relation traversal, because the Cozo C API headers/library were not installed in this environment.
+- Inference smoke test with a real model through `llama-memory-poc chat`.
+
 ```mermaid
 flowchart TD
     user[user] --> poc[agent / memory PoC]
@@ -45,11 +70,26 @@ cmake --build build-memory --config Release -j
 ctest --test-dir build-memory -C Release --output-on-failure
 ```
 
+Focused generic-memory validation:
+
+```sh
+cmake --build build-memory --config Release --target \
+  test-memory-store test-memory-retrieval test-memory-context llama-memory-poc -j
+
+ctest --test-dir build-memory -C Release -R "test-memory" --output-on-failure
+```
+
 Normal build with memory disabled:
 
 ```sh
 cmake -B build-normal -DLLAMA_MEMORY=OFF
 cmake --build build-normal --config Release -j
+```
+
+Fast disabled-memory leak check:
+
+```sh
+cmake --build build-normal --config Release --target llama -j
 ```
 
 Cozo build:
@@ -66,6 +106,12 @@ cmake --build build-cozo --config Release -j
 ```
 
 If `LLAMA_MEMORY_COZO=ON` is set and `cozo_c.h` or the Cozo library cannot be found, configuration fails with a precise CMake error. No dependency is downloaded automatically.
+
+Expected configure-time failure when Cozo is requested but not installed:
+
+```text
+LLAMA_MEMORY_COZO=ON requires Cozo C API headers. Set COZO_INCLUDE_DIR to the directory containing cozo_c.h.
+```
 
 ## CLI
 
@@ -97,6 +143,19 @@ The PoC executable is `llama-memory-poc` and supports `add`, `search`, `relate`,
 ```
 
 The in-memory backend is deterministic and intended for tests and single-process experiments. Persistent cross-process CLI workflows require the Cozo backend.
+
+For a quick in-memory smoke test of the executable:
+
+```sh
+./build/bin/llama-memory-poc add \
+  --id fact-1 \
+  --kind fact \
+  --content "Package search must run when the promotion budget is zero" \
+  --importance 0.8 \
+  --confidence 0.9
+```
+
+This confirms argument parsing and store insertion for the default in-memory backend, but it does not prove persistence because the process exits after the command.
 
 ## Data Model
 
@@ -168,6 +227,31 @@ Stored memory is untrusted. The PoC:
 - Chat mode prepends a safe memory context block to the prompt rather than implementing model-specific prompt construction.
 - The model-callable `memory_search` tool is documented as a future extension point and is not wired into server tool calling in this pass.
 
+## What Remains
+
+Recommended next implementation steps:
+
+1. Install or vendor a supported Cozo C API build for the target platforms.
+2. Compile with `LLAMA_MEMORY_COZO=ON` and add Cozo integration tests that create a temporary database, insert records, reopen it, search, relate records, and verify persistence.
+3. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
+4. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
+5. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and tested.
+6. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
+7. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
+
 ## Future Work
 
 Future phases may add candidate memories, semantic consolidation, reflection records, dream or idle consolidation, forgetting, contradiction detection, procedural memory, server endpoints, and controlled memory tools such as `memory_search` or a policy-gated `memory_remember`.
+
+## Branch Commits
+
+This PoC was split into local commits:
+
+```text
+71e718198 poc(memory): add backend-neutral memory interface
+de813c507 poc(memory): add deterministic in-memory backend
+82e91f55c poc(memory): add retrieval ranking and context rendering
+ad3b96164 poc(memory): add optional CozoDB backend
+5c50e5716 poc(memory): add native memory PoC CLI
+1fa07cf3a docs(memory): document native Cozo memory PoC
+```
