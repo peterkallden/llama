@@ -214,6 +214,15 @@ llama_build_and_test(
 )
 llama_build_and_test(test-regex-partial.cpp)
 
+if (LLAMA_MEMORY)
+    llama_build_and_test(test-memory-store.cpp)
+    target_link_libraries(test-memory-store PRIVATE llama-memory)
+    llama_build_and_test(test-memory-retrieval.cpp)
+    target_link_libraries(test-memory-retrieval PRIVATE llama-memory)
+    llama_build_and_test(test-memory-context.cpp)
+    target_link_libraries(test-memory-context PRIVATE llama-memory)
+endif()
+
 if (NOT ${CMAKE_SYSTEM_PROCESSOR} MATCHES "s390x")
     set(MODEL_NAME "tinyllamas/stories15M-q4_0.gguf")
     set(MODEL_HASH "SHA256=66967fbece6dbe97886593fdbb73589584927e29119ec31f08090732d1861739")
