@@ -330,6 +330,51 @@ static std::string embedding_model_path(const args & a) {
     return a.model;
 }
 
+struct embedding_model_cache {
+    ~embedding_model_cache() {
+        if (model != nullptr) {
+            llama_model_free(model);
+        }
+    }
+
+    bool load(const std::string & requested_path, int requested_n_gpu_layers, std::string & error) {
+        if (model != nullptr && path == requested_path && n_gpu_layers == requested_n_gpu_layers) {
+            fprintf(stderr, "debug: reusing embedding model %s\n", path.c_str());
+            return true;
+        }
+
+        if (model != nullptr) {
+            llama_model_free(model);
+            model = nullptr;
+            path.clear();
+        }
+
+        ggml_backend_load_all();
+
+        llama_model_params model_params = llama_model_default_params();
+        model_params.n_gpu_layers = requested_n_gpu_layers;
+        model = llama_model_load_from_file(requested_path.c_str(), model_params);
+        if (model == nullptr) {
+            error = "failed to load embedding model: " + requested_path;
+            return false;
+        }
+
+        path = requested_path;
+        n_gpu_layers = requested_n_gpu_layers;
+        fprintf(stderr, "debug: loaded embedding model %s\n", path.c_str());
+        return true;
+    }
+
+    std::string path;
+    int n_gpu_layers = -1;
+    llama_model * model = nullptr;
+};
+
+static embedding_model_cache & local_embedding_model_cache() {
+    static embedding_model_cache cache;
+    return cache;
+}
+
 static bool compute_text_embedding(
         const std::string & model_path,
         const std::string & text,
@@ -345,27 +390,21 @@ static bool compute_text_embedding(
         return false;
     }
 
-    ggml_backend_load_all();
-
-    llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = n_gpu_layers;
-    llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
-    if (model == nullptr) {
-        error = "failed to load embedding model: " + model_path;
+    embedding_model_cache & cache = local_embedding_model_cache();
+    if (!cache.load(model_path, n_gpu_layers, error)) {
         return false;
     }
+    llama_model * model = cache.model;
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
     const int n_tokens = -llama_tokenize(vocab, text.c_str(), text.size(), nullptr, 0, true, true);
     if (n_tokens <= 0) {
-        llama_model_free(model);
         error = "failed to tokenize text for embedding generation";
         return false;
     }
 
     std::vector<llama_token> tokens(n_tokens);
     if (llama_tokenize(vocab, text.c_str(), text.size(), tokens.data(), tokens.size(), true, true) < 0) {
-        llama_model_free(model);
         error = "failed to tokenize text for embedding generation";
         return false;
     }
@@ -377,7 +416,6 @@ static bool compute_text_embedding(
     ctx_params.embeddings = true;
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == nullptr) {
-        llama_model_free(model);
         error = "failed to create embedding context";
         return false;
     }
@@ -386,7 +424,6 @@ static bool compute_text_embedding(
     llama_memory_clear(llama_get_memory(ctx), true);
     if (llama_decode(ctx, batch) != 0) {
         llama_free(ctx);
-        llama_model_free(model);
         error = "embedding decode failed";
         return false;
     }
@@ -410,7 +447,6 @@ static bool compute_text_embedding(
         }
         if (used == 0) {
             llama_free(ctx);
-            llama_model_free(model);
             error = "embedding model did not expose token embeddings";
             return false;
         }
@@ -422,7 +458,6 @@ static bool compute_text_embedding(
         const float * embd = llama_get_embeddings_seq(ctx, 0);
         if (embd == nullptr) {
             llama_free(ctx);
-            llama_model_free(model);
             error = "embedding model did not expose a pooled sequence embedding";
             return false;
         }
@@ -430,7 +465,6 @@ static bool compute_text_embedding(
     }
 
     llama_free(ctx);
-    llama_model_free(model);
     error.clear();
     return true;
 }
