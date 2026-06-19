@@ -80,11 +80,14 @@ bool common_memory_cozo_store::run(const std::string & script, const std::string
 bool common_memory_cozo_store::open(const std::string & path, std::string & error) {
     close();
     const std::string db_path = path.empty() ? "memory.cozo" : path;
-    db_id = cozo_open_db("sqlite", db_path.c_str(), "{}");
-    if (db_id < 0) {
-        error = "failed to open Cozo database at path: " + db_path;
+    int32_t opened_db_id = -1;
+    char * open_error = cozo_open_db("sqlite", db_path.c_str(), "{}", &opened_db_id);
+    if (open_error != nullptr) {
+        error = open_error;
+        cozo_free_str(open_error);
         return false;
     }
+    db_id = opened_db_id;
     std::string result;
     if (!run(common_memory_cozo_schema_script(), "{}", result, error)) {
         close();
