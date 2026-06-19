@@ -121,9 +121,21 @@ option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured
 
 option(LLAMA_MEMORY      "llama: build native memory PoC support" OFF)
 option(LLAMA_MEMORY_COZO "llama-memory: build optional CozoDB backend" OFF)
+option(LLAMA_PLAN "llama: build native dynamic plan PoC support" OFF)
+option(LLAMA_PLAN_COZO "llama-plan: build optional CozoDB backend" OFF)
+option(LLAMA_AGENT_REFLECTION "llama: build bounded agent reflection PoC support" OFF)
 
 if (LLAMA_MEMORY_COZO AND NOT LLAMA_MEMORY)
     message(FATAL_ERROR "LLAMA_MEMORY_COZO=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_PLAN=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN_COZO AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_PLAN_COZO=ON requires LLAMA_PLAN=ON")
+endif()
+if (LLAMA_AGENT_REFLECTION AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_AGENT_REFLECTION=ON requires LLAMA_PLAN=ON")
 endif()
 
 
