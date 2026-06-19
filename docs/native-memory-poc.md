@@ -23,10 +23,12 @@ Verified locally:
 - Focused memory tests.
 - Core `llama` build with memory disabled.
 - Configure-time failure when `LLAMA_MEMORY_COZO=ON` is requested without Cozo headers.
+- Cozo-enabled Windows build using the local Cozo 0.7.6 C API release.
+- `llama-memory-poc.exe` produced from the Cozo-enabled build.
 
 Not verified locally:
 
-- Cozo persistence and relation traversal, because the Cozo C API headers/library were not installed in this environment.
+- Cozo persistence and relation traversal through a runtime integration test.
 - Inference smoke test with a real model through `llama-memory-poc chat`.
 
 ```mermaid
@@ -104,6 +106,30 @@ cmake -B build-cozo \
   -DLLAMA_BUILD_EXAMPLES=ON
 cmake --build build-cozo --config Release -j
 ```
+
+### Local Windows Cozo Setup
+
+The local development environment currently uses Cozo 0.7.6 outside version control:
+
+- `work/cozo`: checkout of the Cozo source repository.
+- `work/cozo-release/cozo_c.h`: Cozo C API header.
+- `work/cozo-release/win/libcozo_c-0.7.6-x86_64-pc-windows-msvc.lib`: official Windows C API static library.
+
+Configure and build the Cozo-enabled PoC from the repository root:
+
+```powershell
+cmake -B build-cozo `
+  -DLLAMA_MEMORY=ON `
+  -DLLAMA_MEMORY_COZO=ON `
+  -DCOZO_INCLUDE_DIR="$PWD/work/cozo-release" `
+  -DCOZO_LIBRARY="$PWD/work/cozo-release/win/libcozo_c-0.7.6-x86_64-pc-windows-msvc.lib" `
+  -DLLAMA_BUILD_TESTS=ON `
+  -DLLAMA_BUILD_EXAMPLES=ON
+
+cmake --build build-cozo --config Release --target llama-memory-poc -j
+```
+
+On Windows, the CMake target also links the system libraries required by Cozo's static release. The resulting executable is `build-cozo/bin/Release/llama-memory-poc.exe`.
 
 If `LLAMA_MEMORY_COZO=ON` is set and `cozo_c.h` or the Cozo library cannot be found, configuration fails with a precise CMake error. No dependency is downloaded automatically.
 
@@ -231,13 +257,12 @@ Stored memory is untrusted. The PoC:
 
 Recommended next implementation steps:
 
-1. Install or vendor a supported Cozo C API build for the target platforms.
-2. Compile with `LLAMA_MEMORY_COZO=ON` and add Cozo integration tests that create a temporary database, insert records, reopen it, search, relate records, and verify persistence.
-3. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
-4. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
-5. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and tested.
-6. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
-7. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
+1. Add Cozo integration tests that create a temporary database, insert records, reopen it, search, relate records, and verify persistence.
+2. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
+3. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
+4. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and the Cozo integration tests pass.
+5. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
+6. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
 
 ## Future Work
 
@@ -254,4 +279,6 @@ de813c507 poc(memory): add deterministic in-memory backend
 ad3b96164 poc(memory): add optional CozoDB backend
 5c50e5716 poc(memory): add native memory PoC CLI
 1fa07cf3a docs(memory): document native Cozo memory PoC
+a9085efd0 docs(memory): clarify PoC status and build steps
+890bceb94 poc(memory): fix Cozo Windows linking
 ```
