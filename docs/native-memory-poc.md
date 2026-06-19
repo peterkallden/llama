@@ -187,6 +187,20 @@ The PoC executable is `llama-memory-poc` and supports `add`, `search`, `relate`,
   --memory-token-budget 768
 ```
 
+To let a chat model choose one explicit, read-only memory lookup, add `--memory-search-tool`:
+
+```sh
+./build/bin/llama-memory-poc chat \
+  --backend cozo \
+  --memory-db ./memory.db \
+  --model ./models/tool-capable-chat-model.gguf \
+  --embedding-model ./models/embedding.gguf \
+  --prompt "What did I previously decide about package search?" \
+  --memory-search-tool
+```
+
+The tool is opt-in and is advertised only when local query embeddings are available. It exposes exactly one function, `memory_search`, with a required natural-language `query` (1-1024 characters) and an optional `limit` (1-8). The PoC accepts at most one call per chat turn, performs retrieval through the existing retrieval layer, caps the rendered result to the configured memory token budget, and then produces the final answer with no tools enabled. It never accepts CozoScript, model-supplied memory IDs, arbitrary filters, or any write operation. Console debug output records tool activation, result count, and the embedding-related fallback state.
+
 The in-memory backend is deterministic and intended for tests and single-process experiments. Persistent cross-process CLI workflows require the Cozo backend.
 
 The Cozo schema stores embeddings as variable-length float lists because the PoC scores candidates in C++ and intentionally does not require one fixed embedding dimension. Recreate any database made by the earlier PoC schema before using this build; that schema used a zero-length fixed vector declaration and cannot store real embeddings.
@@ -271,7 +285,8 @@ Stored memory is untrusted. The PoC:
 - The in-memory backend is not persistent across CLI invocations.
 - Cozo graph expansion is intentionally minimal in this first adapter; generic graph behavior is covered by the in-memory backend.
 - The PoC schema does not yet include an automated migration path; recreate pre-fix Cozo databases rather than attempting to reuse them.
-- The model-callable `memory_search` tool is documented as a future extension point and is not wired into server tool calling in this pass.
+- `memory_search` is available only inside `llama-memory-poc chat`; it is not a server endpoint or an OpenAI-compatible server-side tool executor.
+- Tool use requires both a chat template that supports tool calls and a model that can provide local query embeddings. The Phi-3.5 smoke-test model used here does not expose token embeddings, so the PoC logs that the tool is disabled and continues with ordinary chat fallback.
 - Local embedding generation currently loads a model on demand inside the PoC process and is not yet optimized for reuse across commands.
 - For pooling-free models, the PoC falls back to averaging token embeddings before normalization; this is pragmatic rather than benchmarked.
 
@@ -279,10 +294,10 @@ Stored memory is untrusted. The PoC:
 
 Recommended next implementation steps:
 
-1. Smoke-test local embedding generation and `chat` mode with a real GGUF model.
-2. Add a controlled `memory_search` model-callable tool now that the Cozo-backed CLI path is clean and tested.
-3. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
-4. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
+1. Smoke-test a complete `memory_search` call with a GGUF that supports both tool calling and embeddings.
+2. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
+3. Add a policy-gated memory write flow later; do not write unrestricted model prose directly into memory.
+4. Reuse loaded embedding models across repeated searches before treating the PoC as performance-oriented.
 
 ## Future Work
 
