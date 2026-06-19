@@ -31,6 +31,7 @@ Verified locally:
 - Cozo-backed integration test covering `open`, `put`, `get`, `search`, `relate`, `close`, `reopen`, and `erase` with release-safe checks.
 - Direct Windows CLI smoke using `add`, `relate`, and `search` across separate Cozo-backed processes.
 - Chat smoke test with `llama-memory-poc chat` against `Phi-3.5-mini-instruct-confidence-q4-v5.gguf`, with the chat path falling back to prompt-only mode when the model does not expose token embeddings.
+- Console debug logging when chat fallback is activated, including the loaded model path and the embedding failure reason.
 
 Not verified locally:
 

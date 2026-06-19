@@ -285,6 +285,7 @@ static bool ensure_embedding(
 
 static int run_chat(common_memory_store & store, const args & a) {
     std::string error;
+    std::string fallback_reason;
     common_memory_query query;
     query.text = a.prompt;
     query.embedding = a.embedding;
@@ -293,6 +294,7 @@ static int run_chat(common_memory_store & store, const args & a) {
     bool memory_enabled = true;
     if (query.embedding.empty() && !ensure_embedding(a, a.prompt, query.embedding, "query", error)) {
         fprintf(stderr, "warning: memory retrieval disabled: %s\n", error.c_str());
+        fallback_reason = error;
         memory_enabled = false;
     }
 
@@ -317,6 +319,12 @@ static int run_chat(common_memory_store & store, const args & a) {
 
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = a.n_gpu_layers;
+    if (!memory_enabled) {
+        fprintf(stderr,
+            "debug: chat fallback active, loading %s without memory retrieval or episode recording (%s)\n",
+            a.model.c_str(),
+            fallback_reason.c_str());
+    }
     llama_model * model = llama_model_load_from_file(a.model.c_str(), model_params);
     if (model == nullptr) {
         fprintf(stderr, "failed to load model: %s\n", a.model.c_str());
