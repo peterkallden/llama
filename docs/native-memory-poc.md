@@ -315,4 +315,12 @@ ad3b96164 poc(memory): add optional CozoDB backend
 1fa07cf3a docs(memory): document native Cozo memory PoC
 a9085efd0 docs(memory): clarify PoC status and build steps
 890bceb94 poc(memory): fix Cozo Windows linking
+da3db1898 docs(memory): record local Cozo build progress
+59d47085b test(memory): verify Cozo persistence workflow
+abce72b4a poc(memory): add local embeddings and chat templates
+60750458f fix(memory): repair Cozo CLI persistence
+21454dfb7 fix(memory): allow chat fallback without embeddings
+590229632 chore(memory): log chat fallback activation
+0070a44ab feat(memory): add controlled memory search tool
+381bc55f0 fix(memory): enable local embedding outputs
 ```
