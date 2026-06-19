@@ -32,11 +32,9 @@ Verified locally:
 - Direct Windows CLI smoke using `add`, `relate`, and `search` across separate Cozo-backed processes.
 - Chat smoke test with `llama-memory-poc chat` against `Phi-3.5-mini-instruct-confidence-q4-v5.gguf`, with the chat path falling back to prompt-only mode when the model does not expose token embeddings.
 - Console debug logging when chat fallback is activated, including the loaded model path and the embedding failure reason.
+- End-to-end local embedding smoke test using `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` for chat and `nomic-embed-text-v1.5.Q4_K_M.gguf` for embeddings: `add` persisted a 768-dimensional vector in Cozo, `search` retrieved it across processes, and Qwen called `memory_search` and answered from the returned memory.
 
-Not verified locally:
-
-- Inference-backed local embedding generation with a GGUF model that exposes token embeddings.
-- Chat-mode memory retrieval with a real embedding-capable GGUF model.
+The verified Qwen + Nomic configuration uses a dedicated embedding model. A separate smoke test is still needed before claiming that any individual chat GGUF is suitable for both generation and embeddings.
 
 ```mermaid
 flowchart TD
@@ -286,18 +284,19 @@ Stored memory is untrusted. The PoC:
 - Cozo graph expansion is intentionally minimal in this first adapter; generic graph behavior is covered by the in-memory backend.
 - The PoC schema does not yet include an automated migration path; recreate pre-fix Cozo databases rather than attempting to reuse them.
 - `memory_search` is available only inside `llama-memory-poc chat`; it is not a server endpoint or an OpenAI-compatible server-side tool executor.
-- Tool use requires both a chat template that supports tool calls and a model that can provide local query embeddings. The Phi-3.5 smoke-test model used here does not expose token embeddings, so the PoC logs that the tool is disabled and continues with ordinary chat fallback.
+- Tool use requires both a chat template that supports tool calls and query embeddings. The validated local setup uses Qwen2.5-1.5B-Instruct for chat plus the dedicated Nomic embedding GGUF; models that cannot provide an embedding still log the fallback reason and continue with ordinary chat.
 - Local embedding generation currently loads a model on demand inside the PoC process and is not yet optimized for reuse across commands.
 - For pooling-free models, the PoC falls back to averaging token embeddings before normalization; this is pragmatic rather than benchmarked.
+- A dedicated embedding GGUF must be loaded with llama.cpp embedding outputs enabled. The PoC enables this on its local embedding context so encoder models such as `nomic-embed-text-v1.5` can provide their pooled sequence embedding.
 
 ## What Remains
 
 Recommended next implementation steps:
 
-1. Smoke-test a complete `memory_search` call with a GGUF that supports both tool calling and embeddings.
+1. Reuse loaded embedding models across repeated searches before treating the PoC as performance-oriented.
 2. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
 3. Add a policy-gated memory write flow later; do not write unrestricted model prose directly into memory.
-4. Reuse loaded embedding models across repeated searches before treating the PoC as performance-oriented.
+4. Benchmark embedding quality and retrieval thresholds on a representative memory corpus; the current weights and prompts are pragmatic PoC defaults.
 
 ## Future Work
 

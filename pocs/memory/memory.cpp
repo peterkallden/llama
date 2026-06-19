@@ -373,6 +373,8 @@ static bool compute_text_embedding(
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = n_tokens;
     ctx_params.n_batch = n_tokens;
+    // Embedding outputs are opt-in at context creation time.
+    ctx_params.embeddings = true;
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == nullptr) {
         llama_model_free(model);
