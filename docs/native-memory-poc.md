@@ -16,6 +16,7 @@ Implemented in this branch:
 - Optional CozoDB backend, isolated behind `LLAMA_MEMORY_COZO`.
 - `llama-memory-poc` executable with `add`, `search`, `relate`, and `chat` commands.
 - Unit tests for the generic memory layer and in-memory backend.
+- `test-memory-cozo` integration test for the Cozo-backed store.
 
 Verified locally:
 
@@ -25,10 +26,10 @@ Verified locally:
 - Configure-time failure when `LLAMA_MEMORY_COZO=ON` is requested without Cozo headers.
 - Cozo-enabled Windows build using the local Cozo 0.7.6 C API release.
 - `llama-memory-poc.exe` produced from the Cozo-enabled build.
+- Cozo-backed integration test covering `open`, `put`, `get`, `search`, `relate`, `close`, `reopen`, and `erase`.
 
 Not verified locally:
 
-- Cozo persistence and relation traversal through a runtime integration test.
 - Inference smoke test with a real model through `llama-memory-poc chat`.
 
 ```mermaid
@@ -79,6 +80,15 @@ cmake --build build-memory --config Release --target \
   test-memory-store test-memory-retrieval test-memory-context llama-memory-poc -j
 
 ctest --test-dir build-memory -C Release -R "test-memory" --output-on-failure
+```
+
+Focused Cozo memory validation:
+
+```sh
+cmake --build build-cozo --config Release --target \
+  test-memory-store test-memory-retrieval test-memory-context test-memory-cozo -j
+
+ctest --test-dir build-cozo -C Release -R "test-memory-(store|retrieval|context|cozo)$" --output-on-failure
 ```
 
 Normal build with memory disabled:
@@ -257,12 +267,11 @@ Stored memory is untrusted. The PoC:
 
 Recommended next implementation steps:
 
-1. Add Cozo integration tests that create a temporary database, insert records, reopen it, search, relate records, and verify persistence.
-2. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
-3. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
-4. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and the Cozo integration tests pass.
-5. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
-6. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
+1. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
+2. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
+3. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and tested.
+4. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
+5. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
 
 ## Future Work
 
