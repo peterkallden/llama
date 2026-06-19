@@ -10,7 +10,7 @@ std::string common_memory_cozo_schema_script() {
                 kind: String,
                 content: String,
                 summary: String,
-                embedding: <F32; 0>?,
+                embedding: [Float],
                 importance: Float,
                 confidence: Float,
                 created_at: Int,

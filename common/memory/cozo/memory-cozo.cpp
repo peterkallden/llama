@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <unordered_set>
 
 extern "C" {
 #include <cozo_c.h>
@@ -89,7 +90,33 @@ bool common_memory_cozo_store::open(const std::string & path, std::string & erro
     }
     db_id = opened_db_id;
     std::string result;
-    if (!run(common_memory_cozo_schema_script(), "{}", result, error)) {
+    if (!run("::relations", "{}", result, error)) {
+        close();
+        return false;
+    }
+
+    const auto relations = json::parse(result, nullptr, false);
+    if (!relations.is_object() || !relations.contains("rows") || !relations["rows"].is_array()) {
+        close();
+        error = "Cozo returned an unexpected relation list";
+        return false;
+    }
+
+    std::unordered_set<std::string> names;
+    for (const auto & row : relations["rows"]) {
+        if (row.is_array() && !row.empty() && row[0].is_string()) {
+            names.insert(row[0].get<std::string>());
+        }
+    }
+
+    const bool has_memory = names.count("memory") != 0;
+    const bool has_memory_edge = names.count("memory_edge") != 0;
+    if (has_memory != has_memory_edge) {
+        close();
+        error = "Cozo memory database has an incomplete schema; create a new PoC database";
+        return false;
+    }
+    if (!has_memory && !run(common_memory_cozo_schema_script(), "{}", result, error)) {
         close();
         return false;
     }
@@ -131,7 +158,7 @@ bool common_memory_cozo_store::put(const common_memory_record & record, std::str
 std::optional<common_memory_record> common_memory_cozo_store::get(const std::string & id, std::string & error) {
     const json params = {{"id", id}};
     std::string result;
-    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] := *memory[$id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json]",
+    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] := *memory[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json], id == $id",
             params.dump(), result, error)) {
         return std::nullopt;
     }

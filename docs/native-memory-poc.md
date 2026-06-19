@@ -28,11 +28,11 @@ Verified locally:
 - Configure-time failure when `LLAMA_MEMORY_COZO=ON` is requested without Cozo headers.
 - Cozo-enabled Windows build using the local Cozo 0.7.6 C API release.
 - `llama-memory-poc.exe` produced from the Cozo-enabled build.
-- Cozo-backed integration test covering `open`, `put`, `get`, `search`, `relate`, `close`, `reopen`, and `erase`.
+- Cozo-backed integration test covering `open`, `put`, `get`, `search`, `relate`, `close`, `reopen`, and `erase` with release-safe checks.
+- Direct Windows CLI smoke using `add`, `relate`, and `search` across separate Cozo-backed processes.
 
 Not verified locally:
 
-- Direct `llama-memory-poc add/search --backend cozo` smoke through the executable on Windows.
 - Inference-backed local embedding generation with a real GGUF model.
 - Inference smoke test with a real model through `llama-memory-poc chat`.
 
@@ -187,6 +187,8 @@ The PoC executable is `llama-memory-poc` and supports `add`, `search`, `relate`,
 
 The in-memory backend is deterministic and intended for tests and single-process experiments. Persistent cross-process CLI workflows require the Cozo backend.
 
+The Cozo schema stores embeddings as variable-length float lists because the PoC scores candidates in C++ and intentionally does not require one fixed embedding dimension. Recreate any database made by the earlier PoC schema before using this build; that schema used a zero-length fixed vector declaration and cannot store real embeddings.
+
 For a quick in-memory smoke test of the executable:
 
 ```sh
@@ -266,6 +268,7 @@ Stored memory is untrusted. The PoC:
 
 - The in-memory backend is not persistent across CLI invocations.
 - Cozo graph expansion is intentionally minimal in this first adapter; generic graph behavior is covered by the in-memory backend.
+- The PoC schema does not yet include an automated migration path; recreate pre-fix Cozo databases rather than attempting to reuse them.
 - The model-callable `memory_search` tool is documented as a future extension point and is not wired into server tool calling in this pass.
 - Local embedding generation currently loads a model on demand inside the PoC process and is not yet optimized for reuse across commands.
 - For pooling-free models, the PoC falls back to averaging token embeddings before normalization; this is pragmatic rather than benchmarked.
@@ -275,10 +278,9 @@ Stored memory is untrusted. The PoC:
 Recommended next implementation steps:
 
 1. Smoke-test local embedding generation and `chat` mode with a real GGUF model.
-2. Investigate the remaining direct Cozo CLI smoke gap for `llama-memory-poc add/search` on Windows.
-3. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and tested.
-4. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
-5. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
+2. Add a controlled `memory_search` model-callable tool now that the Cozo-backed CLI path is clean and tested.
+3. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
+4. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
 
 ## Future Work
 
