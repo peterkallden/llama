@@ -42,9 +42,19 @@ int main() {
 
         const auto fact = make_record("fact-1", "zero budget package search", {1.0f, 0.0f});
         const auto episode = make_record("episode-1", "the earlier pass produced the fact", {0.0f, 1.0f}, common_memory_kind::episode);
+        common_memory_record cli_like;
+        cli_like.id = "cli-1";
+        cli_like.kind = common_memory_kind::fact;
+        cli_like.content = "cli style insertion";
+        cli_like.embedding = {1.0f, 0.0f};
+        cli_like.importance = 0.8f;
+        cli_like.confidence = 0.9f;
+        cli_like.created_at = 1710000200;
+        cli_like.accessed_at = 1710000200;
 
         assert(store.put(fact, error));
         assert(store.put(episode, error));
+        assert(store.put(cli_like, error));
         assert(store.relate("episode-1", "produced", "fact-1", 1.0f, error));
 
         auto got = store.get("fact-1", error);

@@ -15,6 +15,8 @@ Implemented in this branch:
 - Safe context renderer that emits a clearly delimited `<runtime_memory>` block.
 - Optional CozoDB backend, isolated behind `LLAMA_MEMORY_COZO`.
 - `llama-memory-poc` executable with `add`, `search`, `relate`, and `chat` commands.
+- Local embedding generation in the PoC CLI when no explicit `--embedding` vector is supplied.
+- Chat-mode prompt construction through the current chat-template flow.
 - Unit tests for the generic memory layer and in-memory backend.
 - `test-memory-cozo` integration test for the Cozo-backed store.
 
@@ -30,6 +32,8 @@ Verified locally:
 
 Not verified locally:
 
+- Direct `llama-memory-poc add/search --backend cozo` smoke through the executable on Windows.
+- Inference-backed local embedding generation with a real GGUF model.
 - Inference smoke test with a real model through `llama-memory-poc chat`.
 
 ```mermaid
@@ -160,6 +164,7 @@ The PoC executable is `llama-memory-poc` and supports `add`, `search`, `relate`,
   --id fact-1 \
   --kind fact \
   --content "Package search must run when the promotion budget is zero" \
+  --embedding-model ./models/embedding.gguf \
   --importance 0.8 \
   --confidence 0.9
 
@@ -167,12 +172,14 @@ The PoC executable is `llama-memory-poc` and supports `add`, `search`, `relate`,
   --backend cozo \
   --memory-db ./memory.db \
   --query "zero budget package search" \
+  --embedding-model ./models/embedding.gguf \
   --limit 5
 
 ./build/bin/llama-memory-poc chat \
   --backend cozo \
   --memory-db ./memory.db \
   --model ./models/model.gguf \
+  --embedding-model ./models/embedding.gguf \
   --prompt "What did we learn about zero-budget package search?" \
   --memory-top-k 5 \
   --memory-token-budget 768
@@ -259,16 +266,16 @@ Stored memory is untrusted. The PoC:
 
 - The in-memory backend is not persistent across CLI invocations.
 - Cozo graph expansion is intentionally minimal in this first adapter; generic graph behavior is covered by the in-memory backend.
-- Embedding model integration is left as a follow-up; supplied vectors and text search are supported now.
-- Chat mode prepends a safe memory context block to the prompt rather than implementing model-specific prompt construction.
 - The model-callable `memory_search` tool is documented as a future extension point and is not wired into server tool calling in this pass.
+- Local embedding generation currently loads a model on demand inside the PoC process and is not yet optimized for reuse across commands.
+- For pooling-free models, the PoC falls back to averaging token embeddings before normalization; this is pragmatic rather than benchmarked.
 
 ## What Remains
 
 Recommended next implementation steps:
 
-1. Add local embedding generation using existing llama.cpp embedding APIs, while keeping supplied vectors as the deterministic test path.
-2. Improve `llama-memory-poc chat` prompt construction by using the current chat-template flow instead of simple prompt prepending.
+1. Smoke-test local embedding generation and `chat` mode with a real GGUF model.
+2. Investigate the remaining direct Cozo CLI smoke gap for `llama-memory-poc add/search` on Windows.
 3. Add a controlled `memory_search` model-callable tool only after the PoC executable remains clean and tested.
 4. Decide whether persistence belongs only in PoC tooling or should also be exposed through a future server endpoint.
 5. Add policy-gated memory write flows later; do not write unrestricted model prose directly into memory.
