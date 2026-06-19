@@ -119,6 +119,13 @@ option(LLAMA_TESTS_INSTALL "llama: install tests" ON)
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
 
+option(LLAMA_MEMORY      "llama: build native memory PoC support" OFF)
+option(LLAMA_MEMORY_COZO "llama-memory: build optional CozoDB backend" OFF)
+
+if (LLAMA_MEMORY_COZO AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_MEMORY_COZO=ON requires LLAMA_MEMORY=ON")
+endif()
+
 
 # Required for relocatable CMake package
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)

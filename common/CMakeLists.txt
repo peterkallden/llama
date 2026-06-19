@@ -172,3 +172,7 @@ if (LLAMA_LLGUIDANCE)
 endif()
 
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)
+
+if (LLAMA_MEMORY)
+    add_subdirectory(memory)
+endif()
