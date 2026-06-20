@@ -1,6 +1,20 @@
 #include "agent/agent-runtime.h"
 
+#include <nlohmann/json.hpp>
+#include <regex>
 #include <set>
+
+using json = nlohmann::ordered_json;
+
+static bool infer_calculator_expression(const std::string & text, std::string & expression) {
+    static const std::regex arithmetic(R"((\(?\s*\d+(?:\.\d+)?(?:\s*[-+*/]\s*\d+(?:\.\d+)?)+\s*\)?))");
+    std::smatch match;
+    if (!std::regex_search(text, match, arithmetic) || match.size() < 2) {
+        return false;
+    }
+    expression = match[1].str();
+    return true;
+}
 
 common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools) {}
 
@@ -46,6 +60,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (tool_call) {
             if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
+            if (tool_call->name == "calculator") {
+                auto arguments = json::parse(tool_call->arguments_json, nullptr, false);
+                if (arguments.is_object() && !arguments.contains("expression")) {
+                    std::string expression;
+                    if (infer_calculator_expression(request.prompt, expression)) {
+                        arguments["expression"] = expression;
+                        tool_call->arguments_json = arguments.dump();
+                    }
+                }
+            }
             std::string tool_result;
             if (!tools->execute(*tool_call, tool_result, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "registered tool failed: " + error; return result; }
             if (tool_result.size() > 4096) tool_result.resize(4096);
@@ -56,7 +80,32 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             observed.reason_summary = "registered tool result";
             observed.observation = common_plan_observation{"tool:" + tool_step_id + ":" + tool_call->name, tool_call->name, tool_result, 1.0f, {}, 0};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
-            if (tool_step_id == "request") executed_request_tool = true; else executed_step_ids.insert(tool_step_id);
+            if (tool_step_id == "request") executed_request_tool = true; else {
+                executed_step_ids.insert(tool_step_id);
+                common_plan_operation complete;
+                complete.kind = common_plan_operation_kind::complete_step;
+                complete.plan_id = plan.id;
+                complete.expected_version = plan.version;
+                complete.step_id = tool_step_id;
+                complete.reason_summary = "registered tool completed";
+                if (!store.apply(complete, plan, error)) { result.error = error; return result; }
+                result.events.push_back({common_agent_event_type::plan_updated, "tool step completed", {}, plan.id});
+                for (const auto & step : plan.steps) {
+                    if (step.status != common_plan_step_status::pending) continue;
+                    bool ready = true;
+                    for (const auto & dependency : step.depends_on) for (const auto & candidate : plan.steps) if (candidate.id == dependency && candidate.status != common_plan_step_status::completed) ready = false;
+                    if (!ready) continue;
+                    common_plan_operation activate;
+                    activate.kind = common_plan_operation_kind::activate_step;
+                    activate.plan_id = plan.id;
+                    activate.expected_version = plan.version;
+                    activate.step_id = step.id;
+                    activate.reason_summary = "next dependency-ready step";
+                    if (!store.apply(activate, plan, error)) { result.error = error; return result; }
+                    result.events.push_back({common_agent_event_type::plan_updated, "next plan step activated", {}, plan.id});
+                    break;
+                }
+            }
             ++tool_batches;
             result.events.push_back({common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
             result.events.push_back({common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id});
