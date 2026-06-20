@@ -102,11 +102,12 @@ std::string utc_now() {
 }
 
 bool register_definition(const common_tool_definition & definition, common_tool_registry & registry,
-        std::function<bool(const std::string &, std::string &, std::string &)> handler, std::string & error) {
+        std::function<bool(const std::string &, std::string &, std::string &)> handler, std::string & error, bool read_only = true, bool policy_gated = false) {
     common_registered_tool tool;
     tool.name = definition.name;
     tool.arguments_schema = definition.input_schema_json;
-    tool.read_only = true;
+    tool.read_only = read_only;
+    tool.policy_gated = policy_gated;
     tool.handler = std::move(handler);
     return registry.register_tool(std::move(tool), error);
 }
@@ -159,6 +160,8 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!memory || !common_memory_scope_matches(*memory, bindings.memory_query)) { err = "memory is unavailable in the current scope"; return false; }
                 output = json({{"memory", memory_value(*memory)}}).dump(); return true;
             }, error);
+        } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_remember_proposal) {
+            installed = register_definition(definition, registry, bindings.memory_remember_proposal, error, false, true);
         } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && !bindings.plan_id.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
                 json arguments; if (!parse_object(input, arguments, err)) return false;

@@ -357,7 +357,7 @@ When the PoC is built with both `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON
   --max-tool-rounds 2
 ```
 
-The profile is bootstrapped in process and exposes only native executors that are both registered and read-only. In this memory CLI those are `calculator`, UTC `time_now`, `memory_search`, and `memory_get`; `plan_get` becomes available later when a plan store is bound. `--max-tool-rounds` defaults to one and permits up to four sequential one-call read-only rounds. After the final permitted result, the answer turn has tools disabled. `--tool-profile` is intentionally incompatible with the older `--memory-search-tool` and `--memory-remember-tool` flags. Persistent Cozo catalog storage and proposal-tool execution are later slices.
+The profile is bootstrapped in process. `memory-read` exposes registered read-only executors: `calculator`, UTC `time_now`, `memory_search`, and `memory_get`; `plan_get` becomes available later when a plan store is bound. `memory` and `research` additionally expose `memory_remember` as a policy-gated proposal: it invokes the existing native decision and audit path, never a generic write API. `--max-tool-rounds` defaults to one and permits up to four sequential one-call rounds. After the final permitted result, the answer turn has tools disabled. `--tool-profile` is intentionally incompatible with the older `--memory-search-tool` and `--memory-remember-tool` flags. Persistent Cozo catalog storage is a later slice.
 
 ## Known Limitations
 

@@ -19,6 +19,9 @@ struct common_native_tool_bindings {
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;
+    // Executes a native memory proposal policy. It receives validated tool JSON
+    // and returns a structured policy decision; it is never model-selected code.
+    std::function<bool(const std::string &, std::string &, std::string &)> memory_remember_proposal;
 };
 
 struct common_tool_adapter_result {

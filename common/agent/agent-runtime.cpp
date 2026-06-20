@@ -45,7 +45,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         }
         if (tool_call) {
             if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
-            if (!tools->is_read_only(tool_call->name)) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not read-only", {}, plan.id}); result.error = "planned tool is not read-only"; return result; }
+            if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             std::string tool_result;
             if (!tools->execute(*tool_call, tool_result, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "registered tool failed: " + error; return result; }
             if (tool_result.size() > 4096) tool_result.resize(4096);

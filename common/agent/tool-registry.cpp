@@ -27,3 +27,8 @@ bool common_tool_registry::is_read_only(const std::string & name) const {
     const auto it = tools.find(name);
     return it != tools.end() && it->second.read_only;
 }
+
+bool common_tool_registry::is_policy_gated(const std::string & name) const {
+    const auto it = tools.find(name);
+    return it != tools.end() && it->second.policy_gated;
+}

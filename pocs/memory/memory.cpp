@@ -823,6 +823,10 @@ static int run_chat(common_memory_store & store, const args & a) {
             bindings.embed_memory_query = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return ensure_embedding(a, text, embedding, "tool query", embedding_error);
             };
+            bindings.memory_remember_proposal = [&store, &a](const std::string & arguments, std::string & result, std::string &) {
+                result = memory_remember_tool_result(store, a, arguments);
+                return true;
+            };
         }
         common_tool_adapter_result adapters;
         if (!common_register_native_tool_adapters(tool_catalog, a.tool_profile, bindings, tool_registry, adapters, error) ||

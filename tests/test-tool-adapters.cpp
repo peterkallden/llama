@@ -45,5 +45,13 @@ int main() {
     assert(registry.execute({"plan_get", "{}"}, result, error));
     assert(result.find("plan-1") != std::string::npos);
     assert(!registry.execute({"memory_remember", "{}"}, result, error));
+
+    common_tool_registry proposal_registry;
+    common_native_tool_bindings proposal_bindings;
+    proposal_bindings.memory_remember_proposal = [](const std::string &, std::string & output, std::string & proposal_error) { output = R"({"decision":"accept"})"; proposal_error.clear(); return true; };
+    assert(common_register_native_tool_adapters(catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
+    assert(proposal_registry.is_policy_gated("memory_remember"));
+    assert(proposal_registry.execute({"memory_remember", R"({"kind":"fact","content":"verified"})"}, result, error));
+    assert(result.find("accept") != std::string::npos);
     return 0;
 }

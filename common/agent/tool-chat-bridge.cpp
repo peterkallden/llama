@@ -10,8 +10,10 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
     const auto definitions = catalog.load_profile(profile_id, error);
     if (!error.empty()) return false;
     for (const auto & definition : definitions) {
-        if (!definition.enabled || definition.requires_confirmation || definition.risk_class != common_tool_risk_class::local_read) continue;
-        if (!registry.contains(definition.name) || !registry.is_read_only(definition.name)) continue;
+        if (!definition.enabled || !registry.contains(definition.name)) continue;
+        const bool read_only = definition.risk_class == common_tool_risk_class::local_read && registry.is_read_only(definition.name);
+        const bool proposal = definition.risk_class == common_tool_risk_class::memory_proposal && definition.requires_confirmation && registry.is_policy_gated(definition.name);
+        if (!read_only && !proposal) continue;
         tools.push_back({definition.name, definition.description, definition.input_schema_json});
     }
     error.clear();
@@ -33,7 +35,7 @@ bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const 
         std::string output, call_error;
         if (!registry.contains(call.name)) {
             tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_unavailable"}, {"message", "tool is not registered"}}}}).dump();
-        } else if (!registry.is_read_only(call.name)) {
+        } else if (!registry.is_read_only(call.name) && !registry.is_policy_gated(call.name)) {
             tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_not_read_only"}, {"message", "tool is not available in a read-only batch"}}}}).dump();
         } else if (!registry.execute({call.name, call.arguments}, output, call_error)) {
             tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_call_rejected"}, {"message", call_error}}}}).dump();
@@ -48,4 +50,3 @@ bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const 
     error.clear();
     return true;
 }
-

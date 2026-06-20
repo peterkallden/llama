@@ -32,5 +32,16 @@ int main() {
     assistant.tool_calls.push_back({"time_now", "{}", "second"});
     assert(!common_tool_dispatch_chat_calls(assistant, registry, 1, dispatched, error));
     assert(error == "tool call batch exceeds configured limit");
+
+    common_tool_catalog memory_catalog;
+    assert(memory_catalog.bootstrap("memory", bootstrap, error));
+    common_tool_registry proposal_registry;
+    common_native_tool_bindings proposal_bindings;
+    proposal_bindings.memory_remember_proposal = [](const std::string &, std::string & output, std::string & proposal_error) { output = R"({"decision":"accept"})"; proposal_error.clear(); return true; };
+    assert(common_register_native_tool_adapters(memory_catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
+    assert(common_tool_profile_to_chat_tools(memory_catalog, "memory", proposal_registry, tools, error));
+    bool has_remember = false;
+    for (const auto & tool : tools) has_remember = has_remember || tool.name == "memory_remember";
+    assert(has_remember);
     return 0;
 }
