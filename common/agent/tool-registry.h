@@ -1,0 +1,23 @@
+#pragma once
+
+#include <functional>
+#include <optional>
+#include <string>
+#include <unordered_map>
+
+struct common_registered_tool {
+    std::string name;
+    std::string arguments_schema;
+    bool read_only = true;
+    std::function<bool(const std::string & arguments_json, std::string & result, std::string & error)> handler;
+};
+
+struct common_registered_tool_call { std::string name; std::string arguments_json = "{}"; };
+
+class common_tool_registry {
+public:
+    bool register_tool(common_registered_tool tool, std::string & error);
+    bool execute(const common_registered_tool_call & call, std::string & result, std::string & error) const;
+private:
+    std::unordered_map<std::string, common_registered_tool> tools;
+};

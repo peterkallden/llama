@@ -1,10 +1,16 @@
 #include "agent/agent-runtime.h"
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector) : store(store), planner(planner), executor(executor), reflector(reflector) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools) {}
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
     common_agent_result result; std::string error; auto proposal = planner.create_plan(request, error); if (!error.empty()) { result.error = error; return result; }
     if (!store.create(proposal.plan, error)) { result.error = error; return result; } common_plan_state plan = proposal.plan;
     for (auto op : proposal.operations) { op.plan_id = plan.id; op.expected_version = plan.version; if (!store.apply(op, plan, error)) { result.error = error; return result; } }
+    if (request.tool_call) {
+        if (!tools || request.max_tool_batches == 0) { result.error = "registered tool execution is unavailable"; return result; }
+        std::string tool_result; if (!tools->execute(*request.tool_call, tool_result, error)) { result.error = "registered tool failed: " + error; return result; }
+        common_plan_operation observed; observed.kind = common_plan_operation_kind::record_observation; observed.plan_id = plan.id; observed.expected_version = plan.version; observed.reason_summary = "registered tool result"; observed.observation = common_plan_observation{"tool:" + request.tool_call->name, request.tool_call->name, tool_result, 1.0f, {}, 0};
+        if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+    }
     std::vector<std::string> guidance;
     for (size_t iteration = 0; iteration < request.max_iterations; ++iteration) {
         auto draft = executor.generate_draft(request, plan, guidance, error); if (!error.empty()) { result.error = error; return result; }

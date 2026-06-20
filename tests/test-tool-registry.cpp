@@ -1,0 +1,3 @@
+#include "agent/tool-registry.h"
+#include <cassert>
+int main() { common_tool_registry registry; std::string error, result; common_registered_tool tool; tool.name = "lookup"; tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"; tool.handler = [](const std::string &, std::string & value, std::string & err) { value = "safe result"; err.clear(); return true; }; assert(registry.register_tool(std::move(tool), error)); assert(registry.execute({"lookup", R"({"id":"memory:1"})"}, result, error)); assert(result == "safe result"); assert(!registry.execute({"shell", "{}"}, result, error)); assert(!registry.execute({"lookup", R"({"extra":1})"}, result, error)); return 0; }
