@@ -19,6 +19,10 @@ bool common_tool_registry::execute(const common_registered_tool_call & call, std
     return it->second.handler(call.arguments_json, result, error);
 }
 
+bool common_tool_registry::contains(const std::string & name) const {
+    return tools.count(name) != 0;
+}
+
 bool common_tool_registry::is_read_only(const std::string & name) const {
     const auto it = tools.find(name);
     return it != tools.end() && it->second.read_only;

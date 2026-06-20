@@ -261,6 +261,8 @@ if (LLAMA_AGENT_REFLECTION)
     target_link_libraries(test-tool-catalog PRIVATE llama-agent-poc)
     llama_build_and_test(test-tool-adapters.cpp)
     target_link_libraries(test-tool-adapters PRIVATE llama-agent-poc)
+    llama_build_and_test(test-tool-chat-bridge.cpp)
+    target_link_libraries(test-tool-chat-bridge PRIVATE llama-agent-poc)
 endif()
 
 if (NOT ${CMAKE_SYSTEM_PROCESSOR} MATCHES "s390x")
