@@ -53,6 +53,7 @@ struct args {
     float weight = 1.0f;
     size_t limit = 8;
     size_t memory_token_budget = 768;
+    size_t max_tool_rounds = 1;
     int n_predict = 128;
     int n_gpu_layers = 99;
     bool record_episode = false;
@@ -68,7 +69,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool] [--tool-profile minimal|memory-read|memory|research]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -144,6 +145,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.limit = (size_t) std::stoul(v);
         } else if (strcmp(argv[i], "--memory-token-budget") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_token_budget = (size_t) std::stoul(v);
+        } else if (strcmp(argv[i], "--max-tool-rounds") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.max_tool_rounds = (size_t) std::stoul(v);
         } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--n-predict") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_predict = std::stoi(v);
         } else if (strcmp(argv[i], "-ngl") == 0) {
@@ -722,6 +725,10 @@ static bool ensure_embedding(
 
 static int run_chat(common_memory_store & store, const args & a) {
     std::string error;
+    if (a.max_tool_rounds < 1 || a.max_tool_rounds > 4) {
+        fprintf(stderr, "--max-tool-rounds must be between 1 and 4\n");
+        return 1;
+    }
 #ifndef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (!a.tool_profile.empty()) {
         fprintf(stderr, "--tool-profile requires a build with LLAMA_AGENT_REFLECTION=ON\n");
@@ -858,7 +865,13 @@ static int run_chat(common_memory_store & store, const args & a) {
     }
     common_chat_msg assistant_msg = common_chat_parse(output, false, parser_params);
 
-    if (!assistant_msg.tool_calls.empty()) {
+    size_t tool_rounds = 0;
+    while (!assistant_msg.tool_calls.empty()) {
+        if (tool_rounds >= a.max_tool_rounds) {
+            fprintf(stderr, "tool call round limit reached\n");
+            llama_model_free(model);
+            return 1;
+        }
         if (profile_tools_active) {
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
             common_tool_chat_dispatch_result dispatched;
@@ -895,14 +908,19 @@ static int run_chat(common_memory_store & store, const args & a) {
             messages.push_back(std::move(tool_msg));
         }
 
-        int final_decode = 0;
-        if (!generate_chat_turn(model, chat_templates.get(), messages, {}, COMMON_CHAT_TOOL_CHOICE_NONE,
-                a, output, chat_params, final_decode)) {
+        ++tool_rounds;
+        const bool allow_another_tool_round = tool_rounds < a.max_tool_rounds;
+        int next_decode = 0;
+        if (!generate_chat_turn(model, chat_templates.get(), messages,
+                allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
+                allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
+                a, output, chat_params, next_decode)) {
             llama_model_free(model);
             return 1;
         }
-        n_decode += final_decode;
+        n_decode += next_decode;
         parser_params = common_chat_parser_params(chat_params);
+        parser_params.parse_tool_calls = allow_another_tool_round && !tools.empty();
         if (!chat_params.parser.empty()) {
             parser_params.parser.load(chat_params.parser);
         }
