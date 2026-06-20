@@ -15,6 +15,8 @@ enum class common_agent_event_type {
     memory_retrieved,
     memory_remembered,
     memory_rejected,
+    tool_executed,
+    tool_rejected,
     plan_created,
     plan_updated,
     reflection_completed,

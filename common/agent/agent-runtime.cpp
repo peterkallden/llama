@@ -15,11 +15,23 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     result.plan_id = plan.id;
     result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
     for (auto op : proposal.operations) { op.plan_id = plan.id; op.expected_version = plan.version; if (!store.apply(op, plan, error)) { result.error = error; return result; } result.events.push_back({common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id}); }
-    if (request.tool_call) {
-        if (!tools || request.max_tool_batches == 0) { result.error = "registered tool execution is unavailable"; return result; }
-        std::string tool_result; if (!tools->execute(*request.tool_call, tool_result, error)) { result.error = "registered tool failed: " + error; return result; }
-        common_plan_operation observed; observed.kind = common_plan_operation_kind::record_observation; observed.plan_id = plan.id; observed.expected_version = plan.version; observed.reason_summary = "registered tool result"; observed.observation = common_plan_observation{"tool:" + request.tool_call->name, request.tool_call->name, tool_result, 1.0f, {}, 0};
+    std::optional<common_registered_tool_call> tool_call = request.tool_call;
+    std::string tool_step_id = "request";
+    if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.tool_call) {
+        if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
+        tool_call = common_registered_tool_call{step.tool_call->name, step.tool_call->arguments_json};
+        tool_step_id = step.id;
+        break;
+    }
+    if (tool_call) {
+        if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
+        if (!tools->is_read_only(tool_call->name)) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not read-only", {}, plan.id}); result.error = "planned tool is not read-only"; return result; }
+        std::string tool_result; if (!tools->execute(*tool_call, tool_result, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "registered tool failed: " + error; return result; }
+        if (tool_result.size() > 4096) tool_result.resize(4096);
+        common_plan_operation observed; observed.kind = common_plan_operation_kind::record_observation; observed.plan_id = plan.id; observed.expected_version = plan.version; observed.reason_summary = "registered tool result"; observed.observation = common_plan_observation{"tool:" + tool_step_id + ":" + tool_call->name, tool_call->name, tool_result, 1.0f, {}, 0};
         if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+        result.events.push_back({common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
+        result.events.push_back({common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id});
     }
     std::vector<std::string> guidance;
     for (size_t iteration = 0; iteration < request.max_iterations; ++iteration) {

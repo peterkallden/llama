@@ -18,6 +18,7 @@ class common_tool_registry {
 public:
     bool register_tool(common_registered_tool tool, std::string & error);
     bool execute(const common_registered_tool_call & call, std::string & result, std::string & error) const;
+    bool is_read_only(const std::string & name) const;
 private:
     std::unordered_map<std::string, common_registered_tool> tools;
 };

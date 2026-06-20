@@ -12,11 +12,14 @@ enum class common_plan_step_status { pending, active, completed, blocked, skippe
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
 struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
 struct common_plan_observation { std::string id; std::string source; std::string summary; float confidence = 0.5f; std::vector<std::string> evidence_ids; int64_t created_at = 0; };
+// Data proposed by a plan; execution is owned by the agent tool registry.
+struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
 struct common_plan_step {
     std::string id, title, objective;
     common_plan_step_status status = common_plan_step_status::pending;
     std::vector<std::string> depends_on, blocked_by, required_evidence;
     std::optional<std::string> selected_tool, result_summary;
+    std::optional<common_plan_tool_call> tool_call;
     bool optional = false, generated_from_memory = false;
     int64_t created_at = 0, updated_at = 0;
 };

@@ -19,7 +19,8 @@ std::string common_plan_proposal_json_schema() {
                 {"evidence_ids", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                 {"step", {{"type", "object"}, {"additionalProperties", false}, {"required", {"id", "title", "objective", "depends_on", "required_evidence"}}, {"properties", {
                     {"id", {{"type", "string"}, {"maxLength", 256}}}, {"title", {{"type", "string"}, {"maxLength", 1024}}}, {"objective", {{"type", "string"}, {"maxLength", 4096}}},
-                    {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"required_evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}}
+                    {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"required_evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                    {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name", "arguments"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}}}}}
                 }}}}
             }}}}}}
         }}
@@ -43,6 +44,7 @@ bool common_plan_parse_proposal_json(const std::string & text, common_plan_state
             common_plan_step step; step.id = source["id"].get<std::string>(); step.title = source["title"].get<std::string>(); step.objective = source["objective"].get<std::string>();
             if (source.contains("depends_on") && source["depends_on"].is_array()) step.depends_on = source["depends_on"].get<std::vector<std::string>>();
             if (source.contains("required_evidence") && source["required_evidence"].is_array()) step.required_evidence = source["required_evidence"].get<std::vector<std::string>>();
+            if (source.contains("tool")) { if (!source["tool"].is_object() || !source["tool"].contains("name") || !source["tool"].contains("arguments") || !source["tool"]["name"].is_string() || !source["tool"]["arguments"].is_object()) { error = "invalid step tool payload"; return false; } step.tool_call = common_plan_tool_call{source["tool"]["name"].get<std::string>(), source["tool"]["arguments"].dump()}; step.selected_tool = step.tool_call->name; }
             common_plan_operation operation; operation.kind = common_plan_operation_kind::add_step; operation.step = std::move(step); operation.reason_summary = item.value("reason_summary", std::string()); if (item.contains("evidence_ids") && item["evidence_ids"].is_array()) operation.evidence_ids = item["evidence_ids"].get<std::vector<std::string>>(); operation.step->generated_from_memory = !operation.evidence_ids.empty(); parsed_operations.push_back(std::move(operation));
         }
         plan = std::move(parsed); operations = std::move(parsed_operations); error.clear(); return true;
