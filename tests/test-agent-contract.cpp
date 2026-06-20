@@ -6,14 +6,17 @@ int main() {
 
     common_agent_request request;
     assert(request.memory_scope == common_memory_scope::session);
+    assert(request.plan_scope == common_plan_scope::turn);
     assert(request.namespace_id == "local");
     assert(request.session_id == "default");
     assert(!request.enable_memory);
+    assert(request.enable_planning);
+    assert(request.enable_reflection);
 
     common_agent_result result;
     result.response = "done";
     result.memory_ids.push_back("memory-1");
-    result.events.push_back({common_agent_event_type::memory_retrieved, "memory used", "memory-1"});
+    result.events.push_back({common_agent_event_type::memory_retrieved, "memory used", "memory-1", std::nullopt});
 
     assert(result.events.size() == 1);
     assert(result.events.front().type == common_agent_event_type::memory_retrieved);
