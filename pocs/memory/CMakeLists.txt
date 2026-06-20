@@ -1,5 +1,6 @@
 set(TARGET llama-memory-poc)
 add_executable(${TARGET} memory.cpp)
+set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
