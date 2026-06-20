@@ -17,7 +17,7 @@ user request -> memory retrieval -> planner -> plan store
 
 `llama-memory` provides retrieved evidence only. A planner can propose typed plan operations, but `common_plan_policy` validates version checks, state transitions, dependencies, cycles, evidence requirements and limits before `common_plan_store` persists an update. Plan events are append-only short audit records. Plans are never memory records.
 
-The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `common_plan_cozo_store` persists plan state in the separate Cozo relations `agent_plan` and `agent_plan_event`; it never uses the memory relations `memory` or `memory_edge`. The generic in-memory policy remains the mutation gate before an accepted state and its short audit event are persisted.
+The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `common_plan_cozo_store` persists plan state in the separate Cozo relations `agent_plan` and `agent_plan_event`; it never uses the memory relations `memory` or `memory_edge`. The generic in-memory policy remains the mutation gate before an accepted state and its short audit event are persisted. If either persistence write fails, the cache is reloaded from Cozo; if the audit-event write fails after a state write, the prior state is restored before that reload.
 
 ## Tool catalog bootstrap (first slice)
 
@@ -41,10 +41,11 @@ When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing 
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --prompt "What did we decide, and what is the next step?" `
   --tool-profile memory-read --planning-mode mini --reflection-mode always `
+  --plan-backend cozo --plan-db .\work\agent-plan.cozo --plan-id feature-session `
   --plan-scope session --plan-show-summary --agent-trace --max-tool-rounds 1
 ```
 
-The planner is deliberately fail-closed for actions but fail-soft for availability: invalid planner JSON becomes a one-step, tool-free fallback plan; an invalid reflection becomes `accept` of the generated draft. A planner-selected tool outside the registered profile is stripped before execution. `mini` rejects legacy tool flags because only registry-owned tools may be planned. Plans are currently process-local (`common_plan_in_memory_store`); the existing Cozo plan store is not yet bound to this CLI path.
+The planner is deliberately fail-closed for actions but fail-soft for availability: invalid planner JSON becomes a one-step, tool-free fallback plan; an invalid reflection becomes `accept` of the generated draft. A planner-selected tool outside the registered profile is stripped before execution. `mini` rejects legacy tool flags because only registry-owned tools may be planned. `--plan-backend` is independently selectable from the memory backend. With `--plan-backend cozo --plan-db PATH --plan-id ID`, the runtime loads an existing compatible plan before planning; otherwise it creates that ID once. This makes a session, project, or global plan resumable across CLI processes. `plan_get` is bound when an explicit `--plan-id` is supplied.
 
 `memory_remember` is available in the `memory` and `research` profiles as a policy-gated proposal, not as a generic write capability. Its native binding invokes the existing memory policy and audit path, returning the accept/reject/duplicate/conflict decision as a tool result. Generic plan runtime callers must explicitly set `allow_policy_gated_tool_proposals`; otherwise only read-only tools are eligible.
 
@@ -64,4 +65,4 @@ The runtime is intentionally mockable: a planner creates a turn/session/project/
 
 Registered tools are explicit opt-in runtime dependencies. An active plan step can carry a structured tool name and object-shaped JSON arguments; the runtime executes at most one read-only registered tool batch, validates it through the registry, and records the capped result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls. A network tool should be a constrained capability such as `web_fetch` or `web_search`, with URL, timeout, response-size, and allowlist policy in its registered handler rather than a general-purpose `curl` escape hatch.
 
-Known limitations: plan persistence in `llama-memory chat` is still process-local; the bounded chain is capped by `--max-tool-rounds` and `max_iterations`; and the current reflection operation set deliberately excludes arbitrary plan mutation. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.
+Known limitations: the bounded chain is capped by `--max-tool-rounds` and `max_iterations`; and the current reflection operation set deliberately excludes arbitrary plan mutation. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.

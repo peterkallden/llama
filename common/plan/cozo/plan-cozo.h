@@ -13,4 +13,5 @@ private:
     int32_t db_id = -1; common_plan_in_memory_store cache;
     bool run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const;
     bool persist_plan(const common_plan_state & plan, std::string & error);
+    bool reload_cache(std::string & error);
 };

@@ -17,6 +17,9 @@
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
 #include "plan/plan-json.h"
+#ifdef LLAMA_PLAN_USE_COZO
+#include "plan/cozo/plan-cozo.h"
+#endif
 #endif
 
 #ifdef LLAMA_MEMORY_USE_COZO
@@ -70,6 +73,9 @@ struct args {
     std::string planning_mode = "off";
     std::string reflection_mode = "off";
     std::string plan_scope = "turn";
+    std::string plan_backend = "in-memory";
+    std::string plan_db;
+    std::string plan_id;
     bool plan_show_summary = false;
     bool agent_trace = false;
     bool memory_global_opt_in = false;
@@ -81,7 +87,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--reflection-mode off|always] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -179,6 +185,12 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.reflection_mode = v;
         } else if (strcmp(argv[i], "--plan-scope") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_scope = v;
+        } else if (strcmp(argv[i], "--plan-backend") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.plan_backend = v;
+        } else if (strcmp(argv[i], "--plan-db") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.plan_db = v;
+        } else if (strcmp(argv[i], "--plan-id") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.plan_id = v;
         } else if (strcmp(argv[i], "--plan-show-summary") == 0) {
             out.plan_show_summary = true;
         } else if (strcmp(argv[i], "--agent-trace") == 0) {
@@ -586,6 +598,28 @@ static bool parse_plan_scope(const std::string & value, common_plan_scope & scop
     return false;
 }
 
+static std::unique_ptr<common_plan_store> make_plan_store(const args & a, std::string & error) {
+    if (a.plan_backend == "in-memory") {
+        error.clear();
+        return std::make_unique<common_plan_in_memory_store>();
+    }
+    if (a.plan_backend == "cozo") {
+#ifdef LLAMA_PLAN_USE_COZO
+        if (a.plan_db.empty()) {
+            error = "--plan-backend cozo requires --plan-db PATH";
+            return nullptr;
+        }
+        error.clear();
+        return std::make_unique<common_plan_cozo_store>();
+#else
+        error = "this binary was built without LLAMA_PLAN_COZO";
+        return nullptr;
+#endif
+    }
+    error = "unknown plan backend: " + a.plan_backend;
+    return nullptr;
+}
+
 static std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     std::string names;
     for (const auto & tool : tools) {
@@ -979,6 +1013,21 @@ static int run_chat(common_memory_store & store, const args & a) {
         return 1;
     }
 #endif
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+    std::unique_ptr<common_plan_store> plan_store;
+    common_plan_scope requested_plan_scope = common_plan_scope::turn;
+    if (a.planning_mode == "mini") {
+        if (!parse_plan_scope(a.plan_scope, requested_plan_scope)) {
+            fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
+            return 1;
+        }
+        plan_store = make_plan_store(a, error);
+        if (!plan_store || !plan_store->open(a.plan_db, error)) {
+            fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
+            return 1;
+        }
+    }
+#endif
     std::string fallback_reason;
     common_memory_query query;
     query.text = a.prompt;
@@ -1057,6 +1106,8 @@ static int run_chat(common_memory_store & store, const args & a) {
             return 1;
         }
         common_native_tool_bindings bindings;
+        bindings.plan_store = plan_store.get();
+        bindings.plan_id = a.plan_id;
         if (memory_enabled) {
             bindings.memory_store = &store;
             bindings.memory_query = query;
@@ -1116,22 +1167,10 @@ static int run_chat(common_memory_store & store, const args & a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        common_plan_scope plan_scope;
-        if (!parse_plan_scope(a.plan_scope, plan_scope)) {
-            fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
-            llama_model_free(model);
-            return 1;
-        }
-        common_plan_in_memory_store plan_store;
-        if (!plan_store.open("", error)) {
-            fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
-            llama_model_free(model);
-            return 1;
-        }
         llama_model_planner planner(model, chat_templates.get(), a, tools);
         llama_action_executor executor(model, chat_templates.get(), a);
         llama_reflection_engine reflector(model, chat_templates.get(), a);
-        common_agent_runtime runtime(plan_store, planner, executor, reflector, profile_tools_active ? &tool_registry : nullptr);
+        common_agent_runtime runtime(*plan_store, planner, executor, reflector, profile_tools_active ? &tool_registry : nullptr);
         common_agent_request request;
         request.prompt = a.prompt;
         request.memories = hits;
@@ -1139,7 +1178,8 @@ static int run_chat(common_memory_store & store, const args & a) {
         request.enable_planning = true;
         request.enable_reflection = a.reflection_mode == "always";
         request.memory_scope = query.scope;
-        request.plan_scope = plan_scope;
+        request.plan_scope = requested_plan_scope;
+        if (!a.plan_id.empty()) request.plan_id = a.plan_id;
         request.namespace_id = a.memory_namespace;
         request.session_id = a.memory_session;
         request.project_id = a.memory_project;
@@ -1155,7 +1195,7 @@ static int run_chat(common_memory_store & store, const args & a) {
             return 1;
         }
         if (a.plan_show_summary && result.plan_id) {
-            const auto plan = plan_store.get(*result.plan_id, error);
+            const auto plan = plan_store->get(*result.plan_id, error);
             if (plan) fprintf(stderr, "plan: id=%s version=%llu steps=%zu observations=%zu reflected=%s revised=%s\n",
                 plan->id.c_str(), (unsigned long long) plan->version, plan->steps.size(), plan->observations.size(),
                 result.reflected ? "yes" : "no", result.revised ? "yes" : "no");

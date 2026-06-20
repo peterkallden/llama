@@ -26,20 +26,40 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.memory_ids.push_back(hit.memory.id);
         result.events.push_back({common_agent_event_type::memory_retrieved, "memory supplied to agent runtime", hit.memory.id, std::nullopt});
     }
-    auto proposal = planner.create_plan(request, error);
-    if (!error.empty()) { result.error = error; return result; }
-    proposal.plan.scope = request.plan_scope;
-    if (proposal.plan.session_id.empty()) proposal.plan.session_id = request.session_id;
-    if (!store.create(proposal.plan, error)) { result.error = error; return result; }
-    common_plan_state plan = proposal.plan;
-    result.plan_id = plan.id;
-    result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
-    for (auto op : proposal.operations) {
-        op.plan_id = plan.id;
-        op.expected_version = plan.version;
-        if (!store.apply(op, plan, error)) { result.error = error; return result; }
-        result.events.push_back({common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id});
+    common_plan_state plan;
+    if (request.plan_id && !request.plan_id->empty()) {
+        const auto existing = store.get(*request.plan_id, error);
+        if (!error.empty()) { result.error = error; return result; }
+        if (existing) {
+            if (existing->scope != request.plan_scope) {
+                result.error = "existing plan scope does not match requested plan scope";
+                return result;
+            }
+            if (existing->scope == common_plan_scope::session && existing->session_id != request.session_id) {
+                result.error = "existing session plan does not match requested session";
+                return result;
+            }
+            plan = *existing;
+            result.events.push_back({common_agent_event_type::plan_updated, "existing plan resumed", {}, plan.id});
+        }
     }
+    if (plan.id.empty()) {
+        auto proposal = planner.create_plan(request, error);
+        if (!error.empty()) { result.error = error; return result; }
+        if (request.plan_id) proposal.plan.id = *request.plan_id;
+        proposal.plan.scope = request.plan_scope;
+        if (proposal.plan.session_id.empty()) proposal.plan.session_id = request.session_id;
+        if (!store.create(proposal.plan, error)) { result.error = error; return result; }
+        plan = proposal.plan;
+        result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
+        for (auto op : proposal.operations) {
+            op.plan_id = plan.id;
+            op.expected_version = plan.version;
+            if (!store.apply(op, plan, error)) { result.error = error; return result; }
+            result.events.push_back({common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id});
+        }
+    }
+    result.plan_id = plan.id;
 
     std::vector<std::string> guidance;
     std::set<std::string> executed_step_ids;

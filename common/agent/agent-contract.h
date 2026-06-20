@@ -42,6 +42,9 @@ struct common_agent_request {
     std::string session_id = "default";
     std::string project_id;
     std::string turn_id;
+    // When present, the runtime resumes this exact persisted plan rather than
+    // asking the planner to create a new one.
+    std::optional<std::string> plan_id;
 
     bool enable_memory = false;
     bool enable_planning = true;

@@ -4,8 +4,9 @@
 
 common_plan_in_memory_store::common_plan_in_memory_store(common_plan_policy policy) : policy(std::move(policy)) {}
 bool common_plan_in_memory_store::open(const std::string &, std::string & error) { opened = true; error.clear(); return true; }
-void common_plan_in_memory_store::close() { opened = false; }
+void common_plan_in_memory_store::close() { opened = false; plans.clear(); events.clear(); }
 bool common_plan_in_memory_store::create(const common_plan_state & plan, std::string & error) { if (!opened) { error = "plan store is not open"; return false; } if (plan.id.empty() || plans.count(plan.id)) { error = "plan id is empty or already exists"; return false; } plans.emplace(plan.id, plan); error.clear(); return true; }
+bool common_plan_in_memory_store::restore_history(const std::string & plan_id, std::vector<common_plan_event> history, std::string & error) { if (!opened || !plans.count(plan_id)) { error = "plan store is not open or plan is unavailable"; return false; } events[plan_id] = std::move(history); error.clear(); return true; }
 std::optional<common_plan_state> common_plan_in_memory_store::get(const std::string & id, std::string & error) { if (!opened) { error = "plan store is not open"; return std::nullopt; } error.clear(); auto it = plans.find(id); return it == plans.end() ? std::nullopt : std::optional<common_plan_state>(it->second); }
 std::vector<common_plan_event> common_plan_in_memory_store::history(const std::string & id, std::string & error) { if (!opened) { error = "plan store is not open"; return {}; } error.clear(); return events[id]; }
 bool common_plan_in_memory_store::erase(const std::string & id, std::string & error) { if (!opened) { error = "plan store is not open"; return false; } plans.erase(id); events.erase(id); error.clear(); return true; }
