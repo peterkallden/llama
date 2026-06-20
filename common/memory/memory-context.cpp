@@ -40,6 +40,17 @@ std::string common_memory_render_context(const std::vector<common_memory_hit> & 
         std::ostringstream one;
         one << "[Memory: " << common_memory_escape_context_text(hit.memory.id) << "]\n";
         one << "Type: " << common_memory_kind_name(hit.memory.kind) << "\n";
+        one << "Scope: " << common_memory_scope_name(hit.memory.scope) << "\n";
+        one << "Namespace: " << common_memory_escape_context_text(hit.memory.namespace_id) << "\n";
+        if (!hit.memory.project_id.empty()) {
+            one << "Project: " << common_memory_escape_context_text(hit.memory.project_id) << "\n";
+        }
+        if (!hit.memory.session_id.empty()) {
+            one << "Session: " << common_memory_escape_context_text(hit.memory.session_id) << "\n";
+        }
+        if (!hit.memory.turn_id.empty()) {
+            one << "Turn: " << common_memory_escape_context_text(hit.memory.turn_id) << "\n";
+        }
         one << "Confidence: " << std::fixed << std::setprecision(3) << hit.memory.confidence << "\n";
         if (!hit.provenance.empty()) {
             one << "Provenance: " << common_memory_escape_context_text(hit.provenance) << "\n";

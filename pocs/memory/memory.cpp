@@ -37,6 +37,11 @@ struct args {
     std::string model;
     std::string embedding_model;
     std::string prompt;
+    std::string memory_scope = "session";
+    std::string memory_namespace = "local";
+    std::string memory_session = "default";
+    std::string memory_project;
+    std::string memory_turn;
     std::vector<float> embedding;
     float importance = 0.5f;
     float confidence = 0.5f;
@@ -48,13 +53,14 @@ struct args {
     bool record_episode = false;
     bool enable_memory_search_tool = false;
     bool enable_memory_remember_tool = false;
+    bool memory_global_opt_in = false;
 };
 
 static void usage(const char * argv0) {
     fprintf(stderr,
         "usage:\n"
-        "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
-        "  %s search --memory-db PATH --query TEXT [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
+        "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
+        "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
         "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool]\n",
         argv0, argv0, argv0, argv0);
@@ -112,6 +118,16 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.embedding_model = v;
         } else if (strcmp(argv[i], "--prompt") == 0 || strcmp(argv[i], "-p") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.prompt = v;
+        } else if (strcmp(argv[i], "--memory-scope") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_scope = v;
+        } else if (strcmp(argv[i], "--memory-namespace") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_namespace = v;
+        } else if (strcmp(argv[i], "--memory-session") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_session = v;
+        } else if (strcmp(argv[i], "--memory-project") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_project = v;
+        } else if (strcmp(argv[i], "--memory-turn") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_turn = v;
         } else if (strcmp(argv[i], "--importance") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.importance = std::stof(v);
         } else if (strcmp(argv[i], "--confidence") == 0) {
@@ -134,12 +150,60 @@ static bool parse_args(int argc, char ** argv, args & out) {
             out.enable_memory_search_tool = true;
         } else if (strcmp(argv[i], "--memory-remember-tool") == 0) {
             out.enable_memory_remember_tool = true;
+        } else if (strcmp(argv[i], "--memory-global-opt-in") == 0) {
+            out.memory_global_opt_in = true;
         } else {
             fprintf(stderr, "unknown argument: %s\n", argv[i]);
             return false;
         }
     }
     return true;
+}
+
+static bool memory_scope_from_args(const args & a, common_memory_scope & scope, std::string & error) {
+    if (!common_memory_scope_parse(a.memory_scope, scope)) {
+        error = "unsupported memory scope: " + a.memory_scope;
+        return false;
+    }
+    if (a.memory_namespace.empty()) {
+        error = "memory namespace must not be empty";
+        return false;
+    }
+    if (scope == common_memory_scope::turn && a.memory_turn.empty()) {
+        error = "turn-scoped memory requires --memory-turn";
+        return false;
+    }
+    if (scope == common_memory_scope::session && a.memory_session.empty()) {
+        error = "session-scoped memory requires --memory-session";
+        return false;
+    }
+    if (scope == common_memory_scope::project && a.memory_project.empty()) {
+        error = "project-scoped memory requires --memory-project";
+        return false;
+    }
+    if (scope == common_memory_scope::global && !a.memory_global_opt_in) {
+        error = "global memory requires --memory-global-opt-in (local single-user/test environments only)";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+static void apply_memory_scope(const args & a, common_memory_record & record) {
+    common_memory_scope_parse(a.memory_scope, record.scope);
+    record.namespace_id = a.memory_namespace;
+    record.session_id = a.memory_session;
+    record.project_id = a.memory_project;
+    record.turn_id = a.memory_turn;
+}
+
+static void apply_memory_scope(const args & a, common_memory_query & query) {
+    common_memory_scope_parse(a.memory_scope, query.scope);
+    query.namespace_id = a.memory_namespace;
+    query.session_id = a.memory_session;
+    query.project_id = a.memory_project;
+    query.turn_id = a.memory_turn;
+    query.global_opt_in = a.memory_global_opt_in;
 }
 
 static constexpr size_t k_memory_search_max_limit = 8;
@@ -218,6 +282,7 @@ static std::string memory_search_tool_result(
         query.text = query_text;
         query.limit = limit;
         query.token_budget = a.memory_token_budget;
+        apply_memory_scope(a, query);
 
         std::string error;
         if (!ensure_embedding(a, query.text, query.embedding, "tool query", error)) {
@@ -251,9 +316,11 @@ static void log_memory_remember_audit(
         const common_memory_remember_request & request,
         const common_memory_remember_result & result) {
     fprintf(stderr,
-        "audit: memory_remember decision=%s kind=%s reason=%s related=%zu content=\"%s\"\n",
+        "audit: memory_remember decision=%s kind=%s scope=%s namespace=%s reason=%s related=%zu content=\"%s\"\n",
         common_memory_remember_decision_name(decision),
         common_memory_kind_name(request.kind),
+        common_memory_scope_name(request.scope),
+        request.namespace_id.c_str(),
         result.reason.c_str(),
         result.related_hits.size(),
         request.content.c_str());
@@ -294,6 +361,12 @@ static std::string memory_remember_tool_result(
             return result.dump();
         }
         proposal.content = request.at("content").get<std::string>();
+        common_memory_scope_parse(a.memory_scope, proposal.scope);
+        proposal.namespace_id = a.memory_namespace;
+        proposal.session_id = a.memory_session;
+        proposal.project_id = a.memory_project;
+        proposal.turn_id = a.memory_turn;
+        proposal.global_opt_in = a.memory_global_opt_in;
         if (proposal.content.empty() || proposal.content.size() > k_memory_remember_max_content_chars) {
             result["error"] = "content must contain between 1 and 512 characters";
             return result.dump();
@@ -343,6 +416,7 @@ static std::string memory_remember_tool_result(
         result["decision"] = common_memory_remember_decision_name(decision.decision);
         result["reason"] = decision.reason;
         result["kind"] = common_memory_kind_name(proposal.kind);
+        result["scope"] = common_memory_scope_name(proposal.scope);
         result["content"] = proposal.content;
         result["related_count"] = decision.related_hits.size();
         if (!decision.related_hits.empty()) {
@@ -646,6 +720,7 @@ static int run_chat(common_memory_store & store, const args & a) {
     query.embedding = a.embedding;
     query.limit = a.limit;
     query.token_budget = a.memory_token_budget;
+    apply_memory_scope(a, query);
     bool memory_enabled = true;
     if (query.embedding.empty() && !ensure_embedding(a, a.prompt, query.embedding, "query", error)) {
         fprintf(stderr, "warning: memory retrieval disabled: %s\n", error.c_str());
@@ -787,6 +862,7 @@ static int run_chat(common_memory_store & store, const args & a) {
         episode.accessed_at = episode.created_at;
         episode.importance = 0.5f;
         episode.confidence = 0.5f;
+        apply_memory_scope(a, episode);
         if (!store.put(episode, error)) {
             fprintf(stderr, "failed to record memory episode: %s\n", error.c_str());
         }
@@ -806,6 +882,11 @@ int main(int argc, char ** argv) {
     }
 
     std::string error;
+    common_memory_scope parsed_scope;
+    if (!memory_scope_from_args(a, parsed_scope, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
     auto store = make_store(a, error);
     if (!store) {
         fprintf(stderr, "%s\n", error.c_str());
@@ -835,6 +916,7 @@ int main(int argc, char ** argv) {
         record.accessed_at = record.created_at;
         record.importance = a.importance;
         record.confidence = a.confidence;
+        apply_memory_scope(a, record);
         if (!store->put(record, error)) {
             fprintf(stderr, "failed to add memory: %s\n", error.c_str());
             return 1;
@@ -849,6 +931,7 @@ int main(int argc, char ** argv) {
             return 1;
         }
         query.limit = a.limit;
+        apply_memory_scope(a, query);
         auto hits = store->search(query, error);
         if (!error.empty()) {
             fprintf(stderr, "search failed: %s\n", error.c_str());

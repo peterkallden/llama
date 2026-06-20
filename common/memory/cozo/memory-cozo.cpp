@@ -37,8 +37,19 @@ static common_memory_record record_from_json(const json & row) {
     record.created_at = row.at(7).get<int64_t>();
     record.accessed_at = row.at(8).get<int64_t>();
     record.access_count = row.at(9).get<uint64_t>();
-    if (!row.at(10).get<std::string>().empty()) {
-        const auto metadata = json::parse(row.at(10).get<std::string>(), nullptr, false);
+    record.scope = common_memory_scope::session;
+    record.namespace_id = "local";
+    record.session_id = "default";
+    if (row.size() >= 16) {
+        common_memory_scope_parse(row.at(10).get<std::string>(), record.scope);
+        record.namespace_id = row.at(11).get<std::string>();
+        record.session_id = row.at(12).get<std::string>();
+        record.project_id = row.at(13).get<std::string>();
+        record.turn_id = row.at(14).get<std::string>();
+    }
+    const size_t metadata_index = row.size() >= 16 ? 15 : 10;
+    if (!row.at(metadata_index).get<std::string>().empty()) {
+        const auto metadata = json::parse(row.at(metadata_index).get<std::string>(), nullptr, false);
         if (metadata.is_object()) {
             for (auto it = metadata.begin(); it != metadata.end(); ++it) {
                 if (it.value().is_string()) {
@@ -49,6 +60,8 @@ static common_memory_record record_from_json(const json & row) {
     }
     return record;
 }
+
+static constexpr const char * k_memory_relation = "memory_scoped";
 
 common_memory_cozo_store::common_memory_cozo_store() = default;
 
@@ -110,15 +123,55 @@ bool common_memory_cozo_store::open(const std::string & path, std::string & erro
     }
 
     const bool has_memory = names.count("memory") != 0;
+    const bool has_scoped_memory = names.count(k_memory_relation) != 0;
     const bool has_memory_edge = names.count("memory_edge") != 0;
-    if (has_memory != has_memory_edge) {
+    if ((has_memory || has_scoped_memory) != has_memory_edge) {
         close();
         error = "Cozo memory database has an incomplete schema; create a new PoC database";
         return false;
     }
-    if (!has_memory && !run(common_memory_cozo_schema_script(), "{}", result, error)) {
+    if (!has_memory && !has_scoped_memory && !run(common_memory_cozo_schema_script(), "{}", result, error)) {
         close();
         return false;
+    }
+    if (has_memory && !has_scoped_memory) {
+        const char * create_scoped_relation = R"COZO(
+            {
+                ?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] <-
+                    [['__schema_probe__', 'fact', '', '', [], 0.0, 0.0, 0, 0, 0, 'session', 'local', 'default', '', '', '{}']]
+                :create memory_scoped {
+                    id: String =>
+                    kind: String,
+                    content: String,
+                    summary: String,
+                    embedding: [Float],
+                    importance: Float,
+                    confidence: Float,
+                    created_at: Int,
+                    accessed_at: Int,
+                    access_count: Int,
+                    scope: String,
+                    namespace_id: String,
+                    session_id: String,
+                    project_id: String,
+                    turn_id: String,
+                    metadata_json: String
+                }
+            }
+            {
+                ?[id] <- [['__schema_probe__']]
+                :delete memory_scoped { id }
+            }
+        )COZO";
+        const char * migration =
+            "?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] := "
+            "*memory[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, old_metadata_json], "
+            "scope = 'session', namespace_id = 'local', session_id = 'default', project_id = '', turn_id = '', metadata_json = old_metadata_json "
+            ":put memory_scoped { id => kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json }";
+        if (!run(create_scoped_relation, "{}", result, error) || !run(migration, "{}", result, error)) {
+            close();
+            return false;
+        }
     }
     return true;
 }
@@ -147,18 +200,23 @@ bool common_memory_cozo_store::put(const common_memory_record & record, std::str
             record.created_at,
             record.accessed_at,
             record.access_count,
+            common_memory_scope_name(record.scope),
+            record.namespace_id,
+            record.session_id,
+            record.project_id,
+            record.turn_id,
             metadata_to_json(record.metadata).dump(),
         })})},
     };
     std::string result;
-    return run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] <- $rows :put memory { id => kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json }",
+    return run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] <- $rows :put memory_scoped { id => kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json }",
         params.dump(), result, error);
 }
 
 std::optional<common_memory_record> common_memory_cozo_store::get(const std::string & id, std::string & error) {
     const json params = {{"id", id}};
     std::string result;
-    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] := *memory[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json], id == $id",
+    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] := *memory_scoped[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json], id == $id",
             params.dump(), result, error)) {
         return std::nullopt;
     }
@@ -171,7 +229,7 @@ std::optional<common_memory_record> common_memory_cozo_store::get(const std::str
 
 std::vector<common_memory_hit> common_memory_cozo_store::search(const common_memory_query & query, std::string & error) {
     std::string result;
-    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] := *memory[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json]",
+    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] := *memory_scoped[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json]",
             "{}", result, error)) {
         return {};
     }
@@ -188,6 +246,9 @@ std::vector<common_memory_hit> common_memory_cozo_store::search(const common_mem
     for (const auto & row : parsed["rows"]) {
         auto record = record_from_json(row);
         if (query.kind && record.kind != *query.kind) {
+            continue;
+        }
+        if (!common_memory_scope_matches(record, query)) {
             continue;
         }
         candidate_store.put(record, candidate_error);
@@ -211,7 +272,7 @@ bool common_memory_cozo_store::relate(const std::string & from, const std::strin
 bool common_memory_cozo_store::erase(const std::string & id, std::string & error) {
     const json params = {{"id", id}};
     std::string result;
-    if (!run("?[id] <- [[$id]] :delete memory { id }", params.dump(), result, error)) {
+    if (!run("?[id] <- [[$id]] :delete memory_scoped { id }", params.dump(), result, error)) {
         return false;
     }
     return run("?[from, relation, to] := *memory_edge[from, relation, to, weight, created_at], (from == $id || to == $id) :delete memory_edge { from, relation, to }",

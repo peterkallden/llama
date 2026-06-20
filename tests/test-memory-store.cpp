@@ -46,6 +46,33 @@ int main() {
     assert(emb_hits.size() == 1);
     assert(emb_hits[0].memory.id == "episode-1" || emb_hits[0].memory.id == "fact-1");
 
+    auto session_a = make_record("session-a", "scope isolated memory", {0.5f, 0.5f});
+    session_a.session_id = "session-a";
+    auto session_b = make_record("session-b", "scope isolated memory", {0.5f, 0.5f});
+    session_b.session_id = "session-b";
+    auto global = make_record("global", "globally opt-in memory", {0.5f, 0.5f});
+    global.scope = common_memory_scope::global;
+    assert(store.put(session_a, error));
+    assert(store.put(session_b, error));
+    assert(store.put(global, error));
+
+    common_memory_query scoped_query;
+    scoped_query.text = "scope isolated";
+    scoped_query.session_id = "session-a";
+    scoped_query.limit = 8;
+    auto scoped_hits = store.search(scoped_query, error);
+    assert(scoped_hits.size() == 1);
+    assert(scoped_hits[0].memory.id == "session-a");
+
+    scoped_query.scope = common_memory_scope::global;
+    scoped_query.text = "globally";
+    scoped_query.global_opt_in = false;
+    assert(store.search(scoped_query, error).empty());
+    scoped_query.global_opt_in = true;
+    scoped_hits = store.search(scoped_query, error);
+    assert(scoped_hits.size() == 1);
+    assert(scoped_hits[0].memory.id == "global");
+
     assert(std::fabs(common_memory_cosine_similarity({1.0f, 0.0f}, {1.0f, 0.0f}) - 1.0f) < 0.0001f);
     assert(common_memory_cosine_similarity({}, {1.0f}) == 0.0f);
     assert(common_memory_cosine_similarity({1.0f}, {1.0f, 2.0f}) == 0.0f);
