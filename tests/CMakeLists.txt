@@ -215,6 +215,8 @@ llama_build_and_test(
 llama_build_and_test(test-regex-partial.cpp)
 
 if (LLAMA_MEMORY)
+    llama_build_and_test(test-agent-contract.cpp)
+    target_link_libraries(test-agent-contract PRIVATE llama-memory)
     llama_build_and_test(test-memory-store.cpp)
     target_link_libraries(test-memory-store PRIVATE llama-memory)
     llama_build_and_test(test-memory-retrieval.cpp)
