@@ -75,9 +75,9 @@ llama-memory-cozo
 
 ## Internal Agent Contract
 
-`common/agent/agent-contract.h` defines a backend-neutral internal contract for future agent entry points: `common_agent_request`, `common_agent_result`, and structured `common_agent_event` values. It carries chat messages, independent memory and plan scopes, namespace/session/project/turn identities, feature flags, retrieved memory IDs, optional plan identity/version, and reflection/revision outcomes.
+`common/agent/agent-contract.h` defines a backend-neutral internal contract for future agent entry points: `common_agent_request`, `common_agent_result`, and structured `common_agent_event` values. The active portion carries chat messages, memory scope, namespace/session/project/turn identities, feature flags, retrieved memory IDs, and memory lifecycle events.
 
-The contract does not execute tools or own policy. Memory scope is still enforced by the memory layer, while plan scope remains independent: a global plan does not implicitly authorize reading or writing global memory. Events intentionally record outcomes rather than raw chain-of-thought.
+The plan- and reflection-specific fields are intentionally commented out until the separate plan/reflection branch lands. Their intended boundary remains documented in place: plan scope must remain independent from memory scope, so a global plan never implicitly authorizes reading or writing global memory. The contract does not execute tools or own policy, and events intentionally record outcomes rather than raw chain-of-thought.
 
 ## Build
 
