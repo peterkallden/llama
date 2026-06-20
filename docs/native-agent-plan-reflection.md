@@ -31,6 +31,21 @@ The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. Th
 
 When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing `llama-memory chat` PoC exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs one native read-only tool round, and completes with a tool-free final generation. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags.
 
+## Model-backed chat loop (first vertical slice)
+
+`llama-memory chat --planning-mode mini` now runs the existing bounded runtime around the already loaded chat model. The planner asks the model for a small JSON plan, validates its operations through the regular plan policy, lets only the active plan step invoke a registered tool, records the result as a plan observation, and uses a model-backed executor for the draft. `--reflection-mode always` performs one separate constrained reflection pass and allows at most one revision. Reflection output remains sideband data and is never appended to normal chat history.
+
+```powershell
+.\build-plan\bin\Debug\llama-memory.exe chat `
+  --backend cozo --memory-db .\work\agent.db `
+  --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
+  --prompt "What did we decide, and what is the next step?" `
+  --tool-profile memory-read --planning-mode mini --reflection-mode always `
+  --plan-scope session --plan-show-summary --agent-trace --max-tool-rounds 1
+```
+
+The planner is deliberately fail-closed for actions but fail-soft for availability: invalid planner JSON becomes a one-step, tool-free fallback plan; an invalid reflection becomes `accept` of the generated draft. A planner-selected tool outside the registered profile is stripped before execution. `mini` rejects legacy tool flags because only registry-owned tools may be planned. Plans are currently process-local (`common_plan_in_memory_store`); the existing Cozo plan store is not yet bound to this CLI path.
+
 `memory_remember` is available in the `memory` and `research` profiles as a policy-gated proposal, not as a generic write capability. Its native binding invokes the existing memory policy and audit path, returning the accept/reject/duplicate/conflict decision as a tool result. Generic plan runtime callers must explicitly set `allow_policy_gated_tool_proposals`; otherwise only read-only tools are eligible.
 
 The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits executions per run, and an active step is never re-executed after its observation is recorded. A reflection may propose accepted plan operations such as `complete_step` followed by `activate_step`; if that newly active step has a read-only tool call and batch budget remains, the next iteration runs it. This permits bounded chains such as `memory_search → memory_get` without automatic execution of arbitrary pending steps.
@@ -49,4 +64,4 @@ The runtime is intentionally mockable: a planner creates a turn/session/project/
 
 Registered tools are explicit opt-in runtime dependencies. An active plan step can carry a structured tool name and object-shaped JSON arguments; the runtime executes at most one read-only registered tool batch, validates it through the registry, and records the capped result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls. A network tool should be a constrained capability such as `web_fetch` or `web_search`, with URL, timeout, response-size, and allowlist policy in its registered handler rather than a general-purpose `curl` escape hatch.
 
-Known limitations: this slice has no model-backed constrained planner wired into an inference CLI, no plan CLI command, and only the first one-tool bounded action shape. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.
+Known limitations: model JSON is prompt-constrained and parser-validated, not grammar-constrained yet; plan persistence in `llama-memory chat` is still process-local; and the first model-backed slice executes only the initially active plan step. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.
