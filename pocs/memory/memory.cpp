@@ -8,6 +8,11 @@
 #include "sampling.h"
 #include "llama.h"
 
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+#include "agent/tool-adapters.h"
+#include "agent/tool-chat-bridge.h"
+#endif
+
 #ifdef LLAMA_MEMORY_USE_COZO
 #include "memory/cozo/memory-cozo.h"
 #endif
@@ -53,6 +58,7 @@ struct args {
     bool record_episode = false;
     bool enable_memory_search_tool = false;
     bool enable_memory_remember_tool = false;
+    std::string tool_profile;
     bool memory_global_opt_in = false;
 };
 
@@ -62,7 +68,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-top-k N] [--memory-record-episode] [--memory-search-tool] [--memory-remember-tool] [--tool-profile minimal|memory-read|memory|research]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -150,6 +156,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             out.enable_memory_search_tool = true;
         } else if (strcmp(argv[i], "--memory-remember-tool") == 0) {
             out.enable_memory_remember_tool = true;
+        } else if (strcmp(argv[i], "--tool-profile") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v;
         } else if (strcmp(argv[i], "--memory-global-opt-in") == 0) {
             out.memory_global_opt_in = true;
         } else {
@@ -714,6 +722,16 @@ static bool ensure_embedding(
 
 static int run_chat(common_memory_store & store, const args & a) {
     std::string error;
+#ifndef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+    if (!a.tool_profile.empty()) {
+        fprintf(stderr, "--tool-profile requires a build with LLAMA_AGENT_REFLECTION=ON\n");
+        return 1;
+    }
+#endif
+    if (!a.tool_profile.empty() && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
+        fprintf(stderr, "--tool-profile cannot be combined with legacy memory tool flags\n");
+        return 1;
+    }
     std::string fallback_reason;
     common_memory_query query;
     query.text = a.prompt;
@@ -763,7 +781,7 @@ static int run_chat(common_memory_store & store, const args & a) {
 
     common_chat_templates_ptr chat_templates = common_chat_templates_init(model, "");
     std::vector<common_chat_msg> messages;
-    if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool) && memory_enabled)) {
+    if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool || !a.tool_profile.empty()) && memory_enabled)) {
         common_chat_msg system_msg;
         system_msg.role = "system";
         system_msg.content =
@@ -780,16 +798,46 @@ static int run_chat(common_memory_store & store, const args & a) {
     messages.push_back(std::move(user_msg));
 
     std::vector<common_chat_tool> tools;
-    if (a.enable_memory_search_tool && memory_enabled) {
+    bool profile_tools_active = false;
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+    common_tool_catalog tool_catalog;
+    common_tool_registry tool_registry;
+    if (!a.tool_profile.empty()) {
+        common_tool_bootstrap_result bootstrap;
+        if (!tool_catalog.bootstrap(a.tool_profile, bootstrap, error)) {
+            fprintf(stderr, "tool bootstrap failed: %s\n", error.c_str());
+            llama_model_free(model);
+            return 1;
+        }
+        common_native_tool_bindings bindings;
+        if (memory_enabled) {
+            bindings.memory_store = &store;
+            bindings.memory_query = query;
+            bindings.embed_memory_query = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+                return ensure_embedding(a, text, embedding, "tool query", embedding_error);
+            };
+        }
+        common_tool_adapter_result adapters;
+        if (!common_register_native_tool_adapters(tool_catalog, a.tool_profile, bindings, tool_registry, adapters, error) ||
+                !common_tool_profile_to_chat_tools(tool_catalog, a.tool_profile, tool_registry, tools, error)) {
+            fprintf(stderr, "tool profile setup failed: %s\n", error.c_str());
+            llama_model_free(model);
+            return 1;
+        }
+        profile_tools_active = true;
+        fprintf(stderr, "debug: tool profile %s enabled with %zu native read-only tool(s)\n", a.tool_profile.c_str(), tools.size());
+    }
+#endif
+    if (!profile_tools_active && a.enable_memory_search_tool && memory_enabled) {
         tools.push_back(memory_search_tool_definition());
         fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %zu)\n", k_memory_search_max_limit);
-    } else if (a.enable_memory_search_tool) {
+    } else if (!profile_tools_active && a.enable_memory_search_tool) {
         fprintf(stderr, "debug: memory_search tool disabled because query embeddings are unavailable\n");
     }
-    if (a.enable_memory_remember_tool && memory_enabled) {
+    if (!profile_tools_active && a.enable_memory_remember_tool && memory_enabled) {
         tools.push_back(memory_remember_tool_definition());
         fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
-    } else if (a.enable_memory_remember_tool) {
+    } else if (!profile_tools_active && a.enable_memory_remember_tool) {
         fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
     }
 
@@ -811,27 +859,41 @@ static int run_chat(common_memory_store & store, const args & a) {
     common_chat_msg assistant_msg = common_chat_parse(output, false, parser_params);
 
     if (!assistant_msg.tool_calls.empty()) {
-        common_chat_msg tool_msg;
-        tool_msg.role = "tool";
-        if (assistant_msg.tool_calls.size() != 1) {
-            tool_msg.content = R"({"ok":false,"error":"only one memory tool call is allowed per chat turn"})";
-            fprintf(stderr, "warning: rejected unsupported memory tool call\n");
-        } else {
-            const common_chat_tool_call & call = assistant_msg.tool_calls.front();
-            tool_msg.tool_name = call.name;
-            tool_msg.tool_call_id = call.id.empty() ? "memory-tool-1" : call.id;
-            assistant_msg.tool_calls.front().id = tool_msg.tool_call_id;
-            if (call.name == "memory_search") {
-                tool_msg.content = memory_search_tool_result(store, a, call.arguments);
-            } else if (call.name == "memory_remember") {
-                tool_msg.content = memory_remember_tool_result(store, a, call.arguments);
+        if (profile_tools_active) {
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+            common_tool_chat_dispatch_result dispatched;
+            if (!common_tool_dispatch_chat_calls(assistant_msg, tool_registry, 1, dispatched, error)) {
+                fprintf(stderr, "tool dispatch failed: %s\n", error.c_str());
+                llama_model_free(model);
+                return 1;
             } else {
-                tool_msg.content = R"({"ok":false,"error":"unsupported memory tool"})";
-                fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
+                messages.push_back(std::move(assistant_msg));
+                for (auto & tool_message : dispatched.tool_messages) messages.push_back(std::move(tool_message));
             }
+#endif
+        } else {
+            common_chat_msg tool_msg;
+            tool_msg.role = "tool";
+            if (assistant_msg.tool_calls.size() != 1) {
+                tool_msg.content = R"({"ok":false,"error":"only one memory tool call is allowed per chat turn"})";
+                fprintf(stderr, "warning: rejected unsupported memory tool call\n");
+            } else {
+                const common_chat_tool_call & call = assistant_msg.tool_calls.front();
+                tool_msg.tool_name = call.name;
+                tool_msg.tool_call_id = call.id.empty() ? "memory-tool-1" : call.id;
+                assistant_msg.tool_calls.front().id = tool_msg.tool_call_id;
+                if (call.name == "memory_search") {
+                    tool_msg.content = memory_search_tool_result(store, a, call.arguments);
+                } else if (call.name == "memory_remember") {
+                    tool_msg.content = memory_remember_tool_result(store, a, call.arguments);
+                } else {
+                    tool_msg.content = R"({"ok":false,"error":"unsupported memory tool"})";
+                    fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
+                }
+            }
+            messages.push_back(std::move(assistant_msg));
+            messages.push_back(std::move(tool_msg));
         }
-        messages.push_back(std::move(assistant_msg));
-        messages.push_back(std::move(tool_msg));
 
         int final_decode = 0;
         if (!generate_chat_turn(model, chat_templates.get(), messages, {}, COMMON_CHAT_TOOL_CHOICE_NONE,

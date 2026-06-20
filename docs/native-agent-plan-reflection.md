@@ -29,6 +29,8 @@ The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. Th
 
 `common_tool_profile_to_chat_tools` and `common_tool_dispatch_chat_calls` connect that native registry to llama.cpp's existing chat-template and tool-call parser layer. The former exposes only definitions that are both profile-approved and actually registered; the latter turns a parsed assistant tool call into a bounded `role: tool` message for the next generation. It assigns a stable runtime call id when a template omitted one, caps results, and never executes proposal or unregistered tools. The first limit is one call per batch.
 
+When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing `llama-memory chat` PoC exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs one native read-only tool round, and completes with a tool-free final generation. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags.
+
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 
 Enable the generic PoC:

@@ -143,6 +143,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 query.text = arguments["query"].get<std::string>();
                 query.limit = (size_t) arguments.value("limit", 5);
                 if (query.text.empty() || query.text.size() > 1024 || query.limit < 1 || query.limit > 8) { err = "memory_search arguments are out of bounds"; return false; }
+                if (bindings.embed_memory_query) { query.embedding.clear(); if (!bindings.embed_memory_query(query.text, query.embedding, err)) return false; }
                 common_memory_retrieval retrieval(*bindings.memory_store);
                 const auto hits = retrieval.retrieve(query, err); if (!err.empty()) return false;
                 json values = json::array();
@@ -180,4 +181,3 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
     error.clear();
     return true;
 }
-

@@ -4,6 +4,11 @@ set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+if (LLAMA_AGENT_REFLECTION)
+    target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+    target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+endif()
+
 if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()

@@ -5,6 +5,7 @@
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,9 @@ struct common_native_tool_bindings {
     common_plan_store * plan_store = nullptr;
     common_memory_query memory_query;
     std::string plan_id;
+    // Optional runtime-owned semantic query embedding provider. Tool arguments
+    // only supply text; model code never receives this callback or model path.
+    std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;
 };
 
 struct common_tool_adapter_result {
@@ -32,4 +36,3 @@ bool common_register_native_tool_adapters(
     common_tool_registry & registry,
     common_tool_adapter_result & result,
     std::string & error);
-

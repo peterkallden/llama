@@ -342,6 +342,22 @@ When the tool is enabled and embeddings are available, the console now emits aud
 audit: memory_remember decision=accept kind=fact scope=session namespace=local reason=accepted low-risk memory related=0 content="The project codename is SkyNet."
 ```
 
+## Catalog-backed read-only tool profile
+
+When the PoC is built with both `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, `llama-memory chat` can use the shared native tool catalog:
+
+```powershell
+.\build-plan\bin\Debug\llama-memory.exe chat `
+  --backend cozo `
+  --memory-db .\work\memory.db `
+  --model .\models\poc-qwen15b\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
+  --embedding-model .\models\poc-nomic-embed\nomic-embed-text-v1.5.Q4_K_M.gguf `
+  --prompt "What do we know about the current plan?" `
+  --tool-profile memory-read
+```
+
+The profile is bootstrapped in process and exposes only native executors that are both registered and read-only. In this memory CLI those are `calculator`, UTC `time_now`, `memory_search`, and `memory_get`; `plan_get` becomes available later when a plan store is bound. The first chat turn may make one tool call; its result is added as a standard tool message and the final answer turn has tools disabled. `--tool-profile` is intentionally incompatible with the older `--memory-search-tool` and `--memory-remember-tool` flags. Persistent Cozo catalog storage and proposal-tool execution are later slices.
+
 ## Known Limitations
 
 - The in-memory backend is not persistent across CLI invocations.
