@@ -4,6 +4,7 @@
 #include "chat.h"
 #include "agent/tool-registry.h"
 #include "memory/memory-types.h"
+#include "memory/memory-candidate.h"
 #include "plan/plan-types.h"
 
 #include <cstdint>
@@ -15,6 +16,8 @@ enum class common_agent_event_type {
     memory_retrieved,
     memory_remembered,
     memory_rejected,
+    memory_candidate_extracted,
+    memory_candidate_not_stored,
     tool_executed,
     tool_rejected,
     plan_created,
@@ -66,6 +69,9 @@ struct common_agent_result {
     std::string error;
 
     std::vector<std::string> memory_ids;
+    std::optional<common_memory_candidate> learned_memory_candidate;
+    std::string memory_learning_summary;
+    size_t memory_learning_related_count = 0;
 
     std::optional<std::string> plan_id;
     uint64_t plan_version = 0;

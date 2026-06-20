@@ -1,4 +1,5 @@
 #include "agent/agent-runtime.h"
+#include "agent/memory-learning.h"
 
 #include <nlohmann/json.hpp>
 #include <regex>
@@ -16,7 +17,7 @@ static bool infer_calculator_expression(const std::string & text, std::string & 
     return true;
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
     common_agent_result result;
@@ -156,5 +157,18 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     }
     if (result.response.empty() && result.error.empty()) result.error = "agent loop reached its iteration limit";
     result.plan_version = plan.version;
+    if (memory_learner && result.error.empty() && !result.response.empty()) {
+        const auto learning = memory_learner->learn(request, plan, result);
+        result.learned_memory_candidate = learning.candidate;
+        result.memory_learning_summary = std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason;
+        result.memory_learning_related_count = learning.related_count;
+        if (learning.decision == common_memory_learning_decision::accepted) {
+            result.events.push_back({common_agent_event_type::memory_remembered, "post-turn candidate stored", learning.stored_memory_id.value_or(""), plan.id});
+        } else if (learning.decision == common_memory_learning_decision::no_candidate) {
+            result.events.push_back({common_agent_event_type::memory_candidate_extracted, "post-turn no candidate", {}, plan.id});
+        } else {
+            result.events.push_back({common_agent_event_type::memory_candidate_not_stored, "post-turn candidate not stored: " + learning.reason, {}, plan.id});
+        }
+    }
     return result;
 }

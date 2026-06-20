@@ -4,6 +4,7 @@ add_library(${TARGET}
     ../agent/agent-contract.h
     memory-context.cpp
     memory-context.h
+    memory-candidate.h
     memory-in-memory.cpp
     memory-in-memory.h
     memory-policy.cpp

@@ -1,4 +1,6 @@
 #include "agent/agent-runtime.h"
+#include "agent/memory-learning.h"
+#include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
 #include <cassert>
@@ -45,6 +47,22 @@ public:
     }
 };
 
+class learner_extractor final : public common_memory_candidate_extractor {
+public:
+    common_memory_candidate_result extract(const common_agent_request &, const common_plan_state &, const common_agent_result &, std::string & error) override {
+        error.clear();
+        common_memory_candidate candidate;
+        candidate.kind = common_memory_kind::procedure;
+        candidate.content = "Verify a persisted plan by resuming it in a later process.";
+        candidate.rationale = "Explicit reusable verification rule.";
+        candidate.importance = 0.8f;
+        candidate.confidence = 0.9f;
+        candidate.expected_reuse = 0.8f;
+        candidate.explicit_user_provenance = true;
+        return {{candidate}, "explicit user rule"};
+    }
+};
+
 int main() {
     common_plan_in_memory_store store;
     std::string error;
@@ -75,5 +93,17 @@ int main() {
     const auto resumed = runtime.run(request);
     assert(resumed.error.empty() && resumed.plan_id && *resumed.plan_id == "turn-1");
     assert(p.calls == 1 && !resumed.events.empty() && resumed.events.front().detail == "existing plan resumed");
+
+    common_memory_in_memory_store memories;
+    assert(memories.open("", error));
+    learner_extractor extractor;
+    common_memory_post_turn_learner learner(memories, extractor,
+        [](const std::string &, std::vector<float> & embedding, std::string & embed_error) { embedding = {1.0f}; embed_error.clear(); return true; });
+    request.project_id = "project-a";
+    common_agent_runtime learning_runtime(store, p, e, r, &tools, &learner);
+    const auto learned = learning_runtime.run(request);
+    assert(learned.error.empty() && learned.learned_memory_candidate);
+    assert(learned.memory_learning_summary.rfind("accepted:", 0) == 0);
+    assert(!learned.events.empty() && learned.events.back().type == common_agent_event_type::memory_remembered);
     return 0;
 }

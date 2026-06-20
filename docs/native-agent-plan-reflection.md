@@ -53,6 +53,21 @@ The bounded agent runtime supports the same pattern across plan steps: `max_tool
 
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 
+## Opt-in post-turn durable memory learning
+
+`--memory-learn post-turn` adds one optional stage after a successful bounded agent turn. A separate model-backed candidate extractor returns either one constrained-JSON candidate or `null`; it is not part of the reflection parser and does not expose reflection text. The runtime then applies native shape, confidence (default `0.75`), expected-reuse (default `0.65`) and provenance gates before passing an accepted proposal through the existing `common_memory_evaluate_remember_request` policy and ordinary memory store. The policy remains the final authority for sensitive-content, scope, duplicate and conflict decisions.
+
+```powershell
+.\build-plan\bin\Release\llama-memory.exe chat `
+  --backend cozo --memory-db .\work\agent.db `
+  --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
+  --prompt "When testing persistent data, always close, reopen and read it back." `
+  --planning-mode mini --plan-backend cozo --plan-db .\work\agent-plan.cozo `
+  --memory-learn post-turn --memory-learn-show-candidate
+```
+
+Learning is off by default and currently requires `--planning-mode mini`. It chooses project scope only when the runtime has an explicit project id; otherwise it uses session scope. It never auto-selects global scope, and the model never receives scope or identity authority. `--memory-learn-show-candidate` prints the proposed content for local PoC inspection; the regular audit is structured and omits candidate content and reasoning. A candidate procedure needs explicit user provenance or at least one evidence/plan-step id. Ordinary one-off plans, transient next actions, malformed JSON and failed embedding/policy/persistence paths fail safely without writing memory.
+
 Enable the generic PoC:
 
 ```powershell
