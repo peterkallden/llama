@@ -17,7 +17,7 @@ user request -> memory retrieval -> planner -> plan store
 
 `llama-memory` provides retrieved evidence only. A planner can propose typed plan operations, but `common_plan_policy` validates version checks, state transitions, dependencies, cycles, evidence requirements and limits before `common_plan_store` persists an update. Plan events are append-only short audit records. Plans are never memory records.
 
-The first backend is `common_plan_in_memory_store`. Cozo plan persistence is intentionally not enabled in this vertical slice; it must use separate Cozo relations and APIs from memory storage.
+The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `common_plan_cozo_store` persists plan state in the separate Cozo relations `agent_plan` and `agent_plan_event`; it never uses the memory relations `memory` or `memory_edge`. The generic in-memory policy remains the mutation gate before an accepted state and its short audit event are persisted.
 
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 
@@ -31,4 +31,6 @@ ctest --test-dir build-plan -C Release --output-on-failure
 
 The runtime is intentionally mockable: a planner creates a turn/session/project plan, an executor produces a draft, and a reflector may accept, request a single revision, or propose policy-validated updates. Configure `max_iterations` and `max_reflection_rounds` (defaults: 2 and 1) to keep the loop bounded.
 
-Known limitations: this slice has no model-backed constrained planner yet, no CLI command, no registered-tool execution, and no Cozo plan backend. Those belong after the deterministic store and runtime tests are expanded and passing.
+Registered tools are explicit opt-in runtime dependencies. The registry accepts only named tools with object-shaped JSON arguments; the first loop allows at most one tool batch and records the result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls.
+
+Known limitations: this slice has no model-backed constrained planner wired into an inference CLI, no plan CLI command, and only the first one-tool bounded action shape. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.
