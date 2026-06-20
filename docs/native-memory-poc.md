@@ -73,6 +73,12 @@ llama-memory-cozo
 
 `llama-memory` lives under `common/memory` and exposes backend-neutral record, query, hit, retrieval, and context-rendering types. Cozo-specific code is isolated under `common/memory/cozo` and is compiled only when `LLAMA_MEMORY_COZO=ON`.
 
+## Internal Agent Contract
+
+`common/agent/agent-contract.h` defines a backend-neutral internal contract for future agent entry points: `common_agent_request`, `common_agent_result`, and structured `common_agent_event` values. It carries chat messages, independent memory and plan scopes, namespace/session/project/turn identities, feature flags, retrieved memory IDs, optional plan identity/version, and reflection/revision outcomes.
+
+The contract does not execute tools or own policy. Memory scope is still enforced by the memory layer, while plan scope remains independent: a global plan does not implicitly authorize reading or writing global memory. Events intentionally record outcomes rather than raw chain-of-thought.
+
 ## Build
 
 Generic memory PoC without Cozo:

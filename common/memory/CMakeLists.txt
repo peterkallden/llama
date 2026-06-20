@@ -1,6 +1,7 @@
 set(TARGET llama-memory)
 
 add_library(${TARGET}
+    ../agent/agent-contract.h
     memory-context.cpp
     memory-context.h
     memory-in-memory.cpp
