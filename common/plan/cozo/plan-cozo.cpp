@@ -5,8 +5,8 @@ extern "C" {
 #include <cozo_c.h>
 }
 using json = nlohmann::ordered_json;
-static std::string scope_name(common_plan_scope v) { return v == common_plan_scope::session ? "session" : v == common_plan_scope::project ? "project" : "turn"; }
-static common_plan_scope parse_scope(const std::string & v) { return v == "session" ? common_plan_scope::session : v == "project" ? common_plan_scope::project : common_plan_scope::turn; }
+static std::string scope_name(common_plan_scope v) { return v == common_plan_scope::session ? "session" : v == common_plan_scope::project ? "project" : v == common_plan_scope::global ? "global" : "turn"; }
+static common_plan_scope parse_scope(const std::string & v) { return v == "session" ? common_plan_scope::session : v == "project" ? common_plan_scope::project : v == "global" ? common_plan_scope::global : common_plan_scope::turn; }
 static std::string status_name(common_plan_status v) { switch(v) { case common_plan_status::proposed:return "proposed"; case common_plan_status::active:return "active"; case common_plan_status::completed:return "completed"; case common_plan_status::blocked:return "blocked"; case common_plan_status::failed:return "failed"; default:return "cancelled"; } }
 static common_plan_status parse_status(const std::string & v) { if(v=="active")return common_plan_status::active; if(v=="completed")return common_plan_status::completed; if(v=="blocked")return common_plan_status::blocked; if(v=="failed")return common_plan_status::failed; if(v=="cancelled")return common_plan_status::cancelled; return common_plan_status::proposed; }
 static std::string step_status_name(common_plan_step_status v) { switch(v) { case common_plan_step_status::pending:return "pending"; case common_plan_step_status::active:return "active"; case common_plan_step_status::completed:return "completed"; case common_plan_step_status::blocked:return "blocked"; case common_plan_step_status::skipped:return "skipped"; default:return "failed"; } }

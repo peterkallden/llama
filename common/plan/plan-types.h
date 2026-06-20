@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-enum class common_plan_scope { turn, session, project };
+enum class common_plan_scope { turn, session, project, global };
 enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
 

@@ -29,7 +29,7 @@ cmake --build build-plan --config Release
 ctest --test-dir build-plan -C Release --output-on-failure
 ```
 
-The runtime is intentionally mockable: a planner creates a turn/session/project plan, an executor produces a draft, and a reflector may accept, request a single revision, or propose policy-validated updates. Configure `max_iterations` and `max_reflection_rounds` (defaults: 2 and 1) to keep the loop bounded.
+The runtime is intentionally mockable: a planner creates a turn/session/project/global plan, an executor produces a draft, and a reflector may accept, request a single revision, or propose policy-validated updates. `global` is useful for a single local instance's reusable test or operational plan; multi-user deployments should apply an explicit namespace/tenant policy before enabling it. Configure `max_iterations` and `max_reflection_rounds` (defaults: 2 and 1) to keep the loop bounded.
 
 Registered tools are explicit opt-in runtime dependencies. The registry accepts only named tools with object-shaped JSON arguments; the first loop allows at most one tool batch and records the result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls.
 
