@@ -70,6 +70,30 @@ static bool auto_store_kind_allowed(common_memory_kind kind) {
     return false;
 }
 
+static bool scope_is_valid(const common_memory_remember_request & request, std::string & reason) {
+    if (request.namespace_id.empty()) {
+        reason = "memory namespace must not be empty";
+        return false;
+    }
+    if (request.scope == common_memory_scope::turn && request.turn_id.empty()) {
+        reason = "turn-scoped memory requires a turn identity";
+        return false;
+    }
+    if (request.scope == common_memory_scope::session && request.session_id.empty()) {
+        reason = "session-scoped memory requires a session identity";
+        return false;
+    }
+    if (request.scope == common_memory_scope::project && request.project_id.empty()) {
+        reason = "project-scoped memory requires a project identity";
+        return false;
+    }
+    if (request.scope == common_memory_scope::global && !request.global_opt_in) {
+        reason = "global memory requires explicit local single-user opt-in";
+        return false;
+    }
+    return true;
+}
+
 static bool looks_sensitive(const std::string & normalized) {
     return contains_any(normalized, {
         "password",
@@ -156,6 +180,9 @@ common_memory_remember_result common_memory_evaluate_remember_request(
         result.reason = std::string("kind is not eligible for automatic storage: ") + common_memory_kind_name(request.kind);
         return result;
     }
+    if (!scope_is_valid(request, result.reason)) {
+        return result;
+    }
 
     const std::string normalized_content = squeeze_space(request.content);
     if (normalized_content.size() < 8) {
@@ -177,6 +204,12 @@ common_memory_remember_result common_memory_evaluate_remember_request(
     query.embedding = embedding;
     query.limit = 3;
     query.minimum_score = 0.50f;
+    query.scope = request.scope;
+    query.namespace_id = request.namespace_id;
+    query.session_id = request.session_id;
+    query.project_id = request.project_id;
+    query.turn_id = request.turn_id;
+    query.global_opt_in = request.global_opt_in;
     result.related_hits = retrieval.retrieve(query, error);
     if (!error.empty()) {
         result.reason = "duplicate scan failed";
@@ -206,6 +239,11 @@ common_memory_remember_result common_memory_evaluate_remember_request(
     record.accessed_at = now;
     record.importance = request.importance;
     record.confidence = request.confidence;
+    record.scope = request.scope;
+    record.namespace_id = request.namespace_id;
+    record.session_id = request.session_id;
+    record.project_id = request.project_id;
+    record.turn_id = request.turn_id;
     record.metadata["policy_version"] = "memory_remember_v1";
     record.metadata["policy_decision"] = "accept";
     record.metadata["policy_reason"] = "accepted_low_risk_memory";

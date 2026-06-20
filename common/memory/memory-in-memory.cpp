@@ -57,6 +57,42 @@ bool common_memory_kind_parse(const std::string & value, common_memory_kind & ou
     return false;
 }
 
+const char * common_memory_scope_name(common_memory_scope scope) {
+    switch (scope) {
+        case common_memory_scope::turn:    return "turn";
+        case common_memory_scope::session: return "session";
+        case common_memory_scope::project: return "project";
+        case common_memory_scope::global:  return "global";
+    }
+    return "session";
+}
+
+bool common_memory_scope_parse(const std::string & value, common_memory_scope & out) {
+    const std::string v = lowercase(value);
+    if (v == "turn")    { out = common_memory_scope::turn; return true; }
+    if (v == "session") { out = common_memory_scope::session; return true; }
+    if (v == "project") { out = common_memory_scope::project; return true; }
+    if (v == "global")  { out = common_memory_scope::global; return true; }
+    return false;
+}
+
+bool common_memory_scope_matches(const common_memory_record & record, const common_memory_query & query) {
+    if (record.scope != query.scope || record.namespace_id != query.namespace_id) {
+        return false;
+    }
+    switch (query.scope) {
+        case common_memory_scope::turn:
+            return !query.turn_id.empty() && record.turn_id == query.turn_id;
+        case common_memory_scope::session:
+            return !query.session_id.empty() && record.session_id == query.session_id;
+        case common_memory_scope::project:
+            return !query.project_id.empty() && record.project_id == query.project_id;
+        case common_memory_scope::global:
+            return query.global_opt_in;
+    }
+    return false;
+}
+
 float common_memory_cosine_similarity(const std::vector<float> & a, const std::vector<float> & b) {
     if (a.empty() || b.empty() || a.size() != b.size()) {
         return 0.0f;
@@ -146,6 +182,9 @@ std::vector<common_memory_hit> common_memory_in_memory_store::search(const commo
     for (const auto & kv : records) {
         const common_memory_record & record = kv.second;
         if (query.kind && record.kind != *query.kind) {
+            continue;
+        }
+        if (!common_memory_scope_matches(record, query)) {
             continue;
         }
 

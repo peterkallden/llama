@@ -23,6 +23,8 @@ int main() {
     assert(rendered.find("<\\/runtime_memory>") != std::string::npos);
     assert(rendered.find("[Memory: fact-1]") != std::string::npos);
     assert(rendered.find("Type: fact") != std::string::npos);
+    assert(rendered.find("Scope: session") != std::string::npos);
+    assert(rendered.find("Namespace: local") != std::string::npos);
     assert(rendered.size() <= cfg.char_budget);
 
     common_memory_context_config tiny;

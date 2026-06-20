@@ -77,5 +77,19 @@ int main() {
     assert(error.empty());
     assert(allowed_preference.decision == common_memory_remember_decision::conflict);
 
+    auto other_session = request_for("The project codename is SkyNet.");
+    other_session.session_id = "another-session";
+    auto scoped_accept = common_memory_evaluate_remember_request(
+        store, other_session, {1.0f, 0.0f}, 1242, error);
+    assert(error.empty());
+    assert(scoped_accept.decision == common_memory_remember_decision::accept);
+
+    auto global_without_opt_in = request_for("The global codename is SkyNet.");
+    global_without_opt_in.scope = common_memory_scope::global;
+    auto global_reject = common_memory_evaluate_remember_request(
+        store, global_without_opt_in, {0.4f, 0.6f}, 1243, error);
+    assert(error.empty());
+    assert(global_reject.decision == common_memory_remember_decision::reject);
+
     return 0;
 }

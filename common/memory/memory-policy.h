@@ -15,6 +15,12 @@ struct common_memory_remember_request {
     float confidence = 0.5f;
     std::string source_role = "assistant";
     std::string source_turn_id;
+    common_memory_scope scope = common_memory_scope::session;
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    bool global_opt_in = false;
 };
 
 enum class common_memory_remember_decision {

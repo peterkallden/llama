@@ -5,6 +5,10 @@
 #include <filesystem>
 #include <string>
 
+extern "C" {
+#include <cozo_c.h>
+}
+
 static common_memory_record make_record(
         const std::string & id,
         const std::string & content,
@@ -31,6 +35,44 @@ static common_memory_record make_record(
     } \
 } while (false)
 
+static bool run_legacy_query(int32_t db_id, const char * script) {
+    char * result = cozo_run_query(db_id, script, "{}", false);
+    if (result == nullptr) {
+        return false;
+    }
+    cozo_free_str(result);
+    return true;
+}
+
+static bool create_legacy_database(const std::string & path) {
+    int32_t db_id = -1;
+    char * open_error = cozo_open_db("sqlite", path.c_str(), "{}", &db_id);
+    if (open_error != nullptr) {
+        cozo_free_str(open_error);
+        return false;
+    }
+    const bool ok =
+        run_legacy_query(db_id, R"COZO(
+            ?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] <-
+                [['__schema_probe__', 'fact', '', '', [], 0.0, 0.0, 0, 0, 0, '{}']]
+            :create memory {
+                id: String => kind: String, content: String, summary: String, embedding: [Float], importance: Float, confidence: Float,
+                created_at: Int, accessed_at: Int, access_count: Int, metadata_json: String
+            }
+        )COZO") &&
+        run_legacy_query(db_id, R"COZO(
+            ?[from, relation, to, weight, created_at] <- [['__schema_probe__', 'related', '__schema_probe__', 0.0, 0]]
+            :create memory_edge { from: String, relation: String, to: String => weight: Float, created_at: Int }
+        )COZO") &&
+        run_legacy_query(db_id, R"COZO(
+            ?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json] <-
+                [['legacy-1', 'fact', 'legacy scoped migration record', '', [1.0, 0.0], 0.8, 0.9, 1710000000, 1710000000, 0, '{}']]
+            :put memory { id => kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, metadata_json }
+        )COZO");
+    cozo_close_db(db_id);
+    return ok;
+}
+
 int main() {
     namespace fs = std::filesystem;
 
@@ -40,6 +82,7 @@ int main() {
     std::error_code ec;
     fs::remove_all(db_dir, ec);
     fs::create_directories(db_dir, ec);
+    CHECK(create_legacy_database(db_path.string()));
 
     std::string error;
     {
@@ -47,8 +90,25 @@ int main() {
         CHECK(store.open(db_path.string(), error));
         CHECK(error.empty());
 
+        auto migrated = store.get("legacy-1", error);
+        CHECK(migrated);
+        CHECK(migrated->scope == common_memory_scope::session);
+        CHECK(migrated->namespace_id == "local");
+        CHECK(migrated->session_id == "default");
+        common_memory_query migrated_query;
+        migrated_query.text = "legacy scoped";
+        migrated_query.limit = 1;
+        auto migrated_hits = store.search(migrated_query, error);
+        CHECK(error.empty());
+        CHECK(migrated_hits.size() == 1);
+        CHECK(migrated_hits[0].memory.id == "legacy-1");
+
         const auto fact = make_record("fact-1", "zero budget package search", {1.0f, 0.0f});
         const auto episode = make_record("episode-1", "the earlier pass produced the fact", {0.0f, 1.0f}, common_memory_kind::episode);
+        auto other_session = make_record("session-b", "zero budget from another session", {1.0f, 0.0f});
+        other_session.session_id = "session-b";
+        auto global = make_record("global-1", "globally opt-in record", {0.0f, 1.0f});
+        global.scope = common_memory_scope::global;
         common_memory_record cli_like;
         cli_like.id = "cli-1";
         cli_like.kind = common_memory_kind::fact;
@@ -61,6 +121,8 @@ int main() {
 
         CHECK(store.put(fact, error));
         CHECK(store.put(episode, error));
+        CHECK(store.put(other_session, error));
+        CHECK(store.put(global, error));
         CHECK(store.put(cli_like, error));
         CHECK(store.relate("episode-1", "produced", "fact-1", 1.0f, error));
 
@@ -77,6 +139,17 @@ int main() {
         CHECK(!text_hits.empty());
         CHECK(text_hits[0].memory.id == "fact-1");
 
+        common_memory_query global_query;
+        global_query.text = "globally";
+        global_query.scope = common_memory_scope::global;
+        global_query.limit = 4;
+        CHECK(store.search(global_query, error).empty());
+        global_query.global_opt_in = true;
+        auto global_hits = store.search(global_query, error);
+        CHECK(error.empty());
+        CHECK(global_hits.size() == 1);
+        CHECK(global_hits[0].memory.id == "global-1");
+
         store.close();
     }
 
@@ -89,6 +162,14 @@ int main() {
         CHECK(got);
         CHECK(got->content == "the earlier pass produced the fact");
         CHECK(got->kind == common_memory_kind::episode);
+
+        auto scoped = reopened.get("session-b", error);
+        CHECK(scoped);
+        CHECK(scoped->scope == common_memory_scope::session);
+        CHECK(scoped->session_id == "session-b");
+        auto reopened_legacy = reopened.get("legacy-1", error);
+        CHECK(reopened_legacy);
+        CHECK(reopened_legacy->scope == common_memory_scope::session);
 
         common_memory_query emb_query;
         emb_query.embedding = {0.0f, 1.0f};

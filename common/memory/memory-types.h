@@ -16,6 +16,13 @@ enum class common_memory_kind {
     preference,
 };
 
+enum class common_memory_scope {
+    turn,
+    session,
+    project,
+    global,
+};
+
 struct common_memory_record {
     std::string id;
     common_memory_kind kind = common_memory_kind::episode;
@@ -32,6 +39,13 @@ struct common_memory_record {
     int64_t accessed_at = 0;
     uint64_t access_count = 0;
 
+    // Scope is a first-class access boundary, never model-controlled metadata.
+    common_memory_scope scope = common_memory_scope::session;
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+
     std::unordered_map<std::string, std::string> metadata;
 };
 
@@ -40,6 +54,13 @@ struct common_memory_query {
     std::vector<float> embedding;
 
     std::optional<common_memory_kind> kind;
+
+    common_memory_scope scope = common_memory_scope::session;
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    bool global_opt_in = false;
 
     size_t limit = 8;
     float minimum_score = 0.0f;
@@ -60,4 +81,7 @@ struct common_memory_hit {
 
 const char * common_memory_kind_name(common_memory_kind kind);
 bool common_memory_kind_parse(const std::string & value, common_memory_kind & out);
+const char * common_memory_scope_name(common_memory_scope scope);
+bool common_memory_scope_parse(const std::string & value, common_memory_scope & out);
+bool common_memory_scope_matches(const common_memory_record & record, const common_memory_query & query);
 float common_memory_cosine_similarity(const std::vector<float> & a, const std::vector<float> & b);
