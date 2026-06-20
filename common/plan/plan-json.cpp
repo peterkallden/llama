@@ -97,7 +97,7 @@ std::string common_plan_proposal_json_schema() {
                 {"evidence_ids", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                 {"step", {{"type", "object"}, {"additionalProperties", false}, {"required", {"id", "title", "objective", "depends_on", "required_evidence"}}, {"properties", {
                     {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}},
-                    {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"required_evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                    {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"required_evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"source_memory_ids", {{"type", "array"}, {"maxItems", 4}, {"items", {{"type", "string"}, {"maxLength", 256}}}}},
                     {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name", "arguments_json"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments_json", {{"type", "string"}, {"maxLength", 512}}}}}}}
                 }}}}
             }}}}}}
@@ -122,8 +122,9 @@ bool common_plan_parse_proposal_json(const std::string & text, common_plan_state
             common_plan_step step; step.id = source["id"].get<std::string>(); step.title = source["title"].get<std::string>(); step.objective = source["objective"].get<std::string>();
             if (source.contains("depends_on") && source["depends_on"].is_array()) step.depends_on = source["depends_on"].get<std::vector<std::string>>();
             if (source.contains("required_evidence") && source["required_evidence"].is_array()) step.required_evidence = source["required_evidence"].get<std::vector<std::string>>();
+            if (source.contains("source_memory_ids") && source["source_memory_ids"].is_array()) step.source_memory_ids = source["source_memory_ids"].get<std::vector<std::string>>();
             if (source.contains("tool")) { if (!source["tool"].is_object() || !source["tool"].contains("name") || !source["tool"].contains("arguments_json") || !source["tool"]["name"].is_string() || !source["tool"]["arguments_json"].is_string()) { error = "invalid step tool payload"; return false; } const auto tool_name = source["tool"]["name"].get<std::string>(); const auto arguments_json = source["tool"]["arguments_json"].get<std::string>(); auto arguments = parse_tool_arguments_json(arguments_json); if (!arguments.is_object()) { error = "tool arguments_json must encode an object"; return false; } arguments = normalize_tool_arguments(tool_name, std::move(arguments)); step.tool_call = common_plan_tool_call{tool_name, arguments.dump()}; step.selected_tool = step.tool_call->name; }
-            common_plan_operation operation; operation.kind = common_plan_operation_kind::add_step; operation.step = std::move(step); operation.reason_summary = item.value("reason_summary", std::string()); if (item.contains("evidence_ids") && item["evidence_ids"].is_array()) operation.evidence_ids = item["evidence_ids"].get<std::vector<std::string>>(); operation.step->generated_from_memory = !operation.evidence_ids.empty(); parsed_operations.push_back(std::move(operation));
+            common_plan_operation operation; operation.kind = common_plan_operation_kind::add_step; operation.step = std::move(step); operation.reason_summary = item.value("reason_summary", std::string()); if (item.contains("evidence_ids") && item["evidence_ids"].is_array()) operation.evidence_ids = item["evidence_ids"].get<std::vector<std::string>>(); parsed_operations.push_back(std::move(operation));
         }
         plan = std::move(parsed); operations = std::move(parsed_operations); error.clear(); return true;
     } catch (const json::exception &) { error = "malformed plan proposal JSON"; return false; }

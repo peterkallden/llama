@@ -6,6 +6,7 @@
 #include <vector>
 
 enum class common_plan_scope { turn, session, project, global };
+enum class common_plan_kind { task, blueprint };
 enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
 
@@ -17,7 +18,7 @@ struct common_plan_tool_call { std::string name; std::string arguments_json = "{
 struct common_plan_step {
     std::string id, title, objective;
     common_plan_step_status status = common_plan_step_status::pending;
-    std::vector<std::string> depends_on, blocked_by, required_evidence;
+    std::vector<std::string> depends_on, blocked_by, required_evidence, source_memory_ids;
     std::optional<std::string> selected_tool, result_summary;
     std::optional<common_plan_tool_call> tool_call;
     bool optional = false, generated_from_memory = false;
@@ -25,6 +26,8 @@ struct common_plan_step {
 };
 struct common_plan_state {
     std::string id, session_id;
+    common_plan_kind kind = common_plan_kind::task;
+    std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;
     common_plan_status status = common_plan_status::proposed;
     std::string goal, success_criteria;

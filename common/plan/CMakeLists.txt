@@ -1,5 +1,5 @@
 set(TARGET llama-plan)
-add_library(${TARGET} plan-context.cpp plan-context.h plan-in-memory.cpp plan-in-memory.h plan-json.cpp plan-json.h plan-policy.cpp plan-policy.h plan-store.h plan-template.cpp plan-template.h plan-types.h)
+add_library(${TARGET} plan-blueprint.cpp plan-blueprint.h plan-context.cpp plan-context.h plan-in-memory.cpp plan-in-memory.h plan-json.cpp plan-json.h plan-memory.cpp plan-memory.h plan-policy.cpp plan-policy.h plan-store.h plan-template.cpp plan-template.h plan-types.h)
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
 target_link_libraries(${TARGET} PUBLIC llama-memory)

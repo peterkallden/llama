@@ -1,3 +1,17 @@
 #include "agent/reflection-json.h"
+
 #include <cassert>
-int main() { common_reflection_result result; std::string error; assert(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"revision_guidance":["cite evidence"],"operations":[{"kind":"complete_step","step_id":"lookup","reason_summary":"evidence received"},{"kind":"set_next_action","value":"draft answer","reason_summary":"continue"}]})", result, error)); assert(result.decision == common_reflection_decision::revise); assert(result.proposed_plan_operations.size() == 2); assert(result.proposed_plan_operations[0].kind == common_plan_operation_kind::complete_step); assert(result.proposed_plan_operations[1].value && *result.proposed_plan_operations[1].value == "draft answer"); assert(!common_reflection_parse_json("not json", result, error)); assert(!common_reflection_parse_json(R"({"decision":"unsafe"})", result, error)); assert(!common_reflection_parse_json(R"({"decision":"accept","operations":[{"kind":"remove_step"}]})", result, error)); return 0; }
+
+int main() {
+    common_reflection_result result;
+    std::string error;
+    assert(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"revision_guidance":["cite evidence"],"operations":[{"kind":"complete_step","step_id":"lookup","reason_summary":"evidence received"},{"kind":"add_step","reason_summary":"procedure adds verification","evidence_ids":[],"step":{"id":"reopen","title":"Reopen store","objective":"Verify persistence","depends_on":[],"required_evidence":[],"source_memory_ids":["procedure-1"]}}]})", result, error));
+    assert(result.decision == common_reflection_decision::revise);
+    assert(result.proposed_plan_operations.size() == 2);
+    assert(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
+    assert(result.proposed_plan_operations[1].step->source_memory_ids[0] == "procedure-1");
+    assert(!common_reflection_parse_json("not json", result, error));
+    assert(!common_reflection_parse_json(R"({"decision":"unsafe"})", result, error));
+    assert(!common_reflection_parse_json(R"({"decision":"accept","operations":[{"kind":"remove_step"}]})", result, error));
+    return 0;
+}

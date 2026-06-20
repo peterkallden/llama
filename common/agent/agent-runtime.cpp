@@ -1,5 +1,6 @@
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
+#include "plan/plan-memory.h"
 
 #include <nlohmann/json.hpp>
 #include <regex>
@@ -54,6 +55,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         plan = proposal.plan;
         result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
         for (auto op : proposal.operations) {
+            common_plan_bind_memory_provenance(op, request.memories);
             op.plan_id = plan.id;
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { result.error = error; return result; }
@@ -144,6 +146,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.reflected = true;
         result.events.push_back({common_agent_event_type::reflection_completed, "reflection completed", {}, plan.id});
         for (auto op : reflection.proposed_plan_operations) {
+            common_plan_bind_memory_provenance(op, request.memories);
             op.plan_id = plan.id;
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { error.clear(); continue; }
