@@ -12,7 +12,48 @@ static common_plan_status parse_status(const std::string & v) { if(v=="active")r
 static std::string step_status_name(common_plan_step_status v) { switch(v) { case common_plan_step_status::pending:return "pending"; case common_plan_step_status::active:return "active"; case common_plan_step_status::completed:return "completed"; case common_plan_step_status::blocked:return "blocked"; case common_plan_step_status::skipped:return "skipped"; default:return "failed"; } }
 static common_plan_step_status parse_step_status(const std::string & v) { if(v=="active")return common_plan_step_status::active; if(v=="completed")return common_plan_step_status::completed; if(v=="blocked")return common_plan_step_status::blocked; if(v=="skipped")return common_plan_step_status::skipped; if(v=="failed")return common_plan_step_status::failed; return common_plan_step_status::pending; }
 static json serialize(const common_plan_state & p) { json steps=json::array(); for(const auto & s:p.steps) { json step={{"id",s.id},{"title",s.title},{"objective",s.objective},{"status",step_status_name(s.status)},{"depends_on",s.depends_on},{"blocked_by",s.blocked_by},{"required_evidence",s.required_evidence},{"optional",s.optional},{"generated_from_memory",s.generated_from_memory}}; if(s.selected_tool)step["selected_tool"]=*s.selected_tool; if(s.tool_call)step["tool_call"]={{"name",s.tool_call->name},{"arguments_json",s.tool_call->arguments_json}}; steps.push_back(std::move(step)); } return {{"id",p.id},{"session_id",p.session_id},{"scope",scope_name(p.scope)},{"status",status_name(p.status)},{"goal",p.goal},{"success_criteria",p.success_criteria},{"steps",steps},{"active_step_id",p.active_step_id},{"next_action",p.next_action},{"version",p.version},{"created_at",p.created_at},{"updated_at",p.updated_at}}; }
-static bool deserialize(const std::string & text, common_plan_state & p) { auto j=json::parse(text,nullptr,false); if(!j.is_object())return false; p.id=j.value("id",""); p.session_id=j.value("session_id",""); p.scope=parse_scope(j.value("scope","turn")); p.status=parse_status(j.value("status","proposed")); p.goal=j.value("goal",""); p.success_criteria=j.value("success_criteria",""); if(j.contains("active_step_id")&&!j["active_step_id"].is_null())p.active_step_id=j["active_step_id"].get<std::string>(); if(j.contains("next_action")&&!j["next_action"].is_null())p.next_action=j["next_action"].get<std::string>(); p.version=j.value("version",uint64_t(0)); p.created_at=j.value("created_at",int64_t(0)); p.updated_at=j.value("updated_at",int64_t(0)); if(j.contains("steps"))for(const auto&s:j["steps"]){common_plan_step x; x.id=s.value("id","");x.title=s.value("title","");x.objective=s.value("objective","");x.status=parse_step_status(s.value("status","pending"));x.depends_on=s.value("depends_on",std::vector<std::string>{});x.blocked_by=s.value("blocked_by",std::vector<std::string>{});x.required_evidence=s.value("required_evidence",std::vector<std::string>{});x.optional=s.value("optional",false);x.generated_from_memory=s.value("generated_from_memory",false);if(s.contains("selected_tool")&&s["selected_tool"].is_string())x.selected_tool=s["selected_tool"].get<std::string>();if(s.contains("tool_call")&&s["tool_call"].is_object()&&s["tool_call"].value("name",std::string{}).size())x.tool_call=common_plan_tool_call{s["tool_call"].value("name",std::string{}),s["tool_call"].value("arguments_json",std::string("{}"))};p.steps.push_back(std::move(x));} return !p.id.empty(); }
+static bool deserialize(const std::string & text, common_plan_state & p) {
+    auto j = json::parse(text, nullptr, false);
+    if (!j.is_object()) return false;
+
+    p = {};
+    p.id = j.value("id", std::string{});
+    p.session_id = j.value("session_id", std::string{});
+    p.scope = parse_scope(j.value("scope", std::string("turn")));
+    p.status = parse_status(j.value("status", std::string("proposed")));
+    p.goal = j.value("goal", std::string{});
+    p.success_criteria = j.value("success_criteria", std::string{});
+    if (j.contains("active_step_id") && !j["active_step_id"].is_null()) p.active_step_id = j["active_step_id"].get<std::string>();
+    if (j.contains("next_action") && !j["next_action"].is_null()) p.next_action = j["next_action"].get<std::string>();
+    p.version = j.value("version", uint64_t(0));
+    p.created_at = j.value("created_at", int64_t(0));
+    p.updated_at = j.value("updated_at", int64_t(0));
+
+    if (j.contains("steps")) {
+        for (const auto & s : j["steps"]) {
+            common_plan_step x;
+            x.id = s.value("id", std::string{});
+            x.title = s.value("title", std::string{});
+            x.objective = s.value("objective", std::string{});
+            x.status = parse_step_status(s.value("status", std::string("pending")));
+            x.depends_on = s.value("depends_on", std::vector<std::string>{});
+            x.blocked_by = s.value("blocked_by", std::vector<std::string>{});
+            x.required_evidence = s.value("required_evidence", std::vector<std::string>{});
+            x.optional = s.value("optional", false);
+            x.generated_from_memory = s.value("generated_from_memory", false);
+            if (s.contains("selected_tool") && s["selected_tool"].is_string()) x.selected_tool = s["selected_tool"].get<std::string>();
+            if (s.contains("tool_call") && s["tool_call"].is_object() && s["tool_call"].value("name", std::string{}).size()) {
+                x.tool_call = common_plan_tool_call{
+                    s["tool_call"].value("name", std::string{}),
+                    s["tool_call"].value("arguments_json", std::string("{}"))
+                };
+            }
+            p.steps.push_back(std::move(x));
+        }
+    }
+
+    return !p.id.empty();
+}
 common_plan_cozo_store::common_plan_cozo_store() = default; common_plan_cozo_store::~common_plan_cozo_store(){close();}
 bool common_plan_cozo_store::run(const std::string & script,const std::string & params,std::string & out,std::string & error)const{if(db_id<0){error="Cozo plan store is not open";return false;}char*r=cozo_run_query(db_id,script.c_str(),params.empty()?"{}":params.c_str(),false);if(!r){error="Cozo query failed";return false;}out=r;cozo_free_str(r);auto j=json::parse(out,nullptr,false);if(j.is_object()&&!j.value("ok",true)){error="Cozo query failed: "+j.value("message",std::string("unknown"));return false;}error.clear();return true;}
 bool common_plan_cozo_store::open(const std::string & path,std::string & error){close();int32_t id=-1;char*e=cozo_open_db("sqlite",(path.empty()?"plan.cozo":path).c_str(),"{}",&id);if(e){error=e;cozo_free_str(e);return false;}db_id=id;std::string out;if(!run("::relations","{}",out,error)){close();return false;}auto relations=json::parse(out,nullptr,false);bool has_plan=false,has_event=false;for(const auto &row:relations["rows"]){if(row.is_array()&&row[0].is_string()){has_plan|=row[0]=="agent_plan";has_event|=row[0]=="agent_plan_event";}}if(has_plan!=has_event){error="Cozo plan database has an incomplete schema";close();return false;}if(!has_plan&&!run(common_plan_cozo_schema_script(),"{}",out,error)){close();return false;}cache.open("",error);if(!run("?[id, state_json] := *agent_plan[id, state_json]","{}",out,error))return false;auto j=json::parse(out,nullptr,false);for(const auto &row:j["rows"]){common_plan_state p;if(!deserialize(row[1].get<std::string>(),p)||!cache.create(p,error)){close();return false;}}return true;}
