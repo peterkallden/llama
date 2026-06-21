@@ -76,7 +76,7 @@ Retrieved `procedure` memories may inform the model's initial plan or a bounded 
 
 A reusable blueprint is a normal persisted plan with `kind=blueprint`. A concrete task instance has `kind=task` plus `derived_from_plan_id`, and `common_plan_instantiate_blueprint()` copies the blueprint's structure into independently mutable IDs. It intentionally clears tool bindings so the current runtime/planner must bind only currently registered tools. Cozo persists these fields inside the existing plan state JSON, so there is no blueprint relation or separate database layer.
 
-The first chat integration keeps selection explicit: `--agent-blueprint repository-change --plan-id change-42` instantiates the installed blueprint once, then the normal runtime resumes that task plan. Model-driven blueprint selection is intentionally deferred.
+Blueprint selection can be explicit with `--agent-blueprint repository-change --plan-id change-42`, or use `--agent-blueprint auto --plan-id change-42`. The initial automatic selector is constrained to the compiled default package's two IDs, requires confidence of at least `0.75`, and otherwise falls back safely to ordinary plan creation. A supplied/resumed plan always takes precedence; the selector cannot choose scope, identity, an arbitrary plan, or an uninstalled blueprint.
 
 Enable the generic PoC:
 
