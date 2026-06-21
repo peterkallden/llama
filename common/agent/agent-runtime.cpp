@@ -18,6 +18,16 @@ static bool infer_calculator_expression(const std::string & text, std::string & 
     return true;
 }
 
+static bool infer_memory_search_query(const std::string & prompt, std::string & query) {
+    const auto first = prompt.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return false;
+    }
+    const auto last = prompt.find_last_not_of(" \t\r\n");
+    query = prompt.substr(first, last - first + 1);
+    return query.size() <= 1024;
+}
+
 common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
@@ -89,6 +99,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     std::string expression;
                     if (infer_calculator_expression(request.prompt, expression)) {
                         arguments["expression"] = expression;
+                        tool_call->arguments_json = arguments.dump();
+                    }
+                }
+            } else if (tool_call->name == "memory_search") {
+                auto arguments = json::parse(tool_call->arguments_json, nullptr, false);
+                if (arguments.is_object() && !arguments.contains("query")) {
+                    std::string query;
+                    if (infer_memory_search_query(request.prompt, query)) {
+                        arguments["query"] = std::move(query);
                         tool_call->arguments_json = arguments.dump();
                     }
                 }

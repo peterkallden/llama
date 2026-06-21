@@ -698,6 +698,7 @@ public:
             "A tool, when needed, is {name,arguments_json}; arguments_json is a JSON-encoded object string and the name must be an available tool. "
             "For calculator, arguments_json must be like {\"expression\":\"17 * 23\"}. "
             "For time_now, use an empty object {}. "
+            "For this first bounded tool step, required_evidence must be an empty array; the tool result becomes evidence after execution. "
             "Return exactly one operation in the operations array. Use short IDs and values under twelve words.";
         common_chat_msg user;
         user.role = "user";
@@ -717,6 +718,15 @@ public:
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
                     operation.step->selected_tool.reset();
+                }
+                // A plan's initial tool step has no tool observation yet. Small
+                // instruct models occasionally invent evidence IDs here, which
+                // would make the policy correctly reject completion later.
+                // Tool results are recorded as observations after execution, so
+                // keep the initial requirement empty and preserve provenance in
+                // source_memory_ids instead.
+                if (operation.step && operation.step->tool_call) {
+                    operation.step->required_evidence.clear();
                 }
             }
             if (!proposal.operations.empty() && proposal.operations.front().step) {
