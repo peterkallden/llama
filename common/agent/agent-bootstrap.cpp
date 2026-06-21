@@ -54,7 +54,7 @@ common_agent_bootstrap_blueprint agent_regression_blueprint() {
     return plan;
 }
 
-common_agent_bootstrap_package default_package() {
+common_agent_bootstrap_package make_default_package() {
     common_agent_bootstrap_package package;
     package.name = "default";
     package.version = "v1";
@@ -64,11 +64,19 @@ common_agent_bootstrap_package default_package() {
         {"repository-change-loop", "For a code change: orient in affected code and tests, make the smallest coherent change, run focused tests, then report verified evidence.", "repository-change-loop"},
         {"agent-regression-diagnosis", "For agent regressions: reproduce, isolate the failing plan-memory-tool-reflection boundary, add a negative test, then make the smallest policy-safe fix.", "agent-regression-diagnosis"},
     };
-    package.blueprints = {repo_change_blueprint(), agent_regression_blueprint()};
+    auto repository_change = repo_change_blueprint();
+    repository_change.selection_description = "Implement or modify code in a repository and verify the result.";
+    auto agent_regression = agent_regression_blueprint();
+    agent_regression.selection_description = "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary.";
+    package.blueprints = {std::move(repository_change), std::move(agent_regression)};
     return package;
 }
 
 } // namespace
+
+common_agent_bootstrap_package common_agent_default_bootstrap_package() {
+    return make_default_package();
+}
 
 bool common_agent_install_default_bootstrap(
         common_memory_store & memory_store,
@@ -77,7 +85,7 @@ bool common_agent_install_default_bootstrap(
         common_agent_bootstrap_embedder embed,
         common_agent_bootstrap_result & result,
         std::string & error) {
-    return common_agent_install_bootstrap_package(memory_store, plan_store, config, default_package(), std::move(embed), result, error);
+    return common_agent_install_bootstrap_package(memory_store, plan_store, config, common_agent_default_bootstrap_package(), std::move(embed), result, error);
 }
 
 bool common_agent_install_bootstrap_package(

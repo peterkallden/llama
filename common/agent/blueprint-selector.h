@@ -1,0 +1,64 @@
+#pragma once
+
+#include "agent/agent-contract.h"
+#include "plan/plan-blueprint.h"
+#include "plan/plan-store.h"
+
+#include <optional>
+#include <string>
+#include <vector>
+
+// A candidate is deliberately a narrow view of an installed blueprint.  A
+// selector may choose an id, but never supplies storage or runtime identity.
+struct common_blueprint_candidate {
+    std::string logical_id;
+    std::string persisted_id;
+    std::string description;
+};
+
+enum class common_blueprint_selection_decision { none, instantiate, failed };
+
+struct common_blueprint_selection {
+    common_blueprint_selection_decision decision = common_blueprint_selection_decision::none;
+    std::optional<std::string> logical_id;
+    float confidence = 0.0f;
+    std::string reason;
+};
+
+class common_blueprint_selector {
+public:
+    virtual ~common_blueprint_selector() = default;
+    virtual common_blueprint_selection select(
+        const common_agent_request & request,
+        const std::vector<common_blueprint_candidate> & candidates,
+        std::string & error) = 0;
+};
+
+struct common_blueprint_selection_config {
+    std::string task_plan_id;
+    std::string session_id;
+    common_plan_scope scope = common_plan_scope::turn;
+    int64_t now = 0;
+    float minimum_confidence = 0.75f;
+    size_t maximum_candidates = 16;
+};
+
+enum class common_blueprint_selection_outcome { resumed, declined, failed_safely, instantiated };
+
+struct common_blueprint_selection_result {
+    common_blueprint_selection_outcome outcome = common_blueprint_selection_outcome::declined;
+    std::optional<std::string> logical_id;
+    float confidence = 0.0f;
+    std::string reason;
+};
+
+// This owns the trust boundary around automatic blueprint choice. Failures in
+// a selector are reported as a safe fallback; store failures remain errors.
+bool common_agent_select_and_instantiate_blueprint(
+    common_plan_store & plan_store,
+    const common_agent_request & request,
+    common_blueprint_selector & selector,
+    const std::vector<common_blueprint_candidate> & candidates,
+    const common_blueprint_selection_config & config,
+    common_blueprint_selection_result & result,
+    std::string & error);

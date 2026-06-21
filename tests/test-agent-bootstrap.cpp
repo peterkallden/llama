@@ -1,9 +1,24 @@
 #include "agent/agent-bootstrap.h"
+#include "agent/agent-package-json.h"
+#include "agent/blueprint-selector.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-blueprint.h"
 #include "plan/plan-in-memory.h"
 
 #include <cassert>
+
+class fixed_selector final : public common_blueprint_selector {
+public:
+    int calls = 0;
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+        ++calls; error.clear();
+        common_blueprint_selection selection;
+        selection.decision = common_blueprint_selection_decision::instantiate;
+        selection.logical_id = "repository-change";
+        selection.confidence = 0.9f;
+        return selection;
+    }
+};
 
 int main() {
     common_memory_in_memory_store memory;
@@ -44,6 +59,29 @@ int main() {
     assert(common_agent_install_default_bootstrap(memory, plans, config, embed, second, error));
     assert(second.installed_memory_ids.empty() && second.installed_blueprint_ids.empty());
     assert(second.existing_memory_ids.size() == 4 && second.existing_blueprint_ids.size() == 2);
+
+    std::string package_json;
+    const auto default_package = common_agent_default_bootstrap_package();
+    assert(common_agent_package_to_json(default_package, package_json, error));
+    common_agent_bootstrap_package parsed_package;
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.procedures.size() == default_package.procedures.size());
+    assert(parsed_package.blueprints.size() == default_package.blueprints.size());
+
+    fixed_selector selector;
+    common_blueprint_selection_config selection_config;
+    selection_config.task_plan_id = "selected-instance";
+    selection_config.session_id = config.session_id;
+    selection_config.scope = common_plan_scope::project;
+    selection_config.now = 44;
+    common_blueprint_selection_result selection_result;
+    common_agent_request selection_request;
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated && selector.calls == 1);
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
 
     common_agent_bootstrap_package custom;
     custom.name = "custom";

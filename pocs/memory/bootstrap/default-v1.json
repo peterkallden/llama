@@ -27,6 +27,7 @@
   "blueprints": [
     {
       "id": "repository-change",
+      "selection_description": "Implement or modify code in a repository and verify the result.",
       "goal": "Implement a scoped repository change safely",
       "success_criteria": "The requested change is implemented and verified by relevant tests.",
       "next_action": "orient",
@@ -39,6 +40,7 @@
     },
     {
       "id": "agent-regression",
+      "selection_description": "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary.",
       "goal": "Diagnose and correct an agent behavior regression",
       "success_criteria": "The regression is reproduced, isolated, fixed, and protected by a focused test.",
       "next_action": "reproduce",

@@ -39,6 +39,9 @@ struct common_agent_bootstrap_procedure {
 // the persisted id, scope, session identity, timestamps, and blueprint kind.
 struct common_agent_bootstrap_blueprint {
     std::string id;
+    // Short, untrusted-model-safe description used only to choose among
+    // already installed candidates.
+    std::string selection_description;
     std::string goal;
     std::string success_criteria;
     std::vector<common_plan_step> steps;
@@ -53,6 +56,10 @@ struct common_agent_bootstrap_package {
     std::vector<common_agent_bootstrap_procedure> procedures;
     std::vector<common_agent_bootstrap_blueprint> blueprints;
 };
+
+// The built-in package is a fallback. Callers may install a file/package using
+// the same installer instead of depending on a second hard-coded candidate list.
+common_agent_bootstrap_package common_agent_default_bootstrap_package();
 
 using common_agent_bootstrap_embedder = std::function<bool(const std::string &, std::vector<float> &, std::string &)>;
 
