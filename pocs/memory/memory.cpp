@@ -17,6 +17,7 @@
 #include "agent/tool-adapters.h"
 #include "agent/tool-chat-bridge.h"
 #include "plan/plan-context.h"
+#include "plan/plan-blueprint.h"
 #include "plan/plan-in-memory.h"
 #include "plan/plan-json.h"
 #ifdef LLAMA_PLAN_USE_COZO
@@ -81,6 +82,7 @@ struct args {
     std::string plan_id;
     std::string agent_bootstrap = "none";
     std::string agent_bootstrap_file;
+    std::string agent_blueprint;
     bool plan_show_summary = false;
     bool agent_trace = false;
     bool memory_global_opt_in = false;
@@ -96,7 +98,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -212,6 +214,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap = v;
         } else if (strcmp(argv[i], "--agent-bootstrap-file") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap_file = v;
+        } else if (strcmp(argv[i], "--agent-blueprint") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_blueprint = v;
         } else if (strcmp(argv[i], "--plan-show-summary") == 0) {
             out.plan_show_summary = true;
         } else if (strcmp(argv[i], "--agent-trace") == 0) {
@@ -1193,6 +1197,10 @@ static int run_chat(common_memory_store & store, const args & a) {
         fprintf(stderr, "--agent-bootstrap requires --planning-mode mini\n");
         return 1;
     }
+    if (!a.agent_blueprint.empty() && (!bootstrap_enabled || a.plan_id.empty())) {
+        fprintf(stderr, "--agent-blueprint requires bootstrap and an explicit --plan-id\n");
+        return 1;
+    }
     if (a.reflection_mode != "off" && a.reflection_mode != "always") {
         fprintf(stderr, "--reflection-mode must be off or always\n");
         return 1;
@@ -1269,6 +1277,27 @@ static int run_chat(common_memory_store & store, const args & a) {
             fprintf(stderr, "agent bootstrap: procedures installed=%zu existing=%zu; blueprints installed=%zu existing=%zu\n",
                 bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
                 bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
+            if (!a.agent_blueprint.empty()) {
+                const std::string blueprint_id = "bootstrap:" + a.memory_namespace + ":" +
+                    (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) +
+                    ":blueprint:" + a.agent_blueprint;
+                const auto blueprint = plan_store->get(blueprint_id, error);
+                if (!error.empty() || !blueprint) {
+                    fprintf(stderr, "agent blueprint is unavailable: %s\n", error.empty() ? blueprint_id.c_str() : error.c_str());
+                    return 1;
+                }
+                const auto existing = plan_store->get(a.plan_id, error);
+                if (!error.empty()) { fprintf(stderr, "failed to inspect plan instance: %s\n", error.c_str()); return 1; }
+                if (!existing) {
+                    common_plan_state instance;
+                    if (!common_plan_instantiate_blueprint(*blueprint, a.plan_id, a.memory_session, instance, error, requested_plan_scope, bootstrap_config.now) ||
+                            !plan_store->create(instance, error)) {
+                        fprintf(stderr, "failed to instantiate agent blueprint: %s\n", error.c_str());
+                        return 1;
+                    }
+                    fprintf(stderr, "agent blueprint instantiated: %s -> %s\n", blueprint_id.c_str(), a.plan_id.c_str());
+                }
+            }
         }
     }
 #endif

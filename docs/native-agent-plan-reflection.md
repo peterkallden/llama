@@ -23,6 +23,8 @@ The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `
 
 `common_tool_catalog` is a declarative, versioned catalog of built-in capabilities. Its bootstrap is idempotent: it creates missing definitions and the standard profiles without rewriting existing entries. It deliberately contains metadata only (schemas, policy, limits, risk class and a native `executor_id`) and cannot load a DLL, script, command or other executable code. A future Cozo-backed catalog will persist these same records; the initial in-process catalog keeps the bootstrap semantics testable before introducing another database relation.
 
+The separate agent bootstrap is also idempotent, but installs curated procedure memories and blueprint plans. `--agent-bootstrap default` deliberately uses a compiled stable package. `pocs/memory/bootstrap/default-v1.json` documents the equivalent external format and can be loaded explicitly with `--agent-bootstrap-file PATH`; keeping both provides a stable local default and a versioned file-based extension path.
+
 The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. The catalog includes read-only `calculator`, `time_now`, memory inspection/search, `plan_get`, proposal-only memory/plan mutation definitions, `mock_web_search`, and a declared-but-not-yet-wired `web_fetch` boundary. Proposal tools require confirmation and remain subject to native memory or plan policy; an enabled catalog entry never grants execution authority by itself.
 
 `common_register_native_tool_adapters` is the first bridge from catalog to execution. It only registers implemented read-only executors and receives its memory store, memory scope and bound plan id from runtime-owned bindings. The current first set is `calculator`, UTC `time_now`, `memory_search`, scope-checked `memory_get`, and `plan_get`; proposal tools and web tools intentionally remain unavailable even if their profile declares them.
@@ -73,6 +75,8 @@ Learning is off by default and currently requires `--planning-mode mini`. It cho
 Retrieved `procedure` memories may inform the model's initial plan or a bounded reflection `add_step` proposal. A proposed step can name `source_memory_ids`, but the runtime retains only IDs belonging to actually retrieved procedure memories, marks the surviving step `generated_from_memory=true`, and adds short `memory:<id>` evidence. The normal plan policy and store mutation path still decide whether the step is accepted; memory never mutates a plan directly.
 
 A reusable blueprint is a normal persisted plan with `kind=blueprint`. A concrete task instance has `kind=task` plus `derived_from_plan_id`, and `common_plan_instantiate_blueprint()` copies the blueprint's structure into independently mutable IDs. It intentionally clears tool bindings so the current runtime/planner must bind only currently registered tools. Cozo persists these fields inside the existing plan state JSON, so there is no blueprint relation or separate database layer.
+
+The first chat integration keeps selection explicit: `--agent-blueprint repository-change --plan-id change-42` instantiates the installed blueprint once, then the normal runtime resumes that task plan. Model-driven blueprint selection is intentionally deferred.
 
 Enable the generic PoC:
 
