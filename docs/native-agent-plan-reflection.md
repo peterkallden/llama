@@ -66,13 +66,13 @@ Reflection is a sideband interface. Its JSON parser accepts only a short decisio
   --memory-learn post-turn --memory-learn-show-candidate
 ```
 
-Learning is off by default and currently requires `--planning-mode mini`. It chooses project scope only when the runtime has an explicit project id; otherwise it uses session scope. It never auto-selects global scope, and the model never receives scope or identity authority. `--memory-learn-show-candidate` prints the proposed content for local PoC inspection; the regular audit is structured and omits candidate content and reasoning. A candidate procedure needs explicit user provenance or at least one evidence/plan-step id. Ordinary one-off plans, transient next actions, malformed JSON and failed embedding/policy/persistence paths fail safely without writing memory.
+Learning is off by default and currently requires `--planning-mode mini`. It chooses project scope only when the runtime has an explicit project id; otherwise it uses session scope. It never auto-selects global scope, and the model never receives scope or identity authority. `--memory-learn-show-candidate` prints the proposed content for local PoC inspection; the regular audit is structured and omits candidate content and reasoning. A procedure candidate needs at least one runtime-verified evidence item or completed plan step with an observation/result; model-provided provenance claims do not satisfy this gate. Ordinary one-off plans, transient next actions, malformed JSON and failed embedding/policy/persistence paths fail safely without writing memory.
 
 ## Procedure memory, plan provenance and blueprints
 
 Retrieved `procedure` memories may inform the model's initial plan or a bounded reflection `add_step` proposal. A proposed step can name `source_memory_ids`, but the runtime retains only IDs belonging to actually retrieved procedure memories, marks the surviving step `generated_from_memory=true`, and adds short `memory:<id>` evidence. The normal plan policy and store mutation path still decide whether the step is accepted; memory never mutates a plan directly.
 
-A reusable blueprint is a normal persisted plan with `kind=blueprint`. A concrete task instance has `kind=task` plus `derived_from_plan_id`, and `common_plan_instantiate_blueprint()` copies the blueprint's steps into independently mutable IDs. Cozo persists these fields inside the existing plan state JSON, so there is no blueprint relation or separate database layer.
+A reusable blueprint is a normal persisted plan with `kind=blueprint`. A concrete task instance has `kind=task` plus `derived_from_plan_id`, and `common_plan_instantiate_blueprint()` copies the blueprint's structure into independently mutable IDs. It intentionally clears tool bindings so the current runtime/planner must bind only currently registered tools. Cozo persists these fields inside the existing plan state JSON, so there is no blueprint relation or separate database layer.
 
 Enable the generic PoC:
 

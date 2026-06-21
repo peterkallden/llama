@@ -35,6 +35,7 @@ bool common_plan_instantiate_blueprint(
         step.status = common_plan_step_status::pending;
         step.blocked_by.clear();
         step.selected_tool.reset();
+        step.tool_call.reset();
         step.result_summary.reset();
         step.created_at = now;
         step.updated_at = now;

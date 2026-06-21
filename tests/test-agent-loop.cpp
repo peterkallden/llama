@@ -58,7 +58,7 @@ public:
         candidate.importance = 0.8f;
         candidate.confidence = 0.9f;
         candidate.expected_reuse = 0.8f;
-        candidate.explicit_user_provenance = true;
+        candidate.source_plan_step_ids = {"lookup"};
         return {{candidate}, "explicit user rule"};
     }
 };

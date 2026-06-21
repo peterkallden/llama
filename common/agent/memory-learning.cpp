@@ -2,9 +2,25 @@
 
 #include <algorithm>
 #include <chrono>
+#include <sstream>
 
 static bool valid_score(float value) {
     return value >= 0.0f && value <= 1.0f;
+}
+static bool has_verified_step(const common_plan_state & plan, const std::string & id) {
+    for (const auto & step : plan.steps) {
+        if (step.id != id || step.status != common_plan_step_status::completed) continue;
+        if (step.result_summary) return true;
+        for (const auto & observation : plan.observations) {
+            if (observation.id == id || observation.id.rfind("tool:" + id + ":", 0) == 0) return true;
+        }
+    }
+    return false;
+}
+static std::string join_ids(const std::vector<std::string> & ids) {
+    std::ostringstream out;
+    for (size_t i = 0; i < ids.size(); ++i) { if (i) out << ','; out << ids[i]; }
+    return out.str();
 }
 
 const char * common_memory_learning_decision_name(common_memory_learning_decision decision) {
@@ -44,7 +60,19 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         return outcome;
     }
 
-    const auto & candidate = *extracted.candidate;
+    auto candidate = *extracted.candidate;
+    // Model output is only a claim. It cannot self-attest user provenance.
+    candidate.explicit_user_provenance = false;
+    candidate.source_plan_step_ids.erase(std::remove_if(candidate.source_plan_step_ids.begin(), candidate.source_plan_step_ids.end(),
+        [&](const std::string & id) { return !has_verified_step(plan, id); }), candidate.source_plan_step_ids.end());
+    candidate.evidence_ids.erase(std::remove_if(candidate.evidence_ids.begin(), candidate.evidence_ids.end(),
+        [&](const std::string & id) {
+            if (id.rfind("memory:", 0) == 0) {
+                const auto memory_id = id.substr(7);
+                return std::none_of(request.memories.begin(), request.memories.end(), [&](const common_memory_hit & hit) { return hit.memory.id == memory_id; });
+            }
+            return std::none_of(plan.observations.begin(), plan.observations.end(), [&](const common_plan_observation & observation) { return observation.id == id; });
+        }), candidate.evidence_ids.end());
     outcome.candidate = candidate;
     if ((candidate.kind != common_memory_kind::procedure && candidate.kind != common_memory_kind::preference && candidate.kind != common_memory_kind::fact) ||
             candidate.content.empty() || candidate.content.size() > 512 || candidate.rationale.size() > 240 ||
@@ -63,8 +91,7 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         outcome.reason = "candidate expected reuse is below threshold";
         return outcome;
     }
-    if (candidate.kind == common_memory_kind::procedure && !candidate.explicit_user_provenance &&
-            candidate.evidence_ids.empty() && candidate.source_plan_step_ids.empty()) {
+    if (candidate.kind == common_memory_kind::procedure && candidate.evidence_ids.empty() && candidate.source_plan_step_ids.empty()) {
         outcome.decision = common_memory_learning_decision::rejected;
         outcome.reason = "procedure candidate lacks user provenance or evidence";
         return outcome;
@@ -121,7 +148,8 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     record.metadata["learning_stage"] = "post_turn";
     record.metadata["expected_reuse"] = std::to_string(candidate.expected_reuse);
     record.metadata["source_plan_id"] = plan.id;
-    record.metadata["source_plan_step_ids"] = candidate.source_plan_step_ids.empty() ? "" : candidate.source_plan_step_ids.front();
+    record.metadata["source_plan_step_ids"] = join_ids(candidate.source_plan_step_ids);
+    record.metadata["evidence_ids"] = join_ids(candidate.evidence_ids);
     if (!store.put(record, error)) {
         outcome.decision = common_memory_learning_decision::failed;
         outcome.reason = "memory persistence failed safely: " + error;

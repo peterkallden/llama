@@ -45,6 +45,10 @@ int main() {
     request.memory_scope = common_memory_scope::global; // Must not influence automatic learning scope.
     common_plan_state plan;
     plan.id = "plan-a";
+    common_plan_step verify{"verify", "Verify", "Verify persistence"};
+    verify.status = common_plan_step_status::completed;
+    plan.steps.push_back(verify);
+    plan.observations.push_back({"tool:verify:read-back", "read-back", "record persisted", 1.0f, {}, 0});
     common_agent_result result;
     result.response = "done";
 
@@ -59,6 +63,7 @@ int main() {
     const auto stored = store.get(*accepted.stored_memory_id, error);
     assert(stored && stored->scope == common_memory_scope::project && stored->project_id == "project-a");
     assert(stored->metadata.at("learning_stage") == "post_turn");
+    assert(stored->metadata.at("source_plan_step_ids") == "verify");
 
     const auto duplicate = learner.learn(request, plan, result);
     assert(duplicate.decision == common_memory_learning_decision::duplicate);
@@ -72,6 +77,10 @@ int main() {
     candidate_extractor.next.candidate->source_plan_step_ids.clear();
     candidate_extractor.next.candidate->evidence_ids.clear();
     candidate_extractor.next.candidate->explicit_user_provenance = false;
+    assert(learner.learn(request, plan, result).decision == common_memory_learning_decision::rejected);
+
+    candidate_extractor.next.candidate->source_plan_step_ids = {"invented"};
+    candidate_extractor.next.candidate->explicit_user_provenance = true;
     assert(learner.learn(request, plan, result).decision == common_memory_learning_decision::rejected);
 
     candidate_extractor.failure = "malformed model JSON";
