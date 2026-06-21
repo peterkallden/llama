@@ -6,6 +6,7 @@ public:
     bool open(const std::string & path, std::string & error) override; void close() override;
     bool create(const common_plan_state & plan, std::string & error) override;
     std::optional<common_plan_state> get(const std::string & plan_id, std::string & error) override;
+    std::vector<common_plan_state> list(std::string & error) override;
     bool apply(const common_plan_operation & operation, common_plan_state & updated_plan, std::string & error) override;
     std::vector<common_plan_event> history(const std::string & plan_id, std::string & error) override;
     bool erase(const std::string & plan_id, std::string & error) override;

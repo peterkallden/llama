@@ -152,6 +152,14 @@ std::optional<common_memory_record> common_memory_in_memory_store::get(const std
     return it->second;
 }
 
+std::vector<common_memory_record> common_memory_in_memory_store::list(const common_memory_query & query, std::string & error) {
+    if (!opened) { error = "memory store is not open"; return {}; }
+    std::vector<common_memory_record> result;
+    for (const auto & entry : records) if ((!query.kind || entry.second.kind == *query.kind) && common_memory_scope_matches(entry.second, query)) result.push_back(entry.second);
+    error.clear();
+    return result;
+}
+
 std::vector<common_memory_hit> common_memory_in_memory_store::search(const common_memory_query & query, std::string & error) {
     if (!opened) {
         error = "memory store is not open";

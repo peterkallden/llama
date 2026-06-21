@@ -85,8 +85,8 @@ struct args {
     std::string plan_db;
     std::string plan_id;
     std::string agent_bootstrap = "none";
-    std::string agent_bootstrap_file;
-    std::string agent_bootstrap_kinds = "procedures,blueprints";
+    std::string agent_import;
+    std::string agent_export;
     std::string agent_blueprint;
     bool plan_show_summary = false;
     bool agent_trace = false;
@@ -108,7 +108,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-bootstrap-kinds procedures,blueprints] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static] [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID --plan-id ID] [--plan-backend in-memory|cozo] [--plan-db PATH]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -224,10 +224,10 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_id = v;
         } else if (strcmp(argv[i], "--agent-bootstrap") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap = v;
-        } else if (strcmp(argv[i], "--agent-bootstrap-file") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap_file = v;
-        } else if (strcmp(argv[i], "--agent-bootstrap-kinds") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap_kinds = v;
+        } else if (strcmp(argv[i], "--agent-import") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_import = v;
+        } else if (strcmp(argv[i], "--agent-export") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_export = v;
         } else if (strcmp(argv[i], "--agent-blueprint") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_blueprint = v;
         } else if (strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -654,6 +654,41 @@ static bool load_bootstrap_file(const std::string & path, common_agent_bootstrap
     return common_agent_package_parse_json(text.str(), package, error);
 }
 
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+static bool export_agent_package(common_memory_store & memory_store, common_plan_store & plan_store, const args & a, std::string & error) {
+    common_memory_query query;
+    apply_memory_scope(a, query);
+    query.global_opt_in = a.memory_global_opt_in;
+    const auto memories = memory_store.list(query, error);
+    if (!error.empty()) return false;
+    const auto plans = plan_store.list(error);
+    if (!error.empty()) return false;
+    const std::string prefix = "bootstrap:" + a.memory_namespace + ":" +
+        (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) + ":";
+    common_agent_bootstrap_package package;
+    package.name = "agent-export";
+    package.version = "v1";
+    const std::string procedure_prefix = prefix + "procedure:";
+    for (const auto & memory : memories) if (memory.kind == common_memory_kind::procedure && memory.id.rfind(procedure_prefix, 0) == 0) {
+        package.procedures.push_back({memory.id.substr(procedure_prefix.size()), memory.content, memory.summary, memory.importance, memory.confidence});
+    }
+    const std::string blueprint_prefix = prefix + "blueprint:";
+    for (const auto & plan : plans) if (plan.kind == common_plan_kind::blueprint && plan.id.rfind(blueprint_prefix, 0) == 0) {
+        common_agent_bootstrap_blueprint blueprint;
+        blueprint.id = plan.id.substr(blueprint_prefix.size()); blueprint.goal = plan.goal; blueprint.success_criteria = plan.success_criteria;
+        blueprint.steps = plan.steps; blueprint.constraints = plan.constraints; blueprint.assumptions = plan.assumptions; blueprint.next_action = plan.next_action;
+        package.blueprints.push_back(std::move(blueprint));
+    }
+    std::string text;
+    if (!common_agent_package_to_json(package, text, error)) return false;
+    std::ofstream file(a.agent_export, std::ios::binary | std::ios::trunc);
+    if (!file) { error = "cannot open --agent-export path"; return false; }
+    file << text;
+    if (!file) { error = "failed to write --agent-export package"; return false; }
+    error.clear(); return true;
+}
+#endif
+
 static bool resolve_agent_profile(args & a, std::string & error) {
     // Preserve the legacy tool flags for callers that have not opted into a
     // named profile. Explicit low-level flags always override profile values.
@@ -682,32 +717,6 @@ static bool resolve_agent_profile(args & a, std::string & error) {
     if (!a.planning_mode_explicit) a.planning_mode = std::move(planning_mode);
     if (!a.reflection_mode_explicit) a.reflection_mode = std::move(reflection_mode);
     if (!a.memory_learn_explicit) a.memory_learn = std::move(memory_learn);
-    error.clear();
-    return true;
-}
-
-static bool parse_agent_bootstrap_kinds(const std::string & text, bool & procedures, bool & blueprints, std::string & error) {
-    procedures = false;
-    blueprints = false;
-    std::stringstream stream(text);
-    std::string item;
-    while (std::getline(stream, item, ',')) {
-        const auto first = item.find_first_not_of(" \t");
-        const auto last = item.find_last_not_of(" \t");
-        if (first == std::string::npos) { error = "--agent-bootstrap-kinds contains an empty kind"; return false; }
-        item = item.substr(first, last - first + 1);
-        if (item == "procedures") {
-            if (procedures) { error = "--agent-bootstrap-kinds repeats procedures"; return false; }
-            procedures = true;
-        } else if (item == "blueprints") {
-            if (blueprints) { error = "--agent-bootstrap-kinds repeats blueprints"; return false; }
-            blueprints = true;
-        } else {
-            error = "unsupported --agent-bootstrap-kinds value: " + item;
-            return false;
-        }
-    }
-    if (!procedures && !blueprints) { error = "--agent-bootstrap-kinds must select at least one supported kind"; return false; }
     error.clear();
     return true;
 }
@@ -1268,19 +1277,13 @@ static int run_chat(common_memory_store & store, args a) {
         fprintf(stderr, "--agent-bootstrap must be none or default\n");
         return 1;
     }
-    if (a.agent_bootstrap == "default" && !a.agent_bootstrap_file.empty()) {
-        fprintf(stderr, "--agent-bootstrap default cannot be combined with --agent-bootstrap-file\n");
+    if (a.agent_bootstrap == "default" && !a.agent_import.empty()) {
+        fprintf(stderr, "--agent-bootstrap default cannot be combined with --agent-import\n");
         return 1;
     }
-    const bool bootstrap_enabled = a.agent_bootstrap == "default" || !a.agent_bootstrap_file.empty();
-    bool bootstrap_procedures = true;
-    bool bootstrap_blueprints = true;
-    if (!parse_agent_bootstrap_kinds(a.agent_bootstrap_kinds, bootstrap_procedures, bootstrap_blueprints, error)) {
-        fprintf(stderr, "%s\n", error.c_str());
-        return 1;
-    }
-    if (!bootstrap_enabled && a.agent_bootstrap_kinds != "procedures,blueprints") {
-        fprintf(stderr, "--agent-bootstrap-kinds requires --agent-bootstrap or --agent-bootstrap-file\n");
+    const bool bootstrap_enabled = a.agent_bootstrap == "default" || !a.agent_import.empty();
+    if (!a.agent_export.empty() && (bootstrap_enabled || !a.agent_blueprint.empty())) {
+        fprintf(stderr, "--agent-export cannot be combined with bootstrap or blueprint selection\n");
         return 1;
     }
     if (bootstrap_enabled && a.planning_mode != "mini") {
@@ -1289,10 +1292,6 @@ static int run_chat(common_memory_store & store, args a) {
     }
     if (!a.agent_blueprint.empty() && (!bootstrap_enabled || a.plan_id.empty())) {
         fprintf(stderr, "--agent-blueprint requires bootstrap and an explicit --plan-id\n");
-        return 1;
-    }
-    if (!a.agent_blueprint.empty() && !bootstrap_blueprints) {
-        fprintf(stderr, "--agent-blueprint requires blueprints in --agent-bootstrap-kinds\n");
         return 1;
     }
     if (a.reflection_mode != "off" && a.reflection_mode != "always") {
@@ -1345,8 +1344,6 @@ static int run_chat(common_memory_store & store, args a) {
             bootstrap_config.session_id = a.memory_session;
             bootstrap_config.project_id = a.memory_project;
             bootstrap_config.now = std::time(nullptr);
-            bootstrap_config.install_procedures = bootstrap_procedures;
-            bootstrap_config.install_blueprints = bootstrap_blueprints;
             common_agent_bootstrap_result bootstrap_result;
             const auto embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 if (!ensure_embedding(a, text, embedding, "bootstrap procedure", embedding_error)) return false;
@@ -1357,11 +1354,11 @@ static int run_chat(common_memory_store & store, args a) {
                 return true;
             };
             common_agent_bootstrap_package package;
-            if (a.agent_bootstrap_file.empty()) {
+            if (a.agent_import.empty()) {
                 package = common_agent_default_bootstrap_package();
             } else {
-                if (!load_bootstrap_file(a.agent_bootstrap_file, package, error)) {
-                    fprintf(stderr, "agent bootstrap file failed: %s\n", error.c_str());
+                if (!load_bootstrap_file(a.agent_import, package, error)) {
+                    fprintf(stderr, "agent import failed: %s\n", error.c_str());
                     return 1;
                 }
             }
@@ -1400,6 +1397,14 @@ static int run_chat(common_memory_store & store, args a) {
                 }
                 fprintf(stderr, "agent blueprint %s: %s\n", selection.outcome == common_blueprint_selection_outcome::instantiated ? "instantiated" : "resumed", a.plan_id.c_str());
             }
+        }
+        if (!a.agent_export.empty()) {
+            if (!export_agent_package(store, *plan_store, a, error)) {
+                fprintf(stderr, "agent export failed: %s\n", error.c_str());
+                return 1;
+            }
+            fprintf(stderr, "agent export written: %s\n", a.agent_export.c_str());
+            return 0;
         }
     }
 #endif

@@ -54,6 +54,16 @@ Use a reusable bootstrap blueprint explicitly, or let the selector choose one fr
 
 Use `--memory-scope session|project|global` and `--plan-scope turn|session|project|global` to choose lifecycle boundaries. `global` is intended for one local instance unless a tenant policy is added.
 
+Export the portable bootstrap definitions in the current scope without loading the chat model:
+
+```powershell
+.\build-plan\bin\Release\llama-memory.exe chat `
+  --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
+  --model unused.gguf --prompt export --agent-export .\work\agent-package.json
+```
+
+`--agent-export` writes the canonical package form containing scoped bootstrap `procedures` and `blueprints`; it excludes embeddings, runtime IDs, observations and event history. `--agent-import PATH` reads that same safe package form. The first export slice is intentionally limited to these portable definition types; broader memory/state migration and a full Cozo export/import round-trip test remain follow-up work.
+
 ## Advanced configuration and reference
 
 This optional PoC builds a small control plane around existing llama.cpp inference helpers. It does not change GGML, `llama_decode`, model loading, sampling, the KV cache, or libllama.
@@ -79,7 +89,7 @@ The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `
 
 `common_tool_catalog` is a declarative, versioned catalog of built-in capabilities. Its bootstrap is idempotent: it creates missing definitions and the standard profiles without rewriting existing entries. It deliberately contains metadata only (schemas, policy, limits, risk class and a native `executor_id`) and cannot load a DLL, script, command or other executable code. A future Cozo-backed catalog will persist these same records; the initial in-process catalog keeps the bootstrap semantics testable before introducing another database relation.
 
-The separate agent bootstrap is also idempotent, but installs curated procedure memories and blueprint plans. It has a common logical JSON parser and serializer (`schema_version`, name, version, procedures and blueprints), including blueprint constraints and assumptions. The parser intentionally ignores unknown JSON fields for forward compatibility; it accepts only portable logical IDs and never imports persisted IDs, embeddings, task-plan state, observations or event history. The compiled default remains a small local fallback; `pocs/memory/bootstrap/default-v1.json` carries the equivalent starter definitions and can be loaded explicitly with `--agent-bootstrap-file PATH`. `--agent-bootstrap-kinds procedures,blueprints` controls the implemented import sections and defaults to both; future memory or plan kinds require explicit format and flag support. General export/import of the wider memory store is deliberately the next slice, rather than being implied by this bootstrap-file parser.
+The separate agent bootstrap is also idempotent, but installs curated procedure memories and blueprint plans. It has a common logical JSON parser and serializer (`schema_version`, name, version, procedures and blueprints), including blueprint constraints and assumptions. The parser intentionally ignores unknown JSON fields for forward compatibility; it accepts only portable logical IDs and never imports persisted IDs, embeddings, task-plan state, observations or event history. The compiled default remains a small local fallback; `pocs/memory/bootstrap/default-v1.json` carries the equivalent starter definitions and can be loaded with `--agent-import PATH`. `--agent-export PATH` uses filtered store listing to recreate the same package form from scoped bootstrap definitions. Import and export currently cover `procedures` and `blueprints`; future memory or plan kinds require an explicit format and option.
 
 The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. The catalog includes read-only `calculator`, `time_now`, memory inspection/search, `plan_get`, proposal-only memory/plan mutation definitions, `mock_web_search`, and a declared-but-not-yet-wired `web_fetch` boundary. Proposal tools require confirmation and remain subject to native memory or plan policy; an enabled catalog entry never grants execution authority by itself.
 

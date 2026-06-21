@@ -12,6 +12,7 @@ public:
 
     bool put(const common_memory_record & record, std::string & error) override;
     std::optional<common_memory_record> get(const std::string & id, std::string & error) override;
+    std::vector<common_memory_record> list(const common_memory_query & query, std::string & error) override;
     std::vector<common_memory_hit> search(const common_memory_query & query, std::string & error) override;
     bool relate(const std::string & from, const std::string & relation, const std::string & to, float weight, std::string & error) override;
     bool erase(const std::string & id, std::string & error) override;

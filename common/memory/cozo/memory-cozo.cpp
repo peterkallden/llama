@@ -227,6 +227,17 @@ std::optional<common_memory_record> common_memory_cozo_store::get(const std::str
     return record_from_json(parsed["rows"][0]);
 }
 
+std::vector<common_memory_record> common_memory_cozo_store::list(const common_memory_query & query, std::string & error) {
+    std::string result;
+    if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] := *memory_scoped[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json]", "{}", result, error)) return {};
+    const auto parsed = json::parse(result, nullptr, false);
+    std::vector<common_memory_record> records;
+    if (!parsed.is_object() || !parsed.contains("rows")) { error = "Cozo returned an unexpected result shape"; return {}; }
+    for (const auto & row : parsed["rows"]) { auto record = record_from_json(row); if ((!query.kind || record.kind == *query.kind) && common_memory_scope_matches(record, query)) records.push_back(std::move(record)); }
+    std::sort(records.begin(), records.end(), [](const auto & a, const auto & b) { return a.id < b.id; });
+    error.clear(); return records;
+}
+
 std::vector<common_memory_hit> common_memory_cozo_store::search(const common_memory_query & query, std::string & error) {
     std::string result;
     if (!run("?[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json] := *memory_scoped[id, kind, content, summary, embedding, importance, confidence, created_at, accessed_at, access_count, scope, namespace_id, session_id, project_id, turn_id, metadata_json]",
