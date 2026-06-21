@@ -49,6 +49,14 @@ int main() {
     assert(procedure && procedure->kind == common_memory_kind::procedure);
     assert(procedure->scope == common_memory_scope::project);
     assert(procedure->metadata.at("origin") == "bootstrap");
+    // Package export must list bootstrap procedures in their package scope,
+    // which is project here rather than the normal session retrieval default.
+    common_memory_query bootstrap_query;
+    bootstrap_query.scope = common_memory_scope::project;
+    bootstrap_query.namespace_id = config.namespace_id;
+    bootstrap_query.project_id = config.project_id;
+    const auto bootstrap_procedures = memory.list(bootstrap_query, error);
+    assert(error.empty() && bootstrap_procedures.size() == first.installed_memory_ids.size());
     const auto blueprint = plans.get(first.installed_blueprint_ids.front(), error);
     assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
     assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);

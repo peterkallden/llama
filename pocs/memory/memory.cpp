@@ -657,8 +657,14 @@ static bool load_bootstrap_file(const std::string & path, common_agent_bootstrap
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 static bool export_agent_package(common_memory_store & memory_store, common_plan_store & plan_store, const args & a, std::string & error) {
     common_memory_query query;
-    apply_memory_scope(a, query);
-    query.global_opt_in = a.memory_global_opt_in;
+    // Bootstrap procedures use the package's identity scope: project when a
+    // project id is supplied, otherwise session.  Do not reuse the ordinary
+    // retrieval scope here: its default is session and would silently omit
+    // project-scoped procedures during an otherwise valid export.
+    query.scope = a.memory_project.empty() ? common_memory_scope::session : common_memory_scope::project;
+    query.namespace_id = a.memory_namespace;
+    query.session_id = a.memory_session;
+    query.project_id = a.memory_project;
     const auto memories = memory_store.list(query, error);
     if (!error.empty()) return false;
     const auto plans = plan_store.list(error);
