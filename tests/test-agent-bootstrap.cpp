@@ -5,6 +5,9 @@
 #include "plan/plan-blueprint.h"
 #include "plan/plan-in-memory.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 
 class fixed_selector final : public common_blueprint_selector {
@@ -67,6 +70,7 @@ int main() {
     assert(common_agent_package_parse_json(package_json, parsed_package, error));
     assert(parsed_package.procedures.size() == default_package.procedures.size());
     assert(parsed_package.blueprints.size() == default_package.blueprints.size());
+    assert(common_agent_package_parse_json(R"({"schema_version":1,"name":"forward-compatible","version":"v1","procedures":[],"blueprints":[],"future_section":{"ignored":true}})", parsed_package, error));
 
     fixed_selector selector;
     common_blueprint_selection_config selection_config;
@@ -92,10 +96,32 @@ int main() {
     custom_blueprint.goal = "Review a change";
     custom_blueprint.success_criteria = "Review findings are evidence-backed.";
     custom_blueprint.steps.push_back({"inspect", "Inspect", "Inspect the change."});
+    custom_blueprint.constraints.push_back({"evidence", "Use inspection evidence.", true});
+    custom_blueprint.assumptions.push_back({"repository", "The requested change is in the current repository.", 0.8f, true, {}});
     custom.blueprints.push_back(custom_blueprint);
+    assert(common_agent_package_to_json(custom, package_json, error));
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.blueprints.size() == 1);
+    assert(parsed_package.blueprints.front().constraints.size() == 1);
+    assert(parsed_package.blueprints.front().assumptions.size() == 1);
+    assert(parsed_package.blueprints.front().assumptions.front().valid);
     common_agent_bootstrap_result custom_result;
     assert(common_agent_install_bootstrap_package(memory, plans, config, custom, embed, custom_result, error));
     assert(custom_result.installed_memory_ids.size() == 1 && custom_result.installed_blueprint_ids.size() == 1);
+
+    common_plan_state incompatible = *blueprint;
+    incompatible.id = "incompatible-task";
+    assert(plans.create(incompatible, error));
+    selection_config.task_plan_id = incompatible.id;
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+
+    common_explicit_blueprint_selector explicit_selector("repository-change");
+    selection_config.task_plan_id = "explicit-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, explicit_selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
 
     common_agent_bootstrap_config invalid;
     invalid.namespace_id = "local";

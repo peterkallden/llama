@@ -34,6 +34,19 @@ public:
         std::string & error) = 0;
 };
 
+// Adapts an explicit caller choice to the same bounded orchestration used by
+// model-driven selection. Candidate validation remains owned by the caller.
+class common_explicit_blueprint_selector final : public common_blueprint_selector {
+public:
+    explicit common_explicit_blueprint_selector(std::string logical_id);
+    common_blueprint_selection select(
+        const common_agent_request & request,
+        const std::vector<common_blueprint_candidate> & candidates,
+        std::string & error) override;
+private:
+    std::string logical_id;
+};
+
 struct common_blueprint_selection_config {
     std::string task_plan_id;
     std::string session_id;

@@ -46,7 +46,8 @@
 
 struct args {
     std::string command;
-    std::string backend = "in-memory";
+    // Resolved after argument parsing: a supplied DB path selects persistence.
+    std::string backend = "auto";
     std::string memory_db;
     std::string id;
     std::string kind = "episode";
@@ -79,11 +80,12 @@ struct args {
     std::string planning_mode = "off";
     std::string reflection_mode = "off";
     std::string plan_scope = "turn";
-    std::string plan_backend = "in-memory";
+    std::string plan_backend = "auto";
     std::string plan_db;
     std::string plan_id;
     std::string agent_bootstrap = "none";
     std::string agent_bootstrap_file;
+    std::string agent_bootstrap_kinds = "procedures,blueprints";
     std::string agent_blueprint;
     bool plan_show_summary = false;
     bool agent_trace = false;
@@ -100,7 +102,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-bootstrap-kinds procedures,blueprints] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -216,6 +218,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap = v;
         } else if (strcmp(argv[i], "--agent-bootstrap-file") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap_file = v;
+        } else if (strcmp(argv[i], "--agent-bootstrap-kinds") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap_kinds = v;
         } else if (strcmp(argv[i], "--agent-blueprint") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_blueprint = v;
         } else if (strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -642,12 +646,44 @@ static bool load_bootstrap_file(const std::string & path, common_agent_bootstrap
     return common_agent_package_parse_json(text.str(), package, error);
 }
 
+static bool parse_agent_bootstrap_kinds(const std::string & text, bool & procedures, bool & blueprints, std::string & error) {
+    procedures = false;
+    blueprints = false;
+    std::stringstream stream(text);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        const auto first = item.find_first_not_of(" \t");
+        const auto last = item.find_last_not_of(" \t");
+        if (first == std::string::npos) { error = "--agent-bootstrap-kinds contains an empty kind"; return false; }
+        item = item.substr(first, last - first + 1);
+        if (item == "procedures") {
+            if (procedures) { error = "--agent-bootstrap-kinds repeats procedures"; return false; }
+            procedures = true;
+        } else if (item == "blueprints") {
+            if (blueprints) { error = "--agent-bootstrap-kinds repeats blueprints"; return false; }
+            blueprints = true;
+        } else {
+            error = "unsupported --agent-bootstrap-kinds value: " + item;
+            return false;
+        }
+    }
+    if (!procedures && !blueprints) { error = "--agent-bootstrap-kinds must select at least one supported kind"; return false; }
+    error.clear();
+    return true;
+}
+
 static std::unique_ptr<common_plan_store> make_plan_store(const args & a, std::string & error) {
-    if (a.plan_backend == "in-memory") {
+    std::string backend = a.plan_backend;
+    if (backend == "auto") backend = a.plan_db.empty() ? "in-memory" : "cozo";
+    if (backend == "in-memory" && !a.plan_db.empty()) {
+        error = "--plan-db requires --plan-backend cozo or the default auto backend";
+        return nullptr;
+    }
+    if (backend == "in-memory") {
         error.clear();
         return std::make_unique<common_plan_in_memory_store>();
     }
-    if (a.plan_backend == "cozo") {
+    if (backend == "cozo") {
 #ifdef LLAMA_PLAN_USE_COZO
         if (a.plan_db.empty()) {
             error = "--plan-backend cozo requires --plan-db PATH";
@@ -660,7 +696,7 @@ static std::unique_ptr<common_plan_store> make_plan_store(const args & a, std::s
         return nullptr;
 #endif
     }
-    error = "unknown plan backend: " + a.plan_backend;
+    error = "unknown plan backend: " + backend;
     return nullptr;
 }
 
@@ -927,18 +963,28 @@ private:
 #endif
 
 static std::unique_ptr<common_memory_store> make_store(const args & a, std::string & error) {
-    if (a.backend == "in-memory") {
+    std::string backend = a.backend;
+    if (backend == "auto") backend = a.memory_db.empty() ? "in-memory" : "cozo";
+    if (backend == "in-memory" && !a.memory_db.empty()) {
+        error = "--memory-db requires --backend cozo or the default auto backend";
+        return nullptr;
+    }
+    if (backend == "in-memory") {
         return std::unique_ptr<common_memory_store>(new common_memory_in_memory_store());
     }
-    if (a.backend == "cozo") {
+    if (backend == "cozo") {
 #ifdef LLAMA_MEMORY_USE_COZO
+        if (a.memory_db.empty()) {
+            error = "--backend cozo requires --memory-db PATH";
+            return nullptr;
+        }
         return std::unique_ptr<common_memory_store>(new common_memory_cozo_store());
 #else
         error = "this binary was built without LLAMA_MEMORY_COZO";
         return nullptr;
 #endif
     }
-    error = "unknown memory backend: " + a.backend;
+    error = "unknown memory backend: " + backend;
     return nullptr;
 }
 
@@ -1183,12 +1229,26 @@ static int run_chat(common_memory_store & store, const args & a) {
         return 1;
     }
     const bool bootstrap_enabled = a.agent_bootstrap == "default" || !a.agent_bootstrap_file.empty();
+    bool bootstrap_procedures = true;
+    bool bootstrap_blueprints = true;
+    if (!parse_agent_bootstrap_kinds(a.agent_bootstrap_kinds, bootstrap_procedures, bootstrap_blueprints, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    if (!bootstrap_enabled && a.agent_bootstrap_kinds != "procedures,blueprints") {
+        fprintf(stderr, "--agent-bootstrap-kinds requires --agent-bootstrap or --agent-bootstrap-file\n");
+        return 1;
+    }
     if (bootstrap_enabled && a.planning_mode != "mini") {
         fprintf(stderr, "--agent-bootstrap requires --planning-mode mini\n");
         return 1;
     }
     if (!a.agent_blueprint.empty() && (!bootstrap_enabled || a.plan_id.empty())) {
         fprintf(stderr, "--agent-blueprint requires bootstrap and an explicit --plan-id\n");
+        return 1;
+    }
+    if (!a.agent_blueprint.empty() && !bootstrap_blueprints) {
+        fprintf(stderr, "--agent-blueprint requires blueprints in --agent-bootstrap-kinds\n");
         return 1;
     }
     if (a.reflection_mode != "off" && a.reflection_mode != "always") {
@@ -1241,6 +1301,8 @@ static int run_chat(common_memory_store & store, const args & a) {
             bootstrap_config.session_id = a.memory_session;
             bootstrap_config.project_id = a.memory_project;
             bootstrap_config.now = std::time(nullptr);
+            bootstrap_config.install_procedures = bootstrap_procedures;
+            bootstrap_config.install_blueprints = bootstrap_blueprints;
             common_agent_bootstrap_result bootstrap_result;
             const auto embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 if (!ensure_embedding(a, text, embedding, "bootstrap procedure", embedding_error)) return false;
@@ -1263,35 +1325,36 @@ static int run_chat(common_memory_store & store, const args & a) {
                 fprintf(stderr, "agent bootstrap failed: %s\n", error.c_str());
                 return 1;
             }
-            const std::string prefix = "bootstrap:" + a.memory_namespace + ":" +
-                (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) + ":blueprint:";
-            for (const auto & blueprint : package.blueprints) {
-                installed_blueprint_candidates.push_back({blueprint.id, prefix + blueprint.id,
-                    blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description});
+            if (bootstrap_config.install_blueprints) {
+                const std::string prefix = "bootstrap:" + a.memory_namespace + ":" +
+                    (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) + ":blueprint:";
+                for (const auto & blueprint : package.blueprints) {
+                    installed_blueprint_candidates.push_back({blueprint.id, prefix + blueprint.id,
+                        blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description});
+                }
             }
             fprintf(stderr, "agent bootstrap: procedures installed=%zu existing=%zu; blueprints installed=%zu existing=%zu\n",
                 bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
                 bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
             if (!a.agent_blueprint.empty() && a.agent_blueprint != "auto") {
-                const std::string blueprint_id = "bootstrap:" + a.memory_namespace + ":" +
-                    (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) +
-                    ":blueprint:" + a.agent_blueprint;
-                const auto blueprint = plan_store->get(blueprint_id, error);
-                if (!error.empty() || !blueprint) {
-                    fprintf(stderr, "agent blueprint is unavailable: %s\n", error.empty() ? blueprint_id.c_str() : error.c_str());
+                common_explicit_blueprint_selector selector(a.agent_blueprint);
+                common_blueprint_selection_config selection_config;
+                selection_config.task_plan_id = a.plan_id;
+                selection_config.session_id = a.memory_session;
+                selection_config.scope = requested_plan_scope;
+                selection_config.now = bootstrap_config.now;
+                common_blueprint_selection_result selection;
+                common_agent_request selection_request;
+                selection_request.prompt = a.prompt;
+                if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
+                    fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
                     return 1;
                 }
-                const auto existing = plan_store->get(a.plan_id, error);
-                if (!error.empty()) { fprintf(stderr, "failed to inspect plan instance: %s\n", error.c_str()); return 1; }
-                if (!existing) {
-                    common_plan_state instance;
-                    if (!common_plan_instantiate_blueprint(*blueprint, a.plan_id, a.memory_session, instance, error, requested_plan_scope, bootstrap_config.now) ||
-                            !plan_store->create(instance, error)) {
-                        fprintf(stderr, "failed to instantiate agent blueprint: %s\n", error.c_str());
-                        return 1;
-                    }
-                    fprintf(stderr, "agent blueprint instantiated: %s -> %s\n", blueprint_id.c_str(), a.plan_id.c_str());
+                if (selection.outcome != common_blueprint_selection_outcome::instantiated && selection.outcome != common_blueprint_selection_outcome::resumed) {
+                    fprintf(stderr, "agent blueprint selection failed safely: %s\n", selection.reason.c_str());
+                    return 1;
                 }
+                fprintf(stderr, "agent blueprint %s: %s\n", selection.outcome == common_blueprint_selection_outcome::instantiated ? "instantiated" : "resumed", a.plan_id.c_str());
             }
         }
     }

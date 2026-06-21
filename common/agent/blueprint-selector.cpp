@@ -2,6 +2,16 @@
 
 #include <algorithm>
 
+common_explicit_blueprint_selector::common_explicit_blueprint_selector(std::string logical_id) : logical_id(std::move(logical_id)) {}
+
+common_blueprint_selection common_explicit_blueprint_selector::select(
+        const common_agent_request &,
+        const std::vector<common_blueprint_candidate> &,
+        std::string & error) {
+    error.clear();
+    return {common_blueprint_selection_decision::instantiate, logical_id, 1.0f, "explicitly selected"};
+}
+
 bool common_agent_select_and_instantiate_blueprint(
         common_plan_store & plan_store,
         const common_agent_request & request,
@@ -25,6 +35,11 @@ bool common_agent_select_and_instantiate_blueprint(
     const auto existing = plan_store.get(config.task_plan_id, error);
     if (!error.empty()) return false;
     if (existing) {
+        if (existing->kind != common_plan_kind::task || existing->scope != config.scope || existing->session_id != config.session_id) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "existing plan is not a compatible task plan";
+            return true;
+        }
         result.outcome = common_blueprint_selection_outcome::resumed;
         result.reason = "existing task plan takes precedence";
         return true;

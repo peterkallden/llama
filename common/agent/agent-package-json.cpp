@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <set>
 
@@ -17,7 +18,35 @@ bool strings(const json & value, std::vector<std::string> & out) {
 }
 
 bool valid_id(const std::string & id) {
-    return !id.empty() && id.size() <= 128 && id.find("bootstrap:") == std::string::npos && id.find('\n') == std::string::npos;
+    if (id.empty() || id.size() > 128 || id.find("bootstrap:") != std::string::npos) return false;
+    const auto alnum = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0; };
+    if (!alnum(id.front())) return false;
+    return std::all_of(id.begin() + 1, id.end(), [&](char c) { return alnum(c) || c == '.' || c == '_' || c == '-'; });
+}
+
+bool constraints(const json & value, std::vector<common_plan_constraint> & out) {
+    if (!value.is_array()) return false;
+    out.clear();
+    for (const auto & item : value) {
+        if (!item.is_object() || !item.contains("id") || !item["id"].is_string() || !item.contains("description") || !item["description"].is_string()) return false;
+        out.push_back({item["id"].get<std::string>(), item["description"].get<std::string>(), item.value("hard", true)});
+    }
+    return true;
+}
+
+bool assumptions(const json & value, std::vector<common_plan_assumption> & out) {
+    if (!value.is_array()) return false;
+    out.clear();
+    for (const auto & item : value) {
+        if (!item.is_object() || !item.contains("id") || !item["id"].is_string() || !item.contains("statement") || !item["statement"].is_string()) return false;
+        common_plan_assumption assumption;
+        assumption.id = item["id"].get<std::string>();
+        assumption.statement = item["statement"].get<std::string>();
+        assumption.confidence = item.value("confidence", 0.5f);
+        assumption.valid = true;
+        out.push_back(std::move(assumption));
+    }
+    return true;
 }
 
 bool validate(const common_agent_bootstrap_package & package, std::string & error) {
@@ -33,6 +62,9 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
             if (!valid_id(step.id) || step.title.empty() || step.objective.empty() || step.tool_call || step.selected_tool || !steps.insert(step.id).second) { error = "invalid blueprint step or tool binding"; return false; }
         }
         for (const auto & step : blueprint.steps) for (const auto & dependency : step.depends_on) if (!steps.count(dependency) || dependency == step.id) { error = "blueprint dependency references an unknown step"; return false; }
+        std::set<std::string> constraints, assumptions;
+        for (const auto & constraint : blueprint.constraints) if (!valid_id(constraint.id) || constraint.description.empty() || constraint.description.size() > 4096 || !constraints.insert(constraint.id).second) { error = "invalid or duplicate blueprint constraint"; return false; }
+        for (const auto & assumption : blueprint.assumptions) if (!valid_id(assumption.id) || assumption.statement.empty() || assumption.statement.size() > 4096 || assumption.confidence < 0 || assumption.confidence > 1 || !assumptions.insert(assumption.id).second) { error = "invalid or duplicate blueprint assumption"; return false; }
         // Every dependency points to an earlier-free DAG; bounded DFS detects cycles.
         std::set<std::string> visiting, visited;
         std::function<bool(const std::string &)> visit = [&](const std::string & id) {
@@ -74,6 +106,8 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 blueprint.id = item.value("id", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
                 blueprint.goal = item.value("goal", std::string{}); blueprint.success_criteria = item.value("success_criteria", std::string{});
                 if (item.contains("next_action")) { if (!item["next_action"].is_string()) { error = "next_action must be a string"; return false; } blueprint.next_action = item["next_action"].get<std::string>(); }
+                if (item.contains("constraints") && !constraints(item["constraints"], blueprint.constraints)) { error = "blueprint constraints are invalid"; return false; }
+                if (item.contains("assumptions") && !assumptions(item["assumptions"], blueprint.assumptions)) { error = "blueprint assumptions are invalid"; return false; }
                 for (const auto & source : item["steps"]) {
                     if (!source.is_object()) { error = "package step must be an object"; return false; }
                     common_plan_step step; step.id = source.value("id", std::string{}); step.title = source.value("title", std::string{}); step.objective = source.value("objective", std::string{}); step.optional = source.value("optional", false);
@@ -96,6 +130,8 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
         if (!blueprint.selection_description.empty()) value["selection_description"] = blueprint.selection_description;
         if (blueprint.next_action) value["next_action"] = *blueprint.next_action;
+        if (!blueprint.constraints.empty()) { value["constraints"] = json::array(); for (const auto & constraint : blueprint.constraints) value["constraints"].push_back({{"id", constraint.id}, {"description", constraint.description}, {"hard", constraint.hard}}); }
+        if (!blueprint.assumptions.empty()) { value["assumptions"] = json::array(); for (const auto & assumption : blueprint.assumptions) value["assumptions"].push_back({{"id", assumption.id}, {"statement", assumption.statement}, {"confidence", assumption.confidence}}); }
         for (const auto & step : blueprint.steps) { json item = {{"id", step.id}, {"title", step.title}, {"objective", step.objective}}; if (step.optional) item["optional"] = true; if (!step.depends_on.empty()) item["depends_on"] = step.depends_on; if (!step.required_evidence.empty()) item["required_evidence"] = step.required_evidence; value["steps"].push_back(std::move(item)); }
         root["blueprints"].push_back(std::move(value));
     }

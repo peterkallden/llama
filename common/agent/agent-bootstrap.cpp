@@ -112,7 +112,7 @@ bool common_agent_install_bootstrap_package(
         ? common_memory_scope::session : common_memory_scope::project;
     if (config.install_procedures) {
         for (const auto & definition : package.procedures) {
-            if (definition.id.empty() || definition.content.empty() || definition.content.size() > 512 || definition.importance < 0.0f || definition.importance > 1.0f || definition.confidence < 0.0f || definition.confidence > 1.0f) {
+            if (definition.id.empty() || definition.content.empty() || definition.content.size() > 8192 || definition.importance < 0.0f || definition.importance > 1.0f || definition.confidence < 0.0f || definition.confidence > 1.0f) {
                 error = "bootstrap procedure has invalid id, content, or scores";
                 return false;
             }

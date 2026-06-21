@@ -1,6 +1,9 @@
 #include "agent/agent-runtime.h"
 #include "plan/plan-in-memory.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 
 class planner final : public common_planner {
