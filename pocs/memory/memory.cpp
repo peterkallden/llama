@@ -79,6 +79,7 @@ struct args {
     std::string tool_profile;
     std::string planning_mode = "off";
     std::string reflection_mode = "off";
+    std::string agent_profile = "default";
     std::string plan_scope = "turn";
     std::string plan_backend = "auto";
     std::string plan_db;
@@ -90,6 +91,11 @@ struct args {
     bool plan_show_summary = false;
     bool agent_trace = false;
     bool memory_global_opt_in = false;
+    bool tool_profile_explicit = false;
+    bool planning_mode_explicit = false;
+    bool reflection_mode_explicit = false;
+    bool memory_learn_explicit = false;
+    bool agent_profile_explicit = false;
     std::string memory_learn = "off";
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
@@ -102,7 +108,7 @@ static void usage(const char * argv0) {
         "  %s add --memory-db PATH --id ID --kind KIND --content TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s search --memory-db PATH --query TEXT [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--memory-global-opt-in] [--limit N] [--embedding VALUE|--embedding-model MODEL] [--backend cozo]\n"
         "  %s relate --memory-db PATH --from ID --relation REL --to ID [--weight W] [--backend cozo]\n"
-        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-bootstrap-kinds procedures,blueprints] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
+        "  %s chat --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static] [--memory-record-episode] [--memory-learn off|post-turn] [--tool-profile minimal|memory-read|memory|research] [--max-tool-rounds 1..4] [--planning-mode off|mini] [--agent-bootstrap none|default] [--agent-bootstrap-file PATH] [--agent-bootstrap-kinds procedures,blueprints] [--agent-blueprint ID --plan-id ID] [--reflection-mode off|always] [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-scope turn|session|project|global] [--plan-show-summary] [--agent-trace]\n",
         argv0, argv0, argv0, argv0);
 }
 
@@ -193,7 +199,7 @@ static bool parse_args(int argc, char ** argv, args & out) {
         } else if (strcmp(argv[i], "--memory-remember-tool") == 0) {
             out.enable_memory_remember_tool = true;
         } else if (strcmp(argv[i], "--memory-learn") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn = v;
+            const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn = v; out.memory_learn_explicit = true;
         } else if (strcmp(argv[i], "--memory-learn-show-candidate") == 0) {
             out.memory_learn_show_candidate = true;
         } else if (strcmp(argv[i], "--memory-learn-min-confidence") == 0) {
@@ -201,11 +207,13 @@ static bool parse_args(int argc, char ** argv, args & out) {
         } else if (strcmp(argv[i], "--memory-learn-min-reuse") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn_min_reuse = std::stof(v);
         } else if (strcmp(argv[i], "--tool-profile") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v;
+            const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v; out.tool_profile_explicit = true;
         } else if (strcmp(argv[i], "--planning-mode") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.planning_mode = v;
+            const char * v = need_value(argv[i]); if (!v) return false; out.planning_mode = v; out.planning_mode_explicit = true;
         } else if (strcmp(argv[i], "--reflection-mode") == 0) {
-            const char * v = need_value(argv[i]); if (!v) return false; out.reflection_mode = v;
+            const char * v = need_value(argv[i]); if (!v) return false; out.reflection_mode = v; out.reflection_mode_explicit = true;
+        } else if (strcmp(argv[i], "--agent-profile") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_profile = v; out.agent_profile_explicit = true;
         } else if (strcmp(argv[i], "--plan-scope") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_scope = v;
         } else if (strcmp(argv[i], "--plan-backend") == 0) {
@@ -644,6 +652,38 @@ static bool load_bootstrap_file(const std::string & path, common_agent_bootstrap
     if (!input) { error = "could not open bootstrap file: " + path; return false; }
     std::stringstream text; text << input.rdbuf();
     return common_agent_package_parse_json(text.str(), package, error);
+}
+
+static bool resolve_agent_profile(args & a, std::string & error) {
+    // Preserve the legacy tool flags for callers that have not opted into a
+    // named profile. Explicit low-level flags always override profile values.
+    if (!a.agent_profile_explicit && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
+        a.agent_profile = "static";
+    }
+    std::string tool_profile;
+    std::string planning_mode;
+    std::string reflection_mode;
+    std::string memory_learn;
+    if (a.agent_profile == "default") {
+        tool_profile = "memory"; planning_mode = "mini"; reflection_mode = "always"; memory_learn = "off";
+    } else if (a.agent_profile == "learning") {
+        tool_profile = "memory"; planning_mode = "mini"; reflection_mode = "always"; memory_learn = "post-turn";
+    } else if (a.agent_profile == "research") {
+        tool_profile = "research"; planning_mode = "mini"; reflection_mode = "always"; memory_learn = "off";
+    } else if (a.agent_profile == "safe") {
+        tool_profile = "memory-read"; planning_mode = "mini"; reflection_mode = "off"; memory_learn = "off";
+    } else if (a.agent_profile == "static") {
+        tool_profile.clear(); planning_mode = "off"; reflection_mode = "off"; memory_learn = "off";
+    } else {
+        error = "--agent-profile must be default, learning, research, safe, or static";
+        return false;
+    }
+    if (!a.tool_profile_explicit) a.tool_profile = std::move(tool_profile);
+    if (!a.planning_mode_explicit) a.planning_mode = std::move(planning_mode);
+    if (!a.reflection_mode_explicit) a.reflection_mode = std::move(reflection_mode);
+    if (!a.memory_learn_explicit) a.memory_learn = std::move(memory_learn);
+    error.clear();
+    return true;
 }
 
 static bool parse_agent_bootstrap_kinds(const std::string & text, bool & procedures, bool & blueprints, std::string & error) {
@@ -1200,8 +1240,12 @@ private:
     const args & options;
 };
 
-static int run_chat(common_memory_store & store, const args & a) {
+static int run_chat(common_memory_store & store, args a) {
     std::string error;
+    if (!resolve_agent_profile(a, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
     if (a.max_tool_rounds < 1 || a.max_tool_rounds > 4) {
         fprintf(stderr, "--max-tool-rounds must be between 1 and 4\n");
         return 1;

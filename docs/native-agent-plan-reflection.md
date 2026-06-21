@@ -1,5 +1,61 @@
 # Native dynamic plan and reflection PoC
 
+## Quick start
+
+Build the optional PoC once:
+
+```powershell
+cmake -S . -B build-plan -DLLAMA_MEMORY=ON -DLLAMA_PLAN=ON -DLLAMA_AGENT_REFLECTION=ON -DLLAMA_BUILD_TESTS=ON
+cmake --build build-plan --config Release
+```
+
+### 1. Bootstrap persistent memory and blueprints
+
+Bootstrap is idempotent and happens as part of an agent run. With database paths present, the CLI automatically uses the compiled Cozo backends.
+
+```powershell
+.\build-plan\bin\Release\llama-memory.exe chat `
+  --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
+  --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
+  --agent-bootstrap default --prompt "Set up the local agent workspace."
+```
+
+### 2. Run the agent
+
+The default profile is the normal agent entry point: it plans, uses the scoped memory tools, reflects once, and can submit policy-gated memory proposals.
+
+```powershell
+.\build-plan\bin\Release\llama-memory.exe chat `
+  --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
+  --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
+  --prompt "What did we decide, and what should happen next?"
+```
+
+### 3. Choose an agent profile
+
+| Profile | Planning | Tools | Reflection | Post-turn learning |
+| --- | --- | --- | --- | --- |
+| `default` | `mini` | `memory` | `always` | off |
+| `learning` | `mini` | `memory` | `always` | `post-turn` |
+| `research` | `mini` | `research` | `always` | off |
+| `safe` | `mini` | `memory-read` | off | off |
+| `static` | off | none | off | off |
+
+Use `--agent-profile research`, `--agent-profile learning`, or `--agent-profile safe` when the task calls for a different temperament. Durable post-turn learning is deliberately not part of `default`; `memory_remember` remains policy-gated in the profiles that expose it.
+
+### Common variations
+
+Use a reusable bootstrap blueprint explicitly, or let the selector choose one from the installed package:
+
+```powershell
+--agent-blueprint repository-change --plan-id change-42
+--agent-blueprint auto --plan-id change-42
+```
+
+Use `--memory-scope session|project|global` and `--plan-scope turn|session|project|global` to choose lifecycle boundaries. `global` is intended for one local instance unless a tenant policy is added.
+
+## Advanced configuration and reference
+
 This optional PoC builds a small control plane around existing llama.cpp inference helpers. It does not change GGML, `llama_decode`, model loading, sampling, the KV cache, or libllama.
 
 ```text
@@ -19,7 +75,7 @@ user request -> memory retrieval -> planner -> plan store
 
 The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `common_plan_cozo_store` persists plan state in the separate Cozo relations `agent_plan` and `agent_plan_event`; it never uses the memory relations `memory` or `memory_edge`. The generic in-memory policy remains the mutation gate before an accepted state and its short audit event are persisted. If either persistence write fails, the cache is reloaded from Cozo; if the audit-event write fails after a state write, the prior state is restored before that reload.
 
-## Tool catalog bootstrap (first slice)
+### Tool catalog and bootstrap internals
 
 `common_tool_catalog` is a declarative, versioned catalog of built-in capabilities. Its bootstrap is idempotent: it creates missing definitions and the standard profiles without rewriting existing entries. It deliberately contains metadata only (schemas, policy, limits, risk class and a native `executor_id`) and cannot load a DLL, script, command or other executable code. A future Cozo-backed catalog will persist these same records; the initial in-process catalog keeps the bootstrap semantics testable before introducing another database relation.
 
@@ -33,7 +89,11 @@ The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. Th
 
 When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing `llama-memory chat` PoC exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs bounded registered-tool rounds, and completes with a tool-free final generation. `memory_remember` is available as a policy-gated proposal in `memory` and `research`; it is not an unrestricted write capability. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags.
 
-## Model-backed chat loop (first vertical slice)
+### Detailed overrides
+
+`--agent-profile` is a convenience layer. An explicitly supplied `--tool-profile`, `--planning-mode`, `--reflection-mode` or `--memory-learn` overrides only that dimension of the chosen profile. This is useful for experiments such as `--agent-profile research --reflection-mode off`. Existing legacy memory-tool flags retain static behavior unless a named agent profile is explicitly selected.
+
+### Model-backed chat loop
 
 `llama-memory chat --planning-mode mini` now runs the existing bounded runtime around the already loaded chat model. The planner is constrained by the versioned plan JSON schema to return one to four ordered steps and then strictly policy-validated. Output-format grammar begins at the first generated JSON token rather than consuming the chat template's assistant marker. It lets only the active plan step invoke a registered tool, records the result as a plan observation, completes that step and activates the next dependency-ready step. The model-backed executor then drafts from the current plan, observations and retrieved memory. `--reflection-mode always` uses the same output-format boundary plus strict reflection parsing; it may request a revision or propose the small allowlisted lifecycle operations `complete_step`, `activate_step` and `set_next_action`. Reflection output remains sideband data and is never appended to normal chat history.
 
@@ -55,7 +115,7 @@ The bounded agent runtime supports the same pattern across plan steps: `max_tool
 
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 
-## Opt-in post-turn durable memory learning
+### Post-turn durable memory learning
 
 `--memory-learn post-turn` adds one optional stage after a successful bounded agent turn. A separate model-backed candidate extractor returns either one constrained-JSON candidate or `null`; it is not part of the reflection parser and does not expose reflection text. The runtime then applies native shape, confidence (default `0.75`), expected-reuse (default `0.65`) and provenance gates before passing an accepted proposal through the existing `common_memory_evaluate_remember_request` policy and ordinary memory store. The policy remains the final authority for sensitive-content, scope, duplicate and conflict decisions.
 
@@ -70,7 +130,7 @@ Reflection is a sideband interface. Its JSON parser accepts only a short decisio
 
 Learning is off by default and currently requires `--planning-mode mini`. It chooses project scope only when the runtime has an explicit project id; otherwise it uses session scope. It never auto-selects global scope, and the model never receives scope or identity authority. `--memory-learn-show-candidate` prints the proposed content for local PoC inspection; the regular audit is structured and omits candidate content and reasoning. A procedure candidate needs at least one runtime-verified evidence item or completed plan step with an observation/result; model-provided provenance claims do not satisfy this gate. Ordinary one-off plans, transient next actions, malformed JSON and failed embedding/policy/persistence paths fail safely without writing memory.
 
-## Procedure memory, plan provenance and blueprints
+### Procedure memory, plan provenance and blueprints
 
 Retrieved `procedure` memories may inform the model's initial plan or a bounded reflection `add_step` proposal. A proposed step can name `source_memory_ids`, but the runtime retains only IDs belonging to actually retrieved procedure memories, marks the surviving step `generated_from_memory=true`, and adds short `memory:<id>` evidence. The normal plan policy and store mutation path still decide whether the step is accepted; memory never mutates a plan directly.
 
