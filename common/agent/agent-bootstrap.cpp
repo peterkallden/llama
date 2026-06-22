@@ -157,7 +157,9 @@ bool common_agent_install_bootstrap_package(
             }
             common_plan_state blueprint;
             blueprint.id = prefix + "blueprint:" + definition.id;
+            blueprint.namespace_id = config.namespace_id;
             blueprint.session_id = config.session_id;
+            blueprint.project_id = config.project_id;
             blueprint.kind = common_plan_kind::blueprint;
             blueprint.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
             blueprint.goal = definition.goal;

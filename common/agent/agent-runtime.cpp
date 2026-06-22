@@ -44,12 +44,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         const auto existing = store.get(*request.plan_id, error);
         if (!error.empty()) { result.error = error; return result; }
         if (existing) {
-            if (existing->scope != request.plan_scope) {
-                result.error = "existing plan scope does not match requested plan scope";
-                return result;
-            }
-            if (existing->scope == common_plan_scope::session && existing->session_id != request.session_id) {
-                result.error = "existing session plan does not match requested session";
+            if (!common_plan_scope_matches(*existing, request.plan_scope, request.namespace_id, request.session_id, request.project_id, request.turn_id)) {
+                result.error = "existing plan identity does not match requested scope";
                 return result;
             }
             plan = *existing;
@@ -61,7 +57,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (!error.empty()) { result.error = error; return result; }
         if (request.plan_id) proposal.plan.id = *request.plan_id;
         proposal.plan.scope = request.plan_scope;
+        proposal.plan.namespace_id = request.namespace_id;
         if (proposal.plan.session_id.empty()) proposal.plan.session_id = request.session_id;
+        proposal.plan.project_id = request.project_id;
+        proposal.plan.turn_id = request.turn_id;
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});

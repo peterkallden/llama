@@ -26,6 +26,9 @@ struct common_plan_step {
 };
 struct common_plan_state {
     std::string id, session_id;
+    // Runtime-owned identity boundary.  These mirror memory identity so a
+    // persisted plan can be selected or resumed only in its original scope.
+    std::string namespace_id = "local", project_id, turn_id;
     common_plan_kind kind = common_plan_kind::task;
     std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;
@@ -55,3 +58,6 @@ struct common_plan_operation {
 struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version = 0; common_plan_operation operation; bool accepted = false; std::string reason_summary; int64_t created_at = 0; };
 
 const char * common_plan_operation_kind_name(common_plan_operation_kind kind);
+bool common_plan_scope_matches(const common_plan_state & plan, common_plan_scope scope,
+    const std::string & namespace_id, const std::string & session_id,
+    const std::string & project_id, const std::string & turn_id);

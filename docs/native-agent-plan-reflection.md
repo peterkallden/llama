@@ -54,6 +54,8 @@ Use a reusable bootstrap blueprint explicitly, or let the selector choose one fr
 
 Use `--memory-scope session|project|global` and `--plan-scope turn|session|project|global` to choose lifecycle boundaries. `global` is intended for one local instance unless a tenant policy is added.
 
+Use `--agent-plan auto` with a persistent plan store to let the bounded selector consider up to eight compatible active or blocked task plans. It may resume one only when its confidence reaches `0.75`; otherwise the runtime creates a new plan. An explicit `--plan-id` always takes precedence. Candidate filtering is native-owned and requires matching plan scope plus namespace and the applicable turn, session, or project identity.
+
 Export the portable bootstrap definitions in the current scope without loading the chat model:
 
 ```powershell

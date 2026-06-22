@@ -81,13 +81,15 @@ int main() {
     common_agent_request request;
     request.prompt = "answer";
     request.session_id = "s";
-    request.plan_scope = common_plan_scope::global;
+    request.namespace_id = "tenant-a";
+    request.project_id = "project-a";
+    request.plan_scope = common_plan_scope::project;
 
     const auto created = runtime.run(request);
     assert(created.error.empty() && created.response == "draft");
     assert(created.plan_id && *created.plan_id == "turn-1" && created.reflected);
     const auto plan = store.get("turn-1", error);
-    assert(plan && plan->scope == common_plan_scope::global && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
+    assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
 
     request.plan_id = "turn-1";
     const auto resumed = runtime.run(request);
