@@ -789,8 +789,10 @@ public:
             "A tool, when needed, is {name,arguments_json}; arguments_json is a JSON-encoded object string and the name must be an available tool. "
             "For calculator, arguments_json must be like {\"expression\":\"17 * 23\"}. "
             "For time_now, use an empty object {}. "
-            "For this first bounded tool step, required_evidence must be an empty array; the tool result becomes evidence after execution. "
-            "Return exactly one operation in the operations array. Use short IDs and values under twelve words.";
+            "Return one to six add_step operations in dependency order. Use depends_on for every prerequisite. "
+            "For tool steps, required_evidence must be an empty array; the tool result becomes evidence after execution. "
+            "Every non-tool step is the single final answer synthesis step and must come last. "
+            "Use short IDs and values under twelve words.";
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
@@ -798,13 +800,15 @@ public:
         common_chat_params params;
         int decoded = 0;
         args planner_options = options;
-        planner_options.n_predict = std::max(options.n_predict, 256);
+        // A six-step proposal contains repeated structured fields.  The old
+        // 256-token floor could truncate a valid multi-step JSON plan midway.
+        planner_options.n_predict = std::max(options.n_predict, 512);
         if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, planner_options, output, params, decoded, common_plan_proposal_json_schema())) {
             error = "model planner generation failed";
             return proposal;
         }
         std::string parse_error;
-        if (common_plan_parse_proposal_json(output, proposal.plan, proposal.operations, parse_error, 4)) {
+        if (common_plan_parse_proposal_json(output, proposal.plan, proposal.operations, parse_error, 6)) {
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
@@ -819,10 +823,6 @@ public:
                 if (operation.step && operation.step->tool_call) {
                     operation.step->required_evidence.clear();
                 }
-            }
-            if (!proposal.operations.empty() && proposal.operations.front().step) {
-                proposal.operations.front().step->status = common_plan_step_status::active;
-                proposal.plan.active_step_id = proposal.operations.front().step->id;
             }
             error.clear();
             return proposal;

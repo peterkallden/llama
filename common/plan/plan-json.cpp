@@ -91,7 +91,7 @@ std::string common_plan_proposal_json_schema() {
             {"goal", {{"type", "string"}, {"maxLength", 256}}},
             {"success_criteria", {{"type", "string"}, {"maxLength", 256}}},
             {"next_action", {{"type", "string"}, {"maxLength", 256}}},
-            {"operations", {{"type", "array"}, {"minItems", 1}, {"maxItems", 1}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"required", {"kind", "step", "reason_summary", "evidence_ids"}}, {"properties", {
+            {"operations", {{"type", "array"}, {"minItems", 1}, {"maxItems", 6}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"required", {"kind", "step", "reason_summary", "evidence_ids"}}, {"properties", {
                 {"kind", {{"const", "add_step"}}},
                 {"reason_summary", {{"type", "string"}, {"maxLength", 256}}},
                 {"evidence_ids", {{"type", "array"}, {"items", {{"type", "string"}}}}},

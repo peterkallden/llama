@@ -1,6 +1,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
 #include "plan/plan-memory.h"
+#include "plan/plan-scheduler.h"
 
 #include <nlohmann/json.hpp>
 #include <regex>
@@ -74,14 +75,68 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     }
     result.plan_id = plan.id;
 
+    const auto activate_next_ready_step = [&]() -> bool {
+        bool has_active_step = false;
+        for (const auto & step : plan.steps) if (step.status == common_plan_step_status::active) { has_active_step = true; break; }
+        if (has_active_step) return true;
+
+        const auto schedule = common_plan_schedule(plan);
+        if (schedule.complete && plan.status == common_plan_status::active) {
+            common_plan_operation complete_plan;
+            complete_plan.kind = common_plan_operation_kind::complete_plan;
+            complete_plan.plan_id = plan.id;
+            complete_plan.expected_version = plan.version;
+            complete_plan.reason_summary = "all mandatory plan steps completed";
+            if (!store.apply(complete_plan, plan, error)) return false;
+            result.events.push_back({common_agent_event_type::plan_updated, "plan completed by scheduler", {}, plan.id});
+            return false;
+        }
+        if (schedule.ready_step_ids.empty()) return false;
+
+        common_plan_operation activate;
+        activate.kind = common_plan_operation_kind::activate_step;
+        activate.plan_id = plan.id;
+        activate.expected_version = plan.version;
+        activate.step_id = schedule.ready_step_ids.front();
+        activate.reason_summary = "scheduler selected dependency-ready step";
+        if (!store.apply(activate, plan, error)) return false;
+        result.events.push_back({common_agent_event_type::plan_updated, "scheduler activated plan step", {}, plan.id});
+        return true;
+    };
+
+    const auto complete_active_synthesis_step = [&]() -> bool {
+        if (!plan.active_step_id) return true;
+        common_plan_step * active = nullptr;
+        for (auto & step : plan.steps) if (step.id == *plan.active_step_id) { active = &step; break; }
+        if (!active || active->status != common_plan_step_status::active || active->tool_call) return true;
+
+        common_plan_operation complete;
+        complete.kind = common_plan_operation_kind::complete_step;
+        complete.plan_id = plan.id;
+        complete.expected_version = plan.version;
+        complete.step_id = active->id;
+        complete.reason_summary = "final response synthesis completed";
+        for (const auto & observation : plan.observations) {
+            complete.evidence_ids.push_back(observation.id);
+            complete.evidence_ids.insert(complete.evidence_ids.end(), observation.evidence_ids.begin(), observation.evidence_ids.end());
+        }
+        if (!store.apply(complete, plan, error)) return false;
+        result.events.push_back({common_agent_event_type::plan_updated, "final synthesis step completed", {}, plan.id});
+        activate_next_ready_step();
+        return error.empty();
+    };
+
     std::vector<std::string> guidance;
     std::set<std::string> executed_step_ids;
     bool executed_request_tool = false;
     size_t tool_batches = 0;
     for (size_t iteration = 0; iteration < request.max_iterations; ++iteration) {
-        std::optional<common_registered_tool_call> tool_call;
-        std::string tool_step_id = "request";
-        if (tool_batches < request.max_tool_batches) {
+        // Execute the contiguous, dependency-ready tool chain before drafting.
+        // This makes normal plan progression deterministic; reflection remains
+        // reserved for repair or replanning.
+        while (tool_batches < request.max_tool_batches) {
+            std::optional<common_registered_tool_call> tool_call;
+            std::string tool_step_id = "request";
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && step.tool_call && !executed_step_ids.count(step.id)) {
                 if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
                 tool_call = common_registered_tool_call{step.tool_call->name, step.tool_call->arguments_json};
@@ -89,8 +144,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 break;
             }
             if (!tool_call && request.tool_call && !executed_request_tool) tool_call = request.tool_call;
-        }
-        if (tool_call) {
+            if (!tool_call) {
+                if (plan.active_step_id || !activate_next_ready_step()) break;
+                continue;
+            }
             if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             if (tool_call->name == "calculator") {
@@ -132,21 +189,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 complete.reason_summary = "registered tool completed";
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
                 result.events.push_back({common_agent_event_type::plan_updated, "tool step completed", {}, plan.id});
-                for (const auto & step : plan.steps) {
-                    if (step.status != common_plan_step_status::pending) continue;
-                    bool ready = true;
-                    for (const auto & dependency : step.depends_on) for (const auto & candidate : plan.steps) if (candidate.id == dependency && candidate.status != common_plan_step_status::completed) ready = false;
-                    if (!ready) continue;
-                    common_plan_operation activate;
-                    activate.kind = common_plan_operation_kind::activate_step;
-                    activate.plan_id = plan.id;
-                    activate.expected_version = plan.version;
-                    activate.step_id = step.id;
-                    activate.reason_summary = "next dependency-ready step";
-                    if (!store.apply(activate, plan, error)) { result.error = error; return result; }
-                    result.events.push_back({common_agent_event_type::plan_updated, "next plan step activated", {}, plan.id});
-                    break;
-                }
+                activate_next_ready_step();
+                if (!error.empty()) { result.error = error; return result; }
             }
             ++tool_batches;
             result.events.push_back({common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
@@ -156,6 +200,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         auto draft = executor.generate_draft(request, plan, guidance, error);
         if (!error.empty()) { result.error = error; return result; }
         if (!request.enable_reflection || iteration >= request.max_reflection_rounds) {
+            if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
             result.limit_reached = request.enable_reflection;
             break;
@@ -171,7 +216,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (!store.apply(op, plan, error)) { error.clear(); continue; }
             result.events.push_back({common_agent_event_type::plan_updated, "reflection plan operation applied", {}, plan.id});
         }
-        if (reflection.ready_to_answer || reflection.decision == common_reflection_decision::accept) { result.response = draft; break; }
+        if (reflection.ready_to_answer || reflection.decision == common_reflection_decision::accept) {
+            if (!complete_active_synthesis_step()) { result.error = error; return result; }
+            result.response = draft;
+            break;
+        }
         if (reflection.decision == common_reflection_decision::abort) { result.error = "reflection aborted answer"; break; }
         guidance = reflection.revision_guidance;
         result.revised = true;
