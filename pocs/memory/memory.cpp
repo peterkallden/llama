@@ -85,6 +85,7 @@ struct args {
     std::string plan_db;
     std::string plan_id;
     std::string agent_plan = "off";
+    std::string repository_root;
     std::string agent_bootstrap = "none";
     std::string agent_import;
     std::string agent_export;
@@ -225,6 +226,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_id = v;
         } else if (strcmp(argv[i], "--agent-plan") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_plan = v;
+        } else if (strcmp(argv[i], "--repository-root") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.repository_root = v;
         } else if (strcmp(argv[i], "--agent-bootstrap") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_bootstrap = v;
         } else if (strcmp(argv[i], "--agent-import") == 0) {
@@ -1540,6 +1543,7 @@ static int run_chat(common_memory_store & store, args a) {
             return 1;
         }
         common_native_tool_bindings bindings;
+        if (!a.repository_root.empty()) bindings.repository_root = std::filesystem::weakly_canonical(a.repository_root).string();
         bindings.plan_store = plan_store.get();
         bindings.plan_id = a.plan_id;
         if (memory_enabled) {

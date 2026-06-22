@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -112,6 +114,22 @@ bool register_definition(const common_tool_definition & definition, common_tool_
     return registry.register_tool(std::move(tool), error);
 }
 
+bool repository_path(const std::string & root, const std::string & relative, std::filesystem::path & out, std::string & error) {
+    if (root.empty()) { error = "repository tools require a runtime repository root"; return false; }
+    const auto base = std::filesystem::weakly_canonical(root);
+    const auto requested = relative.empty() ? base : std::filesystem::weakly_canonical(base / relative);
+    const auto base_text = base.generic_string();
+    const auto requested_text = requested.generic_string();
+    if (requested_text != base_text && requested_text.rfind(base_text + "/", 0) != 0) { error = "repository path escapes the runtime root"; return false; }
+    out = requested; return true;
+}
+
+bool text_file(const std::filesystem::path & path) {
+    std::ifstream input(path, std::ios::binary);
+    char buffer[1024]; input.read(buffer, sizeof(buffer));
+    return input.good() || input.eof() ? std::find(buffer, buffer + input.gcount(), '\0') == buffer + input.gcount() : false;
+}
+
 } // namespace
 
 bool common_register_native_tool_adapters(const common_tool_catalog & catalog, const std::string & profile_id,
@@ -136,6 +154,34 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto timezone = arguments.value("timezone", std::string("UTC"));
                 if (timezone != "UTC") { err = "time_now currently supports only UTC"; return false; }
                 output = json({{"timezone", "UTC"}, {"time", utc_now()}}).dump(); return true;
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_list" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
+                json arguments; if (!parse_object(input, arguments, err)) return false;
+                std::filesystem::path path; if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), path, err)) return false;
+                const int depth = arguments.value("depth", 1); if (depth < 0 || depth > 3 || !std::filesystem::is_directory(path)) { err = "repository_list path or depth is invalid"; return false; }
+                json entries = json::array();
+                for (auto it = std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && entries.size() < 128; ++it) {
+                    if (it.depth() >= depth && it->is_directory()) it.disable_recursion_pending();
+                    entries.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"directory", it->is_directory()}});
+                }
+                output = json({{"entries", entries}}).dump(); return true;
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_read" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
+                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) { if (err.empty()) err = "repository_read requires a path"; return false; }
+                std::filesystem::path path; if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) return false;
+                const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199); if (start < 1 || end < start || end - start > 399 || !std::filesystem::is_regular_file(path) || !text_file(path)) { err = "repository_read range or file is invalid"; return false; }
+                std::ifstream file(path); std::string line; json lines = json::array(); for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) lines.push_back({{"line", number}, {"text", line}}); 
+                output = json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"lines", lines}}).dump(); return true;
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_search" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
+                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) { if (err.empty()) err = "repository_search requires a query"; return false; }
+                const auto query = arguments["query"].get<std::string>(); const int limit = arguments.value("max_results", 16); if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) { err = "repository_search arguments are out of bounds"; return false; }
+                std::filesystem::path root; if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, err)) return false;
+                json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
+                output = json({{"matches", matches}}).dump(); return true;
             }, error);
         } else if (definition.executor_id == "builtin.memory_search" && bindings.memory_store) {
             installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {

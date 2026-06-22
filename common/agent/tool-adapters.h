@@ -16,6 +16,9 @@ struct common_native_tool_bindings {
     common_plan_store * plan_store = nullptr;
     common_memory_query memory_query;
     std::string plan_id;
+    // Canonical repository root supplied by the runtime, never by the model.
+    // An empty value leaves repository tools unavailable.
+    std::string repository_root;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;
