@@ -31,6 +31,16 @@ The default profile is the normal agent entry point: it plans, uses the scoped m
   --prompt "What did we decide, and what should happen next?"
 ```
 
+Use the research profile when a task needs bounded repository inspection or public web research. `web_search` returns at most eight candidates from DuckDuckGo Lite; `web_fetch` extracts bounded text from a selected public HTTPS URL. They are read-only tools and remain subject to the normal per-turn tool-round budget.
+
+```powershell
+.\build-plan\bin\Release\llama-memory.exe chat `
+  --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
+  --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
+  --agent-profile research `
+  --prompt "Search for the llama.cpp repository, then fetch its README and summarize the build prerequisites."
+```
+
 ### 3. Choose an agent profile
 
 | Profile | Planning | Tools | Reflection | Post-turn learning |
@@ -93,9 +103,13 @@ The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `
 
 The separate agent bootstrap is also idempotent, but installs curated procedure memories and blueprint plans. It has a common logical JSON parser and serializer (`schema_version`, name, version, procedures and blueprints), including blueprint constraints and assumptions. The parser intentionally ignores unknown JSON fields for forward compatibility; it accepts only portable logical IDs and never imports persisted IDs, embeddings, task-plan state, observations or event history. The compiled default remains a small local fallback; `pocs/memory/bootstrap/default-v1.json` carries the equivalent starter definitions and can be loaded with `--agent-import PATH`. `--agent-export PATH` uses filtered store listing to recreate the same package form from scoped bootstrap definitions. Import and export currently cover `procedures` and `blueprints`; future memory or plan kinds require an explicit format and option.
 
-The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. The catalog includes read-only `calculator`, `time_now`, memory inspection/search, `plan_get`, proposal-only memory/plan mutation definitions, `mock_web_search`, and a declared-but-not-yet-wired `web_fetch` boundary. Proposal tools require confirmation and remain subject to native memory or plan policy; an enabled catalog entry never grants execution authority by itself.
+The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. The catalog includes read-only `calculator`, `time_now`, memory inspection/search, `plan_get`, repository inspection, and the bounded network-read tools `web_search` and `web_fetch`, alongside proposal-only memory/plan mutation definitions. `research` is the only built-in profile that exposes repository and network tools. Proposal tools require confirmation and remain subject to native memory or plan policy; an enabled catalog entry never grants execution authority by itself.
 
-`common_register_native_tool_adapters` is the first bridge from catalog to execution. It receives its memory store, memory scope and bound plan id from runtime-owned bindings. The current native set includes `calculator`, UTC `time_now`, `memory_search`, scope-checked `memory_get`, `plan_get`, and the policy-gated `memory_remember` proposal. Other proposal tools and web tools remain unavailable even if their profile declares them.
+`common_register_native_tool_adapters` is the bridge from catalog to execution. It receives its memory store, memory scope, bound plan id and optional repository root from runtime-owned bindings. The current native set includes `calculator`, UTC `time_now`, scoped memory reads, `plan_get`, repository list/search/read/diff/log, the native `web_search` and `web_fetch` handlers, and the policy-gated `memory_remember` proposal. Other proposal tools remain unavailable even if their profile declares them.
+
+`web_search` queries DuckDuckGo Lite over HTTPS and returns a bounded list of title, URL and snippet candidates. `web_fetch` accepts only HTTPS, rejects credentialed URLs and obvious local targets (`localhost`, `.local`, loopback and private literal IP ranges), follows the native client's redirects, and returns a capped HTML-to-text extraction with status and content type. It has a 10-second transport timeout; `web_search` caps the downloaded provider page at 128 KiB, and `web_fetch` accepts 1 to 500,000 input bytes. Neither tool accepts arbitrary headers, request methods, uploads, shell access, file access or a generic `curl` command. DNS resolution is not yet independently checked against private address ranges, so a future hardening slice should add resolved-address validation and redirect-by-redirect revalidation.
+
+On Windows, these two agent network tools use WinHTTP and the Windows certificate store (`LLAMA_AGENT_WEB_USE_WINHTTP`, supplied by the agent CMake target). On Linux and other supported platforms they use the existing httplib transport and its configured OpenSSL-compatible TLS backend. This keeps the tool contract identical while using the platform's appropriate trust path.
 
 `common_tool_profile_to_chat_tools` and `common_tool_dispatch_chat_calls` connect that native registry to llama.cpp's existing chat-template and tool-call parser layer. The former exposes only definitions that are both profile-approved and actually registered; the latter turns a parsed assistant tool call into a bounded `role: tool` message for the next generation. It assigns a stable runtime call id when a template omitted one, caps results, and never executes proposal or unregistered tools. The first limit is one call per batch.
 
@@ -160,6 +174,6 @@ ctest --test-dir build-plan -C Release --output-on-failure
 
 The runtime is intentionally mockable: a planner creates a turn/session/project/global plan, an executor produces a draft, and a reflector may accept, request a single revision, or propose policy-validated updates. `global` is useful for a single local instance's reusable test or operational plan; multi-user deployments should apply an explicit namespace/tenant policy before enabling it. Configure `max_iterations` and `max_reflection_rounds` (defaults: 2 and 1) to keep the loop bounded.
 
-Registered tools are explicit opt-in runtime dependencies. An active plan step can carry a structured tool name and object-shaped JSON arguments; the runtime executes one dependency-ready read-only tool step at a time, up to the configured batch limit, validates each through the registry, and records the capped result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls. A network tool should be a constrained capability such as `web_fetch` or `web_search`, with URL, timeout, response-size, and allowlist policy in its registered handler rather than a general-purpose `curl` escape hatch.
+Registered tools are explicit opt-in runtime dependencies. An active plan step can carry a structured tool name and object-shaped JSON arguments; the runtime executes one dependency-ready read-only tool step at a time, up to the configured batch limit, validates each through the registry, and records the capped result as a plan observation. It does not expose shell execution, file writes, CozoScript, or unrestricted native calls. The `research` profile now provides constrained `web_search` and `web_fetch` rather than a general-purpose `curl` escape hatch; their HTTPS, timeout, response-size and local-target rules live in the native registered handler.
 
 Known limitations: the bounded chain is capped by `--max-tool-rounds` and `max_iterations`; and the current reflection operation set deliberately excludes arbitrary plan mutation. Cozo stores the full plan state and append-only event relation separately; a future migration can normalize individual steps, dependencies, observations, and assumptions into additional Cozo relations.
