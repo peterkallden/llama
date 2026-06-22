@@ -121,7 +121,20 @@ When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing 
 
 ### Model-backed chat loop
 
-`llama-memory chat --planning-mode mini` now runs the existing bounded runtime around the already loaded chat model. The planner is constrained by the versioned plan JSON schema to return one to six dependency-ordered steps and then strictly policy-validated. Output-format grammar begins at the first generated JSON token rather than consuming the chat template's assistant marker. A deterministic scheduler finds dependency- and evidence-ready pending steps in plan order; the runtime activates and executes their registered tools sequentially until its tool-batch budget is exhausted. Each result becomes a plan observation before the step is completed. A tool-free step is reserved for the final answer synthesis and is completed only after the draft is accepted. `--reflection-mode always` uses the same output-format boundary plus strict reflection parsing; it may request a revision or propose the small allowlisted lifecycle operations `complete_step`, `activate_step` and `set_next_action`. Reflection output remains sideband data and is never appended to normal chat history.
+`llama-memory chat --planning-mode mini` now runs the existing bounded runtime around the already loaded chat model. The planner is constrained by the versioned plan JSON schema to return one to six dependency-ordered steps and then strictly policy-validated. Output-format grammar begins at the first generated JSON token rather than consuming the chat template's assistant marker. A deterministic scheduler finds dependency- and evidence-ready pending steps in plan order; the runtime activates and executes their registered tools sequentially until its tool-batch budget is exhausted. Each result becomes a plan observation before the step is completed. Plan steps have an explicit mode: `tool`, `reasoning`, or `final_response`. A reasoning step produces one bounded JSON observation through the loaded model; only `final_response` produces the user-visible draft. `--reflection-mode always` uses the same output-format boundary plus strict reflection parsing; it may request a revision or propose the small allowlisted lifecycle operations `complete_step`, `activate_step` and `set_next_action`. Reflection output remains sideband data and is never appended to normal chat history.
+
+Tool arguments may use a structured binding from an earlier completed step's JSON observation. The runtime resolves it immediately before normal registered-tool schema validation; bindings are data-only and do not add a new executor or expression language.
+
+```json
+{
+  "path": {
+    "$from_step": "search",
+    "$json_pointer": "/matches/0/path"
+  }
+}
+```
+
+The source step must be completed and have a JSON tool or reasoning observation. Binding nesting, IDs, JSON Pointer length, materialized argument size and source lookup are bounded; missing or malformed bindings fail closed as an invalid tool contract. This enables chains such as `repository_search` to `repository_read` without predeclaring the discovered path.
 
 ```powershell
 .\build-plan\bin\Debug\llama-memory.exe chat `
@@ -137,7 +150,9 @@ The planner is deliberately fail-closed for actions but fail-soft for availabili
 
 `memory_remember` is available in the `memory` and `research` profiles as a policy-gated proposal, not as a generic write capability. Its native binding invokes the existing memory policy and audit path, returning the accept/reject/duplicate/conflict decision as a tool result. Generic plan runtime callers must explicitly set `allow_policy_gated_tool_proposals`; otherwise only read-only tools are eligible.
 
-The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits executions per run, and an active step is never re-executed after its observation is recorded. The scheduler, rather than reflection, normally progresses the DAG and therefore permits bounded chains such as `memory_search → memory_get` without model-issued lifecycle operations. Reflection remains the path for repair, replanning and answer-quality review. This first scheduler slice is sequential and deterministic; it does not run ready steps in parallel or execute arbitrary shell commands.
+The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits tool executions per run, while reasoning steps do not consume that tool budget, and an active successful step is never re-executed after its observation is recorded. The scheduler distinguishes `runnable`, `blocked`, `complete` and `inactive`: a mandatory step waiting on missing evidence or a failed dependency is blocked, not terminal. Only completed, failed and cancelled plans are terminal. The scheduler, rather than reflection, normally progresses the DAG and therefore permits bounded chains such as `memory_search → memory_get` without model-issued lifecycle operations. Reflection remains the path for repair, replanning and answer-quality review. This first scheduler slice is sequential and deterministic; it does not run ready steps in parallel or execute arbitrary shell commands.
+
+An ordinary registered-tool handler failure records a capped JSON error observation and marks that active step `failed`; it does not abort the whole agent process. The following draft and reflection can therefore report the limitation honestly or propose an allowed repair/retry. Unregistered tools, disallowed policy classes, invalid materialized arguments and other tool-contract failures still stop execution fail-closed.
 
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 

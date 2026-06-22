@@ -80,6 +80,19 @@ static json normalize_tool_arguments(const std::string & tool_name, json argumen
     };
 }
 
+static bool parse_step_mode(const json & source, bool has_tool, common_plan_step_mode & mode, std::string & error) {
+    const auto value = source.value("mode", has_tool ? std::string("tool") : std::string("final_response"));
+    if (value == "tool") mode = common_plan_step_mode::tool;
+    else if (value == "reasoning") mode = common_plan_step_mode::reasoning;
+    else if (value == "final_response") mode = common_plan_step_mode::final_response;
+    else { error = "invalid step mode"; return false; }
+    if ((has_tool && mode != common_plan_step_mode::tool) || (!has_tool && mode == common_plan_step_mode::tool)) {
+        error = "step mode does not match tool payload";
+        return false;
+    }
+    return true;
+}
+
 std::string common_plan_proposal_json_schema() {
     const json schema = {
         {"type", "object"},
@@ -96,7 +109,7 @@ std::string common_plan_proposal_json_schema() {
                 {"reason_summary", {{"type", "string"}, {"maxLength", 256}}},
                 {"evidence_ids", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                 {"step", {{"type", "object"}, {"additionalProperties", false}, {"required", {"id", "title", "objective", "depends_on", "required_evidence"}}, {"properties", {
-                    {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}},
+                    {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final_response"}}}},
                     {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"required_evidence", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"source_memory_ids", {{"type", "array"}, {"maxItems", 4}, {"items", {{"type", "string"}, {"maxLength", 256}}}}},
                     {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name", "arguments_json"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments_json", {{"type", "string"}, {"maxLength", 512}}}}}}}
                 }}}}
@@ -123,7 +136,9 @@ bool common_plan_parse_proposal_json(const std::string & text, common_plan_state
             if (source.contains("depends_on") && source["depends_on"].is_array()) step.depends_on = source["depends_on"].get<std::vector<std::string>>();
             if (source.contains("required_evidence") && source["required_evidence"].is_array()) step.required_evidence = source["required_evidence"].get<std::vector<std::string>>();
             if (source.contains("source_memory_ids") && source["source_memory_ids"].is_array()) step.source_memory_ids = source["source_memory_ids"].get<std::vector<std::string>>();
-            if (source.contains("tool")) { if (!source["tool"].is_object() || !source["tool"].contains("name") || !source["tool"].contains("arguments_json") || !source["tool"]["name"].is_string() || !source["tool"]["arguments_json"].is_string()) { error = "invalid step tool payload"; return false; } const auto tool_name = source["tool"]["name"].get<std::string>(); const auto arguments_json = source["tool"]["arguments_json"].get<std::string>(); auto arguments = parse_tool_arguments_json(arguments_json); if (!arguments.is_object()) { error = "tool arguments_json must encode an object"; return false; } arguments = normalize_tool_arguments(tool_name, std::move(arguments)); step.tool_call = common_plan_tool_call{tool_name, arguments.dump()}; step.selected_tool = step.tool_call->name; }
+            const bool has_tool = source.contains("tool");
+            if (!parse_step_mode(source, has_tool, step.mode, error)) return false;
+            if (has_tool) { if (!source["tool"].is_object() || !source["tool"].contains("name") || !source["tool"].contains("arguments_json") || !source["tool"]["name"].is_string() || !source["tool"]["arguments_json"].is_string()) { error = "invalid step tool payload"; return false; } const auto tool_name = source["tool"]["name"].get<std::string>(); const auto arguments_json = source["tool"]["arguments_json"].get<std::string>(); auto arguments = parse_tool_arguments_json(arguments_json); if (!arguments.is_object()) { error = "tool arguments_json must encode an object"; return false; } arguments = normalize_tool_arguments(tool_name, std::move(arguments)); step.tool_call = common_plan_tool_call{tool_name, arguments.dump()}; step.selected_tool = step.tool_call->name; }
             common_plan_operation operation; operation.kind = common_plan_operation_kind::add_step; operation.step = std::move(step); operation.reason_summary = item.value("reason_summary", std::string()); if (item.contains("evidence_ids") && item["evidence_ids"].is_array()) operation.evidence_ids = item["evidence_ids"].get<std::vector<std::string>>(); parsed_operations.push_back(std::move(operation));
         }
         plan = std::move(parsed); operations = std::move(parsed_operations); error.clear(); return true;

@@ -9,6 +9,9 @@ enum class common_plan_scope { turn, session, project, global };
 enum class common_plan_kind { task, blueprint };
 enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
+// A plan step either invokes one registered tool, asks the model for a bounded
+// intermediate result, or produces the user-visible final response.
+enum class common_plan_step_mode { tool, reasoning, final_response };
 
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
 struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
@@ -21,9 +24,14 @@ struct common_plan_step {
     std::vector<std::string> depends_on, blocked_by, required_evidence, source_memory_ids;
     std::optional<std::string> selected_tool, result_summary;
     std::optional<common_plan_tool_call> tool_call;
+    common_plan_step_mode mode = common_plan_step_mode::final_response;
     bool optional = false, generated_from_memory = false;
     int64_t created_at = 0, updated_at = 0;
 };
+
+inline common_plan_step_mode common_plan_step_effective_mode(const common_plan_step & step) {
+    return step.tool_call ? common_plan_step_mode::tool : step.mode;
+}
 struct common_plan_state {
     std::string id, session_id;
     // Runtime-owned identity boundary.  These mirror memory identity so a

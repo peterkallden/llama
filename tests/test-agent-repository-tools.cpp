@@ -20,10 +20,14 @@ public:
         common_plan_step read{"read", "Read", "Read the matched source"};
         read.depends_on = {"search"};
         read.selected_tool = "repository_read";
-        read.tool_call = common_plan_tool_call{"repository_read", R"({"path":"src/target.txt","start_line":1,"end_line":2})"};
+        read.tool_call = common_plan_tool_call{"repository_read", R"({"path":{"$from_step":"search","$json_pointer":"/matches/0/path"},"start_line":1,"end_line":2})"};
+        common_plan_step assess{"assess", "Assess", "Assess whether the selected file is relevant"};
+        assess.mode = common_plan_step_mode::reasoning;
+        assess.depends_on = {"read"};
         common_plan_step answer{"answer", "Answer", "Summarize the evidence"};
-        answer.depends_on = {"read"};
-        proposal.plan.steps = {search, read, answer};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"assess"};
+        proposal.plan.steps = {search, read, assess, answer};
         proposal.plan.active_step_id = "search";
         return proposal;
     }
@@ -33,8 +37,14 @@ class executor final : public common_action_executor {
 public:
     std::string generate_draft(const common_agent_request &, const common_plan_state & plan, const std::vector<std::string> &, std::string & error) override {
         error.clear();
-        assert(plan.observations.size() == 2);
+        assert(plan.observations.size() == 3);
         return "verified repository evidence";
+    }
+
+    std::string generate_reasoning(const common_agent_request &, const common_plan_state &, const common_plan_step & step, std::string & error) override {
+        assert(step.id == "assess");
+        error.clear();
+        return R"({"summary":"target source contains verified content"})";
     }
 };
 
@@ -73,7 +83,7 @@ int main() {
     const auto result = runtime.run(request);
     assert(result.error.empty() && result.response == "verified repository evidence");
     const auto plan = store.get("repository-chain", error);
-    assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2);
+    assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 3 && plan->steps[2].status == common_plan_step_status::completed);
     std::filesystem::remove_all(root);
     return 0;
 }

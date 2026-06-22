@@ -20,6 +20,10 @@ bool has_evidence(const common_plan_state & plan, const std::string & id) {
 
 common_plan_schedule_result common_plan_schedule(const common_plan_state & plan) {
     common_plan_schedule_result result;
+    if (plan.status == common_plan_status::failed || plan.status == common_plan_status::cancelled) {
+        result.terminal = true;
+        return result;
+    }
     bool has_active = false;
     bool has_incomplete_mandatory = false;
 
@@ -40,6 +44,14 @@ common_plan_schedule_result common_plan_schedule(const common_plan_state & plan)
     }
 
     result.complete = !has_incomplete_mandatory;
-    result.terminal = result.complete || (!has_active && result.ready_step_ids.empty());
+    if (result.complete) {
+        result.state = common_plan_schedule_state::complete;
+        result.terminal = true;
+    } else if (has_active || !result.ready_step_ids.empty()) {
+        result.state = common_plan_schedule_state::runnable;
+    } else if (plan.status == common_plan_status::active || plan.status == common_plan_status::blocked) {
+        result.state = common_plan_schedule_state::blocked;
+        result.blocked = true;
+    }
     return result;
 }

@@ -55,6 +55,8 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
     if (op.expected_version != plan.version) return deny("stale plan version");
     if (op.kind == common_plan_operation_kind::add_step) {
         if (!op.step || op.step->id.empty() || op.step->title.empty()) return deny("add_step requires an identified step with a title");
+        const auto mode = common_plan_step_effective_mode(*op.step);
+        if ((mode == common_plan_step_mode::tool) != op.step->tool_call.has_value()) return deny("step mode does not match tool binding");
         if (op.step->generated_from_memory && op.step->source_memory_ids.empty()) return deny("memory-generated step requires source memory id");
         if (!op.step->generated_from_memory && !op.step->source_memory_ids.empty()) return deny("source memory ids require memory-generated step");
         if (plan.steps.size() >= config.max_steps) return deny("plan step limit reached");
