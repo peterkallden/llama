@@ -172,7 +172,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) { if (err.empty()) err = "repository_read requires a path"; return false; }
                 std::filesystem::path path; if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) return false;
                 const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199); if (start < 1 || end < start || end - start > 399 || !std::filesystem::is_regular_file(path) || !text_file(path)) { err = "repository_read range or file is invalid"; return false; }
-                std::ifstream file(path); std::string line; json lines = json::array(); for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) lines.push_back({{"line", number}, {"text", line}}); 
+                std::ifstream file(path); std::string line; json lines = json::array(); for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) lines.push_back({{"line", number}, {"text", line}});
                 output = json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"lines", lines}}).dump(); return true;
             }, error);
         } else if (definition.executor_id == "builtin.repository_search" && !bindings.repository_root.empty()) {

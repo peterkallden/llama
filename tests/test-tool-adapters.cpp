@@ -3,6 +3,8 @@
 #include "plan/plan-in-memory.h"
 
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 
 int main() {
     std::string error, result;
@@ -53,5 +55,23 @@ int main() {
     assert(proposal_registry.is_policy_gated("memory_remember"));
     assert(proposal_registry.execute({"memory_remember", R"({"kind":"fact","content":"verified"})"}, result, error));
     assert(result.find("accept") != std::string::npos);
+
+    const auto repository = std::filesystem::temp_directory_path() / "llama-agent-repository-tool-test";
+    std::filesystem::create_directories(repository / "src");
+    { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
+    common_tool_catalog research_catalog;
+    assert(research_catalog.bootstrap("research", bootstrap, error));
+    common_tool_registry repository_registry;
+    common_native_tool_bindings repository_bindings;
+    repository_bindings.repository_root = repository.string();
+    assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
+    assert(repository_registry.execute({"repository_list", R"({"path":"src","depth":1})"}, result, error));
+    assert(result.find("sample.txt") != std::string::npos);
+    assert(repository_registry.execute({"repository_search", R"({"query":"needle","path":"src"})"}, result, error));
+    assert(result.find("sample.txt") != std::string::npos && result.find("needle") != std::string::npos);
+    assert(repository_registry.execute({"repository_read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"}, result, error));
+    assert(result.find("needle in a haystack") != std::string::npos);
+    assert(!repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"}, result, error));
+    std::filesystem::remove_all(repository);
     return 0;
 }
