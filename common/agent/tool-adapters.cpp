@@ -130,6 +130,25 @@ bool text_file(const std::filesystem::path & path) {
     return input.good() || input.eof() ? std::find(buffer, buffer + input.gcount(), '\0') == buffer + input.gcount() : false;
 }
 
+bool git_read(const std::string & root, const std::string & arguments, std::string & output, std::string & error) {
+    if (root.find_first_of("\"&|;<>`") != std::string::npos) { error = "repository root cannot be represented safely for Git"; return false; }
+    const std::string command = "git -C \"" + root + "\" " + arguments + " 2>&1";
+#ifdef _WIN32
+    FILE * process = _popen(command.c_str(), "r");
+#else
+    FILE * process = popen(command.c_str(), "r");
+#endif
+    if (!process) { error = "unable to launch Git"; return false; }
+    char buffer[512]; output.clear(); while (fgets(buffer, sizeof(buffer), process) && output.size() < 16384) output += buffer;
+#ifdef _WIN32
+    const int status = _pclose(process);
+#else
+    const int status = pclose(process);
+#endif
+    if (status != 0) { error = output.empty() ? "Git command failed" : output; return false; }
+    return true;
+}
+
 } // namespace
 
 bool common_register_native_tool_adapters(const common_tool_catalog & catalog, const std::string & profile_id,
@@ -182,6 +201,19 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 std::filesystem::path root; if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, err)) return false;
                 json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
                 output = json({{"matches", matches}}).dump(); return true;
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_diff" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
+                json arguments; if (!parse_object(input, arguments, err) || !arguments.empty()) { if (err.empty()) err = "repository_diff takes no arguments"; return false; }
+                std::string diff; if (!git_read(bindings.repository_root, "diff --no-ext-diff --stat", diff, err)) return false;
+                output = json({{"summary", diff}}).dump(); return true;
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_log" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
+                json arguments; if (!parse_object(input, arguments, err)) return false;
+                const int limit = arguments.value("limit", 8); if (limit < 1 || limit > 20) { err = "repository_log limit is out of bounds"; return false; }
+                std::string log; if (!git_read(bindings.repository_root, "log --no-ext-diff --max-count=" + std::to_string(limit) + " --pretty=format:%h%x09%s", log, err)) return false;
+                output = json({{"commits", log}}).dump(); return true;
             }, error);
         } else if (definition.executor_id == "builtin.memory_search" && bindings.memory_store) {
             installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
