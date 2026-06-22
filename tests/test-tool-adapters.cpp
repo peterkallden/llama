@@ -64,6 +64,16 @@ int main() {
     common_tool_registry repository_registry;
     common_native_tool_bindings repository_bindings;
     repository_bindings.repository_root = repository.string();
+    repository_bindings.web_search = [](const std::string & input, std::string & output, std::string & err) {
+        if (input.find("\"query\":\"llama\"") == std::string::npos) { err = "unexpected search query"; return false; }
+        output = R"({"results":[{"title":"llama.cpp","url":"https://example.com/llama","snippet":"native tools","source":"test"}],"provider":"test"})";
+        return true;
+    };
+    repository_bindings.web_fetch = [](const std::string & input, std::string & output, std::string & err) {
+        if (input.find("\"url\":\"https://example.com/llama\"") == std::string::npos) { err = "unexpected fetch url"; return false; }
+        output = R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})";
+        return true;
+    };
     assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
     assert(repository_registry.execute({"repository_list", R"({"path":"src","depth":1})"}, result, error));
     assert(result.find("sample.txt") != std::string::npos);
@@ -71,7 +81,15 @@ int main() {
     assert(result.find("sample.txt") != std::string::npos && result.find("needle") != std::string::npos);
     assert(repository_registry.execute({"repository_read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"}, result, error));
     assert(result.find("needle in a haystack") != std::string::npos);
+    assert(repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"}, result, error));
+    assert(result.find("https://example.com/llama") != std::string::npos);
+    assert(repository_registry.execute({"web_fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"}, result, error));
+    assert(result.find("\"status\":200") != std::string::npos && result.find("native tools") != std::string::npos);
     assert(!repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"}, result, error));
+    common_tool_registry native_network_registry;
+    common_native_tool_bindings native_network_bindings;
+    assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));
+    assert(!native_network_registry.execute({"web_fetch", R"({"url":"http://127.0.0.1/test"})"}, result, error));
     std::filesystem::remove_all(repository);
     return 0;
 }

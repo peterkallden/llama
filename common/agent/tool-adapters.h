@@ -19,6 +19,10 @@ struct common_native_tool_bindings {
     // Canonical repository root supplied by the runtime, never by the model.
     // An empty value leaves repository tools unavailable.
     std::string repository_root;
+    // Optional runtime-owned network tool overrides for deterministic tests or
+    // alternative providers. Native defaults are used when absent.
+    std::function<bool(const std::string &, std::string &, std::string &)> web_search;
+    std::function<bool(const std::string &, std::string &, std::string &)> web_fetch;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;

@@ -11,6 +11,7 @@ int main() {
     assert(catalog.find_definition("memory_search"));
     assert(catalog.find_definition("memory_remember")->requires_confirmation);
     assert(catalog.find_definition("memory_remember")->risk_class == common_tool_risk_class::memory_proposal);
+    assert(catalog.find_definition("web_search")->executor_id == "builtin.web_search");
     assert(catalog.find_definition("web_fetch")->executor_id == "builtin.web_fetch");
 
     const auto read = catalog.load_profile("memory-read", error);

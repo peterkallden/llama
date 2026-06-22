@@ -9,8 +9,8 @@ int main() {
     blueprint.goal = "Research a topic";
     blueprint.success_criteria = "Grounded answer";
     common_plan_step search{"search", "Search", "Find sources"};
-    search.selected_tool = "mock_web_search";
-    search.tool_call = common_plan_tool_call{"mock_web_search", R"({"query":"topic"})"};
+    search.selected_tool = "web_search";
+    search.tool_call = common_plan_tool_call{"web_search", R"({"query":"topic"})"};
     common_plan_step answer{"answer", "Answer", "Write answer"};
     answer.depends_on = {"search"};
     blueprint.steps = {search, answer};

@@ -39,11 +39,19 @@ static common_http_url common_http_parse_url(const std::string & url) {
         rest = rest.substr(at_pos + 1);
     }
 
-    auto slash_pos = rest.find('/');
+    const auto fragment_pos = rest.find('#');
+    if (fragment_pos != std::string::npos) {
+        rest.erase(fragment_pos);
+    }
 
-    if (slash_pos != std::string::npos) {
-        parts.host = rest.substr(0, slash_pos);
-        parts.path = rest.substr(slash_pos);
+    const auto path_pos = rest.find_first_of("/?");
+
+    if (path_pos != std::string::npos) {
+        parts.host = rest.substr(0, path_pos);
+        parts.path = rest.substr(path_pos);
+        if (parts.path.front() == '?') {
+            parts.path.insert(parts.path.begin(), '/');
+        }
     } else {
         parts.host = rest;
         parts.path = "/";
