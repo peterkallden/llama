@@ -27,11 +27,37 @@ enum class common_agent_event_type {
     response_revised,
 };
 
+enum class common_learning_signal_type {
+    tool_failure,
+    successful_recovery,
+    reflection_hint,
+};
+
+inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
+    switch (type) {
+        case common_learning_signal_type::tool_failure: return "tool_failure";
+        case common_learning_signal_type::successful_recovery: return "successful_recovery";
+        case common_learning_signal_type::reflection_hint: return "reflection_hint";
+    }
+    return "unknown";
+}
+
 struct common_agent_event {
     common_agent_event_type type = common_agent_event_type::memory_retrieved;
     std::string detail;
     std::string memory_id;
     std::optional<std::string> plan_id;
+};
+
+// Native, evidence-addressable events that may inform post-turn learning.
+// They are observations, not model-provided instructions or memory writes.
+struct common_learning_signal {
+    common_learning_signal_type type = common_learning_signal_type::tool_failure;
+    std::string plan_id;
+    std::string step_id;
+    std::string tool_name;
+    std::string evidence_id;
+    std::string summary;
 };
 
 struct common_agent_request {
@@ -73,6 +99,7 @@ struct common_agent_result {
     std::optional<common_memory_candidate> learned_memory_candidate;
     std::string memory_learning_summary;
     size_t memory_learning_related_count = 0;
+    std::vector<common_learning_signal> learning_signals;
 
     std::optional<std::string> plan_id;
     uint64_t plan_version = 0;

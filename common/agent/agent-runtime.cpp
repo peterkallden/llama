@@ -226,12 +226,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 const std::string tool_error = error;
                 error.clear();
                 if (tool_step_id == "request") { result.events.push_back({common_agent_event_type::tool_rejected, tool_error, {}, plan.id}); result.error = "registered request tool failed: " + tool_error; return result; }
+                const std::string failure_observation_id = "tool:" + tool_step_id + ":" + tool_call->name;
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool failure";
-                observed.observation = common_plan_observation{"tool:" + tool_step_id + ":" + tool_call->name, tool_call->name, json({{"error", tool_error}, {"tool", tool_call->name}}).dump(), 0.0f, {}, 0};
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"error", tool_error}, {"tool", tool_call->name}}).dump(), 0.0f, {}, 0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;
@@ -240,6 +241,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 failed.step_id = tool_step_id;
                 failed.reason_summary = "registered tool failed";
                 if (!store.apply(failed, plan, error)) { result.error = error; return result; }
+                result.learning_signals.push_back({common_learning_signal_type::tool_failure, plan.id, tool_step_id,
+                    tool_call->name, failure_observation_id, "registered tool failed"});
                 result.events.push_back({common_agent_event_type::tool_rejected, tool_error, {}, plan.id});
                 result.events.push_back({common_agent_event_type::plan_updated, "tool failure recorded for repair", {}, plan.id});
                 break;
@@ -282,6 +285,24 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (!error.empty()) { result.response = draft; result.error = "reflection failed safely: " + error; break; }
         result.reflected = true;
         result.events.push_back({common_agent_event_type::reflection_completed, "reflection completed", {}, plan.id});
+        if (reflection.learning_hint) {
+            const auto & hint = *reflection.learning_hint;
+            common_plan_operation observed;
+            observed.kind = common_plan_operation_kind::record_observation;
+            observed.plan_id = plan.id;
+            observed.expected_version = plan.version;
+            observed.reason_summary = "reflection learning hint";
+            const std::string observation_id = "reflection:learning:" + std::to_string(plan.version) + ":" + std::to_string(iteration);
+            observed.observation = common_plan_observation{observation_id, "reflection_hint",
+                json({{"category", hint.category}, {"statement", hint.statement}, {"expected_reuse", hint.expected_reuse}}).dump(),
+                reflection.confidence, {}, 0};
+            if (store.apply(observed, plan, error)) {
+                result.learning_signals.push_back({common_learning_signal_type::reflection_hint, plan.id, {}, {}, observation_id,
+                    "reflection supplied a bounded reusable learning hint"});
+            } else {
+                error.clear();
+            }
+        }
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
             op.plan_id = plan.id;
@@ -301,6 +322,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     }
     if (result.response.empty() && result.error.empty()) result.error = "agent loop reached its iteration limit";
     result.plan_version = plan.version;
+    if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
+        for (const auto & signal : result.learning_signals) if (signal.type == common_learning_signal_type::tool_failure) {
+            result.learning_signals.push_back({common_learning_signal_type::successful_recovery, plan.id, signal.step_id,
+                signal.tool_name, signal.evidence_id, "plan completed after a recorded tool failure"});
+            break;
+        }
+    }
     if (memory_learner && result.error.empty() && !result.response.empty()) {
         const auto learning = memory_learner->learn(request, plan, result);
         result.learned_memory_candidate = learning.candidate;

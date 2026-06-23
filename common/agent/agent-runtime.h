@@ -8,7 +8,8 @@ class common_memory_post_turn_learner;
 
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };
 struct common_reflection_issue { std::string kind, description, correction; float severity = 0.5f; };
-struct common_reflection_result { common_reflection_decision decision = common_reflection_decision::accept; std::vector<common_reflection_issue> issues; std::vector<common_plan_operation> proposed_plan_operations; std::optional<std::string> requested_action; std::vector<std::string> revision_guidance; bool ready_to_answer = false; float confidence = 0.5f; };
+struct common_reflection_learning_hint { std::string category, statement; float expected_reuse = 0.5f; };
+struct common_reflection_result { common_reflection_decision decision = common_reflection_decision::accept; std::vector<common_reflection_issue> issues; std::vector<common_plan_operation> proposed_plan_operations; std::optional<std::string> requested_action; std::vector<std::string> revision_guidance; std::optional<common_reflection_learning_hint> learning_hint; bool ready_to_answer = false; float confidence = 0.5f; };
 struct common_plan_proposal { common_plan_state plan; std::vector<common_plan_operation> operations; };
 class common_planner { public: virtual ~common_planner() = default; virtual common_plan_proposal create_plan(const common_agent_request & request, std::string & error) = 0; };
 class common_action_executor {

@@ -81,6 +81,19 @@ public:
     }
 };
 
+class hint_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        result.confidence = 0.9f;
+        result.learning_hint = common_reflection_learning_hint{"tool_precondition", "Verify a path before reading it.", 0.8f};
+        return result;
+    }
+};
+
 class learner_extractor final : public common_memory_candidate_extractor {
 public:
     common_memory_candidate_result extract(const common_agent_request &, const common_plan_state &, const common_agent_result &, std::string & error) override {
@@ -158,5 +171,40 @@ int main() {
     const auto reasoning_plan = reasoning_store.get("reasoning-turn", error);
     assert(reasoning_plan && reasoning_plan->observations.size() == 1);
     assert(reasoning_plan->observations.front().summary.find("\"format\":\"unstructured\"") != std::string::npos);
+
+    common_plan_in_memory_store hint_store;
+    assert(hint_store.open("", error));
+    hint_reflector hint_r;
+    common_agent_runtime hint_runtime(hint_store, reasoning_p, reasoning_e, hint_r);
+    common_agent_request hint_request = reasoning_request;
+    hint_request.enable_reflection = true;
+    const auto hinted = hint_runtime.run(hint_request);
+    assert(hinted.error.empty() && hinted.response == "draft");
+    assert(hinted.learning_signals.size() == 1 && hinted.learning_signals.front().type == common_learning_signal_type::reflection_hint);
+    const auto hinted_plan = hint_store.get("reasoning-turn", error);
+    assert(hinted_plan && hinted_plan->observations.size() == 2 && hinted_plan->observations.back().source == "reflection_hint");
+
+    common_plan_in_memory_store failure_store;
+    assert(failure_store.open("", error));
+    common_tool_registry failing_tools;
+    common_registered_tool failing_tool;
+    failing_tool.name = "lookup";
+    failing_tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    failing_tool.handler = [](const std::string &, std::string &, std::string & err) { err = "not found"; return false; };
+    assert(failing_tools.register_tool(std::move(failing_tool), error));
+    planner failing_p;
+    common_agent_runtime failure_runtime(failure_store, failing_p, e, r, &failing_tools);
+    common_agent_request failure_request;
+    failure_request.prompt = "inspect";
+    failure_request.session_id = "s";
+    failure_request.namespace_id = "tenant-a";
+    failure_request.plan_scope = common_plan_scope::session;
+    failure_request.enable_reflection = false;
+    const auto failed_tool_run = failure_runtime.run(failure_request);
+    assert(failed_tool_run.error.empty() && failed_tool_run.response == "draft");
+    assert(failed_tool_run.learning_signals.size() == 1);
+    const auto & failure_signal = failed_tool_run.learning_signals.front();
+    assert(failure_signal.type == common_learning_signal_type::tool_failure);
+    assert(failure_signal.tool_name == "lookup" && failure_signal.evidence_id == "tool:lookup:lookup");
     return 0;
 }

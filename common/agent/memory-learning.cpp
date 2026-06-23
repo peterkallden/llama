@@ -22,6 +22,14 @@ static std::string join_ids(const std::vector<std::string> & ids) {
     for (size_t i = 0; i < ids.size(); ++i) { if (i) out << ','; out << ids[i]; }
     return out.str();
 }
+static std::string join_learning_signal_types(const std::vector<common_learning_signal> & signals) {
+    std::ostringstream out;
+    for (size_t i = 0; i < signals.size(); ++i) {
+        if (i) out << ',';
+        out << common_learning_signal_type_name(signals[i].type);
+    }
+    return out.str();
+}
 static size_t metadata_count(const common_memory_record & record, const char * key) {
     const auto value = record.metadata.find(key);
     if (value == record.metadata.end() || value->second.empty()) return 0;
@@ -167,6 +175,9 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     record.metadata["source_plan_id"] = plan.id;
     record.metadata["source_plan_step_ids"] = join_ids(candidate.source_plan_step_ids);
     record.metadata["evidence_ids"] = join_ids(candidate.evidence_ids);
+    if (!result.learning_signals.empty()) {
+        record.metadata["learning_signal_types"] = join_learning_signal_types(result.learning_signals);
+    }
     if (!store.put(record, error)) {
         outcome.decision = common_memory_learning_decision::failed;
         outcome.reason = "memory persistence failed safely: " + error;

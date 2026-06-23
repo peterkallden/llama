@@ -10,6 +10,9 @@ int main() {
     assert(result.proposed_plan_operations.size() == 2);
     assert(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
     assert(result.proposed_plan_operations[1].step->source_memory_ids[0] == "procedure-1");
+    assert(common_reflection_parse_json(R"({"decision":"accept","ready_to_answer":true,"confidence":0.9,"revision_guidance":[],"learning_hint":{"category":"tool_precondition","statement":"Verify a repository path before reading it.","expected_reuse":0.8},"operations":[]})", result, error));
+    assert(result.learning_hint && result.learning_hint->category == "tool_precondition");
+    assert(!common_reflection_parse_json(R"({"decision":"accept","learning_hint":{"category":"x","statement":"","expected_reuse":2}})", result, error));
     assert(!common_reflection_parse_json("not json", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"unsafe"})", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"accept","operations":[{"kind":"remove_step"}]})", result, error));

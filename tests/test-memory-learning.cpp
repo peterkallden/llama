@@ -58,6 +58,7 @@ int main() {
     plan.observations.push_back({"tool:verify:read-back", "read-back", "record persisted", 1.0f, {}, 0});
     common_agent_result result;
     result.response = "done";
+    result.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-a", "verify", "repository_read", "tool:verify:repository_read", "repository read failed"});
 
     candidate_extractor.next = {};
     candidate_extractor.next.reason = "ordinary one-off task";
@@ -71,6 +72,7 @@ int main() {
     assert(stored && stored->scope == common_memory_scope::project && stored->project_id == "project-a");
     assert(stored->metadata.at("learning_stage") == "post_turn");
     assert(stored->metadata.at("source_plan_step_ids") == "verify");
+    assert(stored->metadata.at("learning_signal_types") == "tool_failure");
 
     common_plan_in_memory_store plans;
     assert(plans.open("", error));
