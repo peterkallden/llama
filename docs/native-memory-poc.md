@@ -373,7 +373,7 @@ With `LLAMA_AGENT_REFLECTION=ON`, the same command can route a turn through the 
   --plan-scope session --plan-show-summary --max-tool-rounds 1
 ```
 
-`mini` asks the loaded chat model for a compact JSON plan, runs the active registered tool step if there is one, records its result as a plan observation, drafts an answer with the plan and evidence, and performs one optional accept/revise reflection pass. `--agent-trace` prints only typed lifecycle events. Invalid planner or reflection JSON does not open an alternate execution path: planning falls back to a tool-free plan and reflection accepts the draft. This CLI slice uses an in-memory plan store; memory remains on the selected backend.
+`mini` asks the loaded chat model for a compact `{goal,steps}` JSON plan. Steps use ordinary JSON `args`, not JSON encoded inside a string; native code expands this to the complete plan representation, applies only deterministic safe defaults, and then policy-validates it. The scheduler can execute a bounded dependency-ready chain, records each tool or reasoning result as an observation, drafts an answer with the plan and evidence, and performs one optional accept/revise reflection pass. Reasoning calls receive only their own objective, direct dependencies and relevant observations. `--agent-trace` prints only typed lifecycle events. Invalid planner or reflection JSON does not open an alternate execution path: planning falls back to a tool-free plan and reflection accepts the draft. This CLI slice uses an in-memory plan store; memory remains on the selected backend.
 
 ## Known Limitations
 
@@ -388,7 +388,7 @@ With `LLAMA_AGENT_REFLECTION=ON`, the same command can route a turn through the 
 - A dedicated embedding GGUF must be loaded with llama.cpp embedding outputs enabled. The PoC enables this on its local embedding context so encoder models such as `nomic-embed-text-v1.5` can provide their pooled sequence embedding.
 - The first remember policy is intentionally conservative and lexical in places; conflict detection is useful enough for a PoC but not yet benchmarked against a real memory corpus.
 - Scope defaults are designed for this local PoC. A future server integration must derive namespace/session/project identities from authenticated caller context and keep global-memory authority separate from plan authority.
-- Mini-plan JSON is parser-validated but not grammar-constrained yet. The model-backed loop currently executes only its initially active step; model-directed activation of later steps is reserved for the next multi-round slice.
+- Compact mini-plan JSON is grammar-constrained and parser/policy-validated. The scheduler executes a bounded dependency-ready chain; it remains sequential and deliberately excludes arbitrary shell or write execution.
 
 ## What Remains
 
