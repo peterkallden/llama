@@ -7,19 +7,25 @@ int main() {
     plan.id = "p";
     std::vector<common_plan_operation> operations;
     std::string error;
-    const auto input = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"procedure evidence","evidence_ids":[],"step":{"id":"s1","title":"Draft","objective":"answer","depends_on":[],"required_evidence":[],"source_memory_ids":["procedure-1"],"tool":{"name":"web_search","arguments_json":"{"query":"llama.cpp"}"}}}]})";
-    assert(common_plan_parse_proposal_json(input, plan, operations, error));
-    assert(operations.size() == 1 && !operations[0].step->generated_from_memory);
-    assert(operations[0].step->source_memory_ids == std::vector<std::string>{"procedure-1"});
-    assert(operations[0].step->tool_call && operations[0].step->tool_call->name == "web_search");
-    const auto relaxed = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}]})";
-    assert(common_plan_parse_proposal_json(relaxed, plan, operations, error));
+
+    const auto compact = R"({"goal":"inspect bindings","steps":[{"id":"search","tool":"repository_search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository_read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
+    assert(common_plan_parse_proposal_json(compact, plan, operations, error));
+    assert(operations.size() == 3);
+    assert(operations[0].step->tool_call->arguments_json == R"({"query":"plan bindings"})");
+    assert(operations[1].step->depends_on == std::vector<std::string>{"search"});
+    assert(common_plan_step_effective_mode(*operations[2].step) == common_plan_step_mode::final_response);
+
+    const auto normalized = R"({"goal":"calculate","steps":[{"id":"calculate","tool":"calculator","args":{"operation":"multiply","operands":[{"value":17},{"value":23}]}}]})";
+    assert(common_plan_parse_proposal_json(normalized, plan, operations, error));
+    assert(operations.size() == 2); // native final synthesis
     assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
-    const auto multi_step = R"({"goal":"answer","success_criteria":"verified","next_action":"calculate","operations":[{"kind":"add_step","reason_summary":"calculate","evidence_ids":[],"step":{"id":"calculate","title":"Calculate","objective":"calculate","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{\"expression\":\"17 * 23\"}"}}},{"kind":"add_step","reason_summary":"answer","evidence_ids":[],"step":{"id":"answer","title":"Answer","objective":"answer","depends_on":["calculate"],"required_evidence":[]}}]})";
-    assert(common_plan_parse_proposal_json(multi_step, plan, operations, error, 6));
-    assert(operations.size() == 2 && operations[1].step->depends_on == std::vector<std::string>{"calculate"});
-    assert(!common_plan_parse_proposal_json(R"({"goal":"x","operations":[]})", plan, operations, error));
-    assert(!common_plan_parse_proposal_json(R"({"goal":"x","success_criteria":"y","next_action":"z","operations":[{"kind":"complete_plan"}]})", plan, operations, error));
-    assert(common_plan_proposal_json_schema().find("source_memory_ids") != std::string::npos);
+    assert(operations[1].step->id == "answer");
+
+    // The prior full proposal format remains accepted for persisted or older callers.
+    const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
+    assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
+    assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
+    assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
     return 0;
 }
