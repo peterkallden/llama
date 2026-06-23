@@ -36,6 +36,40 @@ public:
     }
 };
 
+class reasoning_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "reasoning-turn";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        common_plan_step orient{"orient", "Orient", "Inspect the request"};
+        orient.mode = common_plan_step_mode::reasoning;
+        orient.status = common_plan_step_status::active;
+        common_plan_step answer{"answer", "Answer", "Return the answer"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"orient"};
+        proposal.plan.steps = {orient, answer};
+        proposal.plan.active_step_id = "orient";
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
+class unstructured_reasoning_executor final : public common_action_executor {
+public:
+    std::string generate_draft(const common_agent_request &, const common_plan_state &, const std::vector<std::string> &, std::string & error) override {
+        error.clear();
+        return "draft";
+    }
+    std::string generate_reasoning(const common_agent_request &, const common_plan_state &, const common_plan_step &, std::string & error) override {
+        error.clear();
+        return "inspection completed";
+    }
+};
+
 class reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
@@ -107,5 +141,22 @@ int main() {
     assert(learned.error.empty() && learned.learned_memory_candidate);
     assert(learned.memory_learning_summary.rfind("accepted:", 0) == 0);
     assert(!learned.events.empty() && learned.events.back().type == common_agent_event_type::memory_remembered);
+
+    common_plan_in_memory_store reasoning_store;
+    assert(reasoning_store.open("", error));
+    reasoning_planner reasoning_p;
+    unstructured_reasoning_executor reasoning_e;
+    common_agent_runtime reasoning_runtime(reasoning_store, reasoning_p, reasoning_e, r);
+    common_agent_request reasoning_request;
+    reasoning_request.prompt = "inspect";
+    reasoning_request.session_id = "s";
+    reasoning_request.namespace_id = "tenant-a";
+    reasoning_request.plan_scope = common_plan_scope::session;
+    reasoning_request.enable_reflection = false;
+    const auto reasoning_result = reasoning_runtime.run(reasoning_request);
+    assert(reasoning_result.error.empty() && reasoning_result.response == "draft");
+    const auto reasoning_plan = reasoning_store.get("reasoning-turn", error);
+    assert(reasoning_plan && reasoning_plan->observations.size() == 1);
+    assert(reasoning_plan->observations.front().summary.find("\"format\":\"unstructured\"") != std::string::npos);
     return 0;
 }

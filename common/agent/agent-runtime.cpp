@@ -175,8 +175,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 std::string reasoning = executor.generate_reasoning(request, plan, step, error);
                 if (!error.empty()) { result.error = "reasoning step failed: " + error; return result; }
                 auto parsed = json::parse(reasoning, nullptr, false);
-                if (!parsed.is_object()) { result.error = "reasoning step must return a JSON object"; return result; }
-                reasoning = parsed.dump();
+                // Reasoning is evidence only. Small local models occasionally
+                // ignore the requested JSON envelope; preserve that bounded
+                // output as explicitly unstructured evidence instead of
+                // failing an otherwise valid blueprint execution.
+                if (parsed.is_object()) {
+                    reasoning = parsed.dump();
+                } else {
+                    reasoning = json({{"summary", reasoning}, {"format", "unstructured"}}).dump();
+                }
                 if (reasoning.size() > 4096) { result.error = "reasoning step result is too large"; return result; }
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;

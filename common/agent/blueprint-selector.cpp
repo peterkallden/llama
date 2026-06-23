@@ -73,8 +73,14 @@ bool common_agent_select_and_instantiate_blueprint(
         return true;
     }
     common_plan_state instance;
-    if (!common_plan_instantiate_blueprint(*blueprint, config.task_plan_id, config.session_id, instance, error, config.scope, config.now) ||
-            !plan_store.create(instance, error)) return false;
+    if (!common_plan_instantiate_blueprint(*blueprint, config.task_plan_id, config.session_id, instance, error, config.scope, config.now)) return false;
+    // Blueprint templates deliberately contain no caller identity.  The
+    // instantiated task must inherit it before persistence, otherwise a
+    // turn- or project-scoped runtime cannot resume the plan it just made.
+    instance.namespace_id = request.namespace_id;
+    instance.project_id = request.project_id;
+    instance.turn_id = request.turn_id;
+    if (!plan_store.create(instance, error)) return false;
     result.outcome = common_blueprint_selection_outcome::instantiated;
     result.logical_id = candidate->logical_id;
     return true;

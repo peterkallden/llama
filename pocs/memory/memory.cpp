@@ -1326,7 +1326,11 @@ public:
             const auto & tool = binding["tool"];
             if (!bound.insert(id).second || !tool.contains("name") || !tool["name"].is_string() || !tool.contains("arguments") || !tool["arguments"].is_object()) { error = "invalid or duplicate blueprint binding"; return false; }
             auto found = std::find_if(updated.steps.begin(), updated.steps.end(), [&](const auto & step) { return step.id == id; });
-            if (found == updated.steps.end() || !registry.contains(tool["name"].get<std::string>()) || !registry.is_read_only(tool["name"].get<std::string>())) { error = "blueprint binding chose an unavailable step or non-read-only tool"; return false; }
+            if (found == updated.steps.end() || common_plan_step_effective_mode(*found) != common_plan_step_mode::reasoning ||
+                    !registry.contains(tool["name"].get<std::string>()) || !registry.is_read_only(tool["name"].get<std::string>())) {
+                error = "blueprint binding chose an unavailable, final, or non-read-only tool step";
+                return false;
+            }
             common_plan_step replacement = *found;
             replacement.mode = common_plan_step_mode::tool;
             replacement.selected_tool = tool["name"].get<std::string>();
@@ -1431,6 +1435,13 @@ static int run_chat(common_memory_store & store, args a) {
     // A bootstrap package is the source of reusable task structure. Prefer a
     // selected blueprint before asking the model to invent a fresh plan; an
     // unavailable or low-confidence selection still falls back safely below.
+    // A turn-scoped plan needs an identity even when the CLI caller has not
+    // named one. Generate a process-local turn id so an auto-instantiated
+    // blueprint passes the same scope check when the runtime resumes it.
+    // Callers that need cross-process resumption provide --memory-turn.
+    if (a.planning_mode == "mini" && a.plan_scope == "turn" && a.memory_turn.empty()) {
+        a.memory_turn = "implicit-" + std::to_string(std::time(nullptr));
+    }
     if (bootstrap_enabled && a.planning_mode == "mini" && a.agent_blueprint.empty()) {
         a.agent_blueprint = "auto";
     }
@@ -1542,6 +1553,11 @@ static int run_chat(common_memory_store & store, args a) {
                 common_blueprint_selection_result selection;
                 common_agent_request selection_request;
                 selection_request.prompt = a.prompt;
+                selection_request.namespace_id = a.memory_namespace;
+                selection_request.session_id = a.memory_session;
+                selection_request.project_id = a.memory_project;
+                selection_request.turn_id = a.memory_turn;
+                selection_request.plan_scope = requested_plan_scope;
                 if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
                     fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
                     return 1;
@@ -1752,6 +1768,11 @@ static int run_chat(common_memory_store & store, args a) {
             common_blueprint_selection_result selection;
             common_agent_request selection_request;
             selection_request.prompt = a.prompt;
+            selection_request.namespace_id = a.memory_namespace;
+            selection_request.session_id = a.memory_session;
+            selection_request.project_id = a.memory_project;
+            selection_request.turn_id = a.memory_turn;
+            selection_request.plan_scope = requested_plan_scope;
             if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, selector, installed_blueprint_candidates, config, selection, error)) {
                 fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
                 llama_model_free(model);
