@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <set>
 #include <sstream>
 
 static bool valid_score(float value) {
@@ -23,12 +24,35 @@ static std::string join_ids(const std::vector<std::string> & ids) {
     return out.str();
 }
 static std::string join_learning_signal_types(const std::vector<common_learning_signal> & signals) {
+    std::set<std::string> types;
+    for (const auto & signal : signals) types.insert(common_learning_signal_type_name(signal.type));
     std::ostringstream out;
-    for (size_t i = 0; i < signals.size(); ++i) {
-        if (i) out << ',';
-        out << common_learning_signal_type_name(signals[i].type);
+    for (auto it = types.begin(); it != types.end(); ++it) {
+        if (it != types.begin()) out << ',';
+        out << *it;
     }
     return out.str();
+}
+static std::string join_learning_tools(const std::vector<common_learning_signal> & signals) {
+    std::set<std::string> tools;
+    for (const auto & signal : signals) if (!signal.tool_name.empty()) tools.insert(signal.tool_name);
+    std::ostringstream out;
+    for (auto it = tools.begin(); it != tools.end(); ++it) {
+        if (it != tools.begin()) out << ',';
+        out << *it;
+    }
+    return out.str();
+}
+static bool comma_list_contains(const std::string & values, const std::string & value) {
+    if (value.empty()) return false;
+    size_t start = 0;
+    while (start <= values.size()) {
+        const size_t end = values.find(',', start);
+        if (values.substr(start, end == std::string::npos ? std::string::npos : end - start) == value) return true;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return false;
 }
 static size_t metadata_count(const common_memory_record & record, const char * key) {
     const auto value = record.metadata.find(key);
@@ -177,6 +201,8 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     record.metadata["evidence_ids"] = join_ids(candidate.evidence_ids);
     if (!result.learning_signals.empty()) {
         record.metadata["learning_signal_types"] = join_learning_signal_types(result.learning_signals);
+        const auto tools = join_learning_tools(result.learning_signals);
+        if (!tools.empty()) record.metadata["learning_tools"] = tools;
     }
     if (!store.put(record, error)) {
         outcome.decision = common_memory_learning_decision::failed;
@@ -187,6 +213,45 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     outcome.reason = policy.reason;
     outcome.stored_memory_id = record.id;
     return outcome;
+}
+
+std::vector<common_memory_hit> common_memory_select_procedure_memories(
+        const std::vector<common_memory_hit> & hits,
+        const common_plan_state & plan,
+        const common_plan_step & step,
+        size_t limit) {
+    struct ranked_hit { common_memory_hit hit; int context_score = 0; size_t order = 0; };
+    std::set<std::string> context_tools;
+    if (step.selected_tool) context_tools.insert(*step.selected_tool);
+    if (step.tool_call) context_tools.insert(step.tool_call->name);
+    bool has_tool_failure = false;
+    for (const auto & observation : plan.observations) {
+        if (observation.confidence > 0.0f || observation.id.rfind("tool:", 0) != 0) continue;
+        has_tool_failure = true;
+        if (!observation.source.empty()) context_tools.insert(observation.source);
+    }
+
+    std::vector<ranked_hit> ranked;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        if (hits[i].memory.kind != common_memory_kind::procedure) continue;
+        int context_score = 0;
+        const auto tools = hits[i].memory.metadata.find("learning_tools");
+        if (tools != hits[i].memory.metadata.end()) {
+            for (const auto & tool : context_tools) if (comma_list_contains(tools->second, tool)) { context_score += 2; break; }
+        }
+        const auto signals = hits[i].memory.metadata.find("learning_signal_types");
+        if (has_tool_failure && signals != hits[i].memory.metadata.end() && comma_list_contains(signals->second, "tool_failure")) ++context_score;
+        ranked.push_back({hits[i], context_score, i});
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](const ranked_hit & a, const ranked_hit & b) {
+        return a.context_score > b.context_score;
+    });
+    std::vector<common_memory_hit> selected;
+    for (const auto & hit : ranked) {
+        selected.push_back(hit.hit);
+        if (selected.size() == limit) break;
+    }
+    return selected;
 }
 
 common_procedure_blueprint_promotion_result common_memory_post_turn_learner::promote_completed_procedure(

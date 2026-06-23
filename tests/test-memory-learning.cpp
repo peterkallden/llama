@@ -73,6 +73,23 @@ int main() {
     assert(stored->metadata.at("learning_stage") == "post_turn");
     assert(stored->metadata.at("source_plan_step_ids") == "verify");
     assert(stored->metadata.at("learning_signal_types") == "tool_failure");
+    assert(stored->metadata.at("learning_tools") == "repository_read");
+
+    common_memory_hit generic_procedure;
+    generic_procedure.memory.id = "generic";
+    generic_procedure.memory.kind = common_memory_kind::procedure;
+    generic_procedure.final_score = 0.95f;
+    common_memory_hit tool_recovery_procedure;
+    tool_recovery_procedure.memory.id = "tool-recovery";
+    tool_recovery_procedure.memory.kind = common_memory_kind::procedure;
+    tool_recovery_procedure.memory.metadata["learning_tools"] = "repository_read";
+    tool_recovery_procedure.memory.metadata["learning_signal_types"] = "tool_failure,successful_recovery";
+    tool_recovery_procedure.final_score = 0.75f;
+    common_plan_step recovery_step{"recover", "Recover", "Recover from the failed read"};
+    recovery_step.mode = common_plan_step_mode::reasoning;
+    plan.observations.push_back({"tool:verify:repository_read", "repository_read", "read failed", 0.0f, {}, 0});
+    const auto procedures = common_memory_select_procedure_memories({generic_procedure, tool_recovery_procedure}, plan, recovery_step);
+    assert(procedures.size() == 2 && procedures.front().memory.id == "tool-recovery");
 
     common_plan_in_memory_store plans;
     assert(plans.open("", error));

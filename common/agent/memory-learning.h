@@ -49,6 +49,15 @@ struct common_procedure_blueprint_promotion_result {
 
 const char * common_memory_learning_decision_name(common_memory_learning_decision decision);
 
+// Selects a bounded procedure-only context slice from already retrieved
+// memories. Native tool metadata and a recorded tool failure may reorder that
+// slice, but never cause a new memory lookup or invent additional context.
+std::vector<common_memory_hit> common_memory_select_procedure_memories(
+    const std::vector<common_memory_hit> & hits,
+    const common_plan_state & plan,
+    const common_plan_step & step,
+    size_t limit = 3);
+
 class common_memory_post_turn_learner {
 public:
     using embedder = std::function<bool(const std::string &, std::vector<float> &, std::string &)>;

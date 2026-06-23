@@ -323,11 +323,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     if (result.response.empty() && result.error.empty()) result.error = "agent loop reached its iteration limit";
     result.plan_version = plan.version;
     if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
-        for (const auto & signal : result.learning_signals) if (signal.type == common_learning_signal_type::tool_failure) {
-            result.learning_signals.push_back({common_learning_signal_type::successful_recovery, plan.id, signal.step_id,
-                signal.tool_name, signal.evidence_id, "plan completed after a recorded tool failure"});
-            break;
-        }
+        const auto failure = std::find_if(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
+            return signal.type == common_learning_signal_type::tool_failure;
+        });
+        if (failure != result.learning_signals.end()) result.learning_signals.push_back({common_learning_signal_type::successful_recovery, plan.id, failure->step_id,
+            failure->tool_name, failure->evidence_id, "plan completed after a recorded tool failure"});
     }
     if (memory_learner && result.error.empty() && !result.response.empty()) {
         const auto learning = memory_learner->learn(request, plan, result);

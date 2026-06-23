@@ -770,18 +770,6 @@ static std::string join_tool_names(const std::vector<common_chat_tool> & tools) 
     return names.empty() ? "none" : names;
 }
 
-static std::vector<common_memory_hit> select_reasoning_procedure_memories(const std::vector<common_memory_hit> & hits) {
-    std::vector<common_memory_hit> selected;
-    // Retrieval is already ranked. Keep only a tiny procedure-only slice for
-    // local reasoning; other memories remain available to drafting and tools.
-    for (const auto & hit : hits) {
-        if (hit.memory.kind != common_memory_kind::procedure) continue;
-        selected.push_back(hit);
-        if (selected.size() == 3) break;
-    }
-    return selected;
-}
-
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(llama_model * model, const common_chat_templates * templates, const args & options, const std::vector<common_chat_tool> & tools)
@@ -913,7 +901,7 @@ public:
         common_memory_context_config memory_context_config;
         memory_context_config.char_budget = 900;
         memory_context_config.per_memory_char_budget = 300;
-        user.content = common_memory_render_context(select_reasoning_procedure_memories(request.memories), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
+        user.content = common_memory_render_context(common_memory_select_procedure_memories(request.memories, plan, step), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
         std::string output;
         common_chat_params params;
         int decoded = 0;
