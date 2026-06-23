@@ -770,6 +770,18 @@ static std::string join_tool_names(const std::vector<common_chat_tool> & tools) 
     return names.empty() ? "none" : names;
 }
 
+static std::vector<common_memory_hit> select_reasoning_procedure_memories(const std::vector<common_memory_hit> & hits) {
+    std::vector<common_memory_hit> selected;
+    // Retrieval is already ranked. Keep only a tiny procedure-only slice for
+    // local reasoning; other memories remain available to drafting and tools.
+    for (const auto & hit : hits) {
+        if (hit.memory.kind != common_memory_kind::procedure) continue;
+        selected.push_back(hit);
+        if (selected.size() == 3) break;
+    }
+    return selected;
+}
+
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(llama_model * model, const common_chat_templates * templates, const args & options, const std::vector<common_chat_tool> & tools)
@@ -893,7 +905,10 @@ public:
         user.role = "user";
         common_plan_context_config step_context_config;
         step_context_config.char_budget = 1400;
-        user.content = common_memory_render_context(request.memories, {}) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
+        common_memory_context_config memory_context_config;
+        memory_context_config.char_budget = 900;
+        memory_context_config.per_memory_char_budget = 300;
+        user.content = common_memory_render_context(select_reasoning_procedure_memories(request.memories), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
         std::string output;
         common_chat_params params;
         int decoded = 0;
@@ -1279,6 +1294,60 @@ private:
     llama_model * model;
     const common_chat_templates * templates;
     const args & options;
+};
+
+class llama_blueprint_binder final {
+public:
+    llama_blueprint_binder(llama_model * model, const common_chat_templates * templates, const args & options, const common_tool_registry & registry)
+        : model(model), templates(templates), options(options), registry(registry) {}
+
+    bool bind(const common_agent_request & request, common_plan_store & store, const std::string & plan_id, std::string & error) const {
+        const auto loaded = store.get(plan_id, error);
+        if (!loaded || !loaded->derived_from_plan_id) { error.clear(); return true; }
+        const auto & plan = *loaded;
+        std::string steps;
+        for (const auto & step : plan.steps) steps += step.id + ": " + step.objective + "\n";
+        common_chat_msg system{"system", "Return only JSON. You may bind a registered read-only tool to an existing blueprint step. Do not add, remove, reorder, rename, or otherwise alter steps. Return no binding when reasoning is more appropriate."};
+        common_chat_msg user{"user", "[Blueprint steps]\n" + steps + "[User request]\n" + request.prompt};
+        static const std::string schema = R"({"type":"object","additionalProperties":false,"required":["bindings"],"properties":{"bindings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"required":["step_id","tool"],"properties":{"step_id":{"type":"string","maxLength":128},"tool":{"type":"object","additionalProperties":false,"required":["name","arguments"],"properties":{"name":{"type":"string","maxLength":256},"arguments":{"type":"object"}}}}}}}}})";
+        std::string output;
+        common_chat_params params;
+        int decoded = 0;
+        args bind_options = options;
+        bind_options.n_predict = std::min(options.n_predict, 256);
+        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, output, params, decoded, schema)) { error = "blueprint binding generation failed"; return false; }
+        const auto proposal = json::parse(output, nullptr, false);
+        if (!proposal.is_object() || !proposal.contains("bindings") || !proposal["bindings"].is_array()) { error = "blueprint binding returned invalid JSON"; return false; }
+        common_plan_state updated = plan;
+        std::set<std::string> bound;
+        for (const auto & binding : proposal["bindings"]) {
+            if (!binding.is_object() || !binding.contains("step_id") || !binding["step_id"].is_string() || !binding.contains("tool") || !binding["tool"].is_object()) { error = "invalid blueprint binding"; return false; }
+            const auto id = binding["step_id"].get<std::string>();
+            const auto & tool = binding["tool"];
+            if (!bound.insert(id).second || !tool.contains("name") || !tool["name"].is_string() || !tool.contains("arguments") || !tool["arguments"].is_object()) { error = "invalid or duplicate blueprint binding"; return false; }
+            auto found = std::find_if(updated.steps.begin(), updated.steps.end(), [&](const auto & step) { return step.id == id; });
+            if (found == updated.steps.end() || !registry.contains(tool["name"].get<std::string>()) || !registry.is_read_only(tool["name"].get<std::string>())) { error = "blueprint binding chose an unavailable step or non-read-only tool"; return false; }
+            common_plan_step replacement = *found;
+            replacement.mode = common_plan_step_mode::tool;
+            replacement.selected_tool = tool["name"].get<std::string>();
+            replacement.tool_call = common_plan_tool_call{*replacement.selected_tool, tool["arguments"].dump()};
+            if (!registry.validate({replacement.tool_call->name, replacement.tool_call->arguments_json}, error)) return false;
+            common_plan_operation operation;
+            operation.kind = common_plan_operation_kind::revise_step;
+            operation.plan_id = updated.id;
+            operation.expected_version = updated.version;
+            operation.step = std::move(replacement);
+            operation.reason_summary = "blueprint tool binding";
+            if (!store.apply(operation, updated, error)) return false;
+        }
+        error.clear();
+        return true;
+    }
+private:
+    llama_model * model;
+    const common_chat_templates * templates;
+    const args & options;
+    const common_tool_registry & registry;
 };
 
 class llama_plan_selector final {
@@ -1690,6 +1759,18 @@ static int run_chat(common_memory_store & store, args a) {
             }
             if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
                 fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), a.plan_id.c_str());
+                if (profile_tools_active) {
+                    common_agent_request binding_request;
+                    binding_request.prompt = a.prompt;
+                    binding_request.session_id = a.memory_session;
+                    binding_request.project_id = a.memory_project;
+                    binding_request.turn_id = a.memory_turn;
+                    llama_blueprint_binder binder(model, chat_templates.get(), a, tool_registry);
+                    std::string binding_error;
+                    if (!binder.bind(binding_request, *plan_store, a.plan_id, binding_error)) {
+                        fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
+                    }
+                }
             } else if (selection.outcome == common_blueprint_selection_outcome::resumed) {
                 fprintf(stderr, "agent blueprint selection skipped: existing plan resumed\n");
             } else {

@@ -18,6 +18,7 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
     switch (op.kind) {
         case common_plan_operation_kind::revise_goal: next.goal = op.value.value_or(""); break;
         case common_plan_operation_kind::add_step: next.steps.push_back(*op.step); break;
+        case common_plan_operation_kind::revise_step: *find(op.step->id) = *op.step; break;
         case common_plan_operation_kind::remove_step: next.steps.erase(std::remove_if(next.steps.begin(), next.steps.end(), [&](const auto & s) { return s.id == *op.step_id; }), next.steps.end()); break;
         case common_plan_operation_kind::add_dependency: find(*op.step_id)->depends_on.push_back(*op.target_id); break;
         case common_plan_operation_kind::remove_dependency: { auto & v = find(*op.step_id)->depends_on; v.erase(std::remove(v.begin(), v.end(), *op.target_id), v.end()); break; }

@@ -12,12 +12,13 @@ std::string bootstrap_prefix(const common_agent_bootstrap_config & config) {
         (config.project_id.empty() ? "session:" + config.session_id : "project:" + config.project_id) + ":";
 }
 
-common_plan_step step(const char * id, const char * title, const char * objective, std::vector<std::string> depends_on = {}) {
+common_plan_step step(const char * id, const char * title, const char * objective, std::vector<std::string> depends_on = {}, common_plan_step_mode mode = common_plan_step_mode::reasoning) {
     common_plan_step value;
     value.id = id;
     value.title = title;
     value.objective = objective;
     value.depends_on = std::move(depends_on);
+    value.mode = mode;
     return value;
 }
 
@@ -31,6 +32,7 @@ common_agent_bootstrap_blueprint repo_change_blueprint() {
         step("design", "Decide", "Choose the smallest change that satisfies the request.", {"orient"}),
         step("implement", "Implement", "Apply the scoped implementation change.", {"design"}),
         step("verify", "Verify", "Run focused tests and report the evidence.", {"implement"}),
+        step("answer", "Answer", "Report the verified outcome to the user.", {"verify"}, common_plan_step_mode::final_response),
     };
     plan.constraints.push_back({"minimal-scope", "Keep the change within the requested scope.", true});
     plan.constraints.push_back({"evidence", "Do not claim verification without test or inspection evidence.", true});
@@ -48,6 +50,7 @@ common_agent_bootstrap_blueprint agent_regression_blueprint() {
         step("isolate", "Isolate boundary", "Determine whether plan, memory, tool, or reflection behavior caused the failure.", {"reproduce"}),
         step("fix", "Fix", "Make the smallest correction at the responsible trust boundary.", {"isolate"}),
         step("regress", "Add regression test", "Add and run a focused test that prevents recurrence.", {"fix"}),
+        step("answer", "Answer", "Report the verified diagnosis and correction.", {"regress"}, common_plan_step_mode::final_response),
     };
     plan.constraints.push_back({"trust-boundary", "Do not broaden model authority while correcting the regression.", true});
     plan.next_action = "reproduce";

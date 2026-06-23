@@ -63,6 +63,16 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (find_step(plan, op.step->id)) return deny("step already exists");
         for (const auto & dep : op.step->depends_on) if (!find_step(plan, dep)) return deny("step dependency does not exist");
     }
+    if (op.kind == common_plan_operation_kind::revise_step) {
+        if (!op.step) return deny("revise_step requires a replacement step");
+        const auto * prior = find_step(plan, op.step->id);
+        if (!prior) return deny("revise_step references an unknown step");
+        if (prior->title != op.step->title || prior->objective != op.step->objective || prior->depends_on != op.step->depends_on ||
+                prior->required_evidence != op.step->required_evidence || prior->source_memory_ids != op.step->source_memory_ids ||
+                prior->status != op.step->status || prior->optional != op.step->optional || prior->generated_from_memory != op.step->generated_from_memory ||
+                prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary) return deny("revise_step may only bind a tool to an unchanged step");
+        if (!op.step->tool_call || !op.step->selected_tool || *op.step->selected_tool != op.step->tool_call->name || common_plan_step_effective_mode(*op.step) != common_plan_step_mode::tool) return deny("revise_step requires a consistent tool binding");
+    }
     if (op.kind == common_plan_operation_kind::add_dependency) {
         if (!op.step_id || !op.target_id || !find_step(plan, *op.step_id) || !find_step(plan, *op.target_id)) return deny("dependency references an unknown step");
         if (*op.step_id == *op.target_id || has_cycle(plan, op)) return deny("dependency cycle rejected");

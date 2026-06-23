@@ -1,5 +1,7 @@
 #include "plan/plan-json.h"
 
+#include <algorithm>
+#include <cctype>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
@@ -34,6 +36,19 @@ json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     const auto operation = arguments["operation"].get<std::string>();
     const char * symbol = operation == "add" ? "+" : operation == "subtract" ? "-" : operation == "multiply" ? "*" : operation == "divide" ? "/" : nullptr;
     return symbol ? json{{"expression", lhs + " " + symbol + " " + rhs}} : arguments;
+}
+
+json normalize_safe_integer_arguments(json arguments) {
+    if (!arguments.is_object()) return arguments;
+    // These are bounded, read-only control fields. Convert only a canonical
+    // decimal string; paths, IDs, queries and all mutation content stay exact.
+    for (const char * key : {"max_results", "limit", "depth", "start_line", "end_line"}) {
+        if (!arguments.contains(key) || !arguments[key].is_string()) continue;
+        const auto & text = arguments[key].get_ref<const std::string &>();
+        if (text.empty() || text.size() > 9 || !std::all_of(text.begin(), text.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) continue;
+        try { arguments[key] = std::stoll(text); } catch (const std::exception &) {}
+    }
+    return arguments;
 }
 
 bool string_array(const json & value, std::vector<std::string> & output) {
@@ -76,6 +91,7 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
     } else { error = "invalid step tool payload"; return false; }
     if (source.contains("args")) arguments = source["args"];
     if (!arguments.is_object()) { error = "tool arguments must be a JSON object"; return false; }
+    arguments = normalize_safe_integer_arguments(std::move(arguments));
     step.tool_call = common_plan_tool_call{name, normalize_tool_arguments(name, std::move(arguments)).dump()};
     step.selected_tool = name;
     return true;

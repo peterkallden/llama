@@ -22,6 +22,10 @@ int main() {
     assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
     assert(operations[1].step->id == "answer");
 
+    const auto repaired_integer = R"({"goal":"inspect","steps":[{"id":"search","tool":"repository_search","args":{"query":"plan","max_results":"16"}}]})";
+    assert(common_plan_parse_proposal_json(repaired_integer, plan, operations, error));
+    assert(operations[0].step->tool_call->arguments_json == R"({"max_results":16,"query":"plan"})");
+
     // The prior full proposal format remains accepted for persisted or older callers.
     const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
