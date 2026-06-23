@@ -16,11 +16,12 @@ public:
         common_plan_step search{"search", "Search", "Find the target source"};
         search.status = common_plan_step_status::active;
         search.selected_tool = "repository_search";
-        search.tool_call = common_plan_tool_call{"repository_search", R"({"query":"target-symbol","path":"src"})"};
+        // Runtime supplies bounded read-only defaults for path and max_results.
+        search.tool_call = common_plan_tool_call{"repository_search", R"({"query":"target-symbol"})"};
         common_plan_step read{"read", "Read", "Read the matched source"};
         read.depends_on = {"search"};
         read.selected_tool = "repository_read";
-        read.tool_call = common_plan_tool_call{"repository_read", R"({"path":{"$from_step":"search","$json_pointer":"/matches/0/path"},"start_line":1,"end_line":2})"};
+        read.tool_call = common_plan_tool_call{"repository_read", R"({"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}})"};
         common_plan_step assess{"assess", "Assess", "Assess whether the selected file is relevant"};
         assess.mode = common_plan_step_mode::reasoning;
         assess.depends_on = {"read"};

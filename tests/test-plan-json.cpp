@@ -1,4 +1,5 @@
 #include "plan/plan-json.h"
+#include "plan/plan-context.h"
 
 #include <cassert>
 
@@ -27,5 +28,19 @@ int main() {
     assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
+
+    common_plan_state context_plan;
+    context_plan.goal = "Use only relevant evidence";
+    common_plan_step search{"search", "Search", "Find evidence"};
+    search.result_summary = "matching file found";
+    context_plan.steps.push_back(search);
+    common_plan_step reasoning{"reason", "Reason", "Use the selected search result."};
+    reasoning.depends_on = {"search"};
+    context_plan.steps.push_back(reasoning);
+    context_plan.observations.push_back({"tool:search", "tool:search", "matching file found", 1.0f, {}, 0});
+    context_plan.observations.push_back({"tool:other", "tool:other", "unrelated result", 1.0f, {}, 0});
+    const auto step_context = common_plan_render_step_context(context_plan, context_plan.steps.back());
+    assert(step_context.find("matching file found") != std::string::npos);
+    assert(step_context.find("unrelated result") == std::string::npos);
     return 0;
 }

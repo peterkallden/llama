@@ -30,6 +30,40 @@ static bool infer_memory_search_query(const std::string & prompt, std::string & 
     return query.size() <= 1024;
 }
 
+// Defaults are deliberately limited to deterministic read-only values. They
+// reduce the amount a small model must emit, but never fabricate a write path,
+// a mutation payload, or a selection among ambiguous results.
+static void apply_safe_tool_defaults(const common_agent_request & request, common_registered_tool_call & call) {
+    auto arguments = json::parse(call.arguments_json, nullptr, false);
+    if (!arguments.is_object()) return;
+    bool changed = false;
+    const auto set_prompt_query = [&](size_t max_length) {
+        if (arguments.contains("query")) return;
+        std::string query;
+        if (infer_memory_search_query(request.prompt, query) && query.size() <= max_length) { arguments["query"] = std::move(query); changed = true; }
+    };
+    if (call.name == "calculator" && !arguments.contains("expression")) {
+        std::string expression;
+        if (infer_calculator_expression(request.prompt, expression)) { arguments["expression"] = std::move(expression); changed = true; }
+    } else if (call.name == "memory_search") {
+        set_prompt_query(1024);
+    } else if (call.name == "repository_search") {
+        set_prompt_query(256);
+        if (!arguments.contains("path")) { arguments["path"] = ""; changed = true; }
+        if (!arguments.contains("max_results")) { arguments["max_results"] = 16; changed = true; }
+    } else if (call.name == "web_search") {
+        set_prompt_query(256);
+        if (!arguments.contains("limit")) { arguments["limit"] = 5; changed = true; }
+    } else if (call.name == "repository_read") {
+        if (!arguments.contains("start_line")) { arguments["start_line"] = 1; changed = true; }
+        if (!arguments.contains("end_line")) { arguments["end_line"] = 200; changed = true; }
+    } else if (call.name == "repository_list") {
+        if (!arguments.contains("path")) { arguments["path"] = ""; changed = true; }
+        if (!arguments.contains("depth")) { arguments["depth"] = 1; changed = true; }
+    }
+    if (changed) call.arguments_json = arguments.dump();
+}
+
 common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
@@ -178,25 +212,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (tool_batches >= request.max_tool_batches) break;
             if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
-            if (tool_call->name == "calculator") {
-                auto arguments = json::parse(tool_call->arguments_json, nullptr, false);
-                if (arguments.is_object() && !arguments.contains("expression")) {
-                    std::string expression;
-                    if (infer_calculator_expression(request.prompt, expression)) {
-                        arguments["expression"] = expression;
-                        tool_call->arguments_json = arguments.dump();
-                    }
-                }
-            } else if (tool_call->name == "memory_search") {
-                auto arguments = json::parse(tool_call->arguments_json, nullptr, false);
-                if (arguments.is_object() && !arguments.contains("query")) {
-                    std::string query;
-                    if (infer_memory_search_query(request.prompt, query)) {
-                        arguments["query"] = std::move(query);
-                        tool_call->arguments_json = arguments.dump();
-                    }
-                }
-            }
+            apply_safe_tool_defaults(request, *tool_call);
             if (!tools->validate(*tool_call, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "invalid registered tool contract: " + error; return result; }
             std::string tool_result;
             if (!tools->execute(*tool_call, tool_result, error)) {
