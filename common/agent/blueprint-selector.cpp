@@ -1,6 +1,47 @@
 #include "agent/blueprint-selector.h"
 
 #include <algorithm>
+#include <cctype>
+#include <set>
+
+namespace {
+
+std::set<std::string> keyword_set(const std::string & text) {
+    static const std::set<std::string> ignored = {
+        "about", "after", "agent", "and", "answer", "before", "code", "for", "from", "into", "issue", "that", "the", "this", "with"
+    };
+    std::set<std::string> words;
+    std::string word;
+    for (const unsigned char ch : text) {
+        if (std::isalnum(ch)) {
+            word.push_back((char) std::tolower(ch));
+        } else if (!word.empty()) {
+            if (word.size() >= 4 && !ignored.count(word)) words.insert(std::move(word));
+            word.clear();
+        }
+    }
+    if (word.size() >= 4 && !ignored.count(word)) words.insert(std::move(word));
+    return words;
+}
+
+const common_blueprint_candidate * keyword_fallback(
+        const common_agent_request & request,
+        const std::vector<common_blueprint_candidate> & candidates) {
+    const auto request_words = keyword_set(request.prompt);
+    const common_blueprint_candidate * best = nullptr;
+    size_t best_score = 0;
+    bool tied = false;
+    for (const auto & candidate : candidates) {
+        auto candidate_words = keyword_set(candidate.logical_id + " " + candidate.description);
+        size_t score = 0;
+        for (const auto & word : request_words) score += candidate_words.count(word);
+        if (score > best_score) { best = &candidate; best_score = score; tied = false; }
+        else if (score != 0 && score == best_score) tied = true;
+    }
+    return best_score != 0 && !tied ? best : nullptr;
+}
+
+} // namespace
 
 common_explicit_blueprint_selector::common_explicit_blueprint_selector(std::string logical_id) : logical_id(std::move(logical_id)) {}
 
@@ -53,16 +94,29 @@ bool common_agent_select_and_instantiate_blueprint(
         result.outcome = common_blueprint_selection_outcome::failed_safely;
         return true;
     }
-    if (choice.decision != common_blueprint_selection_decision::instantiate || !choice.logical_id || choice.confidence < config.minimum_confidence) {
-        result.outcome = common_blueprint_selection_outcome::declined;
-        return true;
+    const common_blueprint_candidate * candidate = nullptr;
+    if (choice.decision == common_blueprint_selection_decision::instantiate && choice.logical_id && choice.confidence >= config.minimum_confidence) {
+        const auto found = std::find_if(candidates.begin(), candidates.end(), [&](const auto & value) {
+            return value.logical_id == *choice.logical_id;
+        });
+        if (found == candidates.end()) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "selector returned an unavailable blueprint";
+            return true;
+        }
+        candidate = &*found;
+    } else {
+        candidate = keyword_fallback(request, candidates);
+        if (candidate) {
+            result.confidence = 0.0f;
+            result.reason = "native keyword fallback after model declined or reported low confidence";
+        } else {
+            result.outcome = common_blueprint_selection_outcome::declined;
+            return true;
+        }
     }
-    const auto candidate = std::find_if(candidates.begin(), candidates.end(), [&](const auto & value) {
-        return value.logical_id == *choice.logical_id;
-    });
-    if (candidate == candidates.end()) {
+    if (!candidate) {
         result.outcome = common_blueprint_selection_outcome::failed_safely;
-        result.reason = "selector returned an unavailable blueprint";
         return true;
     }
     const auto blueprint = plan_store.get(candidate->persisted_id, error);

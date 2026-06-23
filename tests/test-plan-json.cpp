@@ -31,6 +31,7 @@ int main() {
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
     assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
 
     common_plan_state context_plan;

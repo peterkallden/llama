@@ -828,6 +828,11 @@ public:
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
                     operation.step->selected_tool.reset();
+                    // The parser accepted this as a tool step before the
+                    // runtime catalog rejected its unknown tool. Keep the
+                    // bounded work as reasoning instead of forwarding an
+                    // impossible tool-mode step to plan policy.
+                    operation.step->mode = common_plan_step_mode::reasoning;
                 }
                 // A plan's initial tool step has no tool observation yet. Small
                 // instruct models occasionally invent evidence IDs here, which

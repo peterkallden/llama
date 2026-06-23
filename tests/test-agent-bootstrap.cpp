@@ -23,6 +23,14 @@ public:
     }
 };
 
+class declining_selector final : public common_blueprint_selector {
+public:
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+        error.clear();
+        return {common_blueprint_selection_decision::none, std::nullopt, 0.0f, "model declined"};
+    }
+};
+
 int main() {
     common_memory_in_memory_store memory;
     common_plan_in_memory_store plans;
@@ -101,6 +109,17 @@ int main() {
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
         {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
+
+    declining_selector declining;
+    selection_config.task_plan_id = "fallback-instance";
+    selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    assert(selection_result.logical_id && *selection_result.logical_id == "agent-regression");
+    assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
 
     common_agent_bootstrap_package custom;
     custom.name = "custom";
