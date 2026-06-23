@@ -17,6 +17,131 @@ The work borrows selected ideas from several compression approaches:
 
 The result is still a normal GGUF containing existing `ggml_type` tensor encodings. Inference does not reconstruct deltas, consult an imatrix, dynamically allocate bits, or require new CPU/GPU kernels.
 
+## Quick start: full workflow
+
+The normal teacher-aware workflow has five stages: create a reusable imatrix profile, create a normal Q4 baseline, create a first POC candidate, compare that candidate against the baseline and FP16 teacher, then make the final quality-first or budget-first model using the paired logit report.
+
+Use an F16, BF16, or F32 source GGUF where possible. A requantizable GGUF also works when its source type has a `to_float` converter, but an F16 source is the clearest reference. Keep calibration text and evaluation text separate. With `-c 512`, the calibration text must tokenize to at least 1024 tokens; `llama-imatrix` needs at least two contexts after tokenization.
+
+Create output directories first. On Unix-like shells:
+
+```bash
+mkdir -p profiles output
+```
+
+On PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force profiles, output
+```
+
+### 1. Collect the reusable profile
+
+```bash
+./build/bin/llama-imatrix \
+  -m input-f16.gguf \
+  -f calibration.txt \
+  --collect-quant-profile \
+  --quant-profile-sample-rows 8 \
+  --quant-profile-refine-top-k 16 \
+  --quant-profile-refine-rows 32 \
+  --quant-profile-block-size 256 \
+  --no-ppl \
+  -o profiles/imatrix-profile.gguf
+```
+
+This profile-side refinement is the preferred second RD pass. When this command succeeds with the refine options above, do not also add `--rd-local-refine-top-k` or `--rd-local-refine-rows` to the following quantization commands. Those flags are the fallback for standard imatrix files or profiles that do not already contain refined curves.
+
+### 2. Create a standard baseline and a first POC candidate
+
+```bash
+./build/bin/llama-quantize \
+  input-f16.gguf output/baseline-q4_k_m.gguf Q4_K_M
+
+./build/bin/llama-quantize \
+  --imatrix profiles/imatrix-profile.gguf \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
+  --spqr-block-scoring \
+  --adaptive-anchors \
+  --rd-guided \
+  --quant-repair \
+  --quant-repair-methods clipping,gain,scale \
+  input-f16.gguf output/poc-pass1.gguf Q4_K_M
+```
+
+`--quant-repair` defaults to `--quant-repair-depth teacher`. At this stage, "teacher" means the local FP-versus-reconstructed-tensor proxy; no second model has been run yet. Actual teacher/student output evidence enters only after the next logit comparison produces a report.
+
+### 3. Create the paired logit report
+
+```bash
+./build/bin/llama-logit-compare \
+  --teacher input-f16.gguf \
+  --baseline output/baseline-q4_k_m.gguf \
+  --student output/poc-pass1.gguf \
+  --layer-attribution \
+  --layer-sample-tokens 8 \
+  --logit-top-k 64 \
+  --json-out profiles/logit-pass1.json \
+  -f eval.txt \
+  -c 512 \
+  --chunks 4
+```
+
+The report is specific to this teacher, baseline, candidate, tokenizer, and evaluation text. Regenerate it when any of those change. Its paired attribution deltas become a local allocator prior in the final quantization pass.
+
+### 4. Choose the final policy
+
+For quality first, omit a size target:
+
+```bash
+./build/bin/llama-quantize \
+  --imatrix profiles/imatrix-profile.gguf \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
+  --spqr-block-scoring \
+  --adaptive-anchors \
+  --rd-guided \
+  --quant-repair \
+  --quant-repair-methods clipping,gain,scale \
+  --logit-report profiles/logit-pass1.json \
+  --logit-gate \
+  input-f16.gguf output/poc-quality-final.gguf Q4_K_M
+```
+
+For a hard tensor-payload target, use exactly one of `--rd-target-size-mib` and `--rd-target-bpw`. This example keeps promotions budget-neutral:
+
+```bash
+./build/bin/llama-quantize \
+  --imatrix profiles/imatrix-profile.gguf \
+  --mixed-policy spqr_guided \
+  --layer-delta-guidance \
+  --spqr-block-scoring \
+  --adaptive-anchors \
+  --rd-guided \
+  --rd-target-bpw 4.4 \
+  --quant-repair \
+  --quant-repair-methods clipping,gain,scale \
+  --logit-report profiles/logit-pass1.json \
+  --logit-gate \
+  --logit-guided-search \
+  --logit-search-promote-budget-mib 0 \
+  input-f16.gguf output/poc-budget-final.gguf Q4_K_M
+```
+
+`--logit-gate` is a conservative control signal, not a final accept/reject switch: when the supplied report misses a threshold, later repair and demotion choices become stricter. `--logit-guided-search` is budget-only. With `--logit-search-promote-budget-mib 0`, every accepted promotion must be financed by demotions elsewhere. The target applies to estimated quantized tensor payload; GGUF metadata and alignment can make the final file somewhat larger.
+
+### 5. Validate the chosen final model
+
+Run `llama-logit-compare` again with the same teacher, baseline, and evaluation text, replacing `--student` with the selected final file. Then compare perplexity on the same PPL dataset for the baseline and that same final file:
+
+```bash
+./build/bin/llama-perplexity -m output/baseline-q4_k_m.gguf -f ppl-test.txt -c 512
+./build/bin/llama-perplexity -m output/poc-quality-final.gguf -f ppl-test.txt -c 512
+```
+
+For a budget run, replace `output/poc-quality-final.gguf` with `output/poc-budget-final.gguf`. Do not compare PPL across different datasets or context settings.
+
 ## Purpose
 
 The POC has three practical goals:
@@ -144,9 +269,9 @@ Without an imatrix, the policy uses conservative tensor-name defaults:
 - medium: attention q/k/v, fused attention qkv/kv-b, `ffn_gate`, `ffn_up`
 - low: other quantizable tensors
 
-## Usage
+## Reference usage
 
-Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a two-pass workflow: first collect calibration/profile data with `llama-imatrix`, then let `llama-quantize` run the full POC path: block scoring, adaptive anchors, RD-guided allocation, local RD refinement, and quant repair.
+Build `llama-imatrix`, `llama-quantize`, and `llama-logit-compare` as usual. The quick start above is the recommended complete workflow. This section documents the individual passes and fallback modes.
 
 ```bash
 ./build/bin/llama-imatrix \
@@ -166,14 +291,12 @@ Build `llama-imatrix` and `llama-quantize` as usual. The recommended path is a t
   --spqr-block-scoring \
   --adaptive-anchors \
   --rd-guided \
-  --rd-local-refine-top-k 16 \
-  --rd-local-refine-rows 32 \
   --quant-repair \
   --quant-repair-methods clipping,gain,scale \
   input-f16.gguf output-spqr-rd-repair.gguf Q4_K_M
 ```
 
-In this flow, `--rd-guided` is the main allocation step: it chooses one existing tensor type from sampled candidate curves. `--rd-local-refine-top-k 16` enables the second-stage local RD refinement pass over the most uncertain tensors, and `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale` and uses the teacher-aware repair depth when the needed proxy data can be computed. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
+In this profile-enabled flow, `--rd-guided` reuses the profile's sampled and refined candidate curves. `--quant-repair` then acts as a repair-before-promote pass. By default it enables `clipping,gain,scale` and uses the teacher-aware repair depth when the needed proxy data can be computed. If `--quant-repair-methods` is supplied, the listed methods are used exactly, so omitting `scale` disables the scale sweep. Standard imatrix files are still accepted; missing profile data falls back to local quantizer-side sampling.
 
 For lower-bitrate experiments, `--rd-include-iq3` opt-ins `IQ3_S` as an additional RD / repair candidate while still keeping the main K-ladder behavior unchanged by default. `IQ3_M` remains a recipe/output target rather than a single concrete tensor type, so this flag is mainly a way to probe whether the allocator starts preferring the `IQ3` family at all.
 
