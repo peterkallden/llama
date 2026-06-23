@@ -306,6 +306,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.learned_memory_candidate = learning.candidate;
         result.memory_learning_summary = std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason;
         result.memory_learning_related_count = learning.related_count;
+        if ((learning.decision == common_memory_learning_decision::accepted || learning.decision == common_memory_learning_decision::duplicate) &&
+                learning.candidate && learning.candidate->kind == common_memory_kind::procedure && learning.stored_memory_id) {
+            const auto promotion = memory_learner->promote_completed_procedure(request, plan, store, *learning.stored_memory_id);
+            if (promotion.blueprint_id) {
+                result.events.push_back({common_agent_event_type::blueprint_promoted,
+                    "procedure promoted after " + std::to_string(promotion.verified_uses) + " verified uses",
+                    *learning.stored_memory_id, *promotion.blueprint_id});
+            }
+        }
         if (learning.decision == common_memory_learning_decision::accepted) {
             result.events.push_back({common_agent_event_type::memory_remembered, "post-turn candidate stored", learning.stored_memory_id.value_or(""), plan.id});
         } else if (learning.decision == common_memory_learning_decision::no_candidate) {

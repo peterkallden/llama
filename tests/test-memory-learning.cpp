@@ -1,5 +1,6 @@
 #include "agent/memory-learning.h"
 #include "memory/memory-in-memory.h"
+#include "plan/plan-in-memory.h"
 
 #include <cassert>
 
@@ -45,7 +46,13 @@ int main() {
     request.memory_scope = common_memory_scope::global; // Must not influence automatic learning scope.
     common_plan_state plan;
     plan.id = "plan-a";
+    plan.goal = "Verify persisted memory";
+    plan.success_criteria = "The record can be read back.";
+    plan.status = common_plan_status::completed;
     common_plan_step verify{"verify", "Verify", "Verify persistence"};
+    verify.mode = common_plan_step_mode::tool;
+    verify.selected_tool = "repository_read";
+    verify.tool_call = common_plan_tool_call{"repository_read", R"({"path":"memory.db"})"};
     verify.status = common_plan_step_status::completed;
     plan.steps.push_back(verify);
     plan.observations.push_back({"tool:verify:read-back", "read-back", "record persisted", 1.0f, {}, 0});
@@ -64,6 +71,26 @@ int main() {
     assert(stored && stored->scope == common_memory_scope::project && stored->project_id == "project-a");
     assert(stored->metadata.at("learning_stage") == "post_turn");
     assert(stored->metadata.at("source_plan_step_ids") == "verify");
+
+    common_plan_in_memory_store plans;
+    assert(plans.open("", error));
+    for (int i = 1; i <= 3; ++i) {
+        plan.id = "verified-plan-" + std::to_string(i);
+        const auto promotion = learner.promote_completed_procedure(request, plan, plans, *accepted.stored_memory_id);
+        assert(promotion.verified_uses == (size_t) i);
+        if (i < 3) assert(!promotion.blueprint_id);
+        else {
+            assert(promotion.blueprint_id);
+            const auto blueprint = plans.get(*promotion.blueprint_id, error);
+            assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
+            assert(blueprint->scope == common_plan_scope::project && blueprint->project_id == "project-a");
+            assert(!blueprint->steps.front().tool_call && blueprint->steps.front().mode == common_plan_step_mode::reasoning);
+            assert(blueprint->steps.back().mode == common_plan_step_mode::final_response);
+        }
+    }
+    const auto promoted_procedure = store.get(*accepted.stored_memory_id, error);
+    assert(promoted_procedure && promoted_procedure->metadata.at("procedure_verified_uses") == "3");
+    assert(promoted_procedure->metadata.count("promoted_blueprint_id") == 1);
 
     const auto duplicate = learner.learn(request, plan, result);
     assert(duplicate.decision == common_memory_learning_decision::duplicate);

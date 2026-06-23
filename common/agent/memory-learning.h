@@ -4,6 +4,7 @@
 #include "agent/agent-contract.h"
 #include "memory/memory-candidate.h"
 #include "memory/memory-policy.h"
+#include "plan/plan-store.h"
 
 #include <functional>
 
@@ -29,6 +30,7 @@ enum class common_memory_learning_decision {
 struct common_memory_learning_config {
     float min_confidence = 0.75f;
     float min_expected_reuse = 0.65f;
+    size_t procedure_blueprint_min_verified_uses = 3;
 };
 
 struct common_memory_learning_result {
@@ -37,6 +39,12 @@ struct common_memory_learning_result {
     std::string reason;
     size_t related_count = 0;
     std::optional<std::string> stored_memory_id;
+};
+
+struct common_procedure_blueprint_promotion_result {
+    std::string reason;
+    size_t verified_uses = 0;
+    std::optional<std::string> blueprint_id;
 };
 
 const char * common_memory_learning_decision_name(common_memory_learning_decision decision);
@@ -55,6 +63,15 @@ public:
         const common_agent_request & request,
         const common_plan_state & plan,
         const common_agent_result & result);
+
+    // Advances a procedure's verified-use counter after a completed plan and,
+    // once the bounded threshold is reached, persists a sanitized blueprint.
+    // The caller supplies the procedure ID returned by learn() for this turn.
+    common_procedure_blueprint_promotion_result promote_completed_procedure(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        common_plan_store & plan_store,
+        const std::string & procedure_memory_id);
 
 private:
     common_memory_store & store;

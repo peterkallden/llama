@@ -18,6 +18,7 @@ enum class common_agent_event_type {
     memory_rejected,
     memory_candidate_extracted,
     memory_candidate_not_stored,
+    blueprint_promoted,
     tool_executed,
     tool_rejected,
     plan_created,

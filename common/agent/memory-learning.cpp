@@ -22,6 +22,19 @@ static std::string join_ids(const std::vector<std::string> & ids) {
     for (size_t i = 0; i < ids.size(); ++i) { if (i) out << ','; out << ids[i]; }
     return out.str();
 }
+static size_t metadata_count(const common_memory_record & record, const char * key) {
+    const auto value = record.metadata.find(key);
+    if (value == record.metadata.end() || value->second.empty()) return 0;
+    try { return std::stoull(value->second); } catch (const std::exception &) { return 0; }
+}
+static common_plan_scope blueprint_scope_for(const common_memory_record & procedure) {
+    return procedure.scope == common_memory_scope::project ? common_plan_scope::project : common_plan_scope::session;
+}
+static bool same_procedure_scope(const common_memory_record & procedure, const common_agent_request & request) {
+    const auto expected_scope = request.project_id.empty() ? common_memory_scope::session : common_memory_scope::project;
+    return procedure.scope == expected_scope && procedure.namespace_id == request.namespace_id &&
+        procedure.session_id == request.session_id && procedure.project_id == request.project_id;
+}
 
 const char * common_memory_learning_decision_name(common_memory_learning_decision decision) {
     switch (decision) {
@@ -131,6 +144,10 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     if (policy.decision == common_memory_remember_decision::duplicate) {
         outcome.decision = common_memory_learning_decision::duplicate;
         outcome.reason = policy.reason;
+        const auto existing = std::find_if(policy.related_hits.begin(), policy.related_hits.end(), [&](const auto & hit) {
+            return hit.memory.kind == candidate.kind;
+        });
+        if (existing != policy.related_hits.end()) outcome.stored_memory_id = existing->memory.id;
         return outcome;
     }
     if (policy.decision == common_memory_remember_decision::conflict) {
@@ -158,5 +175,87 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     outcome.decision = common_memory_learning_decision::accepted;
     outcome.reason = policy.reason;
     outcome.stored_memory_id = record.id;
+    return outcome;
+}
+
+common_procedure_blueprint_promotion_result common_memory_post_turn_learner::promote_completed_procedure(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        common_plan_store & plan_store,
+        const std::string & procedure_memory_id) {
+    common_procedure_blueprint_promotion_result outcome;
+    std::string error;
+    if (plan.status != common_plan_status::completed || plan.id.empty() || plan.steps.empty()) {
+        outcome.reason = "plan did not complete successfully";
+        return outcome;
+    }
+    const auto loaded = store.get(procedure_memory_id, error);
+    if (!error.empty() || !loaded || loaded->kind != common_memory_kind::procedure || !same_procedure_scope(*loaded, request)) {
+        outcome.reason = error.empty() ? "procedure is unavailable in the completed plan scope" : error;
+        return outcome;
+    }
+    auto procedure = *loaded;
+    if (procedure.metadata["procedure_last_success_plan_id"] == plan.id) {
+        outcome.verified_uses = metadata_count(procedure, "procedure_verified_uses");
+        outcome.reason = "procedure was already counted for this plan";
+        return outcome;
+    }
+    outcome.verified_uses = metadata_count(procedure, "procedure_verified_uses") + 1;
+    procedure.metadata["procedure_verified_uses"] = std::to_string(outcome.verified_uses);
+    procedure.metadata["procedure_last_success_plan_id"] = plan.id;
+
+    const std::string blueprint_id = "learned-blueprint:" + procedure.id;
+    if (outcome.verified_uses >= config.procedure_blueprint_min_verified_uses) {
+        const auto existing = plan_store.get(blueprint_id, error);
+        if (!error.empty()) { outcome.reason = error; return outcome; }
+        if (existing && existing->kind != common_plan_kind::blueprint) {
+            outcome.reason = "promotion blueprint id is already occupied";
+            return outcome;
+        }
+        if (!existing) {
+            common_plan_state blueprint;
+            blueprint.id = blueprint_id;
+            blueprint.namespace_id = procedure.namespace_id;
+            blueprint.session_id = procedure.session_id;
+            blueprint.project_id = procedure.project_id;
+            blueprint.kind = common_plan_kind::blueprint;
+            blueprint.scope = blueprint_scope_for(procedure);
+            blueprint.goal = plan.goal.empty() ? procedure.summary : plan.goal;
+            blueprint.success_criteria = plan.success_criteria.empty() ? "Complete the reusable procedure safely." : plan.success_criteria;
+            blueprint.created_at = plan.updated_at;
+            blueprint.updated_at = plan.updated_at;
+            bool has_final = false;
+            for (const auto & source : plan.steps) {
+                common_plan_step step = source;
+                step.status = common_plan_step_status::pending;
+                step.blocked_by.clear();
+                step.selected_tool.reset();
+                step.tool_call.reset();
+                step.required_evidence.clear();
+                step.source_memory_ids.clear();
+                step.result_summary.reset();
+                step.generated_from_memory = false;
+                step.created_at = blueprint.created_at;
+                step.updated_at = blueprint.updated_at;
+                if (step.mode == common_plan_step_mode::tool) step.mode = common_plan_step_mode::reasoning;
+                has_final = has_final || step.mode == common_plan_step_mode::final_response;
+                blueprint.steps.push_back(std::move(step));
+            }
+            if (!has_final) {
+                common_plan_step final_step;
+                final_step.id = "answer";
+                final_step.title = "Answer";
+                final_step.objective = "Answer the user using the completed procedure.";
+                final_step.mode = common_plan_step_mode::final_response;
+                for (const auto & step : blueprint.steps) final_step.depends_on.push_back(step.id);
+                blueprint.steps.push_back(std::move(final_step));
+            }
+            if (!plan_store.create(blueprint, error)) { outcome.reason = error; return outcome; }
+        }
+        procedure.metadata["promoted_blueprint_id"] = blueprint_id;
+        outcome.blueprint_id = blueprint_id;
+    }
+    if (!store.put(procedure, error)) { outcome.reason = error; return outcome; }
+    outcome.reason = outcome.blueprint_id ? "procedure promoted to blueprint" : "procedure success recorded";
     return outcome;
 }
