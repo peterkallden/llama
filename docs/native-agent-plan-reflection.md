@@ -193,6 +193,8 @@ Native tool invocation uses one bounded object-contract path: parse JSON, canoni
 
 Tools retain three separate layers. The catalog declares versioned metadata and profile membership; the registry owns executable handlers; adapters bind a catalog definition to local runtime resources. A tool is model-visible only when the registered handler matches the catalog definition's name, version and `executor_id`. Catalog metadata alone never supplies executable code.
 
+Reflection and memory-candidate outputs use the same bounded JSON readers for required strings, unit-range scores and short string arrays. Plan-specific shorthand, runtime tool defaults and observation-to-argument bindings remain separate normalizers because they perform distinct, explicitly allowed transformations.
+
 ### Explicit user corrections
 
 The runtime does not infer corrections from arbitrary user text. An integration may instead supply an explicit `user_correction` with a bounded statement and mandatory `source_turn_id`. The runtime records it as an evidence-addressable `user_correction` observation and native learning signal. It may support a later procedure candidate only through the ordinary post-turn extractor and memory policy; it cannot directly alter a procedure, blueprint, plan scope or memory record.

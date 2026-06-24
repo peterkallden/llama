@@ -38,6 +38,46 @@ bool validate_value(const json & value, const json & schema, const std::string &
 
 } // namespace
 
+bool common_json_contract_parse_object(const std::string & input_json, common_json_contract_value & object, std::string & error) {
+    object = json::parse(input_json, nullptr, false);
+    if (!object.is_object()) { error = "contract input must be a JSON object"; return false; }
+    error.clear();
+    return true;
+}
+
+bool common_json_contract_required_string(const common_json_contract_value & object, const char * key, size_t max_length,
+        std::string & value, std::string & error) {
+    const auto it = object.find(key);
+    if (it == object.end() || !it->is_string()) { error = std::string("contract field '") + key + "' must be a string"; return false; }
+    value = it->get<std::string>();
+    if (value.empty() || value.size() > max_length) { error = std::string("contract field '") + key + "' is out of bounds"; return false; }
+    return true;
+}
+
+bool common_json_contract_optional_string_array(const common_json_contract_value & object, const char * key,
+        size_t max_items, size_t per_item_max_length, std::vector<std::string> & values, std::string & error) {
+    values.clear();
+    const auto it = object.find(key);
+    if (it == object.end()) return true;
+    if (!it->is_array() || it->size() > max_items) { error = std::string("contract field '") + key + "' must be a bounded string array"; return false; }
+    for (const auto & item : *it) {
+        if (!item.is_string() || item.get_ref<const std::string &>().size() > per_item_max_length) { error = std::string("contract field '") + key + "' contains an invalid string"; return false; }
+        values.push_back(item.get<std::string>());
+    }
+    return true;
+}
+
+bool common_json_contract_optional_unit_number(const common_json_contract_value & object, const char * key,
+        float default_value, float & value, std::string & error) {
+    value = default_value;
+    const auto it = object.find(key);
+    if (it == object.end()) return true;
+    if (!it->is_number()) { error = std::string("contract field '") + key + "' must be a number"; return false; }
+    value = it->get<float>();
+    if (value < 0.0f || value > 1.0f) { error = std::string("contract field '") + key + "' must be between zero and one"; return false; }
+    return true;
+}
+
 bool common_schema_normalize_and_validate_object(const std::string & input_json, const std::string & schema_json,
         std::string & normalized_json, std::string & error) {
     const auto input = json::parse(input_json, nullptr, false);

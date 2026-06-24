@@ -38,7 +38,7 @@ bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const 
         } else if (!registry.is_read_only(call.name) && !registry.is_policy_gated(call.name)) {
             tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_not_read_only"}, {"message", "tool is not available in a read-only batch"}}}}).dump();
         } else if (!registry.execute({call.name, call.arguments}, output, call_error)) {
-            tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_call_rejected"}, {"message", call_error}}}}).dump();
+            tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_call_rejected"}, {"message", "The tool call was rejected by its native contract or executor."}}}}).dump();
         } else {
             if (output.size() > 4096) output.resize(4096);
             const auto value = json::parse(output, nullptr, false);

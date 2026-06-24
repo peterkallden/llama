@@ -16,6 +16,7 @@
 #include "agent/blueprint-selector.h"
 #include "agent/memory-learning.h"
 #include "agent/reflection-json.h"
+#include "agent/schema-contract.h"
 #include "agent/tool-adapters.h"
 #include "agent/tool-chat-bridge.h"
 #include "plan/plan-context.h"
@@ -973,14 +974,13 @@ private:
 };
 
 static bool parse_memory_candidate_json(const std::string & text, common_memory_candidate_result & result, std::string & error) {
-    try {
-        const auto root = json::parse(text);
-        if (!root.is_object() || !root.contains("candidate") || !root.contains("reason") || !root["reason"].is_string()) {
-            error = "candidate output must contain candidate and reason";
-            return false;
-        }
+    common_json_contract_value root;
+    if (!common_json_contract_parse_object(text, root, error)) return false;
+    if (!root.contains("candidate")) { error = "candidate output must contain candidate"; return false; }
+    std::string reason;
+    if (!common_json_contract_required_string(root, "reason", 240, reason, error)) return false;
         result = {};
-        result.reason = root["reason"].get<std::string>();
+        result.reason = std::move(reason);
         if (root["candidate"].is_null()) {
             error.clear();
             return true;
@@ -1001,22 +1001,11 @@ static bool parse_memory_candidate_json(const std::string & text, common_memory_
         candidate.importance = item.value("importance", 0.5f);
         candidate.confidence = item.value("confidence", 0.5f);
         candidate.expected_reuse = item.value("expected_reuse", 0.5f);
-        for (const auto & key : {"evidence_ids", "source_plan_step_ids"}) {
-            if (!item.contains(key)) continue;
-            if (!item[key].is_array()) { error = std::string(key) + " must be an array"; return false; }
-            auto & destination = std::string(key) == "evidence_ids" ? candidate.evidence_ids : candidate.source_plan_step_ids;
-            for (const auto & value : item[key]) {
-                if (!value.is_string() || value.get<std::string>().size() > 256) { error = std::string(key) + " must contain short strings"; return false; }
-                destination.push_back(value.get<std::string>());
-            }
-        }
+        if (!common_json_contract_optional_string_array(item, "evidence_ids", 8, 256, candidate.evidence_ids, error) ||
+                !common_json_contract_optional_string_array(item, "source_plan_step_ids", 8, 256, candidate.source_plan_step_ids, error)) return false;
         result.candidate = std::move(candidate);
         error.clear();
         return true;
-    } catch (const json::exception &) {
-        error = "malformed candidate JSON";
-        return false;
-    }
 }
 
 class llama_memory_candidate_extractor final : public common_memory_candidate_extractor {
