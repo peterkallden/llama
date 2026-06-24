@@ -153,6 +153,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     }
     result.plan_id = plan.id;
 
+    if (request.user_correction) {
+        const auto & correction = *request.user_correction;
+        if (correction.source_turn_id.empty() || correction.statement.empty() || correction.statement.size() > 512) {
+            result.error = "explicit user correction requires bounded source turn and statement";
+            return result;
+        }
+        const std::string observation_id = "feedback:correction:" + std::to_string(plan.version);
+        common_plan_operation observed;
+        observed.kind = common_plan_operation_kind::record_observation;
+        observed.plan_id = plan.id;
+        observed.expected_version = plan.version;
+        observed.reason_summary = "explicit user correction";
+        observed.observation = common_plan_observation{observation_id, "user_correction",
+            json({{"source_turn_id", correction.source_turn_id}, {"statement", correction.statement}}).dump(), 1.0f, {}, 0};
+        if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+        result.learning_signals.push_back({common_learning_signal_type::user_correction, plan.id, {}, {}, observation_id,
+            "explicit user correction supplied by the caller"});
+        result.events.push_back({common_agent_event_type::plan_updated, "explicit user correction recorded", {}, plan.id});
+    }
+
     const auto activate_next_ready_step = [&]() -> bool {
         bool has_active_step = false;
         for (const auto & step : plan.steps) if (step.status == common_plan_step_status::active) { has_active_step = true; break; }

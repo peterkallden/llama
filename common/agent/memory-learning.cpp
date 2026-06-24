@@ -199,6 +199,7 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     record.metadata["source_plan_id"] = plan.id;
     record.metadata["source_plan_step_ids"] = join_ids(candidate.source_plan_step_ids);
     record.metadata["evidence_ids"] = join_ids(candidate.evidence_ids);
+    if (candidate.kind == common_memory_kind::procedure) record.metadata["procedure_lifecycle"] = "candidate";
     if (!result.learning_signals.empty()) {
         record.metadata["learning_signal_types"] = join_learning_signal_types(result.learning_signals);
         const auto tools = join_learning_tools(result.learning_signals);
@@ -279,6 +280,7 @@ common_procedure_blueprint_promotion_result common_memory_post_turn_learner::pro
     outcome.verified_uses = metadata_count(procedure, "procedure_verified_uses") + 1;
     procedure.metadata["procedure_verified_uses"] = std::to_string(outcome.verified_uses);
     procedure.metadata["procedure_last_success_plan_id"] = plan.id;
+    procedure.metadata["procedure_lifecycle"] = "verified";
 
     const std::string blueprint_id = "learned-blueprint:" + procedure.id;
     if (outcome.verified_uses >= config.procedure_blueprint_min_verified_uses) {
@@ -329,6 +331,7 @@ common_procedure_blueprint_promotion_result common_memory_post_turn_learner::pro
             if (!plan_store.create(blueprint, error)) { outcome.reason = error; return outcome; }
         }
         procedure.metadata["promoted_blueprint_id"] = blueprint_id;
+        procedure.metadata["procedure_lifecycle"] = "promoted";
         outcome.blueprint_id = blueprint_id;
     }
     if (!store.put(procedure, error)) { outcome.reason = error; return outcome; }

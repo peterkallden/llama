@@ -31,6 +31,7 @@ enum class common_learning_signal_type {
     tool_failure,
     successful_recovery,
     reflection_hint,
+    user_correction,
 };
 
 // Stable, model-safe failure categories. The runtime keeps raw diagnostics
@@ -73,11 +74,20 @@ struct common_agent_failure {
     std::string safe_summary;
 };
 
+// A caller supplies this only when it has an explicit user correction and the
+// turn it corrects. It is evidence for post-turn learning, never a direct
+// memory write or a model-controlled provenance claim.
+struct common_agent_user_correction {
+    std::string source_turn_id;
+    std::string statement;
+};
+
 inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
     switch (type) {
         case common_learning_signal_type::tool_failure: return "tool_failure";
         case common_learning_signal_type::successful_recovery: return "successful_recovery";
         case common_learning_signal_type::reflection_hint: return "reflection_hint";
+        case common_learning_signal_type::user_correction: return "user_correction";
     }
     return "unknown";
 }
@@ -124,6 +134,7 @@ struct common_agent_request {
     // the caller-supplied registry.
     std::string prompt;
     std::vector<common_memory_hit> memories;
+    std::optional<common_agent_user_correction> user_correction;
     std::optional<common_registered_tool_call> tool_call;
     size_t max_iterations = 2;
     size_t max_reflection_rounds = 1;

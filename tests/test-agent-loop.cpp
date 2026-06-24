@@ -184,6 +184,21 @@ int main() {
     const auto hinted_plan = hint_store.get("reasoning-turn", error);
     assert(hinted_plan && hinted_plan->observations.size() == 2 && hinted_plan->observations.back().source == "reflection_hint");
 
+    common_plan_in_memory_store correction_store;
+    assert(correction_store.open("", error));
+    planner correction_p;
+    common_agent_runtime correction_runtime(correction_store, correction_p, e, r, &tools);
+    common_agent_request correction_request = request;
+    correction_request.plan_id.reset();
+    correction_request.user_correction = common_agent_user_correction{"prior-turn-7", "Use the calculator result rather than mental arithmetic."};
+    const auto corrected = correction_runtime.run(correction_request);
+    assert(corrected.error.empty() && corrected.learning_signals.size() == 1);
+    assert(corrected.learning_signals.front().type == common_learning_signal_type::user_correction);
+    const auto correction_plan = correction_store.get("turn-1", error);
+    assert(correction_plan && correction_plan->observations.size() == 2);
+    assert(correction_plan->observations.front().source == "user_correction");
+    assert(correction_plan->observations.front().summary.find("prior-turn-7") != std::string::npos);
+
     common_plan_in_memory_store failure_store;
     assert(failure_store.open("", error));
     common_tool_registry failing_tools;

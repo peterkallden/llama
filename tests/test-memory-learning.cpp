@@ -71,6 +71,7 @@ int main() {
     const auto stored = store.get(*accepted.stored_memory_id, error);
     assert(stored && stored->scope == common_memory_scope::project && stored->project_id == "project-a");
     assert(stored->metadata.at("learning_stage") == "post_turn");
+    assert(stored->metadata.at("procedure_lifecycle") == "candidate");
     assert(stored->metadata.at("source_plan_step_ids") == "verify");
     assert(stored->metadata.at("learning_signal_types") == "tool_failure");
     assert(stored->metadata.at("learning_tools") == "repository_read");
@@ -109,6 +110,7 @@ int main() {
     }
     const auto promoted_procedure = store.get(*accepted.stored_memory_id, error);
     assert(promoted_procedure && promoted_procedure->metadata.at("procedure_verified_uses") == "3");
+    assert(promoted_procedure->metadata.at("procedure_lifecycle") == "promoted");
     assert(promoted_procedure->metadata.count("promoted_blueprint_id") == 1);
 
     const auto duplicate = learner.learn(request, plan, result);
