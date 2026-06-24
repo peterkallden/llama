@@ -23,10 +23,18 @@ bool common_tool_registry::validate(const common_registered_tool_call & call, st
     return common_schema_normalize_and_validate_object(call.arguments_json, it->second.arguments_schema, normalized, error);
 }
 
-bool common_tool_registry::execute(const common_registered_tool_call & call, std::string & result, std::string & error) const {
-    if (!validate(call, error)) return false;
+common_tool_execution_result common_tool_registry::execute(const common_registered_tool_call & call) const {
+    std::string error;
+    if (!validate(call, error)) return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
     const auto it = tools.find(call.name);
-    return it->second.handler(call.arguments_json, result, error);
+    return it->second.handler(call.arguments_json);
+}
+
+bool common_tool_registry::execute(const common_registered_tool_call & call, std::string & result, std::string & error) const {
+    const auto execution = execute(call);
+    result = execution.output;
+    error = execution.raw_diagnostic;
+    return execution.ok;
 }
 
 bool common_tool_registry::contains(const std::string & name) const {
