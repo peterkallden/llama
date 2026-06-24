@@ -4,11 +4,15 @@
 bool common_tool_registry::register_tool(common_registered_tool tool, std::string & error) {
     if (tool.name.empty() || !tool.handler) { error = "registered tool requires a name and handler"; return false; }
     if (tools.count(tool.name)) { error = "tool is already registered"; return false; }
-    std::string ignored;
-    if (tool.version == 0 || tool.executor_id.empty() || !common_schema_normalize_and_validate_object("{}", tool.arguments_schema, ignored, error)) {
-        if (error == "required contract field is missing") error.clear();
-        if (error.empty()) error = "registered tool has invalid capability binding";
+    const auto schema = common_json_contract_value::parse(tool.arguments_schema, nullptr, false);
+    if (tool.version == 0 || tool.executor_id.empty() || !schema.is_object() || schema.value("type", std::string()) != "object" ||
+            (schema.contains("required") && !schema["required"].is_array()) ||
+            (schema.contains("properties") && !schema["properties"].is_object())) {
+        error = "registered tool has invalid capability binding";
         return false;
+    }
+    if (schema.contains("required")) for (const auto & field : schema["required"]) {
+        if (!field.is_string()) { error = "registered tool has invalid capability binding"; return false; }
     }
     tools.emplace(tool.name, std::move(tool)); error.clear(); return true;
 }
