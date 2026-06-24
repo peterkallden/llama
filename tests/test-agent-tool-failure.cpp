@@ -51,7 +51,10 @@ int main() {
     common_registered_tool tool;
     tool.name = "failing_lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string &, std::string &, std::string & handler_error) { handler_error = "temporary network failure"; return false; };
+    tool.handler = [](const std::string &) {
+        return common_tool_execution_result::failure("tool.lookup.temporary_network_failure", common_tool_failure_class::network, true,
+            "Lookup failed because the network is temporarily unavailable.", "temporary network failure");
+    };
     assert(registry.register_tool(std::move(tool), error));
     planner p; executor e; reflector r;
     common_agent_runtime runtime(store, p, e, r, &registry);
@@ -61,6 +64,6 @@ int main() {
     const auto result = runtime.run(request);
     assert(result.error.empty() && result.response == "The lookup failed; no result was claimed.");
     const auto plan = store.get("tool-failure", error);
-    assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporary network failure") != std::string::npos);
+    assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporarily unavailable") != std::string::npos);
     return 0;
 }

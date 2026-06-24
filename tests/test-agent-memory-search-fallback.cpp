@@ -48,11 +48,9 @@ int main() {
     common_registered_tool tool;
     tool.name = "memory_search";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"}}})";
-    tool.handler = [](const std::string & input, std::string & output, std::string & handler_error) {
+    tool.handler = [](const std::string & input) {
         assert(input == R"({"query":"What is my favorite breakfast?"})");
-        output = "stored preference";
-        handler_error.clear();
-        return true;
+        return common_tool_execution_result::success("stored preference");
     };
     assert(tools.register_tool(std::move(tool), error));
 

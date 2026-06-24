@@ -37,7 +37,7 @@ int main() {
     assert(memory_catalog.bootstrap("memory", bootstrap, error));
     common_tool_registry proposal_registry;
     common_native_tool_bindings proposal_bindings;
-    proposal_bindings.memory_remember_proposal = [](const std::string &, std::string & output, std::string & proposal_error) { output = R"({"decision":"accept"})"; proposal_error.clear(); return true; };
+    proposal_bindings.memory_remember_proposal = [](const std::string &) { return common_tool_execution_result::success(R"({"decision":"accept"})"); };
     assert(common_register_native_tool_adapters(memory_catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
     assert(common_tool_profile_to_chat_tools(memory_catalog, "memory", proposal_registry, tools, error));
     bool has_remember = false;

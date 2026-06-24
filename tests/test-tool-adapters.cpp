@@ -7,7 +7,7 @@
 #include <fstream>
 
 int main() {
-    std::string error, result;
+    std::string error;
     common_memory_in_memory_store memories;
     assert(memories.open("", error));
     common_memory_record memory;
@@ -38,23 +38,26 @@ int main() {
     common_tool_adapter_result adapters;
     assert(common_register_native_tool_adapters(catalog, "memory-read", bindings, registry, adapters, error));
     assert(adapters.registered.size() == 5);
-    assert(registry.execute({"calculator", R"({"expression":"(18 + 2) * 3"})"}, result, error));
-    assert(result == R"({"value":60.0})" || result == R"({"value":60})");
-    assert(registry.execute({"memory_search", R"({"query":"optimistic checks"})"}, result, error));
-    assert(result.find("memory-1") != std::string::npos);
-    assert(registry.execute({"memory_get", R"({"id":"memory-1"})"}, result, error));
-    assert(result.find("optimistic version checks") != std::string::npos);
-    assert(registry.execute({"plan_get", "{}"}, result, error));
-    assert(result.find("plan-1") != std::string::npos);
-    assert(!registry.execute({"memory_remember", "{}"}, result, error));
+    auto result = registry.execute({"calculator", R"({"expression":"(18 + 2) * 3"})"});
+    assert(result.ok);
+    auto output = result.output;
+    assert(output == R"({"value":60.0})" || output == R"({"value":60})");
+    result = registry.execute({"memory_search", R"({"query":"optimistic checks"})"});
+    assert(result.ok && result.output.find("memory-1") != std::string::npos);
+    result = registry.execute({"memory_get", R"({"id":"memory-1"})"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"plan_get", "{}"});
+    assert(result.ok && result.output.find("plan-1") != std::string::npos);
+    result = registry.execute({"memory_remember", "{}"});
+    assert(!result.ok);
 
     common_tool_registry proposal_registry;
     common_native_tool_bindings proposal_bindings;
-    proposal_bindings.memory_remember_proposal = [](const std::string &, std::string & output, std::string & proposal_error) { output = R"({"decision":"accept"})"; proposal_error.clear(); return true; };
+    proposal_bindings.memory_remember_proposal = [](const std::string &) { return common_tool_execution_result::success(R"({"decision":"accept"})"); };
     assert(common_register_native_tool_adapters(catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
     assert(proposal_registry.is_policy_gated("memory_remember"));
-    assert(proposal_registry.execute({"memory_remember", R"({"kind":"fact","content":"verified"})"}, result, error));
-    assert(result.find("accept") != std::string::npos);
+    result = proposal_registry.execute({"memory_remember", R"({"kind":"fact","content":"verified"})"});
+    assert(result.ok && result.output.find("accept") != std::string::npos);
 
     const auto repository = std::filesystem::temp_directory_path() / "llama-agent-repository-tool-test";
     std::filesystem::create_directories(repository / "src");
@@ -64,32 +67,36 @@ int main() {
     common_tool_registry repository_registry;
     common_native_tool_bindings repository_bindings;
     repository_bindings.repository_root = repository.string();
-    repository_bindings.web_search = [](const std::string & input, std::string & output, std::string & err) {
-        if (input.find("\"query\":\"llama\"") == std::string::npos) { err = "unexpected search query"; return false; }
-        output = R"({"results":[{"title":"llama.cpp","url":"https://example.com/llama","snippet":"native tools","source":"test"}],"provider":"test"})";
-        return true;
+    repository_bindings.web_search = [](const std::string & input) {
+        if (input.find("\"query\":\"llama\"") == std::string::npos) {
+            return common_tool_execution_result::failure("tool.web_search.unexpected_query", common_tool_failure_class::validation, false, "Unexpected search query.", "unexpected search query");
+        }
+        return common_tool_execution_result::success(R"({"results":[{"title":"llama.cpp","url":"https://example.com/llama","snippet":"native tools","source":"test"}],"provider":"test"})");
     };
-    repository_bindings.web_fetch = [](const std::string & input, std::string & output, std::string & err) {
-        if (input.find("\"url\":\"https://example.com/llama\"") == std::string::npos) { err = "unexpected fetch url"; return false; }
-        output = R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})";
-        return true;
+    repository_bindings.web_fetch = [](const std::string & input) {
+        if (input.find("\"url\":\"https://example.com/llama\"") == std::string::npos) {
+            return common_tool_execution_result::failure("tool.web_fetch.unexpected_url", common_tool_failure_class::validation, false, "Unexpected fetch URL.", "unexpected fetch url");
+        }
+        return common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
     };
     assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
-    assert(repository_registry.execute({"repository_list", R"({"path":"src","depth":1})"}, result, error));
-    assert(result.find("sample.txt") != std::string::npos);
-    assert(repository_registry.execute({"repository_search", R"({"query":"needle","path":"src"})"}, result, error));
-    assert(result.find("sample.txt") != std::string::npos && result.find("needle") != std::string::npos);
-    assert(repository_registry.execute({"repository_read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"}, result, error));
-    assert(result.find("needle in a haystack") != std::string::npos);
-    assert(repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"}, result, error));
-    assert(result.find("https://example.com/llama") != std::string::npos);
-    assert(repository_registry.execute({"web_fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"}, result, error));
-    assert(result.find("\"status\":200") != std::string::npos && result.find("native tools") != std::string::npos);
-    assert(!repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"}, result, error));
+    result = repository_registry.execute({"repository_list", R"({"path":"src","depth":1})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = repository_registry.execute({"repository_search", R"({"query":"needle","path":"src"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    result = repository_registry.execute({"repository_read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
+    assert(result.ok && result.output.find("needle in a haystack") != std::string::npos);
+    result = repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"});
+    assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
+    result = repository_registry.execute({"web_fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});
+    assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos);
+    result = repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));
-    assert(!native_network_registry.execute({"web_fetch", R"({"url":"http://127.0.0.1/test"})"}, result, error));
+    result = native_network_registry.execute({"web_fetch", R"({"url":"http://127.0.0.1/test"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::network);
     std::filesystem::remove_all(repository);
     return 0;
 }

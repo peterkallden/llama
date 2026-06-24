@@ -59,7 +59,7 @@ void scenario_persistence_resume() {
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string & input, std::string & output, std::string & handler_error) { output = input; handler_error.clear(); return true; };
+    tool.handler = [](const std::string & input) { return common_tool_execution_result::success(input); };
     assert(tools.register_tool(std::move(tool), error));
     resume_planner planner;
     draft_executor executor;
@@ -135,9 +135,12 @@ void scenario_repair() {
     tool.name = "retry_lookup";
     tool.executor_id = "test.retry_lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [&calls](const std::string &, std::string & output, std::string & handler_error) {
-        if (++calls == 1) { handler_error = "temporary network failure"; return false; }
-        output = "recovered fact"; handler_error.clear(); return true;
+    tool.handler = [&calls](const std::string &) {
+        if (++calls == 1) {
+            return common_tool_execution_result::failure("tool.retry_lookup.temporary_network_failure", common_tool_failure_class::network, true,
+                "Lookup failed because the network is temporarily unavailable.", "temporary network failure");
+        }
+        return common_tool_execution_result::success("recovered fact");
     };
     assert(tools.register_tool(std::move(tool), error));
     repair_planner planner;
@@ -205,7 +208,7 @@ void scenario_learning_promotion() {
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string &, std::string & output, std::string & handler_error) { output = "stable result"; handler_error.clear(); return true; };
+    tool.handler = [](const std::string &) { return common_tool_execution_result::success("stable result"); };
     assert(tools.register_tool(std::move(tool), error));
     learning_planner planner;
     draft_executor executor;

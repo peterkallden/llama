@@ -55,7 +55,9 @@ int main() {
     common_registered_tool tool;
     tool.name = "lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string & input, std::string & output, std::string & handler_error) { output = input.find("second") == std::string::npos ? "first result" : "second result"; handler_error.clear(); return true; };
+    tool.handler = [](const std::string & input) {
+        return common_tool_execution_result::success(input.find("second") == std::string::npos ? "first result" : "second result");
+    };
     assert(registry.register_tool(std::move(tool), error));
     planner p; executor e; reflector r;
     common_agent_runtime runtime(store, p, e, r, &registry);

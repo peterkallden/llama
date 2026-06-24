@@ -119,7 +119,7 @@ int main() {
     common_registered_tool tool;
     tool.name = "lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string &, std::string & value, std::string & err) { value = "current status"; err.clear(); return true; };
+    tool.handler = [](const std::string &) { return common_tool_execution_result::success("current status"); };
     assert(tools.register_tool(std::move(tool), error));
 
     planner p;
@@ -221,7 +221,10 @@ int main() {
     common_registered_tool failing_tool;
     failing_tool.name = "lookup";
     failing_tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    failing_tool.handler = [](const std::string &, std::string &, std::string & err) { err = "not found"; return false; };
+    failing_tool.handler = [](const std::string &) {
+        return common_tool_execution_result::failure("tool.lookup.not_found", common_tool_failure_class::not_found, false,
+            "Requested resource was not found.", "not found");
+    };
     assert(failing_tools.register_tool(std::move(failing_tool), error));
     planner failing_p;
     common_agent_runtime failure_runtime(failure_store, failing_p, e, r, &failing_tools);

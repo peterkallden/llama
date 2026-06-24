@@ -30,13 +30,6 @@ common_tool_execution_result common_tool_registry::execute(const common_register
     return it->second.handler(call.arguments_json);
 }
 
-bool common_tool_registry::execute(const common_registered_tool_call & call, std::string & result, std::string & error) const {
-    const auto execution = execute(call);
-    result = execution.output;
-    error = execution.raw_diagnostic;
-    return execution.ok;
-}
-
 bool common_tool_registry::contains(const std::string & name) const {
     return tools.count(name) != 0;
 }

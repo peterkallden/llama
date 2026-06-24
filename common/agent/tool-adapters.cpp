@@ -91,6 +91,39 @@ bool parse_object(const std::string & arguments_json, json & arguments, std::str
     return true;
 }
 
+common_tool_execution_result tool_success_json(const json & value) {
+    return common_tool_execution_result::success(value.dump());
+}
+
+common_tool_execution_result tool_success_text(std::string value) {
+    return common_tool_execution_result::success(std::move(value));
+}
+
+common_tool_execution_result tool_failure(std::string code, common_tool_failure_class failure_class, bool retryable,
+        std::string safe_summary, std::string raw_diagnostic) {
+    return common_tool_execution_result::failure(std::move(code), failure_class, retryable, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
+common_tool_execution_result tool_validation_failure(std::string code, std::string raw_diagnostic, std::string safe_summary = "Tool arguments are invalid.") {
+    return tool_failure(std::move(code), common_tool_failure_class::validation, false, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
+common_tool_execution_result tool_execution_failure(std::string code, std::string raw_diagnostic, std::string safe_summary) {
+    return tool_failure(std::move(code), common_tool_failure_class::execution, false, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
+common_tool_execution_result tool_not_found_failure(std::string code, std::string raw_diagnostic, std::string safe_summary) {
+    return tool_failure(std::move(code), common_tool_failure_class::not_found, false, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
+common_tool_execution_result tool_network_failure(std::string code, std::string raw_diagnostic, std::string safe_summary, bool retryable = true) {
+    return tool_failure(std::move(code), common_tool_failure_class::network, retryable, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
+common_tool_execution_result tool_limit_failure(std::string code, std::string raw_diagnostic, std::string safe_summary) {
+    return tool_failure(std::move(code), common_tool_failure_class::limit, false, std::move(safe_summary), std::move(raw_diagnostic));
+}
+
 json memory_value(const common_memory_record & memory) {
     return {
         {"id", memory.id}, {"kind", common_memory_kind_name(memory.kind)},
@@ -115,7 +148,7 @@ std::string utc_now() {
 }
 
 bool register_definition(const common_tool_definition & definition, common_tool_registry & registry,
-        std::function<bool(const std::string &, std::string &, std::string &)> handler, std::string & error, bool read_only = true, bool policy_gated = false) {
+        std::function<common_tool_execution_result(const std::string &)> handler, std::string & error, bool read_only = true, bool policy_gated = false) {
     common_registered_tool tool;
     tool.name = definition.name;
     tool.version = definition.version;
@@ -470,138 +503,233 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
     for (const auto & definition : definitions) {
         bool installed = false;
         if (definition.executor_id == "builtin.calculator") {
-            installed = register_definition(definition, registry, [](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("expression") || !arguments["expression"].is_string()) { if (err.empty()) err = "calculator requires an expression"; return false; }
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("expression") || !arguments["expression"].is_string()) {
+                    if (err.empty()) err = "calculator requires an expression";
+                    return tool_validation_failure("tool.calculator.invalid_expression", std::move(err), "Calculator requires a valid expression.");
+                }
                 const auto expression = arguments["expression"].get<std::string>();
-                if (expression.size() > 256) { err = "calculator expression exceeds limit"; return false; }
-                double value = 0.0; calculator_parser parser(expression); if (!parser.parse(value, err)) return false;
-                output = json({{"value", value}}).dump(); return true;
+                if (expression.size() > 256) return tool_limit_failure("tool.calculator.expression_too_large", "calculator expression exceeds limit", "Calculator expression exceeds the allowed size.");
+                double value = 0.0;
+                calculator_parser parser(expression);
+                if (!parser.parse(value, err)) return tool_validation_failure("tool.calculator.invalid_expression", std::move(err), "Calculator expression could not be parsed.");
+                return tool_success_json({{"value", value}});
             }, error);
         } else if (definition.executor_id == "builtin.time_now") {
-            installed = register_definition(definition, registry, [](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err)) return false;
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.time_now.invalid_arguments", std::move(err));
                 const auto timezone = arguments.value("timezone", std::string("UTC"));
-                if (timezone != "UTC") { err = "time_now currently supports only UTC"; return false; }
-                output = json({{"timezone", "UTC"}, {"time", utc_now()}}).dump(); return true;
+                if (timezone != "UTC") return tool_validation_failure("tool.time_now.unsupported_timezone", "time_now currently supports only UTC", "Only UTC is currently supported.");
+                return tool_success_json({{"timezone", "UTC"}, {"time", utc_now()}});
             }, error);
         } else if (definition.executor_id == "builtin.repository_list" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err)) return false;
-                std::filesystem::path path; if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), path, err)) return false;
-                const int depth = arguments.value("depth", 1); if (depth < 0 || depth > 3 || !std::filesystem::is_directory(path)) { err = "repository_list path or depth is invalid"; return false; }
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository_list.invalid_arguments", std::move(err));
+                std::filesystem::path path;
+                if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), path, err)) {
+                    return tool_validation_failure("tool.repository_list.invalid_path", std::move(err), "Repository path is outside the allowed root.");
+                }
+                const int depth = arguments.value("depth", 1);
+                if (depth < 0 || depth > 3) return tool_validation_failure("tool.repository_list.invalid_depth", "repository_list path or depth is invalid", "Repository list depth is out of bounds.");
+                if (!std::filesystem::is_directory(path)) return tool_not_found_failure("tool.repository_list.path_not_found", "repository_list path or depth is invalid", "Repository directory was not found.");
                 json entries = json::array();
                 for (auto it = std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && entries.size() < 128; ++it) {
                     if (it.depth() >= depth && it->is_directory()) it.disable_recursion_pending();
                     entries.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"directory", it->is_directory()}});
                 }
-                output = json({{"entries", entries}}).dump(); return true;
+                return tool_success_json({{"entries", entries}});
             }, error);
         } else if (definition.executor_id == "builtin.repository_read" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) { if (err.empty()) err = "repository_read requires a path"; return false; }
-                std::filesystem::path path; if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) return false;
-                const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199); if (start < 1 || end < start || end - start > 399 || !std::filesystem::is_regular_file(path) || !text_file(path)) { err = "repository_read range or file is invalid"; return false; }
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) {
+                    if (err.empty()) err = "repository_read requires a path";
+                    return tool_validation_failure("tool.repository_read.invalid_path", std::move(err), "Repository read requires a valid path.");
+                }
+                std::filesystem::path path;
+                if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) {
+                    return tool_validation_failure("tool.repository_read.path_escapes_root", std::move(err), "Repository path is outside the allowed root.");
+                }
+                const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199);
+                if (start < 1 || end < start || end - start > 399) {
+                    return tool_validation_failure("tool.repository_read.invalid_range", "repository_read range or file is invalid", "Requested line range is invalid.");
+                }
+                if (!std::filesystem::is_regular_file(path)) return tool_not_found_failure("tool.repository_read.file_not_found", "repository_read range or file is invalid", "Repository file was not found.");
+                if (!text_file(path)) return tool_validation_failure("tool.repository_read.not_text", "repository_read range or file is invalid", "Repository file is not a readable text file.");
                 std::ifstream file(path); std::string line; json lines = json::array(); for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) lines.push_back({{"line", number}, {"text", line}});
-                output = json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"lines", lines}}).dump(); return true;
+                return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"lines", lines}});
             }, error);
         } else if (definition.executor_id == "builtin.repository_search" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) { if (err.empty()) err = "repository_search requires a query"; return false; }
-                const auto query = arguments["query"].get<std::string>(); const int limit = arguments.value("max_results", 16); if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) { err = "repository_search arguments are out of bounds"; return false; }
-                std::filesystem::path root; if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, err)) return false;
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) {
+                    if (err.empty()) err = "repository_search requires a query";
+                    return tool_validation_failure("tool.repository_search.invalid_query", std::move(err), "Repository search requires a valid query.");
+                }
+                const auto query = arguments["query"].get<std::string>();
+                const int limit = arguments.value("max_results", 16);
+                if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) {
+                    return tool_validation_failure("tool.repository_search.out_of_bounds", "repository_search arguments are out of bounds", "Repository search arguments are out of bounds.");
+                }
+                std::filesystem::path root;
+                if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, err)) {
+                    return tool_validation_failure("tool.repository_search.invalid_path", std::move(err), "Repository path is outside the allowed root.");
+                }
                 json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
-                output = json({{"matches", matches}}).dump(); return true;
+                return tool_success_json({{"matches", matches}});
             }, error);
         } else if (definition.executor_id == "builtin.repository_diff" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.empty()) { if (err.empty()) err = "repository_diff takes no arguments"; return false; }
-                std::string diff; if (!git_read(bindings.repository_root, "diff --no-ext-diff --stat", diff, err)) return false;
-                output = json({{"summary", diff}}).dump(); return true;
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.empty()) {
+                    if (err.empty()) err = "repository_diff takes no arguments";
+                    return tool_validation_failure("tool.repository_diff.invalid_arguments", std::move(err), "Repository diff does not take arguments.");
+                }
+                std::string diff;
+                if (!git_read(bindings.repository_root, "diff --no-ext-diff --stat", diff, err)) {
+                    return tool_execution_failure("tool.repository_diff.git_failed", std::move(err), "Git diff could not be read.");
+                }
+                return tool_success_json({{"summary", diff}});
             }, error);
         } else if (definition.executor_id == "builtin.repository_log" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err)) return false;
-                const int limit = arguments.value("limit", 8); if (limit < 1 || limit > 20) { err = "repository_log limit is out of bounds"; return false; }
-                std::string log; if (!git_read(bindings.repository_root, "log --no-ext-diff --max-count=" + std::to_string(limit) + " --pretty=format:%h%x09%s", log, err)) return false;
-                output = json({{"commits", log}}).dump(); return true;
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository_log.invalid_arguments", std::move(err));
+                const int limit = arguments.value("limit", 8);
+                if (limit < 1 || limit > 20) return tool_validation_failure("tool.repository_log.invalid_limit", "repository_log limit is out of bounds", "Repository log limit is out of bounds.");
+                std::string log;
+                if (!git_read(bindings.repository_root, "log --no-ext-diff --max-count=" + std::to_string(limit) + " --pretty=format:%h%x09%s", log, err)) {
+                    return tool_execution_failure("tool.repository_log.git_failed", std::move(err), "Git log could not be read.");
+                }
+                return tool_success_json({{"commits", log}});
             }, error);
         } else if (definition.executor_id == "builtin.web_search") {
             if (bindings.web_search) {
                 installed = register_definition(definition, registry, bindings.web_search, error);
             } else {
-                installed = register_definition(definition, registry, [](const std::string & input, std::string & output, std::string & err) {
-                    json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) { if (err.empty()) err = "web_search requires a query"; return false; }
+                installed = register_definition(definition, registry, [](const std::string & input) {
+                    std::string err;
+                    json arguments;
+                    if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) {
+                        if (err.empty()) err = "web_search requires a query";
+                        return tool_validation_failure("tool.web_search.invalid_query", std::move(err), "Web search requires a valid query.");
+                    }
                     const auto query = trim_copy(arguments["query"].get<std::string>());
                     const int limit = arguments.value("limit", 5);
                     const auto site = trim_copy(arguments.value("site", std::string{}));
-                    if (query.empty() || query.size() > 512 || limit < 1 || limit > 8 || site.size() > 256) { err = "web_search arguments are out of bounds"; return false; }
+                    if (query.empty() || query.size() > 512 || limit < 1 || limit > 8 || site.size() > 256) {
+                        return tool_validation_failure("tool.web_search.out_of_bounds", "web_search arguments are out of bounds", "Web search arguments are out of bounds.");
+                    }
                     const auto search_query = site.empty() ? query : query + " site:" + site;
                     json fetched;
                     std::string raw_html;
-                    if (!http_fetch_text("https://lite.duckduckgo.com/lite/?q=" + url_encode(search_query), 128 * 1024, fetched, err, &raw_html)) return false;
+                    if (!http_fetch_text("https://lite.duckduckgo.com/lite/?q=" + url_encode(search_query), 128 * 1024, fetched, err, &raw_html)) {
+                        return tool_network_failure("tool.web_search.fetch_failed", std::move(err), "Web search request failed.");
+                    }
                     json results;
                     if (!parse_search_results(raw_html, limit, results)) {
-                        output = json({{"results", json::array()}, {"provider", "duckduckgo-lite"}}).dump();
-                        return true;
+                        return tool_success_json({{"results", json::array()}, {"provider", "duckduckgo-lite"}});
                     }
-                    output = json({{"results", results}, {"provider", "duckduckgo-lite"}}).dump();
-                    return true;
+                    return tool_success_json({{"results", results}, {"provider", "duckduckgo-lite"}});
                 }, error);
             }
         } else if (definition.executor_id == "builtin.web_fetch") {
             if (bindings.web_fetch) {
                 installed = register_definition(definition, registry, bindings.web_fetch, error);
             } else {
-                installed = register_definition(definition, registry, [](const std::string & input, std::string & output, std::string & err) {
-                    json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("url") || !arguments["url"].is_string()) { if (err.empty()) err = "web_fetch requires a url"; return false; }
+                installed = register_definition(definition, registry, [](const std::string & input) {
+                    std::string err;
+                    json arguments;
+                    if (!parse_object(input, arguments, err) || !arguments.contains("url") || !arguments["url"].is_string()) {
+                        if (err.empty()) err = "web_fetch requires a url";
+                        return tool_validation_failure("tool.web_fetch.invalid_url", std::move(err), "Web fetch requires a valid URL.");
+                    }
                     const auto url = trim_copy(arguments["url"].get<std::string>());
                     const auto extract = arguments.value("extract", std::string("text"));
                     const int max_bytes = arguments.value("max_bytes", 64000);
-                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 500000) { err = "web_fetch arguments are out of bounds"; return false; }
+                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 500000) {
+                        return tool_validation_failure("tool.web_fetch.out_of_bounds", "web_fetch arguments are out of bounds", "Web fetch arguments are out of bounds.");
+                    }
                     json fetched;
-                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err)) return false;
-                    output = fetched.dump();
-                    return true;
+                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err)) {
+                        return tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
+                    }
+                    return tool_success_text(fetched.dump());
                 }, error);
             }
         } else if (definition.executor_id == "builtin.memory_search" && bindings.memory_store) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) { if (err.empty()) err = "memory_search requires a query"; return false; }
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) {
+                    if (err.empty()) err = "memory_search requires a query";
+                    return tool_validation_failure("tool.memory_search.invalid_query", std::move(err), "Memory search requires a valid query.");
+                }
                 common_memory_query query = bindings.memory_query;
                 query.text = arguments["query"].get<std::string>();
                 query.limit = (size_t) arguments.value("limit", 5);
-                if (query.text.empty() || query.text.size() > 1024 || query.limit < 1 || query.limit > 8) { err = "memory_search arguments are out of bounds"; return false; }
-                if (bindings.embed_memory_query) { query.embedding.clear(); if (!bindings.embed_memory_query(query.text, query.embedding, err)) return false; }
+                if (query.text.empty() || query.text.size() > 1024 || query.limit < 1 || query.limit > 8) {
+                    return tool_validation_failure("tool.memory_search.out_of_bounds", "memory_search arguments are out of bounds", "Memory search arguments are out of bounds.");
+                }
+                if (bindings.embed_memory_query) {
+                    query.embedding.clear();
+                    if (!bindings.embed_memory_query(query.text, query.embedding, err)) {
+                        return tool_execution_failure("tool.memory_search.embedding_failed", std::move(err), "Memory query embedding failed.");
+                    }
+                }
                 common_memory_retrieval retrieval(*bindings.memory_store);
-                const auto hits = retrieval.retrieve(query, err); if (!err.empty()) return false;
+                const auto hits = retrieval.retrieve(query, err);
+                if (!err.empty()) return tool_execution_failure("tool.memory_search.retrieve_failed", std::move(err), "Memory search failed.");
                 json values = json::array();
                 for (const auto & hit : hits) values.push_back({{"memory", memory_value(hit.memory)}, {"score", hit.final_score}, {"provenance", hit.provenance}});
-                output = json({{"results", values}}).dump(); return true;
+                return tool_success_json({{"results", values}});
             }, error);
         } else if (definition.executor_id == "builtin.memory_get" && bindings.memory_store) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err) || !arguments.contains("id") || !arguments["id"].is_string()) { if (err.empty()) err = "memory_get requires an id"; return false; }
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("id") || !arguments["id"].is_string()) {
+                    if (err.empty()) err = "memory_get requires an id";
+                    return tool_validation_failure("tool.memory_get.invalid_id", std::move(err), "Memory get requires a valid id.");
+                }
                 const auto id = arguments["id"].get<std::string>();
-                if (id.empty() || id.size() > 256) { err = "memory id is out of bounds"; return false; }
-                const auto memory = bindings.memory_store->get(id, err); if (!err.empty()) return false;
-                if (!memory || !common_memory_scope_matches(*memory, bindings.memory_query)) { err = "memory is unavailable in the current scope"; return false; }
-                output = json({{"memory", memory_value(*memory)}}).dump(); return true;
+                if (id.empty() || id.size() > 256) return tool_validation_failure("tool.memory_get.out_of_bounds", "memory id is out of bounds", "Memory id is out of bounds.");
+                const auto memory = bindings.memory_store->get(id, err);
+                if (!err.empty()) return tool_execution_failure("tool.memory_get.load_failed", std::move(err), "Memory could not be loaded.");
+                if (!memory || !common_memory_scope_matches(*memory, bindings.memory_query)) {
+                    return tool_not_found_failure("tool.memory_get.unavailable", "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
+                }
+                return tool_success_json({{"memory", memory_value(*memory)}});
             }, error);
         } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_remember_proposal) {
             installed = register_definition(definition, registry, bindings.memory_remember_proposal, error, false, true);
         } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && !bindings.plan_id.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input, std::string & output, std::string & err) {
-                json arguments; if (!parse_object(input, arguments, err)) return false;
-                const auto plan = bindings.plan_store->get(bindings.plan_id, err); if (!err.empty()) return false;
-                if (!plan) { err = "bound plan is unavailable"; return false; }
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.plan_get.invalid_arguments", std::move(err));
+                const auto plan = bindings.plan_store->get(bindings.plan_id, err);
+                if (!err.empty()) return tool_execution_failure("tool.plan_get.load_failed", std::move(err), "Plan could not be loaded.");
+                if (!plan) return tool_not_found_failure("tool.plan_get.unavailable", "bound plan is unavailable", "Bound plan is unavailable.");
                 json steps = json::array();
                 for (const auto & step : plan->steps) steps.push_back({{"id", step.id}, {"title", step.title}, {"objective", step.objective}, {"status", (int) step.status}, {"selected_tool", step.selected_tool}});
                 json response = {{"plan_id", plan->id}, {"version", plan->version}, {"goal", plan->goal}, {"active_step", plan->active_step_id}, {"next_action", plan->next_action}, {"steps", steps}};
                 if (arguments.value("include_history", false)) {
-                    const auto history = bindings.plan_store->history(bindings.plan_id, err); if (!err.empty()) return false;
+                    const auto history = bindings.plan_store->history(bindings.plan_id, err);
+                    if (!err.empty()) return tool_execution_failure("tool.plan_get.history_failed", std::move(err), "Plan history could not be loaded.");
                     response["history_count"] = history.size();
                 }
-                output = response.dump(); return true;
+                return tool_success_text(response.dump());
             }, error);
         }
         if (!error.empty()) return false;

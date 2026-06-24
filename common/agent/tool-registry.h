@@ -3,7 +3,6 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <unordered_map>
 
 enum class common_tool_failure_class { validation, policy, not_found, timeout, network, execution, limit };
@@ -37,29 +36,6 @@ struct common_tool_execution_result {
     }
 };
 
-// Transitional internal convenience for the PoC adapter layer. Registry and
-// runtime always consume the structured result; adapters should assign the
-// structured form directly as they are migrated.
-struct common_tool_handler {
-    std::function<common_tool_execution_result(const std::string &)> invoke;
-    explicit operator bool() const { return (bool) invoke; }
-    common_tool_execution_result operator()(const std::string & arguments_json) const { return invoke(arguments_json); }
-
-    common_tool_handler & operator=(std::function<common_tool_execution_result(const std::string &)> value) {
-        invoke = std::move(value); return *this;
-    }
-    template<typename F, typename = std::enable_if_t<std::is_invocable_r_v<bool, F, const std::string &, std::string &, std::string &>>>
-    common_tool_handler & operator=(F value) {
-        invoke = [value = std::move(value)](const std::string & input) mutable {
-            std::string output, diagnostic;
-            if (value(input, output, diagnostic)) return common_tool_execution_result::success(std::move(output));
-            return common_tool_execution_result::failure("tool.execution_failed", common_tool_failure_class::execution, false,
-                "The native tool handler failed.", std::move(diagnostic));
-        };
-        return *this;
-    }
-};
-
 struct common_registered_tool {
     std::string name;
     uint32_t version = 1;
@@ -69,7 +45,7 @@ struct common_registered_tool {
     // A policy-gated proposal may write only through a native policy callback.
     // It is not a general write capability.
     bool policy_gated = false;
-    common_tool_handler handler;
+    std::function<common_tool_execution_result(const std::string &)> handler;
 };
 
 struct common_registered_tool_call { std::string name; std::string arguments_json = "{}"; };
@@ -82,8 +58,6 @@ public:
     // plan/tool contract from an ordinary handler failure.
     bool validate(const common_registered_tool_call & call, std::string & error) const;
     common_tool_execution_result execute(const common_registered_tool_call & call) const;
-    // Temporary caller bridge while non-agent presentation code migrates.
-    bool execute(const common_registered_tool_call & call, std::string & result, std::string & error) const;
     bool contains(const std::string & name) const;
     bool matches_binding(const std::string & name, uint32_t version, const std::string & executor_id) const;
     bool is_read_only(const std::string & name) const;
