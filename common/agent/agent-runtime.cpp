@@ -1,6 +1,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
 #include "plan/plan-bindings.h"
+#include "plan/plan-goal.h"
 #include "plan/plan-memory.h"
 #include "plan/plan-scheduler.h"
 
@@ -29,6 +30,47 @@ static bool infer_memory_search_query(const std::string & prompt, std::string & 
     const auto last = prompt.find_last_not_of(" \t\r\n");
     query = prompt.substr(first, last - first + 1);
     return query.size() <= 1024;
+}
+
+static bool apply_request_objective(const common_agent_request & request, common_plan_state & plan, std::string & error) {
+    const auto bounded = [](const std::string & value) { return value.size() <= 512; };
+    const auto purpose = request.objective && !request.objective->purpose.empty() ? request.objective->purpose : request.prompt;
+    const auto outcome = request.objective && !request.objective->desired_outcome.empty() ? request.objective->desired_outcome : request.prompt;
+    if (purpose.empty() || outcome.empty() || !bounded(purpose) || !bounded(outcome)) {
+        error = "agent objective requires bounded purpose and desired outcome";
+        return false;
+    }
+    if (request.objective) {
+        if (request.objective->success_criteria.size() > 8 || request.objective->constraints.size() > 8) {
+            error = "agent objective exceeds bounded criteria or constraints";
+            return false;
+        }
+        for (const auto & value : request.objective->success_criteria) if (value.empty() || !bounded(value)) { error = "agent objective contains invalid success criteria"; return false; }
+        for (const auto & value : request.objective->constraints) if (value.empty() || !bounded(value)) { error = "agent objective contains invalid constraints"; return false; }
+    }
+    // Purpose is owned by the caller, rather than an untrusted planner
+    // proposal. A planner may refine the executable goal, but cannot replace
+    // why the turn was requested.
+    plan.purpose = purpose;
+    if (plan.goal.empty()) plan.goal = outcome;
+    if (request.objective && !request.objective->success_criteria.empty()) {
+        plan.success_criteria.clear();
+        for (const auto & criterion : request.objective->success_criteria) {
+            if (!plan.success_criteria.empty()) plan.success_criteria += "; ";
+            plan.success_criteria += criterion;
+        }
+        if (plan.success_criteria.size() > 1024) { error = "agent objective success criteria are too long"; return false; }
+    } else if (plan.success_criteria.empty()) {
+        plan.success_criteria = "Provide a grounded, concise response.";
+    }
+    if (request.objective) {
+        for (size_t index = 0; index < request.objective->constraints.size(); ++index) {
+            plan.constraints.push_back({"objective-constraint-" + std::to_string(index + 1), request.objective->constraints[index], true});
+        }
+    }
+    for (auto & step : plan.steps) if (step.intended_contribution.empty()) step.intended_contribution = step.objective;
+    error.clear();
+    return true;
 }
 
 static common_agent_failure tool_failure(
@@ -134,6 +176,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     if (plan.id.empty()) {
         auto proposal = planner.create_plan(request, error);
         if (!error.empty()) { result.error = error; return result; }
+        if (!apply_request_objective(request, proposal.plan, error)) { result.error = error; return result; }
+        for (auto & operation : proposal.operations) {
+            if (operation.step && operation.step->intended_contribution.empty()) {
+                operation.step->intended_contribution = operation.step->objective;
+            }
+        }
         if (request.plan_id) proposal.plan.id = *request.plan_id;
         proposal.plan.scope = request.plan_scope;
         proposal.plan.namespace_id = request.namespace_id;
@@ -180,6 +228,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
 
         const auto schedule = common_plan_schedule(plan);
         if (schedule.complete && plan.status == common_plan_status::active) {
+            auto completed_candidate = plan;
+            completed_candidate.status = common_plan_status::completed;
+            const auto evaluation = common_plan_evaluate_goal(completed_candidate);
+            if (!evaluation.evidence_sufficient) {
+                result.error = "plan goal is not sufficiently evidenced";
+                if (!evaluation.unmet_criteria.empty()) result.error += ": " + evaluation.unmet_criteria.front();
+                return false;
+            }
             common_plan_operation complete_plan;
             complete_plan.kind = common_plan_operation_kind::complete_plan;
             complete_plan.plan_id = plan.id;

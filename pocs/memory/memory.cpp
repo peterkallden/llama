@@ -688,7 +688,7 @@ static bool export_agent_package(common_memory_store & memory_store, common_plan
     const std::string blueprint_prefix = prefix + "blueprint:";
     for (const auto & plan : plans) if (plan.kind == common_plan_kind::blueprint && plan.id.rfind(blueprint_prefix, 0) == 0) {
         common_agent_bootstrap_blueprint blueprint;
-        blueprint.id = plan.id.substr(blueprint_prefix.size()); blueprint.goal = plan.goal; blueprint.success_criteria = plan.success_criteria;
+        blueprint.id = plan.id.substr(blueprint_prefix.size()); blueprint.purpose = plan.purpose; blueprint.goal = plan.goal; blueprint.success_criteria = plan.success_criteria;
         blueprint.steps = plan.steps; blueprint.constraints = plan.constraints; blueprint.assumptions = plan.assumptions; blueprint.next_action = plan.next_action;
         package.blueprints.push_back(std::move(blueprint));
     }

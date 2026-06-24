@@ -74,7 +74,7 @@ Export the portable bootstrap definitions in the current scope without loading t
   --model unused.gguf --prompt export --agent-export .\work\agent-package.json
 ```
 
-`--agent-export` writes the canonical package form containing scoped bootstrap `procedures` and `blueprints`; it excludes embeddings, runtime IDs, observations and event history. `--agent-import PATH` reads that same safe package form. The first export slice is intentionally limited to these portable definition types; broader memory/state migration and a full Cozo export/import round-trip test remain follow-up work.
+`--agent-export` writes the canonical package form containing scoped bootstrap `procedures` and `blueprints`; it excludes embeddings, runtime IDs, observations and event history. Blueprint purpose and non-default step contributions are retained as portable definition metadata. `--agent-import PATH` reads that same safe package form. The first export slice is intentionally limited to these portable definition types; broader memory/state migration and a full Cozo export/import round-trip test remain follow-up work.
 
 ## Advanced configuration and reference
 
@@ -122,6 +122,12 @@ When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing 
 ### Model-backed chat loop
 
 `llama-memory chat --planning-mode mini` runs the bounded runtime around the already loaded chat model. The model-facing planner contract is deliberately compact: it returns `{goal,steps}`, where each step needs only an `id` and, when applicable, a `tool`, ordinary JSON `args`, optional `after` dependencies, and a `mode`. It never has to JSON-encode an object inside `arguments_json`. Native code expands this compact proposal into the full internal operations, supplies titles/objectives and empty metadata, normalizes safe shorthand such as one-string dependencies, and can add the final synthesis step. The older full proposal form remains parser-compatible for persisted or older callers.
+
+### Purpose, goal and evidence
+
+Each task plan has a caller-owned `purpose`, an executable `goal`, and bounded `success_criteria`. By default the user prompt supplies both purpose and desired outcome; an embedding API may instead provide `common_agent_objective` with an explicit purpose, desired outcome, criteria and constraints. The planner may refine the executable goal but cannot replace the caller-owned purpose. A compact proposal can describe a step's optional `contribution`; internally every step has an intended contribution, defaulting to its objective.
+
+Before the scheduler marks a plan complete, native code evaluates it deterministically: mandatory non-final steps require a recorded result or matching tool/reasoning observation, and the plan must have purpose, goal and success criteria. This is a completion guard, not a second model judge or a separate goal database. The result remains ordinary plan state, observations and event history.
 
 The pipeline is `strict parse -> safe normalization -> policy validation -> bounded fallback`. Normalization may only add deterministic structure; it never invents a tool, path, dependency, mutation payload, or ambiguous result selection. Invalid planner JSON still becomes a one-step, tool-free fallback plan. Output-format grammar begins at the first generated JSON token rather than consuming the chat template's assistant marker. A deterministic scheduler finds dependency- and evidence-ready pending steps in plan order and executes registered tools sequentially until its tool-batch budget is exhausted. Each result becomes a plan observation before the step is completed. Plan steps have an explicit mode: `tool`, `reasoning`, or `final_response`; a reasoning step produces one bounded JSON observation and only `final_response` produces the user-visible draft. `--reflection-mode always` may request a revision or propose the small allowlisted lifecycle operations `complete_step`, `activate_step` and `set_next_action`; reflection remains sideband data and is never appended to normal chat history.
 

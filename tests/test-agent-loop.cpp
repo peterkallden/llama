@@ -2,6 +2,7 @@
 #include "agent/memory-learning.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
+#include "plan/plan-goal.h"
 
 #include <cassert>
 
@@ -134,9 +135,24 @@ int main() {
 
     const auto created = runtime.run(request);
     assert(created.error.empty() && created.response == "draft");
+    const auto completed_plan = store.get("turn-1", error);
+    assert(completed_plan && completed_plan->purpose == request.prompt);
+    assert(common_plan_evaluate_goal(*completed_plan).evidence_sufficient);
     assert(created.plan_id && *created.plan_id == "turn-1" && created.reflected);
     const auto plan = store.get("turn-1", error);
     assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
+
+    common_plan_in_memory_store objective_store;
+    assert(objective_store.open("", error));
+    planner objective_planner;
+    common_agent_runtime objective_runtime(objective_store, objective_planner, e, r, &tools);
+    common_agent_request objective_request = request;
+    objective_request.objective = common_agent_objective{"Explain the current status", "Return a verified status", {"Use the lookup result"}, {"Do not mutate repository state"}};
+    const auto objective_result = objective_runtime.run(objective_request);
+    assert(objective_result.error.empty());
+    const auto objective_plan = objective_store.get("turn-1", error);
+    assert(objective_plan && objective_plan->purpose == "Explain the current status" && objective_plan->success_criteria == "Use the lookup result");
+    assert(objective_plan->constraints.size() == 1 && objective_plan->constraints.front().description == "Do not mutate repository state");
 
     request.plan_id = "turn-1";
     const auto resumed = runtime.run(request);

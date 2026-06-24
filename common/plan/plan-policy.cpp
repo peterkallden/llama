@@ -55,6 +55,7 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
     if (op.expected_version != plan.version) return deny("stale plan version");
     if (op.kind == common_plan_operation_kind::add_step) {
         if (!op.step || op.step->id.empty() || op.step->title.empty()) return deny("add_step requires an identified step with a title");
+        if (op.step->objective.size() > config.max_string_length || op.step->intended_contribution.size() > config.max_string_length) return deny("step objective or contribution is too long");
         const auto mode = common_plan_step_effective_mode(*op.step);
         if ((mode == common_plan_step_mode::tool) != op.step->tool_call.has_value()) return deny("step mode does not match tool binding");
         if (op.step->generated_from_memory && op.step->source_memory_ids.empty()) return deny("memory-generated step requires source memory id");
@@ -67,7 +68,7 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (!op.step) return deny("revise_step requires a replacement step");
         const auto * prior = find_step(plan, op.step->id);
         if (!prior) return deny("revise_step references an unknown step");
-        if (prior->title != op.step->title || prior->objective != op.step->objective || prior->depends_on != op.step->depends_on ||
+        if (prior->title != op.step->title || prior->objective != op.step->objective || prior->intended_contribution != op.step->intended_contribution || prior->depends_on != op.step->depends_on ||
                 prior->required_evidence != op.step->required_evidence || prior->source_memory_ids != op.step->source_memory_ids ||
                 prior->status != op.step->status || prior->optional != op.step->optional || prior->generated_from_memory != op.step->generated_from_memory ||
                 prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary) return deny("revise_step may only bind a tool to an unchanged step");

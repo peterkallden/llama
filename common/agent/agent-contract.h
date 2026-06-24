@@ -110,6 +110,17 @@ struct common_learning_signal {
     std::string summary;
 };
 
+// Host-owned intent.  It is optional so existing callers retain the prompt as
+// their effective purpose, while callers with a UI or API can make the user's
+// intended outcome and constraints explicit without asking the model to infer
+// authority from free-form context.
+struct common_agent_objective {
+    std::string purpose;
+    std::string desired_outcome;
+    std::vector<std::string> success_criteria;
+    std::vector<std::string> constraints;
+};
+
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
 
@@ -133,6 +144,7 @@ struct common_agent_request {
     // Runtime inputs are data only; tool execution remains policy-owned by
     // the caller-supplied registry.
     std::string prompt;
+    std::optional<common_agent_objective> objective;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
     std::optional<common_registered_tool_call> tool_call;

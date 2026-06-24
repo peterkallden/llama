@@ -104,6 +104,8 @@ bool parse_step(const json & source, const std::string & goal, common_plan_step 
     if (source.contains("objective") && !source["objective"].is_string()) { error = "step objective must be a string"; return false; }
     step.title = source.value("title", step.id);
     step.objective = source.value("objective", goal);
+    if (source.contains("contribution") && !source["contribution"].is_string()) { error = "step contribution must be a string"; return false; }
+    step.intended_contribution = source.value("contribution", step.objective);
     if (!normalize_dependencies(source, step.depends_on, error)) return false;
     if (source.contains("required_evidence") && !string_array(source["required_evidence"], step.required_evidence)) { error = "required_evidence must be a string array"; return false; }
     if (source.contains("source_memory_ids") && !string_array(source["source_memory_ids"], step.source_memory_ids)) { error = "source_memory_ids must be a string array"; return false; }
@@ -117,6 +119,7 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     if (!input.contains("goal") || !input["goal"].is_string() || !input.contains("steps") || !input["steps"].is_array()) { error = "compact plan proposal requires goal and steps"; return false; }
     if (input["steps"].empty() || input["steps"].size() > max_operations) { error = "invalid number of compact plan steps"; return false; }
     plan.goal = input["goal"].get<std::string>();
+    plan.purpose = input.value("purpose", plan.goal);
     plan.success_criteria = input.value("success_criteria", "Complete the requested task safely.");
     plan.next_action = input.value("next_action", "execute plan");
     bool has_final = false;
@@ -150,6 +153,7 @@ bool parse_legacy(const json & input, common_plan_state & plan, std::vector<comm
         !input["goal"].is_string() || !input["success_criteria"].is_string() || !input["next_action"].is_string() || !input["operations"].is_array()) { error = "plan proposal is missing required fields"; return false; }
     if (input["operations"].empty() || input["operations"].size() > max_operations) { error = "invalid number of plan operations"; return false; }
     plan.goal = input["goal"].get<std::string>();
+    plan.purpose = input.value("purpose", plan.goal);
     plan.success_criteria = input["success_criteria"].get<std::string>();
     plan.next_action = input["next_action"].get<std::string>();
     for (const auto & item : input["operations"]) {
@@ -172,10 +176,10 @@ std::string common_plan_proposal_json_schema() {
     const json schema = {
         {"type", "object"}, {"additionalProperties", false}, {"required", {"goal", "steps"}},
         {"properties", {
-            {"goal", {{"type", "string"}, {"maxLength", 256}}},
+            {"purpose", {{"type", "string"}, {"maxLength", 256}}}, {"goal", {{"type", "string"}, {"maxLength", 256}}},
             {"success_criteria", {{"type", "string"}, {"maxLength", 256}}}, {"next_action", {{"type", "string"}, {"maxLength", 256}}},
             {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"required", {"id"}}, {"properties", {
-                {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}},
+                {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
                 {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final"}}}}, {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                 {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}}}}},
                 {"args", {{"type", "object"}}}

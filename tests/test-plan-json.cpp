@@ -9,10 +9,12 @@ int main() {
     std::vector<common_plan_operation> operations;
     std::string error;
 
-    const auto compact = R"({"goal":"inspect bindings","steps":[{"id":"search","tool":"repository_search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository_read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
+    const auto compact = R"({"purpose":"inspect the current implementation","goal":"inspect bindings","steps":[{"id":"search","contribution":"find the relevant implementation","tool":"repository_search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository_read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
     assert(common_plan_parse_proposal_json(compact, plan, operations, error));
     assert(operations.size() == 3);
     assert(operations[0].step->tool_call->arguments_json == R"({"query":"plan bindings"})");
+    assert(plan.purpose == "inspect the current implementation");
+    assert(operations[0].step->intended_contribution == "find the relevant implementation");
     assert(operations[1].step->depends_on == std::vector<std::string>{"search"});
     assert(common_plan_step_effective_mode(*operations[2].step) == common_plan_step_mode::final_response);
 

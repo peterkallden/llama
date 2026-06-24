@@ -19,7 +19,7 @@ struct common_plan_observation { std::string id; std::string source; std::string
 // Data proposed by a plan; execution is owned by the agent tool registry.
 struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
 struct common_plan_step {
-    std::string id, title, objective;
+    std::string id, title, objective, intended_contribution;
     common_plan_step_status status = common_plan_step_status::pending;
     std::vector<std::string> depends_on, blocked_by, required_evidence, source_memory_ids;
     std::optional<std::string> selected_tool, result_summary;
@@ -41,7 +41,9 @@ struct common_plan_state {
     std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;
     common_plan_status status = common_plan_status::proposed;
-    std::string goal, success_criteria;
+    // Purpose is the stable user-facing reason for the work. Goal and success
+    // criteria describe the mutable execution target for this particular plan.
+    std::string purpose, goal, success_criteria;
     std::vector<common_plan_step> steps;
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;

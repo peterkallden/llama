@@ -42,6 +42,7 @@ struct common_agent_bootstrap_blueprint {
     // Short, untrusted-model-safe description used only to choose among
     // already installed candidates.
     std::string selection_description;
+    std::string purpose;
     std::string goal;
     std::string success_criteria;
     std::vector<common_plan_step> steps;

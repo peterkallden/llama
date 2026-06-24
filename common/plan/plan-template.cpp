@@ -7,7 +7,7 @@ bool common_plan_instantiate_template(const common_plan_template & source, const
     if (source.goal.empty() || source.success_criteria.empty()) { error = "template goal and success criteria are required"; return false; }
     common_plan_state out;
     out.id = instance_id; out.session_id = session_id; out.scope = options.scope; out.status = common_plan_status::proposed;
-    out.goal = source.goal; out.success_criteria = source.success_criteria; out.constraints = source.constraints; out.next_action = source.next_action; out.created_at = options.now; out.updated_at = options.now;
+    out.purpose = source.goal; out.goal = source.goal; out.success_criteria = source.success_criteria; out.constraints = source.constraints; out.next_action = source.next_action; out.created_at = options.now; out.updated_at = options.now;
     std::unordered_map<std::string, std::string> ids;
     for (const auto & step : source.steps) {
         if (step.id.empty() || ids.count(step.id)) { error = "template contains an empty or duplicate step id"; return false; }

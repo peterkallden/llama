@@ -165,6 +165,7 @@ bool common_agent_install_bootstrap_package(
             blueprint.project_id = config.project_id;
             blueprint.kind = common_plan_kind::blueprint;
             blueprint.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
+            blueprint.purpose = definition.purpose.empty() ? definition.goal : definition.purpose;
             blueprint.goal = definition.goal;
             blueprint.success_criteria = definition.success_criteria;
             blueprint.steps = definition.steps;

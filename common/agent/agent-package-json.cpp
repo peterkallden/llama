@@ -104,13 +104,14 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 if (!item.is_object() || !item.contains("steps") || !item["steps"].is_array()) { error = "package blueprint requires steps"; return false; }
                 common_agent_bootstrap_blueprint blueprint;
                 blueprint.id = item.value("id", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
+                blueprint.purpose = item.value("purpose", std::string{});
                 blueprint.goal = item.value("goal", std::string{}); blueprint.success_criteria = item.value("success_criteria", std::string{});
                 if (item.contains("next_action")) { if (!item["next_action"].is_string()) { error = "next_action must be a string"; return false; } blueprint.next_action = item["next_action"].get<std::string>(); }
                 if (item.contains("constraints") && !constraints(item["constraints"], blueprint.constraints)) { error = "blueprint constraints are invalid"; return false; }
                 if (item.contains("assumptions") && !assumptions(item["assumptions"], blueprint.assumptions)) { error = "blueprint assumptions are invalid"; return false; }
                 for (const auto & source : item["steps"]) {
                     if (!source.is_object()) { error = "package step must be an object"; return false; }
-                    common_plan_step step; step.id = source.value("id", std::string{}); step.title = source.value("title", std::string{}); step.objective = source.value("objective", std::string{}); step.optional = source.value("optional", false);
+                    common_plan_step step; step.id = source.value("id", std::string{}); step.title = source.value("title", std::string{}); step.objective = source.value("objective", std::string{}); step.intended_contribution = source.value("contribution", step.objective); step.optional = source.value("optional", false);
                     if (source.contains("depends_on") && !strings(source["depends_on"], step.depends_on)) { error = "step dependencies must be strings"; return false; }
                     if (source.contains("required_evidence") && !strings(source["required_evidence"], step.required_evidence)) { error = "step required_evidence must be strings"; return false; }
                     blueprint.steps.push_back(std::move(step));
@@ -129,10 +130,11 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
     for (const auto & blueprint : package.blueprints) {
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
         if (!blueprint.selection_description.empty()) value["selection_description"] = blueprint.selection_description;
+        if (!blueprint.purpose.empty()) value["purpose"] = blueprint.purpose;
         if (blueprint.next_action) value["next_action"] = *blueprint.next_action;
         if (!blueprint.constraints.empty()) { value["constraints"] = json::array(); for (const auto & constraint : blueprint.constraints) value["constraints"].push_back({{"id", constraint.id}, {"description", constraint.description}, {"hard", constraint.hard}}); }
         if (!blueprint.assumptions.empty()) { value["assumptions"] = json::array(); for (const auto & assumption : blueprint.assumptions) value["assumptions"].push_back({{"id", assumption.id}, {"statement", assumption.statement}, {"confidence", assumption.confidence}}); }
-        for (const auto & step : blueprint.steps) { json item = {{"id", step.id}, {"title", step.title}, {"objective", step.objective}}; if (step.optional) item["optional"] = true; if (!step.depends_on.empty()) item["depends_on"] = step.depends_on; if (!step.required_evidence.empty()) item["required_evidence"] = step.required_evidence; value["steps"].push_back(std::move(item)); }
+        for (const auto & step : blueprint.steps) { json item = {{"id", step.id}, {"title", step.title}, {"objective", step.objective}}; if (!step.intended_contribution.empty() && step.intended_contribution != step.objective) item["contribution"] = step.intended_contribution; if (step.optional) item["optional"] = true; if (!step.depends_on.empty()) item["depends_on"] = step.depends_on; if (!step.required_evidence.empty()) item["required_evidence"] = step.required_evidence; value["steps"].push_back(std::move(item)); }
         root["blueprints"].push_back(std::move(value));
     }
     text = pretty ? root.dump(2) + "\n" : root.dump(); error.clear(); return true;

@@ -22,6 +22,7 @@ bool common_plan_instantiate_blueprint(
     out.kind = common_plan_kind::task;
     out.derived_from_plan_id = blueprint.id;
     out.scope = scope;
+    out.purpose = blueprint.purpose.empty() ? blueprint.goal : blueprint.purpose;
     out.goal = blueprint.goal;
     out.success_criteria = blueprint.success_criteria;
     out.constraints = blueprint.constraints;
