@@ -111,7 +111,7 @@ The bootstrap profiles are `minimal`, `memory-read`, `memory` and `research`. Th
 
 On Windows, these two agent network tools use WinHTTP and the Windows certificate store (`LLAMA_AGENT_WEB_USE_WINHTTP`, supplied by the agent CMake target). On Linux and other supported platforms they use the existing httplib transport and its configured OpenSSL-compatible TLS backend. This keeps the tool contract identical while using the platform's appropriate trust path.
 
-`common_tool_profile_to_chat_tools` and `common_tool_dispatch_chat_calls` connect that native registry to llama.cpp's existing chat-template and tool-call parser layer. The former exposes only definitions that are both profile-approved and actually registered; the latter turns a parsed assistant tool call into a bounded `role: tool` message for the next generation. It assigns a stable runtime call id when a template omitted one, caps results, and never executes proposal or unregistered tools. The first limit is one call per batch.
+`common_tool_profile_to_chat_tools` and `common_tool_dispatch_chat_calls` connect that native registry to llama.cpp's existing chat-template and tool-call parser layer. The former exposes only definitions that are both profile-approved and actually registered; the latter turns a parsed assistant tool call into a bounded `role: tool` message for the next generation. It assigns a stable runtime call id when a template omitted one, caps results, and never executes proposal or unregistered tools. Native handlers now return a structured `common_tool_execution_result` with `failure_code`, `failure_class`, `retryable`, `safe_summary`, and optional raw diagnostics. The chat bridge forwards only the safe structured fields into the tool message; raw diagnostics stay local to the caller. The first limit is one call per batch.
 
 When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing `llama-memory chat` PoC exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs bounded registered-tool rounds, and completes with a tool-free final generation. `memory_remember` is available as a policy-gated proposal in `memory` and `research`; it is not an unrestricted write capability. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags.
 
@@ -162,7 +162,7 @@ The planner is deliberately fail-closed for actions but fail-soft for availabili
 
 The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits tool executions per run, while reasoning steps do not consume that tool budget, and an active successful step is never re-executed after its observation is recorded. The scheduler distinguishes `runnable`, `blocked`, `complete` and `inactive`: a mandatory step waiting on missing evidence or a failed dependency is blocked, not terminal. Only completed, failed and cancelled plans are terminal. The scheduler, rather than reflection, normally progresses the DAG and therefore permits bounded chains such as `memory_search → memory_get` without model-issued lifecycle operations. Reflection remains the path for repair, replanning and answer-quality review. This first scheduler slice is sequential and deterministic; it does not run ready steps in parallel or execute arbitrary shell commands.
 
-An ordinary registered-tool handler failure records a capped JSON error observation and marks that active step `failed`; it does not abort the whole agent process. The following draft and reflection can therefore report the limitation honestly or propose an allowed repair/retry. Unregistered tools, disallowed policy classes, invalid materialized arguments and other tool-contract failures still stop execution fail-closed.
+An ordinary registered-tool handler failure records a capped JSON error observation and marks that active step `failed`; it does not abort the whole agent process. The following draft and reflection can therefore report the limitation honestly or propose an allowed repair/retry. Unregistered tools, disallowed policy classes, invalid materialized arguments and other tool-contract failures still stop execution fail-closed. Runtime failure classification no longer depends on string-matching executor text: adapters return explicit native classes such as `validation`, `policy`, `not_found`, `timeout`, `network`, `execution`, or `limit`, and the runtime maps those to the agent-facing failure envelope.
 
 Reflection is a sideband interface. Its JSON parser accepts only a short decision, readiness flag, confidence, and revision guidance. It neither requires nor stores chain-of-thought, and the agent runtime never puts reflection output into normal conversation history.
 
@@ -191,7 +191,23 @@ Reflection uses a compact outer JSON schema to keep local grammar sampling bound
 
 ### Model-safe failure observations
 
-Tool failures are rendered to the plan/reflection context as a bounded native envelope: stable `code`, `class`, `stage`, `tool`, `step_id`, `retryable`, `safe_summary` and evidence ID. The initial classifications are `validation`, `policy`, `not_found`, `timeout`, `network` and `execution`. Raw executor diagnostics remain available to the local caller and audit event, but are not persisted in the model-facing plan observation. This lets a later repair policy reason about a failure without treating arbitrary tool output as instructions.
+Tool failures are rendered to the plan/reflection context as a bounded native envelope: stable `code`, `class`, `stage`, `tool`, `step_id`, `retryable`, `safe_summary` and evidence ID. The initial classifications are `validation`, `policy`, `not_found`, `timeout`, `network`, `execution`, and `limit`. Raw executor diagnostics remain available to the local caller and audit event, but are not persisted in the model-facing plan observation. This lets a later repair policy reason about a failure without treating arbitrary tool output as instructions.
+
+The same structured contract also reaches the chat-template tool bridge. A failed tool call becomes a bounded `role: tool` payload such as:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "tool.web_fetch.request_failed",
+    "message": "Web fetch request failed.",
+    "retryable": true,
+    "class": "network"
+  }
+}
+```
+
+Successful calls continue to return either parsed JSON under `result` or plain text under `result_text`.
 
 ### Contract and capability boundaries
 
