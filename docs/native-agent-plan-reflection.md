@@ -187,6 +187,12 @@ Reflection uses a compact outer JSON schema to keep local grammar sampling bound
 
 Tool failures are rendered to the plan/reflection context as a bounded native envelope: stable `code`, `class`, `stage`, `tool`, `step_id`, `retryable`, `safe_summary` and evidence ID. The initial classifications are `validation`, `policy`, `not_found`, `timeout`, `network` and `execution`. Raw executor diagnostics remain available to the local caller and audit event, but are not persisted in the model-facing plan observation. This lets a later repair policy reason about a failure without treating arbitrary tool output as instructions.
 
+### Contract and capability boundaries
+
+Native tool invocation uses one bounded object-contract path: parse JSON, canonicalize its representation, validate the supported schema subset, apply runtime policy, then invoke the bound executor. The same parse/normalize/validate/policy pattern is the intended boundary for future reflection, import and procedure-patch contracts.
+
+Tools retain three separate layers. The catalog declares versioned metadata and profile membership; the registry owns executable handlers; adapters bind a catalog definition to local runtime resources. A tool is model-visible only when the registered handler matches the catalog definition's name, version and `executor_id`. Catalog metadata alone never supplies executable code.
+
 ### Explicit user corrections
 
 The runtime does not infer corrections from arbitrary user text. An integration may instead supply an explicit `user_correction` with a bounded statement and mandatory `source_turn_id`. The runtime records it as an evidence-addressable `user_correction` observation and native learning signal. It may support a later procedure candidate only through the ordinary post-turn extractor and memory policy; it cannot directly alter a procedure, blueprint, plan scope or memory record.

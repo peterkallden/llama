@@ -118,6 +118,8 @@ bool register_definition(const common_tool_definition & definition, common_tool_
         std::function<bool(const std::string &, std::string &, std::string &)> handler, std::string & error, bool read_only = true, bool policy_gated = false) {
     common_registered_tool tool;
     tool.name = definition.name;
+    tool.version = definition.version;
+    tool.executor_id = definition.executor_id;
     tool.arguments_schema = definition.input_schema_json;
     tool.read_only = read_only;
     tool.policy_gated = policy_gated;

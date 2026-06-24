@@ -10,7 +10,7 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
     const auto definitions = catalog.load_profile(profile_id, error);
     if (!error.empty()) return false;
     for (const auto & definition : definitions) {
-        if (!definition.enabled || !registry.contains(definition.name)) continue;
+        if (!definition.enabled || !registry.matches_binding(definition.name, definition.version, definition.executor_id)) continue;
         const bool read_only = definition.risk_class == common_tool_risk_class::local_read && registry.is_read_only(definition.name);
         const bool proposal = definition.risk_class == common_tool_risk_class::memory_proposal && definition.requires_confirmation && registry.is_policy_gated(definition.name);
         if (!read_only && !proposal) continue;

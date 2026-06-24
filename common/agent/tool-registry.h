@@ -7,6 +7,8 @@
 
 struct common_registered_tool {
     std::string name;
+    uint32_t version = 1;
+    std::string executor_id = "native.unnamed";
     std::string arguments_schema;
     bool read_only = true;
     // A policy-gated proposal may write only through a native policy callback.
@@ -26,6 +28,7 @@ public:
     bool validate(const common_registered_tool_call & call, std::string & error) const;
     bool execute(const common_registered_tool_call & call, std::string & result, std::string & error) const;
     bool contains(const std::string & name) const;
+    bool matches_binding(const std::string & name, uint32_t version, const std::string & executor_id) const;
     bool is_read_only(const std::string & name) const;
     bool is_policy_gated(const std::string & name) const;
 private:
