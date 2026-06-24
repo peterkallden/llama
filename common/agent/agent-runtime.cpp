@@ -5,6 +5,7 @@
 #include "plan/plan-scheduler.h"
 
 #include <nlohmann/json.hpp>
+#include <cctype>
 #include <regex>
 #include <set>
 
@@ -28,6 +29,49 @@ static bool infer_memory_search_query(const std::string & prompt, std::string & 
     const auto last = prompt.find_last_not_of(" \t\r\n");
     query = prompt.substr(first, last - first + 1);
     return query.size() <= 1024;
+}
+
+static common_agent_failure tool_failure(
+        const std::string & tool_name,
+        const std::string & step_id,
+        const std::string & evidence_id,
+        const std::string & code,
+        common_agent_failure_class classification,
+        bool retryable,
+        const std::string & safe_summary) {
+    return {code, classification, "tool_execution", tool_name, step_id, evidence_id, retryable, safe_summary};
+}
+
+static json render_failure(const common_agent_failure & failure) {
+    return {
+        {"code", failure.code},
+        {"class", common_agent_failure_class_name(failure.classification)},
+        {"stage", failure.stage},
+        {"tool", failure.tool_name},
+        {"step_id", failure.step_id},
+        {"retryable", failure.retryable},
+        {"safe_summary", failure.safe_summary},
+        {"evidence_id", failure.evidence_id},
+    };
+}
+
+static common_agent_failure classify_tool_execution_failure(
+        const std::string & tool_name,
+        const std::string & step_id,
+        const std::string & evidence_id,
+        const std::string & raw_error) {
+    std::string normalized = raw_error;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    if (normalized.find("not found") != std::string::npos) {
+        return tool_failure(tool_name, step_id, evidence_id, "tool.not_found", common_agent_failure_class::not_found, true, "The requested resource was not found.");
+    }
+    if (normalized.find("timeout") != std::string::npos || normalized.find("timed out") != std::string::npos) {
+        return tool_failure(tool_name, step_id, evidence_id, "tool.timeout", common_agent_failure_class::timeout, true, "The tool did not finish within its allowed time.");
+    }
+    if (normalized.find("network") != std::string::npos || normalized.find("connection") != std::string::npos) {
+        return tool_failure(tool_name, step_id, evidence_id, "tool.network_failure", common_agent_failure_class::network, true, "The tool could not reach its required network resource.");
+    }
+    return tool_failure(tool_name, step_id, evidence_id, "tool.execution_failed", common_agent_failure_class::execution, false, "The tool failed without a safe recovery classification.");
 }
 
 // Defaults are deliberately limited to deterministic read-only values. They
@@ -217,22 +261,24 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 continue;
             }
             if (tool_batches >= request.max_tool_batches) break;
-            if (!tools || request.max_tool_batches == 0) { result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
-            if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
+            if (!tools || request.max_tool_batches == 0) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.unavailable", common_agent_failure_class::execution, false, "Registered tool execution is unavailable.")); result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
+            if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             apply_safe_tool_defaults(request, *tool_call);
-            if (!tools->validate(*tool_call, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "invalid registered tool contract: " + error; return result; }
+            if (!tools->validate(*tool_call, error)) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.")); result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "invalid registered tool contract: " + error; return result; }
             std::string tool_result;
             if (!tools->execute(*tool_call, tool_result, error)) {
                 const std::string tool_error = error;
                 error.clear();
                 if (tool_step_id == "request") { result.events.push_back({common_agent_event_type::tool_rejected, tool_error, {}, plan.id}); result.error = "registered request tool failed: " + tool_error; return result; }
                 const std::string failure_observation_id = "tool:" + tool_step_id + ":" + tool_call->name;
+                const auto failure = classify_tool_execution_failure(tool_call->name, tool_step_id, failure_observation_id, tool_error);
+                result.failures.push_back(failure);
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool failure";
-                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"error", tool_error}, {"tool", tool_call->name}}).dump(), 0.0f, {}, 0};
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, 0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;

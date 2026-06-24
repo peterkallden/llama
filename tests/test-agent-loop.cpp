@@ -206,5 +206,12 @@ int main() {
     const auto & failure_signal = failed_tool_run.learning_signals.front();
     assert(failure_signal.type == common_learning_signal_type::tool_failure);
     assert(failure_signal.tool_name == "lookup" && failure_signal.evidence_id == "tool:lookup:lookup");
+    assert(failed_tool_run.failures.size() == 1);
+    assert(failed_tool_run.failures.front().code == "tool.not_found");
+    assert(failed_tool_run.failures.front().classification == common_agent_failure_class::not_found);
+    const auto failed_plan = failure_store.get("turn-1", error);
+    assert(failed_plan && failed_plan->observations.size() == 1);
+    assert(failed_plan->observations.front().summary.find("tool.not_found") != std::string::npos);
+    assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
     return 0;
 }

@@ -33,6 +33,46 @@ enum class common_learning_signal_type {
     reflection_hint,
 };
 
+// Stable, model-safe failure categories. The runtime keeps raw diagnostics
+// outside this contract; repair prompts receive only bounded classifications.
+enum class common_agent_failure_class {
+    validation,
+    policy,
+    not_found,
+    timeout,
+    network,
+    execution,
+    model_format,
+    plan_conflict,
+    limit,
+};
+
+inline const char * common_agent_failure_class_name(common_agent_failure_class value) {
+    switch (value) {
+        case common_agent_failure_class::validation:    return "validation";
+        case common_agent_failure_class::policy:        return "policy";
+        case common_agent_failure_class::not_found:     return "not_found";
+        case common_agent_failure_class::timeout:       return "timeout";
+        case common_agent_failure_class::network:       return "network";
+        case common_agent_failure_class::execution:     return "execution";
+        case common_agent_failure_class::model_format:  return "model_format";
+        case common_agent_failure_class::plan_conflict: return "plan_conflict";
+        case common_agent_failure_class::limit:         return "limit";
+    }
+    return "execution";
+}
+
+struct common_agent_failure {
+    std::string code;
+    common_agent_failure_class classification = common_agent_failure_class::execution;
+    std::string stage;
+    std::string tool_name;
+    std::string step_id;
+    std::string evidence_id;
+    bool retryable = false;
+    std::string safe_summary;
+};
+
 inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
     switch (type) {
         case common_learning_signal_type::tool_failure: return "tool_failure";
@@ -100,6 +140,7 @@ struct common_agent_result {
     std::string memory_learning_summary;
     size_t memory_learning_related_count = 0;
     std::vector<common_learning_signal> learning_signals;
+    std::vector<common_agent_failure> failures;
 
     std::optional<std::string> plan_id;
     uint64_t plan_version = 0;
