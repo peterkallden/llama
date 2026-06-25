@@ -1,5 +1,5 @@
 set(TARGET llama-memory-poc)
-add_executable(${TARGET} memory.cpp memory-cli-config.cpp memory-cli-chat.cpp)
+add_executable(${TARGET} memory.cpp memory-cli-config.cpp memory-cli-chat.cpp memory-cli-memory.cpp memory-cli-run.cpp)
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
