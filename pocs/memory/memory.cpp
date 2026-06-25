@@ -950,12 +950,12 @@ public:
         // (including add_step payloads) before any plan mutation is applied.
         // This avoids a Windows grammar-sampler fast-fail caused by the much
         // larger recursively nested operation schema.
-        const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":4,"items":{"type":"object"}}}})";
+        const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reflection_options, output, params, decoded, reflection_schema)) {
             error = "model reflection generation failed";
             return result;
         }
-        if (!common_reflection_parse_json(output, result, error, 4)) {
+        if (!common_reflection_parse_json(output, result, error, 8)) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
             result.decision = common_reflection_decision::accept;
