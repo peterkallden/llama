@@ -34,6 +34,10 @@ int main() {
     assert(operations[0].step->tool_call->arguments_json == R"({"expression":"17 * 23"})");
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository_search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
+    assert(error == "duplicate step id");
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"answer","tool":"calculator","args":{"expression":"6 * 7"}}]})", plan, operations, error));
+    assert(error == "native final step id conflicts with proposed step");
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
 
     common_plan_state context_plan;

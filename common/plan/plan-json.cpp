@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <nlohmann/json.hpp>
+#include <set>
 
 using json = nlohmann::ordered_json;
 
@@ -123,9 +124,11 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     plan.success_criteria = input.value("success_criteria", "Complete the requested task safely.");
     plan.next_action = input.value("next_action", "execute plan");
     bool has_final = false;
+    std::set<std::string> seen_step_ids;
     for (const auto & source : input["steps"]) {
         common_plan_step step;
         if (!parse_step(source, plan.goal, step, error)) return false;
+        if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
         has_final = has_final || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
@@ -136,6 +139,7 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     if (!has_final && operations.size() < max_operations) {
         common_plan_step final_step;
         final_step.id = "answer";
+        if (seen_step_ids.count(final_step.id)) { error = "native final step id conflicts with proposed step"; return false; }
         final_step.title = "Answer";
         final_step.objective = "Answer the user using the completed plan.";
         for (const auto & operation : operations) if (operation.step) final_step.depends_on.push_back(operation.step->id);
@@ -156,10 +160,12 @@ bool parse_legacy(const json & input, common_plan_state & plan, std::vector<comm
     plan.purpose = input.value("purpose", plan.goal);
     plan.success_criteria = input["success_criteria"].get<std::string>();
     plan.next_action = input["next_action"].get<std::string>();
+    std::set<std::string> seen_step_ids;
     for (const auto & item : input["operations"]) {
         if (!item.is_object() || item.value("kind", std::string()) != "add_step" || !item.contains("step")) { error = "unsupported plan operation"; return false; }
         common_plan_step step;
         if (!parse_step(item["step"], plan.goal, step, error)) return false;
+        if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
         operation.reason_summary = item.value("reason_summary", std::string());
