@@ -51,6 +51,7 @@ int main() {
     assert(error == "native final step id conflicts with proposed step");
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
     assert(common_plan_proposal_json_schema().find(R"("required":["id"])") == std::string::npos);
+    assert(common_plan_proposal_json_schema().find("oneOf") == std::string::npos);
 
     common_plan_state context_plan;
     context_plan.goal = "Use only relevant evidence";

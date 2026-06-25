@@ -215,11 +215,8 @@ std::string common_plan_proposal_json_schema() {
             {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"properties", {
                 {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
                 {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final", "final_response"}}}},
-                {"after", {{"oneOf", json::array({json{{"type", "string"}}, json{{"type", "array"}, {"items", {{"type", "string"}}}}})}}},
-                {"tool", {{"oneOf", json::array({
-                    json{{"type", "string"}, {"maxLength", 256}},
-                    json{{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}, {"args", {{"type", "object"}}}}}}
-                })}}},
+                {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}, {"args", {{"type", "object"}}}}}}},
                 {"args", {{"type", "object"}}}
             }}}}}}
         }}

@@ -337,7 +337,31 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (!tools || request.max_tool_batches == 0) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.unavailable", common_agent_failure_class::execution, false, "Registered tool execution is unavailable.")); result.events.push_back({common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             apply_safe_tool_defaults(request, *tool_call);
-            if (!tools->validate(*tool_call, error)) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.")); result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "invalid registered tool contract: " + error; return result; }
+            if (!tools->validate(*tool_call, error)) {
+                const std::string failure_observation_id = "tool:" + tool_step_id + ":" + tool_call->name;
+                const auto validation_error = error;
+                auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
+                result.failures.push_back(failure);
+                common_plan_operation observed;
+                observed.kind = common_plan_operation_kind::record_observation;
+                observed.plan_id = plan.id;
+                observed.expected_version = plan.version;
+                observed.reason_summary = "registered tool validation failure";
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, 0};
+                if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+                common_plan_operation failed;
+                failed.kind = common_plan_operation_kind::fail_step;
+                failed.plan_id = plan.id;
+                failed.expected_version = plan.version;
+                failed.step_id = tool_step_id;
+                failed.reason_summary = "registered tool validation failed";
+                if (!store.apply(failed, plan, error)) { result.error = error; return result; }
+                result.learning_signals.push_back({common_learning_signal_type::tool_failure, plan.id, tool_step_id,
+                    tool_call->name, failure_observation_id, "registered tool validation failed"});
+                result.events.push_back({common_agent_event_type::tool_rejected, validation_error, {}, plan.id});
+                result.events.push_back({common_agent_event_type::plan_updated, "tool validation failure recorded for repair", {}, plan.id});
+                break;
+            }
             const auto execution = tools->execute(*tool_call);
             if (!execution.ok) {
                 if (tool_step_id == "request") { result.events.push_back({common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id}); result.error = "registered request tool failed: " + execution.safe_summary; return result; }

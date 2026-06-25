@@ -87,7 +87,7 @@ bool common_schema_normalize_and_validate_object(const std::string & input_json,
     const auto required = schema.value("required", json::array());
     const auto properties = schema.value("properties", json::object());
     for (const auto & key : required) if (!key.is_string() || !input.contains(key.get<std::string>())) { error = "required contract field is missing"; return false; }
-    if (schema.value("additionalProperties", true) == false) for (auto field = input.begin(); field != input.end(); ++field) if (!properties.contains(field.key())) { error = "unexpected contract field"; return false; }
+    if (schema.value("additionalProperties", true) == false) for (auto field = input.begin(); field != input.end(); ++field) if (!properties.contains(field.key())) { error = "unexpected contract field: " + field.key(); return false; }
     for (auto field = input.begin(); field != input.end(); ++field) if (properties.contains(field.key()) && !validate_value(field.value(), properties[field.key()], field.key(), error)) return false;
     normalized_json = input.dump();
     error.clear();

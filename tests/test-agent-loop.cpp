@@ -85,6 +85,26 @@ public:
     }
 };
 
+class invalid_tool_arguments_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "invalid-tool-arguments";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        common_plan_step step{"lookup", "Lookup", "Get facts"};
+        step.status = common_plan_step_status::active;
+        step.selected_tool = "lookup";
+        step.tool_call = common_plan_tool_call{"lookup", R"({"id":"status","tool":"lookup"})"};
+        proposal.plan.steps.push_back(std::move(step));
+        proposal.plan.active_step_id = "lookup";
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
 class unstructured_reasoning_executor final : public common_action_executor {
 public:
     std::string generate_draft(const common_agent_request &, const common_plan_state &, const std::vector<std::string> &, std::string & error) override {
@@ -285,5 +305,21 @@ int main() {
     assert(failed_plan && failed_plan->observations.size() == 1);
     assert(failed_plan->observations.front().summary.find("tool.not_found") != std::string::npos);
     assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
+
+    common_plan_in_memory_store invalid_args_store;
+    assert(invalid_args_store.open("", error));
+    invalid_tool_arguments_planner invalid_args_p;
+    common_agent_runtime invalid_args_runtime(invalid_args_store, invalid_args_p, e, r, &tools);
+    common_agent_request invalid_args_request = failure_request;
+    const auto invalid_args_run = invalid_args_runtime.run(invalid_args_request);
+    assert(invalid_args_run.error.empty() && invalid_args_run.response == "draft");
+    assert(invalid_args_run.learning_signals.size() == 1);
+    assert(invalid_args_run.learning_signals.front().type == common_learning_signal_type::tool_failure);
+    assert(invalid_args_run.failures.size() == 1);
+    assert(invalid_args_run.failures.front().code == "tool.invalid_arguments");
+    assert(invalid_args_run.failures.front().classification == common_agent_failure_class::validation);
+    const auto invalid_args_plan = invalid_args_store.get("invalid-tool-arguments", error);
+    assert(invalid_args_plan && invalid_args_plan->observations.size() == 1);
+    assert(invalid_args_plan->observations.front().summary.find("unexpected contract field: tool") != std::string::npos);
     return 0;
 }

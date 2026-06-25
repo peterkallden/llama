@@ -794,7 +794,7 @@ public:
             "Each step needs only {tool?,args?,after?,mode?,id?}. "
             "tool is {name,arguments?}; args and arguments are ordinary JSON objects, never JSON encoded strings. "
             "Use tool only when it is one of the registered tools. For calculator use args:{expression:'17 * 23'}; for time_now use args:{}. "
-            "after is optional; when omitted, the runtime chains each step after the previous one. "
+            "after is an array of prior step IDs; when omitted, the runtime chains each step after the previous one. "
             "A tool step has mode tool. A reasoning step has mode reasoning. The runtime adds the final answer step automatically, so do not emit one unless you need a custom final dependency shape. "
             "The runtime supplies IDs when omitted, plus titles, objectives, empty evidence lists, operation metadata, and safe defaults. Prefer omitting id and after unless you need branching. Keep values under twelve words.";
         common_chat_msg user;
@@ -1663,9 +1663,22 @@ static int run_chat(common_memory_store & store, args a) {
             bindings.embed_memory_query = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return ensure_embedding(a, text, embedding, "tool query", embedding_error);
             };
-            bindings.memory_remember_proposal = [&store, &a](const std::string & arguments, std::string & result, std::string &) {
-                result = memory_remember_tool_result(store, a, arguments);
-                return true;
+            bindings.memory_remember_proposal = [&store, &a](const std::string & arguments) {
+                const std::string result = memory_remember_tool_result(store, a, arguments);
+                const auto parsed = json::parse(result, nullptr, false);
+                if (parsed.is_object() && parsed.value("ok", false)) {
+                    return common_tool_execution_result::success(result);
+                }
+                std::string summary = "memory_remember proposal rejected";
+                if (parsed.is_object() && parsed.contains("error") && parsed["error"].is_string()) {
+                    summary = parsed["error"].get<std::string>();
+                }
+                return common_tool_execution_result::failure(
+                    "memory.remember.rejected",
+                    common_tool_failure_class::policy,
+                    false,
+                    summary,
+                    result);
             };
         }
         common_tool_adapter_result adapters;
