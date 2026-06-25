@@ -19,6 +19,16 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
         case common_plan_operation_kind::revise_goal: next.goal = op.value.value_or(""); break;
         case common_plan_operation_kind::add_step: next.steps.push_back(*op.step); break;
         case common_plan_operation_kind::revise_step: *find(op.step->id) = *op.step; break;
+        case common_plan_operation_kind::replace_step: {
+            auto replacement = *op.step;
+            replacement.status = common_plan_step_status::pending;
+            replacement.result_summary.reset();
+            replacement.blocked_by.clear();
+            *find(*op.step_id) = std::move(replacement);
+            if (next.active_step_id == op.step_id) next.active_step_id.reset();
+            next.status = common_plan_status::active;
+            break;
+        }
         case common_plan_operation_kind::remove_step: next.steps.erase(std::remove_if(next.steps.begin(), next.steps.end(), [&](const auto & s) { return s.id == *op.step_id; }), next.steps.end()); break;
         case common_plan_operation_kind::add_dependency: find(*op.step_id)->depends_on.push_back(*op.target_id); break;
         case common_plan_operation_kind::remove_dependency: { auto & v = find(*op.step_id)->depends_on; v.erase(std::remove(v.begin(), v.end(), *op.target_id), v.end()); break; }
@@ -28,6 +38,7 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
         case common_plan_operation_kind::record_observation: next.observations.push_back(*op.observation); break;
         case common_plan_operation_kind::set_next_action: next.next_action = op.value; break;
         case common_plan_operation_kind::activate_step: case common_plan_operation_kind::unblock_step: find(*op.step_id)->status = common_plan_step_status::active; next.active_step_id = op.step_id; next.status = common_plan_status::active; break;
+        case common_plan_operation_kind::reset_step: find(*op.step_id)->status = common_plan_step_status::pending; find(*op.step_id)->result_summary.reset(); find(*op.step_id)->blocked_by.clear(); if (next.active_step_id == op.step_id) next.active_step_id.reset(); next.status = common_plan_status::active; break;
         case common_plan_operation_kind::complete_step: find(*op.step_id)->status = common_plan_step_status::completed; if (next.active_step_id == op.step_id) next.active_step_id.reset(); break;
         case common_plan_operation_kind::block_step: find(*op.step_id)->status = common_plan_step_status::blocked; if (next.active_step_id == op.step_id) next.active_step_id.reset(); break;
         case common_plan_operation_kind::fail_step: find(*op.step_id)->status = common_plan_step_status::failed; if (next.active_step_id == op.step_id) next.active_step_id.reset(); break;

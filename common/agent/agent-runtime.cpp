@@ -109,6 +109,27 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
         classification, result.retryable, result.safe_summary.empty() ? "The tool failed." : result.safe_summary);
 }
 
+static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
+    const std::string base = "tool:" + step_id + ":" + tool_name;
+    const std::string attempt_prefix = base + ":attempt:";
+    bool seen_base = false;
+    size_t next_attempt = 2;
+    for (const auto & observation : plan.observations) {
+        if (observation.id == base) {
+            seen_base = true;
+            continue;
+        }
+        if (observation.id.rfind(attempt_prefix, 0) != 0) continue;
+        seen_base = true;
+        try {
+            next_attempt = std::max(next_attempt, static_cast<size_t>(std::stoull(observation.id.substr(attempt_prefix.size())) + 1));
+        } catch (const std::exception &) {
+            next_attempt = std::max(next_attempt, static_cast<size_t>(3));
+        }
+    }
+    return seen_base ? attempt_prefix + std::to_string(next_attempt) : base;
+}
+
 // Defaults are deliberately limited to deterministic read-only values. They
 // reduce the amount a small model must emit, but never fabricate a write path,
 // a mutation payload, or a selection among ambiguous results.
@@ -338,7 +359,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); result.events.push_back({common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             apply_safe_tool_defaults(request, *tool_call);
             if (!tools->validate(*tool_call, error)) {
-                const std::string failure_observation_id = "tool:" + tool_step_id + ":" + tool_call->name;
+                const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 result.failures.push_back(failure);
@@ -365,7 +386,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             const auto execution = tools->execute(*tool_call);
             if (!execution.ok) {
                 if (tool_step_id == "request") { result.events.push_back({common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id}); result.error = "registered request tool failed: " + execution.safe_summary; return result; }
-                const std::string failure_observation_id = "tool:" + tool_step_id + ":" + tool_call->name;
+                const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto failure = structured_tool_failure(tool_call->name, tool_step_id, failure_observation_id, execution);
                 result.failures.push_back(failure);
                 common_plan_operation observed;
@@ -395,7 +416,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             observed.plan_id = plan.id;
             observed.expected_version = plan.version;
             observed.reason_summary = "registered tool result";
-            observed.observation = common_plan_observation{"tool:" + tool_step_id + ":" + tool_call->name, tool_call->name, tool_result, 1.0f, {}, 0};
+            observed.observation = common_plan_observation{next_tool_observation_id(plan, tool_step_id, tool_call->name), tool_call->name, tool_result, 1.0f, {}, 0};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             if (tool_step_id == "request") executed_request_tool = true; else {
                 executed_step_ids.insert(tool_step_id);

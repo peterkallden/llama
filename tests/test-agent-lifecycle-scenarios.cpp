@@ -112,6 +112,11 @@ public:
         common_reflection_result result;
         if (++calls == 1) {
             result.decision = common_reflection_decision::revise;
+            common_plan_operation reset;
+            reset.kind = common_plan_operation_kind::reset_step;
+            reset.step_id = "fetch";
+            reset.reason_summary = "clear the failed attempt before retrying";
+            result.proposed_plan_operations.push_back(std::move(reset));
             common_plan_operation retry;
             retry.kind = common_plan_operation_kind::activate_step;
             retry.step_id = "fetch";
@@ -157,6 +162,89 @@ void scenario_repair() {
     assert(result.failures.size() == 1 && result.learning_signals.size() == 2);
     const auto plan = store.get("repair-plan", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed);
+    assert(plan->observations[0].id != plan->observations[1].id);
+    assert(plan->observations[1].id.find(":attempt:2") != std::string::npos);
+}
+
+class replacement_repair_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "replacement-repair-plan";
+        proposal.plan.goal = "Repair invalid tool arguments";
+        proposal.plan.success_criteria = "The corrected lookup produces evidence.";
+        proposal.plan.status = common_plan_status::active;
+        common_plan_step fetch{"fetch", "Fetch", "Retrieve the fact with corrected arguments"};
+        fetch.status = common_plan_step_status::active;
+        fetch.selected_tool = "lookup";
+        fetch.tool_call = common_plan_tool_call{"lookup", R"({"tool":"unexpected"})"};
+        common_plan_step answer{"answer", "Answer", "Report the repaired fact"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"fetch"};
+        proposal.plan.steps = {fetch, answer};
+        proposal.plan.active_step_id = "fetch";
+        return proposal;
+    }
+};
+
+class replacing_reflector final : public common_reflection_engine {
+public:
+    int calls = 0;
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        if (++calls == 1) {
+            result.decision = common_reflection_decision::revise;
+            common_plan_operation replace;
+            replace.kind = common_plan_operation_kind::replace_step;
+            replace.step_id = "fetch";
+            replace.reason_summary = "replace the invalid tool arguments";
+            common_plan_step fetch{"fetch", "Fetch", "Retrieve the fact with corrected arguments"};
+            fetch.selected_tool = "lookup";
+            fetch.tool_call = common_plan_tool_call{"lookup", R"({"id":"fact"})"};
+            replace.step = fetch;
+            result.proposed_plan_operations.push_back(std::move(replace));
+            common_plan_operation activate;
+            activate.kind = common_plan_operation_kind::activate_step;
+            activate.step_id = "fetch";
+            activate.reason_summary = "run the corrected lookup";
+            result.proposed_plan_operations.push_back(std::move(activate));
+        } else {
+            result.decision = common_reflection_decision::accept;
+            result.ready_to_answer = true;
+        }
+        return result;
+    }
+};
+
+void scenario_replace_repair() {
+    std::string error;
+    common_plan_in_memory_store store;
+    assert(store.open("", error));
+    common_tool_registry tools;
+    common_registered_tool tool;
+    tool.name = "lookup";
+    tool.executor_id = "test.lookup";
+    tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    tool.handler = [](const std::string &) { return common_tool_execution_result::success("repaired fact"); };
+    assert(tools.register_tool(std::move(tool), error));
+    replacement_repair_planner planner;
+    draft_executor executor;
+    replacing_reflector reflector;
+    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_request request;
+    request.prompt = "repair invalid lookup";
+    request.max_iterations = 2;
+    request.max_reflection_rounds = 2;
+    request.max_tool_batches = 2;
+    const auto result = runtime.run(request);
+    assert(result.error.empty() && result.response == "draft");
+    assert(result.failures.size() == 1);
+    const auto plan = store.get("replacement-repair-plan", error);
+    assert(plan && plan->status == common_plan_status::completed && plan->steps[0].status == common_plan_step_status::completed && plan->observations.size() == 2);
+    assert(plan->observations[0].summary.find("tool.invalid_arguments") != std::string::npos);
+    assert(plan->observations[1].summary == "repaired fact");
 }
 
 class learning_planner final : public common_planner {
@@ -238,6 +326,7 @@ void scenario_learning_promotion() {
 int main() {
     scenario_persistence_resume();
     scenario_repair();
+    scenario_replace_repair();
     scenario_learning_promotion();
     return 0;
 }

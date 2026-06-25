@@ -62,6 +62,44 @@ bool parse_compact_tool(
     return true;
 }
 
+bool parse_compact_replace_step(
+    const common_json_contract_value & item,
+    common_plan_operation & op,
+    std::string & error) {
+    if (!item.is_object()) { error = "invalid reflection replace_steps item"; return false; }
+    std::string step_id;
+    if (item.contains("step_id") && item["step_id"].is_string() && !item["step_id"].get<std::string>().empty()) step_id = item["step_id"].get<std::string>();
+    else if (item.contains("id") && item["id"].is_string() && !item["id"].get<std::string>().empty()) step_id = item["id"].get<std::string>();
+    else { error = "reflection replace_steps step_id must be a non-empty string"; return false; }
+    common_plan_step parsed;
+    parsed.id = step_id;
+    if (item.contains("title") && !item["title"].is_string()) { error = "reflection replace_steps title must be a string"; return false; }
+    if (item.contains("objective") && !item["objective"].is_string()) { error = "reflection replace_steps objective must be a string"; return false; }
+    if (item.contains("contribution") && !item["contribution"].is_string()) { error = "reflection replace_steps contribution must be a string"; return false; }
+    parsed.title = item.value("title", step_id);
+    parsed.objective = item.value("objective", std::string("Repair the failed step after reflection."));
+    parsed.intended_contribution = item.value("contribution", parsed.objective);
+    if (!parse_dependencies(item, parsed.depends_on, error)) return false;
+    if (item.contains("required_evidence") && !parse_string_array(item["required_evidence"], 8, 128, parsed.required_evidence, error)) return false;
+    if (item.contains("source_memory_ids") && !parse_string_array(item["source_memory_ids"], 8, 128, parsed.source_memory_ids, error)) return false;
+    if (!parse_compact_tool(item, parsed, error)) return false;
+    if (item.contains("mode")) {
+        if (!item["mode"].is_string()) { error = "reflection replace_steps mode must be a string"; return false; }
+        const auto mode = item["mode"].get<std::string>();
+        if (mode == "tool") parsed.mode = common_plan_step_mode::tool;
+        else if (mode == "reasoning") parsed.mode = common_plan_step_mode::reasoning;
+        else if (mode == "final" || mode == "final_response") parsed.mode = common_plan_step_mode::final_response;
+        else { error = "invalid reflection replace_steps mode"; return false; }
+    } else if (parsed.tool_call) {
+        parsed.mode = common_plan_step_mode::tool;
+    }
+    op.kind = common_plan_operation_kind::replace_step;
+    op.step_id = step_id;
+    op.reason_summary = item.value("reason_summary", std::string{});
+    op.step = parsed;
+    return true;
+}
+
 bool parse_compact_add_step(
     const common_json_contract_value & item,
     size_t & generated_index,
@@ -151,6 +189,22 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
             op.step_id = step_id;
             result.proposed_plan_operations.push_back(std::move(op));
         }
+        std::vector<std::string> retry_ids;
+        if (!parse_optional_step_ids(j, "retry", max_operations, retry_ids, error)) return false;
+        for (const auto & step_id : retry_ids) {
+            common_plan_operation op;
+            op.kind = common_plan_operation_kind::activate_step;
+            op.step_id = step_id;
+            result.proposed_plan_operations.push_back(std::move(op));
+        }
+        std::vector<std::string> reset_ids;
+        if (!parse_optional_step_ids(j, "reset", max_operations, reset_ids, error)) return false;
+        for (const auto & step_id : reset_ids) {
+            common_plan_operation op;
+            op.kind = common_plan_operation_kind::reset_step;
+            op.step_id = step_id;
+            result.proposed_plan_operations.push_back(std::move(op));
+        }
         if (j.contains("next_action")) {
             if (!j["next_action"].is_string() || j["next_action"].get<std::string>().empty()) { error = "next_action must be a non-empty string"; return false; }
             common_plan_operation op;
@@ -169,6 +223,14 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                 result.proposed_plan_operations.push_back(std::move(op));
             }
         }
+        if (j.contains("replace_steps")) {
+            if (!j["replace_steps"].is_array() || j["replace_steps"].size() > max_operations) { error = "too many reflection replace_steps"; return false; }
+            for (const auto & item : j["replace_steps"]) {
+                common_plan_operation op;
+                if (!parse_compact_replace_step(item, op, error)) return false;
+                result.proposed_plan_operations.push_back(std::move(op));
+            }
+        }
         if (j.contains("operations")) {
             if (!j["operations"].is_array() || j["operations"].size() > max_operations) { error = "too many reflection operations"; return false; }
             for (const auto & item : j["operations"]) {
@@ -177,17 +239,19 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                 const auto kind = item["kind"].get<std::string>();
                 if (kind == "complete_step") op.kind = common_plan_operation_kind::complete_step;
                 else if (kind == "activate_step") op.kind = common_plan_operation_kind::activate_step;
+                else if (kind == "reset_step") op.kind = common_plan_operation_kind::reset_step;
                 else if (kind == "set_next_action") op.kind = common_plan_operation_kind::set_next_action;
                 else if (kind == "add_step") op.kind = common_plan_operation_kind::add_step;
+                else if (kind == "replace_step") op.kind = common_plan_operation_kind::replace_step;
                 else { error = "unsupported reflection operation"; return false; }
                 op.reason_summary = item.value("reason_summary", std::string{});
                 if (op.kind == common_plan_operation_kind::set_next_action) {
                     if (!item.contains("value") || !item["value"].is_string()) { error = "set_next_action requires value"; return false; }
                     op.value = item["value"].get<std::string>();
-                } else if (op.kind == common_plan_operation_kind::add_step) {
-                    if (!item.contains("step") || !item["step"].is_object()) { error = "add_step requires step"; return false; }
+                } else if (op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) {
+                    if (!item.contains("step") || !item["step"].is_object()) { error = op.kind == common_plan_operation_kind::add_step ? "add_step requires step" : "replace_step requires step"; return false; }
                     const auto & step = item["step"];
-                    if (!step.contains("id") || !step.contains("title") || !step.contains("objective") || !step["id"].is_string() || !step["title"].is_string() || !step["objective"].is_string()) { error = "invalid reflection add_step"; return false; }
+                    if (!step.contains("id") || !step.contains("title") || !step.contains("objective") || !step["id"].is_string() || !step["title"].is_string() || !step["objective"].is_string()) { error = op.kind == common_plan_operation_kind::add_step ? "invalid reflection add_step" : "invalid reflection replace_step"; return false; }
                     common_plan_step parsed;
                     parsed.id = step["id"].get<std::string>();
                     parsed.title = step["title"].get<std::string>();
@@ -195,7 +259,22 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                     if (step.contains("depends_on") && step["depends_on"].is_array()) parsed.depends_on = step["depends_on"].get<std::vector<std::string>>();
                     if (step.contains("required_evidence") && step["required_evidence"].is_array()) parsed.required_evidence = step["required_evidence"].get<std::vector<std::string>>();
                     if (step.contains("source_memory_ids") && step["source_memory_ids"].is_array()) parsed.source_memory_ids = step["source_memory_ids"].get<std::vector<std::string>>();
-                    op.step = std::move(parsed);
+                    if (step.contains("mode") && step["mode"].is_string()) {
+                        const auto mode = step["mode"].get<std::string>();
+                        if (mode == "tool") parsed.mode = common_plan_step_mode::tool;
+                        else if (mode == "reasoning") parsed.mode = common_plan_step_mode::reasoning;
+                        else if (mode == "final" || mode == "final_response") parsed.mode = common_plan_step_mode::final_response;
+                    }
+                    if (step.contains("tool_call") && step["tool_call"].is_object()) {
+                        const auto & tool_call = step["tool_call"];
+                        if (!tool_call.contains("name") || !tool_call["name"].is_string()) { error = "reflection tool_call requires name"; return false; }
+                        const auto arguments = tool_call.contains("arguments_json") && tool_call["arguments_json"].is_string() ? tool_call["arguments_json"].get<std::string>() : std::string("{}");
+                        parsed.tool_call = common_plan_tool_call{tool_call["name"].get<std::string>(), arguments};
+                        parsed.selected_tool = tool_call["name"].get<std::string>();
+                        parsed.mode = common_plan_step_mode::tool;
+                    }
+                    op.step = parsed;
+                    if (op.kind == common_plan_operation_kind::replace_step) op.step_id = parsed.id;
                     if (item.contains("evidence_ids") && item["evidence_ids"].is_array()) op.evidence_ids = item["evidence_ids"].get<std::vector<std::string>>();
                 } else {
                     if (!item.contains("step_id") || !item["step_id"].is_string()) { error = "step reflection operation requires step_id"; return false; }

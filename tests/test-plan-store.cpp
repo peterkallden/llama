@@ -20,5 +20,20 @@ int main() {
     assert(bindable.steps.front().tool_call && bindable.steps.front().selected_tool == "repository_search");
     auto alter_dependency = op(common_plan_operation_kind::revise_step, bindable); replacement.depends_on = {"missing"}; alter_dependency.step = replacement; assert(!store.apply(alter_dependency, bindable, error));
     auto alter_objective = op(common_plan_operation_kind::revise_step, bindable); replacement = bindable.steps.front(); replacement.objective = "changed"; alter_objective.step = replacement; assert(!store.apply(alter_objective, bindable, error));
+
+    common_plan_state repairable; repairable.id = "repairable"; repairable.goal = "repair"; repairable.status = common_plan_status::active;
+    common_plan_step failed; failed.id = "fetch"; failed.title = "Fetch"; failed.objective = "Fetch evidence"; failed.status = common_plan_step_status::failed; failed.selected_tool = "lookup"; failed.tool_call = common_plan_tool_call{"lookup", R"({"id":"old"})"};
+    repairable.steps = {failed}; assert(store.create(repairable, error));
+    auto reset = op(common_plan_operation_kind::reset_step, repairable, "fetch"); assert(store.apply(reset, repairable, error)); assert(repairable.steps.front().status == common_plan_step_status::pending);
+    auto activate_repair = op(common_plan_operation_kind::activate_step, repairable, "fetch"); assert(store.apply(activate_repair, repairable, error));
+    auto fail_again = op(common_plan_operation_kind::fail_step, repairable, "fetch"); assert(store.apply(fail_again, repairable, error));
+    auto replace = op(common_plan_operation_kind::replace_step, repairable, "fetch"); auto corrected = repairable.steps.front(); corrected.tool_call = common_plan_tool_call{"lookup", R"({"id":"new"})"}; replace.step = corrected; assert(store.apply(replace, repairable, error));
+    assert(repairable.steps.front().status == common_plan_step_status::pending && repairable.steps.front().tool_call->arguments_json.find("new") != std::string::npos);
+
+    common_plan_state completed; completed.id = "completed-step"; completed.goal = "completed"; completed.status = common_plan_status::active;
+    common_plan_step done_step; done_step.id = "done"; done_step.title = "Done"; done_step.status = common_plan_step_status::completed;
+    completed.steps = {done_step}; assert(store.create(completed, error));
+    auto reset_completed = op(common_plan_operation_kind::reset_step, completed, "done"); assert(!store.apply(reset_completed, completed, error));
+    auto replace_completed = op(common_plan_operation_kind::replace_step, completed, "done"); replace_completed.step = done_step; assert(!store.apply(replace_completed, completed, error));
     store.close(); return 0;
 }

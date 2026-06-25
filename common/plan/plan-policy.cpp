@@ -9,7 +9,8 @@ const char * common_plan_operation_kind_name(common_plan_operation_kind kind) {
     switch (kind) {
         case common_plan_operation_kind::create_plan: return "create_plan"; case common_plan_operation_kind::revise_goal: return "revise_goal";
         case common_plan_operation_kind::add_step: return "add_step"; case common_plan_operation_kind::revise_step: return "revise_step";
-        case common_plan_operation_kind::remove_step: return "remove_step"; case common_plan_operation_kind::activate_step: return "activate_step";
+        case common_plan_operation_kind::replace_step: return "replace_step"; case common_plan_operation_kind::remove_step: return "remove_step";
+        case common_plan_operation_kind::activate_step: return "activate_step"; case common_plan_operation_kind::reset_step: return "reset_step";
         case common_plan_operation_kind::complete_step: return "complete_step"; case common_plan_operation_kind::block_step: return "block_step";
         case common_plan_operation_kind::unblock_step: return "unblock_step"; case common_plan_operation_kind::fail_step: return "fail_step";
         case common_plan_operation_kind::skip_step: return "skip_step"; case common_plan_operation_kind::add_dependency: return "add_dependency";
@@ -32,6 +33,10 @@ static bool transition(common_plan_step_status from, common_plan_step_status to)
            (from == common_plan_step_status::active && (to == common_plan_step_status::completed || to == common_plan_step_status::blocked || to == common_plan_step_status::failed)) ||
            (from == common_plan_step_status::blocked && (to == common_plan_step_status::active || to == common_plan_step_status::failed)) ||
            (from == common_plan_step_status::failed && to == common_plan_step_status::active);
+}
+static bool reset_transition(common_plan_step_status from) {
+    return from == common_plan_step_status::active || from == common_plan_step_status::blocked ||
+           from == common_plan_step_status::failed || from == common_plan_step_status::skipped;
 }
 static bool plan_transition(common_plan_status from, common_plan_status to) {
     return (from == common_plan_status::proposed && to == common_plan_status::active) ||
@@ -74,19 +79,40 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
                 prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary) return deny("revise_step may only bind a tool to an unchanged step");
         if (!op.step->tool_call || !op.step->selected_tool || *op.step->selected_tool != op.step->tool_call->name || common_plan_step_effective_mode(*op.step) != common_plan_step_mode::tool) return deny("revise_step requires a consistent tool binding");
     }
+    if (op.kind == common_plan_operation_kind::replace_step) {
+        if (!op.step_id || !op.step) return deny("replace_step requires step_id and step");
+        const auto * prior = find_step(plan, *op.step_id);
+        if (!prior) return deny("replace_step references an unknown step");
+        if (prior->status == common_plan_step_status::completed) return deny("replace_step cannot replace a completed step");
+        if (op.step->id != *op.step_id) return deny("replace_step step id must match target step id");
+        if (op.step->title.empty()) return deny("replace_step requires a step title");
+        if (op.step->objective.size() > config.max_string_length || op.step->intended_contribution.size() > config.max_string_length) return deny("step objective or contribution is too long");
+        const auto mode = common_plan_step_effective_mode(*op.step);
+        if ((mode == common_plan_step_mode::tool) != op.step->tool_call.has_value()) return deny("step mode does not match tool binding");
+        if (op.step->generated_from_memory && op.step->source_memory_ids.empty()) return deny("memory-generated step requires source memory id");
+        if (!op.step->generated_from_memory && !op.step->source_memory_ids.empty()) return deny("source memory ids require memory-generated step");
+        for (const auto & dep : op.step->depends_on) {
+            if (dep == *op.step_id) return deny("step dependency cycle rejected");
+            if (!find_step(plan, dep)) return deny("step dependency does not exist");
+        }
+        (void) prior;
+    }
     if (op.kind == common_plan_operation_kind::add_dependency) {
         if (!op.step_id || !op.target_id || !find_step(plan, *op.step_id) || !find_step(plan, *op.target_id)) return deny("dependency references an unknown step");
         if (*op.step_id == *op.target_id || has_cycle(plan, op)) return deny("dependency cycle rejected");
     }
-    if (op.kind == common_plan_operation_kind::activate_step || op.kind == common_plan_operation_kind::complete_step || op.kind == common_plan_operation_kind::block_step || op.kind == common_plan_operation_kind::unblock_step || op.kind == common_plan_operation_kind::fail_step || op.kind == common_plan_operation_kind::skip_step) {
+    if (op.kind == common_plan_operation_kind::activate_step || op.kind == common_plan_operation_kind::reset_step || op.kind == common_plan_operation_kind::complete_step || op.kind == common_plan_operation_kind::block_step || op.kind == common_plan_operation_kind::unblock_step || op.kind == common_plan_operation_kind::fail_step || op.kind == common_plan_operation_kind::skip_step) {
         if (!op.step_id) return deny("step operation requires step id"); const auto * step = find_step(plan, *op.step_id); if (!step) return deny("unknown step");
         common_plan_step_status target = common_plan_step_status::pending;
         if (op.kind == common_plan_operation_kind::activate_step || op.kind == common_plan_operation_kind::unblock_step) target = common_plan_step_status::active;
+        if (op.kind == common_plan_operation_kind::reset_step) target = common_plan_step_status::pending;
         if (op.kind == common_plan_operation_kind::complete_step) target = common_plan_step_status::completed;
         if (op.kind == common_plan_operation_kind::block_step) target = common_plan_step_status::blocked;
         if (op.kind == common_plan_operation_kind::fail_step) target = common_plan_step_status::failed;
         if (op.kind == common_plan_operation_kind::skip_step) target = common_plan_step_status::skipped;
-        if (!transition(step->status, target)) return deny("illegal step state transition");
+        if (op.kind == common_plan_operation_kind::reset_step) {
+            if (!reset_transition(step->status)) return deny("illegal step reset");
+        } else if (!transition(step->status, target)) return deny("illegal step state transition");
         if (target == common_plan_step_status::active) for (const auto & dep : step->depends_on) { const auto * d = find_step(plan, dep); if (!d || d->status != common_plan_step_status::completed) return deny("step has unmet dependency"); }
         if (target == common_plan_step_status::completed && config.require_evidence_for_completion) for (const auto & id : step->required_evidence) if (std::find(op.evidence_ids.begin(), op.evidence_ids.end(), id) == op.evidence_ids.end()) return deny("required evidence is missing");
     }

@@ -52,7 +52,7 @@ struct common_plan_state {
     uint64_t version = 0;
     int64_t created_at = 0, updated_at = 0;
 };
-enum class common_plan_operation_kind { create_plan, revise_goal, add_step, revise_step, remove_step, activate_step, complete_step, block_step, unblock_step, fail_step, skip_step, add_dependency, remove_dependency, add_constraint, add_assumption, invalidate_assumption, record_observation, set_next_action, request_replan, complete_plan, fail_plan };
+enum class common_plan_operation_kind { create_plan, revise_goal, add_step, revise_step, replace_step, remove_step, activate_step, reset_step, complete_step, block_step, unblock_step, fail_step, skip_step, add_dependency, remove_dependency, add_constraint, add_assumption, invalidate_assumption, record_observation, set_next_action, request_replan, complete_plan, fail_plan };
 struct common_plan_operation {
     common_plan_operation_kind kind = common_plan_operation_kind::add_step;
     std::string plan_id;
