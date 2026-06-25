@@ -121,7 +121,7 @@ When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing 
 
 ### Model-backed chat loop
 
-`llama-memory chat --planning-mode mini` runs the bounded runtime around the already loaded chat model. The model-facing planner contract is deliberately compact: it returns `{goal,steps}`, where each step needs only an `id` and, when applicable, a `tool`, ordinary JSON `args`, optional `after` dependencies, and a `mode`. It never has to JSON-encode an object inside `arguments_json`. Native code expands this compact proposal into the full internal operations, supplies titles/objectives and empty metadata, normalizes safe shorthand such as one-string dependencies, and can add the final synthesis step. The older full proposal form remains parser-compatible for persisted or older callers.
+`llama-memory chat --planning-mode mini` runs the bounded runtime around the already loaded chat model. The model-facing planner contract is deliberately compact: it returns `{goal,steps}`, where each step may include a `tool`, ordinary JSON `args`, optional `after` dependencies, an optional `id`, and a `mode`. It never has to JSON-encode an object inside `arguments_json`. Native code expands this compact proposal into the full internal operations, supplies IDs when they are omitted, supplies titles/objectives and empty metadata, normalizes safe shorthand such as one-string dependencies, infers a simple sequential dependency chain when `after` is omitted, and can add the final synthesis step automatically. The older full proposal form remains parser-compatible for persisted or older callers.
 
 ### Purpose, goal and evidence
 

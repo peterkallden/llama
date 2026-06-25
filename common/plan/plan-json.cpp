@@ -68,6 +68,10 @@ bool normalize_dependencies(const json & source, std::vector<std::string> & depe
     return false;
 }
 
+bool has_explicit_dependencies(const json & source) {
+    return source.contains("after") || source.contains("depends_on");
+}
+
 bool parse_mode(const json & source, bool has_tool, common_plan_step_mode & mode, std::string & error) {
     const auto value = source.value("mode", has_tool ? std::string("tool") : std::string("final_response"));
     if (value == "tool") mode = common_plan_step_mode::tool;
@@ -98,9 +102,17 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
     return true;
 }
 
-bool parse_step(const json & source, const std::string & goal, common_plan_step & step, std::string & error) {
-    if (!source.is_object() || !source.contains("id") || !source["id"].is_string() || source["id"].get<std::string>().empty()) { error = "step requires a non-empty id"; return false; }
-    step.id = source["id"].get<std::string>();
+bool parse_step(const json & source, const std::string & goal, const std::string & fallback_id, common_plan_step & step, std::string & error) {
+    if (!source.is_object()) { error = "step must be an object"; return false; }
+    if (source.contains("id")) {
+        if (!source["id"].is_string() || source["id"].get<std::string>().empty()) { error = "step requires a non-empty id"; return false; }
+        step.id = source["id"].get<std::string>();
+    } else if (!fallback_id.empty()) {
+        step.id = fallback_id;
+    } else {
+        error = "step requires a non-empty id";
+        return false;
+    }
     if (source.contains("title") && !source["title"].is_string()) { error = "step title must be a string"; return false; }
     if (source.contains("objective") && !source["objective"].is_string()) { error = "step objective must be a string"; return false; }
     step.title = source.value("title", step.id);
@@ -116,6 +128,15 @@ bool parse_step(const json & source, const std::string & goal, common_plan_step 
     return true;
 }
 
+std::string next_generated_step_id(size_t index, const std::set<std::string> & seen_step_ids) {
+    std::string id = "step_" + std::to_string(index);
+    while (seen_step_ids.count(id)) {
+        ++index;
+        id = "step_" + std::to_string(index);
+    }
+    return id;
+}
+
 bool parse_compact(const json & input, common_plan_state & plan, std::vector<common_plan_operation> & operations, std::string & error, size_t max_operations) {
     if (!input.contains("goal") || !input["goal"].is_string() || !input.contains("steps") || !input["steps"].is_array()) { error = "compact plan proposal requires goal and steps"; return false; }
     if (input["steps"].empty() || input["steps"].size() > max_operations) { error = "invalid number of compact plan steps"; return false; }
@@ -125,10 +146,17 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     plan.next_action = input.value("next_action", "execute plan");
     bool has_final = false;
     std::set<std::string> seen_step_ids;
+    size_t generated_index = 1;
     for (const auto & source : input["steps"]) {
+        const std::string fallback_id = source.is_object() && source.contains("id") ? std::string() : next_generated_step_id(generated_index, seen_step_ids);
         common_plan_step step;
-        if (!parse_step(source, plan.goal, step, error)) return false;
+        if (!parse_step(source, plan.goal, fallback_id, step, error)) return false;
         if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
+        if (step.id == fallback_id) ++generated_index;
+        if (step.depends_on.empty() && !operations.empty() && !has_explicit_dependencies(source)) {
+            const auto & previous = operations.back();
+            if (previous.step) step.depends_on = {previous.step->id};
+        }
         has_final = has_final || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
@@ -164,7 +192,7 @@ bool parse_legacy(const json & input, common_plan_state & plan, std::vector<comm
     for (const auto & item : input["operations"]) {
         if (!item.is_object() || item.value("kind", std::string()) != "add_step" || !item.contains("step")) { error = "unsupported plan operation"; return false; }
         common_plan_step step;
-        if (!parse_step(item["step"], plan.goal, step, error)) return false;
+        if (!parse_step(item["step"], plan.goal, std::string(), step, error)) return false;
         if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
@@ -184,10 +212,14 @@ std::string common_plan_proposal_json_schema() {
         {"properties", {
             {"purpose", {{"type", "string"}, {"maxLength", 256}}}, {"goal", {{"type", "string"}, {"maxLength", 256}}},
             {"success_criteria", {{"type", "string"}, {"maxLength", 256}}}, {"next_action", {{"type", "string"}, {"maxLength", 256}}},
-            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"required", {"id"}}, {"properties", {
+            {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"properties", {
                 {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
-                {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final"}}}}, {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}},
-                {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}}}}},
+                {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final", "final_response"}}}},
+                {"after", {{"oneOf", json::array({json{{"type", "string"}}, json{{"type", "array"}, {"items", {{"type", "string"}}}}})}}},
+                {"tool", {{"oneOf", json::array({
+                    json{{"type", "string"}, {"maxLength", 256}},
+                    json{{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}, {"args", {{"type", "object"}}}}}}
+                })}}},
                 {"args", {{"type", "object"}}}
             }}}}}}
         }}
