@@ -170,6 +170,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         auto proposal = planner.create_plan(request, error);
         if (!error.empty()) { result.error = error; return result; }
         if (!apply_request_objective(request, proposal.plan, error)) { result.error = error; return result; }
+        if (!proposal.operations.empty() && !proposal.plan.steps.empty()) {
+            proposal.plan.steps.clear();
+            proposal.plan.active_step_id.reset();
+        }
         for (auto & operation : proposal.operations) {
             if (operation.step && operation.step->intended_contribution.empty()) {
                 operation.step->intended_contribution = operation.step->objective;

@@ -59,6 +59,32 @@ public:
     }
 };
 
+class mixed_initial_plan_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "mixed-initial";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        proposal.plan.status = common_plan_status::active;
+
+        common_plan_step lookup{"lookup", "Lookup", "Get facts"};
+        lookup.status = common_plan_step_status::active;
+        lookup.selected_tool = "lookup";
+        lookup.tool_call = common_plan_tool_call{"lookup", R"({"id":"status"})"};
+        proposal.plan.steps.push_back(lookup);
+        proposal.plan.active_step_id = "lookup";
+
+        common_plan_operation add_lookup;
+        add_lookup.kind = common_plan_operation_kind::add_step;
+        add_lookup.step = std::move(lookup);
+        proposal.operations.push_back(std::move(add_lookup));
+        return proposal;
+    }
+};
+
 class unstructured_reasoning_executor final : public common_action_executor {
 public:
     std::string generate_draft(const common_agent_request &, const common_plan_state &, const std::vector<std::string> &, std::string & error) override {
@@ -141,6 +167,18 @@ int main() {
     assert(created.plan_id && *created.plan_id == "turn-1" && created.reflected);
     const auto plan = store.get("turn-1", error);
     assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
+
+    common_plan_in_memory_store mixed_store;
+    assert(mixed_store.open("", error));
+    mixed_initial_plan_planner mixed_p;
+    common_agent_runtime mixed_runtime(mixed_store, mixed_p, e, r, &tools);
+    common_agent_request mixed_request = request;
+    mixed_request.plan_id.reset();
+    const auto mixed = mixed_runtime.run(mixed_request);
+    assert(mixed.error.empty() && mixed.response == "draft");
+    const auto mixed_plan = mixed_store.get("mixed-initial", error);
+    assert(mixed_plan && mixed_plan->steps.size() == 1 && mixed_plan->steps.front().id == "lookup");
+    assert(mixed_plan->observations.size() == 1 && mixed_plan->observations.front().summary == "current status");
 
     common_plan_in_memory_store objective_store;
     assert(objective_store.open("", error));
