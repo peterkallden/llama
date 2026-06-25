@@ -1,6 +1,114 @@
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
 
+#include <set>
+
+namespace {
+
+bool parse_string_array(const common_json_contract_value & value, size_t max_items, size_t max_length, std::vector<std::string> & out, std::string & error) {
+    if (!value.is_array() || value.size() > max_items) { error = "reflection string list is invalid"; return false; }
+    out.clear();
+    for (const auto & item : value) {
+        if (!item.is_string()) { error = "reflection string list must contain only strings"; return false; }
+        const auto parsed = item.get<std::string>();
+        if (parsed.empty() || parsed.size() > max_length) { error = "reflection string list item is invalid"; return false; }
+        out.push_back(parsed);
+    }
+    return true;
+}
+
+bool parse_optional_step_ids(const common_json_contract_value & object, const char * key, size_t max_items, std::vector<std::string> & out, std::string & error) {
+    if (!object.contains(key)) { out.clear(); return true; }
+    return parse_string_array(object[key], max_items, 64, out, error);
+}
+
+bool parse_dependencies(const common_json_contract_value & source, std::vector<std::string> & dependencies, std::string & error) {
+    const auto it = source.contains("after") ? source.find("after") : source.find("depends_on");
+    if (it == source.end()) { dependencies.clear(); return true; }
+    if (it->is_string()) { dependencies = {it->get<std::string>()}; return true; }
+    return parse_string_array(*it, 8, 64, dependencies, error);
+}
+
+std::string next_generated_repair_id(size_t index, const std::set<std::string> & seen_ids) {
+    std::string id = "repair_" + std::to_string(index);
+    while (seen_ids.count(id)) {
+        ++index;
+        id = "repair_" + std::to_string(index);
+    }
+    return id;
+}
+
+bool parse_compact_tool(
+    const common_json_contract_value & item,
+    common_plan_step & step,
+    std::string & error) {
+    if (!item.contains("tool")) return true;
+    const auto & tool = item["tool"];
+    std::string name;
+    common_json_contract_value arguments = common_json_contract_value::object();
+    if (tool.is_string()) name = tool.get<std::string>();
+    else if (tool.is_object() && tool.contains("name") && tool["name"].is_string()) {
+        name = tool["name"].get<std::string>();
+        if (tool.contains("arguments")) arguments = tool["arguments"];
+        else if (tool.contains("args")) arguments = tool["args"];
+    } else {
+        error = "invalid reflection add_steps tool payload";
+        return false;
+    }
+    if (item.contains("args")) arguments = item["args"];
+    if (!arguments.is_object()) { error = "reflection add_steps tool arguments must be an object"; return false; }
+    step.tool_call = common_plan_tool_call{name, arguments.dump()};
+    step.selected_tool = name;
+    return true;
+}
+
+bool parse_compact_add_step(
+    const common_json_contract_value & item,
+    size_t & generated_index,
+    std::set<std::string> & seen_ids,
+    std::optional<common_plan_step> & previous_step,
+    common_plan_operation & op,
+    std::string & error) {
+    if (!item.is_object()) { error = "invalid reflection add_steps item"; return false; }
+    common_plan_step parsed;
+    if (item.contains("id")) {
+        if (!item["id"].is_string() || item["id"].get<std::string>().empty()) { error = "reflection add_steps id must be a non-empty string"; return false; }
+        parsed.id = item["id"].get<std::string>();
+    } else {
+        parsed.id = next_generated_repair_id(generated_index, seen_ids);
+        ++generated_index;
+    }
+    if (!seen_ids.insert(parsed.id).second) { error = "duplicate reflection add_step id"; return false; }
+    if (item.contains("title") && !item["title"].is_string()) { error = "reflection add_steps title must be a string"; return false; }
+    if (item.contains("objective") && !item["objective"].is_string()) { error = "reflection add_steps objective must be a string"; return false; }
+    if (item.contains("contribution") && !item["contribution"].is_string()) { error = "reflection add_steps contribution must be a string"; return false; }
+    parsed.title = item.value("title", parsed.id);
+    parsed.objective = item.value("objective", std::string("Repair the plan after reflection."));
+    parsed.intended_contribution = item.value("contribution", parsed.objective);
+    if (!parse_dependencies(item, parsed.depends_on, error)) return false;
+    if (parsed.depends_on.empty() && previous_step) parsed.depends_on = {previous_step->id};
+    if (item.contains("required_evidence") && !parse_string_array(item["required_evidence"], 8, 128, parsed.required_evidence, error)) return false;
+    if (item.contains("source_memory_ids") && !parse_string_array(item["source_memory_ids"], 8, 128, parsed.source_memory_ids, error)) return false;
+    if (!parse_compact_tool(item, parsed, error)) return false;
+    if (item.contains("mode")) {
+        if (!item["mode"].is_string()) { error = "reflection add_steps mode must be a string"; return false; }
+        const auto mode = item["mode"].get<std::string>();
+        if (mode == "tool") parsed.mode = common_plan_step_mode::tool;
+        else if (mode == "reasoning") parsed.mode = common_plan_step_mode::reasoning;
+        else if (mode == "final" || mode == "final_response") parsed.mode = common_plan_step_mode::final_response;
+        else { error = "invalid reflection add_steps mode"; return false; }
+    } else if (parsed.tool_call) {
+        parsed.mode = common_plan_step_mode::tool;
+    }
+    op.kind = common_plan_operation_kind::add_step;
+    op.reason_summary = item.value("reason_summary", std::string{});
+    op.step = parsed;
+    previous_step = std::move(parsed);
+    return true;
+}
+
+} // namespace
+
 bool common_reflection_parse_json(const std::string & text, common_reflection_result & result, std::string & error, size_t max_operations) {
     common_json_contract_value j;
     if (!common_json_contract_parse_object(text, j, error)) return false;
@@ -26,6 +134,40 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                     !common_json_contract_required_string(hint, "statement", 512, parsed.statement, error) ||
                     !common_json_contract_optional_unit_number(hint, "expected_reuse", 0.5f, parsed.expected_reuse, error)) return false;
             result.learning_hint = std::move(parsed);
+        }
+        std::vector<std::string> complete_ids;
+        if (!parse_optional_step_ids(j, "complete", max_operations, complete_ids, error)) return false;
+        for (const auto & step_id : complete_ids) {
+            common_plan_operation op;
+            op.kind = common_plan_operation_kind::complete_step;
+            op.step_id = step_id;
+            result.proposed_plan_operations.push_back(std::move(op));
+        }
+        std::vector<std::string> activate_ids;
+        if (!parse_optional_step_ids(j, "activate", max_operations, activate_ids, error)) return false;
+        for (const auto & step_id : activate_ids) {
+            common_plan_operation op;
+            op.kind = common_plan_operation_kind::activate_step;
+            op.step_id = step_id;
+            result.proposed_plan_operations.push_back(std::move(op));
+        }
+        if (j.contains("next_action")) {
+            if (!j["next_action"].is_string() || j["next_action"].get<std::string>().empty()) { error = "next_action must be a non-empty string"; return false; }
+            common_plan_operation op;
+            op.kind = common_plan_operation_kind::set_next_action;
+            op.value = j["next_action"].get<std::string>();
+            result.proposed_plan_operations.push_back(std::move(op));
+        }
+        if (j.contains("add_steps")) {
+            if (!j["add_steps"].is_array() || j["add_steps"].size() > max_operations) { error = "too many reflection add_steps"; return false; }
+            size_t generated_index = 1;
+            std::set<std::string> seen_ids;
+            std::optional<common_plan_step> previous_step;
+            for (const auto & item : j["add_steps"]) {
+                common_plan_operation op;
+                if (!parse_compact_add_step(item, generated_index, seen_ids, previous_step, op, error)) return false;
+                result.proposed_plan_operations.push_back(std::move(op));
+            }
         }
         if (j.contains("operations")) {
             if (!j["operations"].is_array() || j["operations"].size() > max_operations) { error = "too many reflection operations"; return false; }
@@ -62,6 +204,7 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                 result.proposed_plan_operations.push_back(std::move(op));
             }
         }
+        if (result.proposed_plan_operations.size() > max_operations) { error = "too many reflection operations"; return false; }
         error.clear();
         return true;
     } catch (const std::exception &) {
