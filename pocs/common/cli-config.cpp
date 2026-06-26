@@ -1,4 +1,4 @@
-#include "memory-cli-config.h"
+#include "common/cli-config.h"
 
 #include "memory/memory-in-memory.h"
 
@@ -14,8 +14,6 @@
 #endif
 
 bool resolve_agent_profile(args & a, std::string & error) {
-    // Preserve the legacy tool flags for callers that have not opted into a
-    // named profile. Explicit low-level flags always override profile values.
     if (!a.agent_profile_explicit && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
         a.agent_profile = "static";
     }

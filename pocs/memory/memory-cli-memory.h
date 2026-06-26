@@ -1,7 +1,7 @@
 #pragma once
 
 #include "chat.h"
-#include "memory-cli-config.h"
+#include "common/cli-config.h"
 #include "memory/memory-store.h"
 
 #include <string>

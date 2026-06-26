@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../memory/memory-cli-config.h"
+#include "common/cli-config.h"
 
 #include <string>
 

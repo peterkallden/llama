@@ -2,7 +2,7 @@
 
 #include "chat.h"
 #include "llama.h"
-#include "memory-cli-config.h"
+#include "common/cli-config.h"
 
 #include <string>
 #include <vector>

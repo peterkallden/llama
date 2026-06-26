@@ -4,7 +4,7 @@
 #include "agent/memory-learning.h"
 #include "chat.h"
 #include "llama.h"
-#include "memory-cli-config.h"
+#include "common/cli-config.h"
 
 #include <memory>
 #include <vector>

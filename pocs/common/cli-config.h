@@ -12,7 +12,6 @@
 
 struct args {
     std::string command;
-    // Resolved after argument parsing: a supplied DB path selects persistence.
     std::string backend = "auto";
     std::string memory_db;
     std::string id;

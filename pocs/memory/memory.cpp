@@ -2,7 +2,7 @@
 #include "memory/memory-in-memory.h"
 
 #include "../agent/agent-cli-config.h"
-#include "memory-cli-config.h"
+#include "common/cli-config.h"
 #include "memory-cli-memory.h"
 #include "../agent/agent-cli-run.h"
 
