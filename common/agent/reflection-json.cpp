@@ -1,5 +1,6 @@
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
+#include "plan/plan-json.h"
 
 #include <set>
 
@@ -57,7 +58,9 @@ bool parse_compact_tool(
     }
     if (item.contains("args")) arguments = item["args"];
     if (!arguments.is_object()) { error = "reflection add_steps tool arguments must be an object"; return false; }
-    step.tool_call = common_plan_tool_call{name, arguments.dump()};
+    std::string normalized_arguments;
+    if (!common_plan_normalize_tool_arguments_json(name, arguments.dump(), normalized_arguments, error)) return false;
+    step.tool_call = common_plan_tool_call{name, normalized_arguments};
     step.selected_tool = name;
     return true;
 }

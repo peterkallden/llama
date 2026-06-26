@@ -6,6 +6,11 @@
 
 // Schema is intended for existing llama.cpp JSON-schema-to-grammar helpers.
 std::string common_plan_proposal_json_schema();
+bool common_plan_normalize_tool_arguments_json(
+    const std::string & tool_name,
+    const std::string & arguments_json,
+    std::string & normalized_json,
+    std::string & error);
 bool common_plan_parse_proposal_json(
     const std::string & json_text,
     common_plan_state & plan,

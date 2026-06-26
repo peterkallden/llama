@@ -29,6 +29,25 @@ bool calculator_expression_from_value(const json & value, std::string & expressi
 }
 
 json normalize_tool_arguments(const std::string & tool_name, json arguments) {
+    if (!arguments.is_object()) return arguments;
+    const auto unwrap_named_call = [&](const json & call, json & unwrapped) {
+        if (!call.is_object() || !call.contains("name") || !call["name"].is_string() || call["name"].get<std::string>() != tool_name) return false;
+        if (call.contains("arguments") && call["arguments"].is_object()) { unwrapped = call["arguments"]; return true; }
+        if (call.contains("args") && call["args"].is_object()) { unwrapped = call["args"]; return true; }
+        return false;
+    };
+    const auto unwrap_tool_and_arguments = [&](const json & tool, const json & payload, json & unwrapped) {
+        if (!payload.is_object()) return false;
+        if (tool.is_string() && tool.get<std::string>() == tool_name) { unwrapped = payload; return true; }
+        return unwrap_named_call(tool, unwrapped);
+    };
+    json unwrapped;
+    if (arguments.size() == 1 && arguments.contains("tool") && unwrap_named_call(arguments["tool"], unwrapped)) arguments = std::move(unwrapped);
+    else if (arguments.size() <= 2 && arguments.contains("tool") && arguments.contains("arguments") &&
+            unwrap_tool_and_arguments(arguments["tool"], arguments["arguments"], unwrapped)) arguments = std::move(unwrapped);
+    else if (arguments.size() <= 2 && arguments.contains("tool") && arguments.contains("args") &&
+            unwrap_tool_and_arguments(arguments["tool"], arguments["args"], unwrapped)) arguments = std::move(unwrapped);
+    else if (arguments.size() <= 2 && arguments.contains("name") && unwrap_named_call(arguments, unwrapped)) arguments = std::move(unwrapped);
     if (tool_name != "calculator" || !arguments.is_object() || arguments.contains("expression") ||
         !arguments.contains("operation") || !arguments["operation"].is_string() ||
         !arguments.contains("operands") || !arguments["operands"].is_array() || arguments["operands"].size() != 2) return arguments;
@@ -222,6 +241,21 @@ std::string common_plan_proposal_json_schema() {
         }}
     };
     return schema.dump();
+}
+
+bool common_plan_normalize_tool_arguments_json(
+        const std::string & tool_name,
+        const std::string & arguments_json,
+        std::string & normalized_json,
+        std::string & error) {
+    const auto parsed = json::parse(arguments_json, nullptr, false);
+    if (!parsed.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    normalized_json = normalize_tool_arguments(tool_name, normalize_safe_integer_arguments(parsed)).dump();
+    error.clear();
+    return true;
 }
 
 bool common_plan_parse_proposal_json(const std::string & text, common_plan_state & plan, std::vector<common_plan_operation> & operations, std::string & error, size_t max_operations) {
