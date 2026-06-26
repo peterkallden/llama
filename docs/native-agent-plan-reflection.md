@@ -14,7 +14,7 @@ cmake --build build-plan --config Release
 Bootstrap is idempotent and happens as part of an agent run. With database paths present, the CLI automatically uses the compiled Cozo backends.
 
 ```powershell
-.\build-plan\bin\Release\llama-memory.exe chat `
+.\build-plan\bin\Release\llama-agent.exe run `
   --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --agent-bootstrap default --prompt "Set up the local agent workspace."
@@ -25,7 +25,7 @@ Bootstrap is idempotent and happens as part of an agent run. With database paths
 The default profile is the normal agent entry point: it plans, uses the scoped memory tools, reflects once, and can submit policy-gated memory proposals.
 
 ```powershell
-.\build-plan\bin\Release\llama-memory.exe chat `
+.\build-plan\bin\Release\llama-agent.exe run `
   --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --prompt "What did we decide, and what should happen next?"
@@ -34,7 +34,7 @@ The default profile is the normal agent entry point: it plans, uses the scoped m
 Use the research profile when a task needs bounded repository inspection or public web research. `web_search` returns at most eight candidates from DuckDuckGo Lite; `web_fetch` extracts bounded text from a selected public HTTPS URL. They are read-only tools and remain subject to the normal per-turn tool-round budget.
 
 ```powershell
-.\build-plan\bin\Release\llama-memory.exe chat `
+.\build-plan\bin\Release\llama-agent.exe run `
   --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --agent-profile research `
@@ -69,7 +69,7 @@ Use `--agent-plan auto` with a persistent plan store to let the bounded selector
 Export the portable bootstrap definitions in the current scope without loading the chat model:
 
 ```powershell
-.\build-plan\bin\Release\llama-memory.exe chat `
+.\build-plan\bin\Release\llama-agent.exe run `
   --memory-db .\work\agent-memory.cozo --plan-db .\work\agent-plan.cozo `
   --model unused.gguf --prompt export --agent-export .\work\agent-package.json
 ```
@@ -93,6 +93,8 @@ user request -> memory retrieval -> planner -> plan store
                             final answer or one bounded revision
 ```
 
+`llama-agent` is the preferred PoC entry point for agent turns. It owns the CLI parsing, profile resolution, planning, reflection, tool-profile and learning flow, while reusing the same memory store and chat helpers as the memory PoC. `llama-memory chat` remains as a compatibility wrapper that delegates to the same agent implementation; `llama-memory add/search/relate` remain memory-only operations.
+
 `llama-memory` provides retrieved evidence only. A planner can propose typed plan operations, but `common_plan_policy` validates version checks, state transitions, dependencies, cycles, evidence requirements and limits before `common_plan_store` persists an update. Plan events are append-only short audit records. Plans are never memory records.
 
 The first backend is `common_plan_in_memory_store`. When `LLAMA_PLAN_COZO=ON`, `common_plan_cozo_store` persists plan state in the separate Cozo relations `agent_plan` and `agent_plan_event`; it never uses the memory relations `memory` or `memory_edge`. The generic in-memory policy remains the mutation gate before an accepted state and its short audit event are persisted. If either persistence write fails, the cache is reloaded from Cozo; if the audit-event write fails after a state write, the prior state is restored before that reload.
@@ -113,15 +115,15 @@ On Windows, these two agent network tools use WinHTTP and the Windows certificat
 
 `common_tool_profile_to_chat_tools` and `common_tool_dispatch_chat_calls` connect that native registry to llama.cpp's existing chat-template and tool-call parser layer. The former exposes only definitions that are both profile-approved and actually registered; the latter turns a parsed assistant tool call into a bounded `role: tool` message for the next generation. It assigns a stable runtime call id when a template omitted one, caps results, and never executes proposal or unregistered tools. Native handlers now return a structured `common_tool_execution_result` with `failure_code`, `failure_class`, `retryable`, `safe_summary`, and optional raw diagnostics. The chat bridge forwards only the safe structured fields into the tool message; raw diagnostics stay local to the caller. The first limit is one call per batch.
 
-When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, the existing `llama-memory chat` PoC exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs bounded registered-tool rounds, and completes with a tool-free final generation. `memory_remember` is available as a policy-gated proposal in `memory` and `research`; it is not an unrestricted write capability. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags.
+When built with `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, `llama-agent run` exposes this path with `--tool-profile minimal|memory-read|memory|research`. It bootstraps the selected profile in process, binds memory scope and the optional embedding provider from CLI-owned runtime state, performs bounded registered-tool rounds, and completes with a tool-free final generation. `memory_remember` is available as a policy-gated proposal in `memory` and `research`; it is not an unrestricted write capability. The profile flag cannot be combined with the older `--memory-search-tool` or `--memory-remember-tool` flags. `llama-memory chat` accepts the same agent arguments for compatibility.
 
 ### Detailed overrides
 
-`--agent-profile` is a convenience layer. An explicitly supplied `--tool-profile`, `--planning-mode`, `--reflection-mode` or `--memory-learn` overrides only that dimension of the chosen profile. This is useful for experiments such as `--agent-profile research --reflection-mode off`. Existing legacy memory-tool flags retain static behavior unless a named agent profile is explicitly selected.
+`--agent-profile` is a convenience layer. An explicitly supplied `--tool-profile`, `--planning-mode`, `--reflection-mode` or `--memory-learn` overrides only that dimension of the chosen profile. This is useful for experiments such as `--agent-profile research --reflection-mode off`. Existing legacy memory-tool flags retain static behavior unless a named agent profile is explicitly selected, and they remain useful for simple non-planned chat tests.
 
 ### Model-backed chat loop
 
-`llama-memory chat --planning-mode mini` runs the bounded runtime around the already loaded chat model. The model-facing planner contract is deliberately compact: it returns `{goal,steps}`, where each step may include a `tool`, ordinary JSON `args`, optional `after` dependencies, an optional `id`, and a `mode`. It never has to JSON-encode an object inside `arguments_json`. Native code expands this compact proposal into the full internal operations, supplies IDs when they are omitted, supplies titles/objectives and empty metadata, normalizes safe shorthand such as one-string dependencies, infers a simple sequential dependency chain when `after` is omitted, and can add the final synthesis step automatically. The schema given to grammar-constrained local generation is intentionally narrower than the parser: it prefers `tool` objects and `after` arrays, while the parser still accepts safe shorthand for imported, persisted or older compact proposals.
+`llama-agent run --planning-mode mini` runs the bounded runtime around the already loaded chat model. The model-facing planner contract is deliberately compact: it returns `{goal,steps}`, where each step may include a `tool`, ordinary JSON `args`, optional `after` dependencies, an optional `id`, and a `mode`. It never has to JSON-encode an object inside `arguments_json`. Native code expands this compact proposal into the full internal operations, supplies IDs when they are omitted, supplies titles/objectives and empty metadata, normalizes safe shorthand such as one-string dependencies, infers a simple sequential dependency chain when `after` is omitted, and can add the final synthesis step automatically. The schema given to grammar-constrained local generation is intentionally narrower than the parser: it prefers `tool` objects and `after` arrays, while the parser still accepts safe shorthand for imported, persisted or older compact proposals.
 
 ### Purpose, goal and evidence
 
@@ -147,7 +149,7 @@ Tool arguments may use a structured binding from an earlier completed step's JSO
 The source step must be completed and have a JSON tool or reasoning observation. Binding nesting, IDs, JSON Pointer length, materialized argument size and source lookup are bounded; missing or malformed bindings become structured validation failures on the active step. This enables chains such as `repository_search` to `repository_read` without predeclaring the discovered path while still giving reflection/repair a stable failure observation.
 
 ```powershell
-.\build-plan\bin\Debug\llama-memory.exe chat `
+.\build-plan\bin\Debug\llama-agent.exe run `
   --backend cozo --memory-db .\work\agent.db `
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --prompt "What did we decide, and what is the next step?" `
@@ -160,7 +162,7 @@ The planner is deliberately fail-closed for actions but fail-soft for availabili
 
 `memory_remember` is available in the `memory` and `research` profiles as a policy-gated proposal, not as a generic write capability. Its native binding invokes the existing memory policy and audit path, returning the accept/reject/duplicate/conflict decision as a tool result. Generic plan runtime callers must explicitly set `allow_policy_gated_tool_proposals`; otherwise only read-only tools are eligible.
 
-The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits tool executions per run, while reasoning steps do not consume that tool budget, and an active successful step is never re-executed after its observation is recorded. The scheduler distinguishes `runnable`, `blocked`, `complete` and `inactive`: a mandatory step waiting on missing evidence or a failed dependency is blocked, not terminal. Only completed, failed and cancelled plans are terminal. The scheduler, rather than reflection, normally progresses the DAG and therefore permits bounded chains such as `memory_search → memory_get` without model-issued lifecycle operations. Reflection remains the path for repair, replanning and answer-quality review. This first scheduler slice is sequential and deterministic; it does not run ready steps in parallel or execute arbitrary shell commands.
+The bounded agent runtime supports the same pattern across plan steps: `max_tool_batches` limits tool executions per run, while reasoning steps do not consume that tool budget, and an active successful step is never re-executed after its observation is recorded. The scheduler distinguishes `runnable`, `blocked`, `complete` and `inactive`: a mandatory step waiting on missing evidence or a failed dependency is blocked, not terminal. Only completed, failed and cancelled plans are terminal. The scheduler, rather than reflection, normally progresses the DAG and therefore permits bounded chains such as `memory_search -> memory_get` without model-issued lifecycle operations. Reflection remains the path for repair, replanning and answer-quality review. This first scheduler slice is sequential and deterministic; it does not run ready steps in parallel or execute arbitrary shell commands.
 
 An ordinary registered-tool handler failure records a capped JSON error observation and marks that active step `failed`; it does not abort the whole agent process. Registered-tool argument validation failures follow the same repairable lifecycle: the runtime records a `tool.invalid_arguments` observation, marks the step failed, emits a `tool_failure` learning signal, and then continues to drafting/reflection with the failure as evidence. The following draft and reflection can therefore report the limitation honestly or propose an allowed repair/retry. Unregistered tools and disallowed policy classes still stop execution fail-closed because they indicate a capability or authority boundary rather than a recoverable argument-shape problem. Runtime failure classification no longer depends on string-matching executor text: adapters return explicit native classes such as `validation`, `policy`, `not_found`, `timeout`, `network`, `execution`, or `limit`, and the runtime maps those to the agent-facing failure envelope.
 
@@ -171,7 +173,7 @@ Reflection is a sideband interface. Its JSON parser accepts only a short decisio
 `--memory-learn post-turn` adds one optional stage after a successful bounded agent turn. A separate model-backed candidate extractor returns either one constrained-JSON candidate or `null`; it is not part of the reflection parser and does not expose reflection text. The runtime then applies native shape, confidence (default `0.75`), expected-reuse (default `0.65`) and provenance gates before passing an accepted proposal through the existing `common_memory_evaluate_remember_request` policy and ordinary memory store. The policy remains the final authority for sensitive-content, scope, duplicate and conflict decisions.
 
 ```powershell
-.\build-plan\bin\Release\llama-memory.exe chat `
+.\build-plan\bin\Release\llama-agent.exe run `
   --backend cozo --memory-db .\work\agent.db `
   --model .\models\chat.gguf --embedding-model .\models\embedding.gguf `
   --prompt "When testing persistent data, always close, reopen and read it back." `

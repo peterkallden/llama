@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <sstream>
 static void usage(const char * argv0) {
     fprintf(stderr,
         "usage:\n"
@@ -87,6 +88,8 @@ static bool parse_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.weight = std::stof(v);
         } else if (strcmp(argv[i], "--limit") == 0 || strcmp(argv[i], "--memory-top-k") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.limit = (size_t) std::stoul(v);
+        } else if (strcmp(argv[i], "--embedding-model") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.embedding_model = v;
         } else if (strcmp(argv[i], "--embedding") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false;
             std::stringstream ss(v);

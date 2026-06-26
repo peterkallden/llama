@@ -13,6 +13,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "usage:\n"
         "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--planning-mode off|mini] [--reflection-mode off|always] [--memory-learn off|post-turn]\n"
+        "         [--memory-search-tool|--memory-remember-tool]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n",
@@ -86,6 +87,10 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v || !parse_embedding(v, out.embedding)) return false;
         } else if (strcmp(argv[i], "--memory-record-episode") == 0) {
             out.record_episode = true;
+        } else if (strcmp(argv[i], "--memory-search-tool") == 0) {
+            out.enable_memory_search_tool = true;
+        } else if (strcmp(argv[i], "--memory-remember-tool") == 0) {
+            out.enable_memory_remember_tool = true;
         } else if (strcmp(argv[i], "--memory-learn") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn = v; out.memory_learn_explicit = true;
         } else if (strcmp(argv[i], "--memory-learn-show-candidate") == 0) {

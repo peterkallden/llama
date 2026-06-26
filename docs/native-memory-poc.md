@@ -169,6 +169,8 @@ LLAMA_MEMORY_COZO=ON requires Cozo C API headers. Set COZO_INCLUDE_DIR to the di
 
 The executable is `llama-memory` and supports `add`, `search`, `relate`, and `chat`. The internal CMake target remains `llama-memory-poc` because `llama-memory` is already the backend library target.
 
+`add` and `search` are memory operations and accept either an explicit `--embedding` vector or `--embedding-model MODEL`. The `chat` command is retained for compatibility, but now delegates its agent turn to the shared `pocs/agent` CLI path. New agent-focused examples should prefer `llama-agent run`; existing `llama-memory chat` invocations continue to work.
+
 ```sh
 ./build/bin/llama-memory add \
   --backend cozo \
@@ -220,6 +222,8 @@ To let a chat model choose one explicit, read-only memory lookup, add `--memory-
 ```
 
 The tool is opt-in and is advertised only when local query embeddings are available. It exposes exactly one function, `memory_search`, with a required natural-language `query` (1-1024 characters) and an optional `limit` (1-8). The PoC accepts at most one call per chat turn, performs retrieval through the existing retrieval layer, caps the rendered result to the configured memory token budget, and then produces the final answer with no tools enabled. It never accepts CozoScript, model-supplied memory IDs, arbitrary filters, or any write operation. Console debug output records tool activation, result count, and the embedding-related fallback state.
+
+The older direct memory-tool flags, `--memory-search-tool` and `--memory-remember-tool`, are still accepted on the agent parser for compatibility. They intentionally remain incompatible with `--tool-profile` and with `--planning-mode mini`; use a catalog-backed profile such as `memory-read`, `memory`, or `research` for planned agent runs.
 
 The in-memory backend is deterministic and intended for tests and single-process experiments. Persistent cross-process CLI workflows require the Cozo backend.
 
@@ -344,10 +348,10 @@ audit: memory_remember decision=accept kind=fact scope=session namespace=local r
 
 ## Catalog-backed read-only tool profile
 
-When the PoC is built with both `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, `llama-memory chat` can use the shared native tool catalog:
+When the PoC is built with both `LLAMA_MEMORY=ON` and `LLAMA_AGENT_REFLECTION=ON`, agent chat can use the shared native tool catalog. `llama-agent run` is the preferred entry point; `llama-memory chat` delegates to the same implementation for compatibility:
 
 ```powershell
-.\build-plan\bin\Debug\llama-memory.exe chat `
+.\build-plan\bin\Debug\llama-agent.exe run `
   --backend cozo `
   --memory-db .\work\memory.db `
   --model .\models\poc-qwen15b\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
@@ -361,10 +365,10 @@ The profile is bootstrapped in process. `memory-read` exposes registered read-on
 
 ## Model-backed mini plan chat
 
-With `LLAMA_AGENT_REFLECTION=ON`, the same command can route a turn through the bounded agent runtime:
+With `LLAMA_AGENT_REFLECTION=ON`, the same agent command can route a turn through the bounded agent runtime:
 
 ```powershell
-.\build-plan\bin\Debug\llama-memory.exe chat `
+.\build-plan\bin\Debug\llama-agent.exe run `
   --backend cozo --memory-db .\work\agent.db `
   --model .\models\poc-qwen15b\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
   --embedding-model .\models\poc-nomic-embed\nomic-embed-text-v1.5.Q4_K_M.gguf `
