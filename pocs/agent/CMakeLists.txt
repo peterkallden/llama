@@ -4,9 +4,9 @@ add_executable(${TARGET}
     ../memory/memory-cli-config.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp
-    ../memory/memory-cli-run.cpp
+    agent-cli-run.cpp
     ../memory/memory-cli-agent.cpp
-    ../memory/memory-cli-selection.cpp
+    agent-cli-selection.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
 target_include_directories(${TARGET} PRIVATE

@@ -3,7 +3,7 @@
 
 #include "memory-cli-config.h"
 #include "memory-cli-memory.h"
-#include "memory-cli-run.h"
+#include "../agent/agent-cli-run.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-in-memory.h"
@@ -277,7 +277,7 @@ int main(int argc, char ** argv) {
             usage(argv[0]);
             return 1;
         }
-        return run_memory_cli_chat(*store, a);
+        return run_agent_cli(*store, a);
     } else {
         usage(argv[0]);
         return 1;

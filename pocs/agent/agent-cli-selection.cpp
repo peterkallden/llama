@@ -1,7 +1,7 @@
-#include "memory-cli-selection.h"
+#include "agent-cli-selection.h"
 
 #include "agent/agent-package-json.h"
-#include "memory-cli-chat.h"
+#include "../memory/memory-cli-chat.h"
 
 #include <algorithm>
 #include <fstream>

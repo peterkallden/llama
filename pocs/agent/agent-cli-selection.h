@@ -5,7 +5,7 @@
 #include "agent/tool-registry.h"
 #include "chat.h"
 #include "llama.h"
-#include "memory-cli-config.h"
+#include "../memory/memory-cli-config.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 

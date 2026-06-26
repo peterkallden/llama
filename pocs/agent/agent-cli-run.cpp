@@ -1,11 +1,11 @@
-#include "memory-cli-run.h"
+#include "agent-cli-run.h"
 
-#include "memory-cli-chat.h"
-#include "memory-cli-memory.h"
+#include "../memory/memory-cli-chat.h"
+#include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-#include "memory-cli-agent.h"
-#include "memory-cli-selection.h"
+#include "../memory/memory-cli-agent.h"
+#include "agent-cli-selection.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
 #include "agent/blueprint-selector.h"
@@ -39,7 +39,7 @@
 using json = nlohmann::ordered_json;
 #endif
 
-int run_memory_cli_chat(common_memory_store & store, args a) {
+int run_agent_cli(common_memory_store & store, args a) {
     std::string error;
     if (!resolve_agent_profile(a, error)) {
         fprintf(stderr, "%s\n", error.c_str());

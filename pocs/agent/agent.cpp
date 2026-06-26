@@ -1,5 +1,5 @@
 #include "../memory/memory-cli-config.h"
-#include "../memory/memory-cli-run.h"
+#include "agent-cli-run.h"
 
 #include <cstdio>
 #include <cstring>
@@ -195,5 +195,5 @@ int main(int argc, char ** argv) {
     }
 
     a.command = "chat";
-    return run_memory_cli_chat(*store, a);
+    return run_agent_cli(*store, a);
 }
