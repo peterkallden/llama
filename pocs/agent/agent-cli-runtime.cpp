@@ -1,8 +1,8 @@
-#include "memory-cli-agent.h"
+#include "agent-cli-runtime.h"
 
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
-#include "memory-cli-chat.h"
+#include "../memory/memory-cli-chat.h"
 #include "memory/memory-context.h"
 #include "plan/plan-context.h"
 #include "plan/plan-json.h"

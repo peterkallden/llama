@@ -3,8 +3,8 @@
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
 #include "chat.h"
-#include "llama.h"
 #include "common/cli-config.h"
+#include "llama.h"
 
 #include <memory>
 #include <vector>

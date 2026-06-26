@@ -3,11 +3,11 @@ add_executable(${TARGET}
     agent.cpp
     agent-cli-command.cpp
     agent-cli-config.cpp
+    agent-cli-runtime.cpp
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp
     agent-cli-run.cpp
-    ../memory/memory-cli-agent.cpp
     agent-cli-selection.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)

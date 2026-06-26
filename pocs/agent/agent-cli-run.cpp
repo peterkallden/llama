@@ -4,7 +4,7 @@
 #include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-#include "../memory/memory-cli-agent.h"
+#include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
