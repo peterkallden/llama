@@ -301,8 +301,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     std::vector<std::string> guidance;
     std::set<std::string> executed_step_ids;
     bool executed_request_tool = false;
-    size_t tool_batches = 0;
     for (size_t iteration = 0; iteration < request.max_iterations; ++iteration) {
+        size_t tool_batches = 0;
         // Execute the contiguous, dependency-ready tool chain before drafting.
         // This makes normal plan progression deterministic; reflection remains
         // reserved for repair or replanning.
@@ -468,6 +468,23 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         }
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
+            if ((op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) && op.step && op.step->tool_call) {
+                std::string validation_error;
+                const auto & call = *op.step->tool_call;
+                const bool policy_allowed = tools && (tools->is_read_only(call.name) || (request.allow_policy_gated_tool_proposals && tools->is_policy_gated(call.name)));
+                const bool valid_tool_call = policy_allowed && tools->validate({call.name, call.arguments_json}, validation_error);
+                if (!valid_tool_call) {
+                    if (validation_error.empty()) {
+                        validation_error = tools ? "tool is not approved by policy" : "registered tool execution is unavailable";
+                    }
+                    op.step->selected_tool.reset();
+                    op.step->tool_call.reset();
+                    op.step->mode = common_plan_step_mode::reasoning;
+                    op.step->required_evidence.clear();
+                    result.events.push_back({common_agent_event_type::tool_rejected,
+                        "reflection-added tool step degraded to reasoning: " + validation_error, {}, plan.id});
+                }
+            }
             op.plan_id = plan.id;
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { error.clear(); continue; }
@@ -502,7 +519,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (failure != result.learning_signals.end()) result.learning_signals.push_back({common_learning_signal_type::successful_recovery, plan.id, failure->step_id,
             failure->tool_name, failure->evidence_id, "plan completed after a recorded tool failure"});
     }
-    if (memory_learner && result.error.empty() && !result.response.empty()) {
+    if (memory_learner && result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
         const auto learning = memory_learner->learn(request, plan, result);
         result.learned_memory_candidate = learning.candidate;
         result.memory_learning_summary = std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason;
@@ -523,6 +540,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         } else {
             result.events.push_back({common_agent_event_type::memory_candidate_not_stored, "post-turn candidate not stored: " + learning.reason, {}, plan.id});
         }
+    } else if (memory_learner && result.error.empty() && !result.response.empty()) {
+        result.memory_learning_summary = "skipped: plan did not complete";
+        result.events.push_back({common_agent_event_type::memory_candidate_not_stored, "post-turn learning skipped because the plan did not complete", {}, plan.id});
     }
     return result;
 }

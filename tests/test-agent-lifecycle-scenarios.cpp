@@ -14,6 +14,10 @@ public:
         error.clear();
         return "draft";
     }
+    std::string generate_reasoning(const common_agent_request &, const common_plan_state &, const common_plan_step &, std::string & error) override {
+        error.clear();
+        return R"({"summary":"reasoned"})";
+    }
 };
 
 class accepting_reflector final : public common_reflection_engine {
@@ -166,6 +170,39 @@ void scenario_repair() {
     assert(plan->observations[1].id.find(":attempt:2") != std::string::npos);
 }
 
+void scenario_repair_with_iteration_tool_budget() {
+    std::string error;
+    common_plan_in_memory_store store;
+    assert(store.open("", error));
+    common_tool_registry tools;
+    int calls = 0;
+    common_registered_tool tool;
+    tool.name = "retry_lookup";
+    tool.executor_id = "test.retry_lookup";
+    tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    tool.handler = [&calls](const std::string &) {
+        if (++calls == 1) {
+            return common_tool_execution_result::failure("tool.retry_lookup.temporary_network_failure", common_tool_failure_class::network, true,
+                "Lookup failed because the network is temporarily unavailable.", "temporary network failure");
+        }
+        return common_tool_execution_result::success("recovered fact");
+    };
+    assert(tools.register_tool(std::move(tool), error));
+    repair_planner planner;
+    draft_executor executor;
+    repairing_reflector reflector;
+    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_request request;
+    request.prompt = "recover fact";
+    request.max_iterations = 2;
+    request.max_reflection_rounds = 2;
+    request.max_tool_batches = 1;
+    const auto result = runtime.run(request);
+    assert(result.error.empty() && result.response == "draft");
+    const auto plan = store.get("repair-plan", error);
+    assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2);
+}
+
 class replacement_repair_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
@@ -261,7 +298,10 @@ public:
         work.status = common_plan_step_status::active;
         work.selected_tool = "lookup";
         work.tool_call = common_plan_tool_call{"lookup", R"({"id":"stable"})"};
-        proposal.plan.steps = {work};
+        common_plan_step answer{"answer", "Answer", "Report the verified lookup"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"work"};
+        proposal.plan.steps = {work, answer};
         proposal.plan.active_step_id = "work";
         return proposal;
     }
@@ -280,6 +320,24 @@ public:
         candidate.expected_reuse = 0.8f;
         candidate.source_plan_step_ids = {"work"};
         return {{candidate}, "reusable verified procedure"};
+    }
+};
+
+class revise_without_completion_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        common_plan_operation add_followup;
+        add_followup.kind = common_plan_operation_kind::add_step;
+        add_followup.reason_summary = "follow up after the visible answer";
+        common_plan_step followup{"followup", "Followup", "Do more work after answering"};
+        followup.mode = common_plan_step_mode::reasoning;
+        add_followup.step = std::move(followup);
+        result.proposed_plan_operations.push_back(std::move(add_followup));
+        return result;
     }
 };
 
@@ -323,10 +381,134 @@ void scenario_learning_promotion() {
     assert(blueprint && blueprint->kind == common_plan_kind::blueprint && !blueprint->steps.empty());
 }
 
+void scenario_learning_skipped_for_incomplete_plan() {
+    std::string error;
+    common_plan_in_memory_store plans;
+    common_memory_in_memory_store memories;
+    assert(plans.open("", error) && memories.open("", error));
+    procedure_extractor extractor;
+    common_memory_post_turn_learner learner(memories, extractor,
+        [](const std::string &, std::vector<float> & embedding, std::string & embed_error) { embedding = {1.0f}; embed_error.clear(); return true; });
+    common_tool_registry tools;
+    common_registered_tool tool;
+    tool.name = "lookup";
+    tool.executor_id = "test.lookup";
+    tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    tool.handler = [](const std::string &) { return common_tool_execution_result::success("stable result"); };
+    assert(tools.register_tool(std::move(tool), error));
+    learning_planner planner;
+    draft_executor executor;
+    revise_without_completion_reflector reflector;
+    common_agent_runtime runtime(plans, planner, executor, reflector, &tools, &learner);
+    common_agent_request request;
+    request.prompt = "run stable lookup";
+    request.namespace_id = "local";
+    request.session_id = "session";
+    request.project_id = "project";
+    request.enable_reflection = true;
+    request.max_iterations = 2;
+    request.max_reflection_rounds = 1;
+    request.max_tool_batches = 1;
+    const auto result = runtime.run(request);
+    assert(result.error.empty() && result.response == "draft");
+    assert(result.memory_learning_summary == "skipped: plan did not complete");
+    assert(!result.learned_memory_candidate);
+    std::string list_error;
+    const auto stored = memories.list({}, list_error);
+    assert(list_error.empty() && stored.empty());
+}
+
+class reflection_tool_degrade_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "reflection-tool-degrade-plan";
+        proposal.plan.goal = "Verify reflection tool fallback";
+        proposal.plan.success_criteria = "Initial lookup and reflected follow-up both produce evidence.";
+        proposal.plan.status = common_plan_status::active;
+        common_plan_step fetch{"fetch", "Fetch", "Retrieve the first fact"};
+        fetch.status = common_plan_step_status::active;
+        fetch.selected_tool = "lookup";
+        fetch.tool_call = common_plan_tool_call{"lookup", R"({"id":"first"})"};
+        common_plan_step answer{"answer", "Answer", "Prepare an answer before checking reflection follow-up"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"fetch"};
+        proposal.plan.steps = {fetch, answer};
+        proposal.plan.active_step_id = "fetch";
+        return proposal;
+    }
+};
+
+class invalid_tool_add_reflector final : public common_reflection_engine {
+public:
+    int calls = 0;
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        if (++calls == 1) {
+            result.decision = common_reflection_decision::revise;
+            common_plan_operation complete_answer;
+            complete_answer.kind = common_plan_operation_kind::complete_step;
+            complete_answer.step_id = "answer";
+            complete_answer.reason_summary = "free the active synthesis step before adding follow-up";
+            result.proposed_plan_operations.push_back(std::move(complete_answer));
+            common_plan_operation add;
+            add.kind = common_plan_operation_kind::add_step;
+            add.reason_summary = "add a follow-up, but with incomplete tool arguments";
+            common_plan_step followup{"followup", "Followup", "Check whether another lookup is needed"};
+            followup.selected_tool = "lookup";
+            followup.tool_call = common_plan_tool_call{"lookup", "{}"};
+            add.step = followup;
+            result.proposed_plan_operations.push_back(std::move(add));
+        } else {
+            result.decision = common_reflection_decision::accept;
+            result.ready_to_answer = true;
+        }
+        return result;
+    }
+};
+
+void scenario_invalid_reflection_tool_degrades_to_reasoning() {
+    std::string error;
+    common_plan_in_memory_store store;
+    assert(store.open("", error));
+    common_tool_registry tools;
+    common_registered_tool tool;
+    tool.name = "lookup";
+    tool.executor_id = "test.lookup";
+    tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    tool.handler = [](const std::string & input) { return common_tool_execution_result::success(input); };
+    assert(tools.register_tool(std::move(tool), error));
+    reflection_tool_degrade_planner planner;
+    draft_executor executor;
+    invalid_tool_add_reflector reflector;
+    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_request request;
+    request.prompt = "verify reflection fallback";
+    request.max_iterations = 3;
+    request.max_reflection_rounds = 2;
+    request.max_tool_batches = 1;
+    const auto result = runtime.run(request);
+    assert(result.error.empty() && result.response == "draft");
+    bool degraded = false;
+    for (const auto & event : result.events) {
+        if (event.type == common_agent_event_type::tool_rejected && event.detail.find("degraded to reasoning") != std::string::npos) degraded = true;
+    }
+    assert(degraded);
+    const auto plan = store.get("reflection-tool-degrade-plan", error);
+    assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2);
+    assert(plan->steps.size() == 3 && plan->steps[2].status == common_plan_step_status::completed);
+    assert(!plan->steps[2].tool_call && !plan->steps[2].selected_tool && common_plan_step_effective_mode(plan->steps[2]) == common_plan_step_mode::reasoning);
+}
+
 int main() {
     scenario_persistence_resume();
+    scenario_repair_with_iteration_tool_budget();
     scenario_repair();
     scenario_replace_repair();
     scenario_learning_promotion();
+    scenario_learning_skipped_for_incomplete_plan();
+    scenario_invalid_reflection_tool_degrades_to_reasoning();
     return 0;
 }
