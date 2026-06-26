@@ -1,10 +1,10 @@
 #include "memory/memory-context.h"
 #include "memory/memory-in-memory.h"
 
+#include "../agent/agent-cli-command.h"
 #include "../agent/agent-cli-config.h"
 #include "common/cli-config.h"
 #include "memory-cli-memory.h"
-#include "../agent/agent-cli-run.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-in-memory.h"
@@ -215,15 +215,7 @@ int main(int argc, char ** argv) {
         }
         fprintf(stderr, "related %s --%s--> %s\n", a.from.c_str(), a.relation.c_str(), a.to.c_str());
     } else if (a.command == "chat") {
-        if (a.model.empty() || a.prompt.empty()) {
-            print_agent_usage(argv[0], "chat");
-            return 1;
-        }
-        if (!validate_agent_memory_scope(a, error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        return run_agent_cli(*store, a);
+        return run_memory_chat_command(argv[0], *store, a);
     } else {
         usage(argv[0]);
         return 1;
