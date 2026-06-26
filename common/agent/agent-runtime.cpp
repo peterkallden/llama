@@ -170,6 +170,37 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     common_agent_result result;
     std::string error;
     if (!request.enable_planning) { result.error = "planning is disabled"; return result; }
+    const auto normalize_planned_tool_step = [&](common_plan_step & step, bool degrade_on_any_invalid, std::string & detail) {
+        detail.clear();
+        if (!step.tool_call) return false;
+        common_registered_tool_call call{step.tool_call->name, step.tool_call->arguments_json};
+        apply_safe_tool_defaults(request, call);
+        step.tool_call->arguments_json = call.arguments_json;
+        if (!tools) {
+            if (!degrade_on_any_invalid) return false;
+            step.selected_tool.reset();
+            step.tool_call.reset();
+            step.mode = common_plan_step_mode::reasoning;
+            step.required_evidence.clear();
+            detail = "registered tool execution is unavailable";
+            return true;
+        }
+        std::string validation_error;
+        const bool policy_allowed = tools->is_read_only(call.name) || (request.allow_policy_gated_tool_proposals && tools->is_policy_gated(call.name));
+        const bool valid_tool_call = policy_allowed && tools->validate(call, validation_error);
+        if (valid_tool_call) return false;
+        if (validation_error.empty()) validation_error = "tool is not approved by policy";
+        const auto arguments = json::parse(call.arguments_json, nullptr, false);
+        const bool empty_arguments = arguments.is_object() && arguments.empty();
+        const bool incomplete_tool_call = validation_error == "required contract field is missing" && empty_arguments;
+        if (!degrade_on_any_invalid && !incomplete_tool_call) return false;
+        step.selected_tool.reset();
+        step.tool_call.reset();
+        step.mode = common_plan_step_mode::reasoning;
+        step.required_evidence.clear();
+        detail = validation_error;
+        return true;
+    };
     for (const auto & hit : request.memories) {
         result.memory_ids.push_back(hit.memory.id);
         result.events.push_back({common_agent_event_type::memory_retrieved, "memory supplied to agent runtime", hit.memory.id, std::nullopt});
@@ -195,9 +226,22 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             proposal.plan.steps.clear();
             proposal.plan.active_step_id.reset();
         }
+        std::vector<std::string> initial_guardrail_events;
+        for (auto & step : proposal.plan.steps) {
+            std::string detail;
+            if (normalize_planned_tool_step(step, false, detail)) {
+                initial_guardrail_events.push_back("initial tool step degraded to reasoning: " + detail);
+            }
+        }
         for (auto & operation : proposal.operations) {
             if (operation.step && operation.step->intended_contribution.empty()) {
                 operation.step->intended_contribution = operation.step->objective;
+            }
+            if (operation.step) {
+                std::string detail;
+                if (normalize_planned_tool_step(*operation.step, false, detail)) {
+                    initial_guardrail_events.push_back("initial tool step degraded to reasoning: " + detail);
+                }
             }
         }
         if (request.plan_id) proposal.plan.id = *request.plan_id;
@@ -209,6 +253,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
+        for (const auto & detail : initial_guardrail_events) {
+            result.events.push_back({common_agent_event_type::tool_rejected, detail, {}, plan.id});
+        }
         for (auto op : proposal.operations) {
             common_plan_bind_memory_provenance(op, request.memories);
             op.plan_id = plan.id;
@@ -470,17 +517,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             common_plan_bind_memory_provenance(op, request.memories);
             if ((op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) && op.step && op.step->tool_call) {
                 std::string validation_error;
-                const auto & call = *op.step->tool_call;
-                const bool policy_allowed = tools && (tools->is_read_only(call.name) || (request.allow_policy_gated_tool_proposals && tools->is_policy_gated(call.name)));
-                const bool valid_tool_call = policy_allowed && tools->validate({call.name, call.arguments_json}, validation_error);
-                if (!valid_tool_call) {
-                    if (validation_error.empty()) {
-                        validation_error = tools ? "tool is not approved by policy" : "registered tool execution is unavailable";
-                    }
-                    op.step->selected_tool.reset();
-                    op.step->tool_call.reset();
-                    op.step->mode = common_plan_step_mode::reasoning;
-                    op.step->required_evidence.clear();
+                if (normalize_planned_tool_step(*op.step, true, validation_error)) {
                     result.events.push_back({common_agent_event_type::tool_rejected,
                         "reflection-added tool step degraded to reasoning: " + validation_error, {}, plan.id});
                 }

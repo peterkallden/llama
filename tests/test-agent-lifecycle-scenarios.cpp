@@ -502,6 +502,57 @@ void scenario_invalid_reflection_tool_degrades_to_reasoning() {
     assert(!plan->steps[2].tool_call && !plan->steps[2].selected_tool && common_plan_step_effective_mode(plan->steps[2]) == common_plan_step_mode::reasoning);
 }
 
+class initial_tool_guardrail_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "initial-tool-guardrail-plan";
+        proposal.plan.goal = "Handle an incomplete initial tool plan";
+        proposal.plan.success_criteria = "The incomplete tool step is handled without a tool validation failure.";
+        proposal.plan.status = common_plan_status::active;
+        common_plan_step lookup{"lookup", "Lookup", "Retrieve the fact if enough arguments are known"};
+        lookup.status = common_plan_step_status::active;
+        lookup.selected_tool = "lookup";
+        lookup.tool_call = common_plan_tool_call{"lookup", "{}"};
+        proposal.plan.steps.push_back(std::move(lookup));
+        proposal.plan.active_step_id = "lookup";
+        return proposal;
+    }
+};
+
+void scenario_initial_missing_required_tool_degrades_to_reasoning() {
+    std::string error;
+    common_plan_in_memory_store store;
+    assert(store.open("", error));
+    common_tool_registry tools;
+    bool tool_called = false;
+    common_registered_tool tool;
+    tool.name = "lookup";
+    tool.executor_id = "test.lookup";
+    tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    tool.handler = [&tool_called](const std::string &) { tool_called = true; return common_tool_execution_result::success("should not run"); };
+    assert(tools.register_tool(std::move(tool), error));
+    initial_tool_guardrail_planner planner;
+    draft_executor executor;
+    accepting_reflector reflector;
+    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_request request;
+    request.prompt = "lookup something";
+    request.enable_reflection = false;
+    const auto result = runtime.run(request);
+    assert(result.error.empty() && result.response == "draft");
+    assert(result.failures.empty() && !tool_called);
+    bool degraded = false;
+    for (const auto & event : result.events) {
+        if (event.type == common_agent_event_type::tool_rejected && event.detail.find("initial tool step degraded to reasoning") != std::string::npos) degraded = true;
+    }
+    assert(degraded);
+    const auto plan = store.get("initial-tool-guardrail-plan", error);
+    assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 1);
+    assert(!plan->steps.front().tool_call && !plan->steps.front().selected_tool && common_plan_step_effective_mode(plan->steps.front()) == common_plan_step_mode::reasoning);
+}
+
 int main() {
     scenario_persistence_resume();
     scenario_repair_with_iteration_tool_budget();
@@ -510,5 +561,6 @@ int main() {
     scenario_learning_promotion();
     scenario_learning_skipped_for_incomplete_plan();
     scenario_invalid_reflection_tool_degrades_to_reasoning();
+    scenario_initial_missing_required_tool_degrades_to_reasoning();
     return 0;
 }
