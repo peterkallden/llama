@@ -1,6 +1,7 @@
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
     agent.cpp
+    agent-cli-config.cpp
     ../memory/memory-cli-config.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp

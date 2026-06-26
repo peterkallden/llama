@@ -1,5 +1,5 @@
 set(TARGET llama-memory-poc)
-add_executable(${TARGET} memory.cpp memory-cli-config.cpp memory-cli-chat.cpp memory-cli-memory.cpp ../agent/agent-cli-run.cpp)
+add_executable(${TARGET} memory.cpp memory-cli-config.cpp memory-cli-chat.cpp memory-cli-memory.cpp ../agent/agent-cli-config.cpp ../agent/agent-cli-run.cpp)
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
 target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../agent)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
