@@ -48,6 +48,9 @@ json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     else if (arguments.size() <= 2 && arguments.contains("tool") && arguments.contains("args") &&
             unwrap_tool_and_arguments(arguments["tool"], arguments["args"], unwrapped)) arguments = std::move(unwrapped);
     else if (arguments.size() <= 2 && arguments.contains("name") && unwrap_named_call(arguments, unwrapped)) arguments = std::move(unwrapped);
+    else if (arguments.contains("tool") && arguments["tool"].is_string() && arguments["tool"].get<std::string>() == tool_name) {
+        arguments.erase("tool");
+    }
     if (tool_name != "calculator" || !arguments.is_object() || arguments.contains("expression") ||
         !arguments.contains("operation") || !arguments["operation"].is_string() ||
         !arguments.contains("operands") || !arguments["operands"].is_array() || arguments["operands"].size() != 2) return arguments;

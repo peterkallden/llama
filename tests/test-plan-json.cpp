@@ -32,6 +32,10 @@ int main() {
     assert(common_plan_parse_proposal_json(wrapped_tool_arguments, plan, operations, error));
     assert(operations[0].step->tool_call->arguments_json == R"({"limit":2,"query":"regression procedure"})");
 
+    const auto sibling_tool_argument = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":"memory_search","query":"regression procedure","limit":"2"}}]})";
+    assert(common_plan_parse_proposal_json(sibling_tool_argument, plan, operations, error));
+    assert(operations[0].step->tool_call->arguments_json == R"({"limit":2,"query":"regression procedure"})");
+
     const auto compact_without_ids = R"({"goal":"inspect","steps":[{"tool":"repository_search","args":{"query":"planner"}},{"tool":{"name":"repository_read","arguments":{"path":{"$from_step":"step_1","$json_pointer":"/matches/0/path"}}}},{"mode":"reasoning"}]})";
     assert(common_plan_parse_proposal_json(compact_without_ids, plan, operations, error));
     assert(operations.size() == 4); // native final synthesis

@@ -484,6 +484,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.events.push_back({common_agent_event_type::response_revised, "reflection requested revision", {}, plan.id});
     }
     if (result.response.empty() && result.error.empty()) result.error = "agent loop reached its iteration limit";
+    if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::active) {
+        for (size_t pass = 0; pass < 3 && plan.status == common_plan_status::active; ++pass) {
+            const auto before_version = plan.version;
+            if (!complete_active_synthesis_step()) { result.error = error; return result; }
+            if (plan.status != common_plan_status::active) break;
+            activate_next_ready_step();
+            if (!error.empty()) { result.error = error; return result; }
+            if (plan.version == before_version) break;
+        }
+    }
     result.plan_version = plan.version;
     if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
         const auto failure = std::find_if(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
