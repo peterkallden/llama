@@ -180,13 +180,15 @@ public:
         }
         common_chat_msg system{"system", "Return only JSON. You may bind a registered read-only tool to an existing blueprint step. Do not add, remove, reorder, rename, or otherwise alter steps. Return no binding when reasoning is more appropriate."};
         common_chat_msg user{"user", "[Blueprint steps]\n" + steps + "[User request]\n" + request.prompt};
-        static const std::string schema = R"({"type":"object","additionalProperties":false,"required":["bindings"],"properties":{"bindings":{"type":"array","maxItems":6,"items":{"type":"object","additionalProperties":false,"required":["step_id","tool"],"properties":{"step_id":{"type":"string","maxLength":128},"tool":{"type":"object","additionalProperties":false,"required":["name","arguments"],"properties":{"name":{"type":"string","maxLength":256},"arguments":{"type":"object"}}}}}}}}})";
         std::string output;
         common_chat_params params;
         int decoded = 0;
         args bind_options = options;
         bind_options.n_predict = std::min(options.n_predict, 256);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, output, params, decoded, schema)) {
+        // Keep this as a soft JSON contract. The nested free-form arguments
+        // object is validated below against the native registry, and using a
+        // hard grammar here can fail before we get a safe decline path.
+        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, output, params, decoded)) {
             error = "blueprint binding generation failed";
             return false;
         }
