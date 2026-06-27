@@ -4,6 +4,7 @@
 #include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+#include "agent-cli-inference.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
 #include "agent/agent-bootstrap.h"
@@ -264,6 +265,9 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 
     common_chat_templates_ptr chat_templates = common_chat_templates_init(model, "");
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+    auto agent_inference = make_llama_cli_agent_inference(model, chat_templates.get());
+#endif
     std::vector<common_chat_msg> messages;
     if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool || !a.tool_profile.empty()) && memory_enabled)) {
         common_chat_msg system_msg;
@@ -396,7 +400,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 selection_request.turn_id = a.memory_turn;
                 selection_request.plan_scope = requested_plan_scope;
                 std::string selection_error;
-                const auto selected = select_llama_cli_plan(model, chat_templates.get(), a, selection_request, candidates, selection_error);
+                const auto selected = select_llama_cli_plan(*agent_inference, a, selection_request, candidates, selection_error);
                 if (selected) {
                     a.plan_id = *selected;
                     fprintf(stderr, "agent plan auto-selected: %s\n", a.plan_id.c_str());
@@ -408,7 +412,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             }
         }
         if (a.agent_blueprint == "auto") {
-            auto selector = make_llama_cli_blueprint_selector(model, chat_templates.get(), a);
+            auto selector = make_llama_cli_blueprint_selector(*agent_inference, a);
             common_blueprint_selection_config config;
             config.task_plan_id = a.plan_id;
             config.session_id = a.memory_session;
@@ -436,7 +440,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                     binding_request.project_id = a.memory_project;
                     binding_request.turn_id = a.memory_turn;
                     std::string binding_error;
-                    if (!bind_llama_cli_blueprint_tools(model, chat_templates.get(), a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error)) {
+                    if (!bind_llama_cli_blueprint_tools(*agent_inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error)) {
                         fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
                     }
                 }
@@ -446,13 +450,13 @@ int run_agent_cli(common_memory_store & store, args a) {
                 fprintf(stderr, "agent blueprint auto-selection declined or failed safely; using normal plan creation\n");
             }
         }
-        auto planner = make_llama_cli_planner(model, chat_templates.get(), a, tools);
-        auto executor = make_llama_cli_action_executor(model, chat_templates.get(), a);
-        auto reflector = make_llama_cli_reflection_engine(model, chat_templates.get(), a);
+        auto planner = make_llama_cli_planner(*agent_inference, a, tools);
+        auto executor = make_llama_cli_action_executor(*agent_inference, a);
+        auto reflector = make_llama_cli_reflection_engine(*agent_inference, a);
         std::unique_ptr<common_memory_candidate_extractor> candidate_extractor;
         std::unique_ptr<common_memory_post_turn_learner> memory_learner;
         if (a.memory_learn == "post-turn") {
-            candidate_extractor = make_llama_cli_memory_candidate_extractor(model, chat_templates.get(), a);
+            candidate_extractor = make_llama_cli_memory_candidate_extractor(*agent_inference, a);
             common_memory_learning_config learning_config;
             learning_config.min_confidence = a.memory_learn_min_confidence;
             learning_config.min_expected_reuse = a.memory_learn_min_reuse;

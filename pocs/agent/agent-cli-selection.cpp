@@ -1,7 +1,6 @@
 #include "agent-cli-selection.h"
 
 #include "agent/agent-package-json.h"
-#include "../memory/memory-cli-chat.h"
 
 #include <algorithm>
 #include <fstream>
@@ -106,8 +105,8 @@ namespace {
 
 class llama_blueprint_selector final : public common_blueprint_selector {
 public:
-    llama_blueprint_selector(llama_model * model, const common_chat_templates * templates, const args & options)
-        : model(model), templates(templates), options(options) {}
+    llama_blueprint_selector(common_agent_inference & inference, const args & options)
+        : inference(inference), options(options) {}
 
     common_blueprint_selection select(
             const common_agent_request & request,
@@ -132,17 +131,15 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args selection_options = options;
         selection_options.n_predict = std::max(options.n_predict, 96);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, output, params, decoded, schema.dump())) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, schema.dump()}, inference_result)) {
             error = "blueprint selector generation failed";
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
-        const auto choice = json::parse(output, nullptr, false);
+        const auto choice = json::parse(inference_result.output, nullptr, false);
         if (!choice.is_object()) {
             error = "blueprint selector returned invalid JSON";
             result.decision = common_blueprint_selection_decision::failed;
@@ -157,15 +154,14 @@ public:
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
 };
 
 class llama_blueprint_binder final {
 public:
-    llama_blueprint_binder(llama_model * model, const common_chat_templates * templates, const args & options, const common_tool_registry & registry)
-        : model(model), templates(templates), options(options), registry(registry) {}
+    llama_blueprint_binder(common_agent_inference & inference, const args & options, const common_tool_registry & registry)
+        : inference(inference), options(options), registry(registry) {}
 
     bool bind(const common_agent_request & request, common_plan_store & store, const std::string & plan_id, std::string & error) const {
         const auto loaded = store.get(plan_id, error);
@@ -180,19 +176,17 @@ public:
         }
         common_chat_msg system{"system", "Return only JSON. You may bind a registered read-only tool to an existing blueprint step. Do not add, remove, reorder, rename, or otherwise alter steps. Return no binding when reasoning is more appropriate."};
         common_chat_msg user{"user", "[Blueprint steps]\n" + steps + "[User request]\n" + request.prompt};
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args bind_options = options;
         bind_options.n_predict = std::min(options.n_predict, 256);
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, output, params, decoded)) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, {}}, inference_result)) {
             error = "blueprint binding generation failed";
             return false;
         }
-        const auto proposal = json::parse(output, nullptr, false);
+        const auto proposal = json::parse(inference_result.output, nullptr, false);
         if (!proposal.is_object() || !proposal.contains("bindings") || !proposal["bindings"].is_array()) {
             error = "blueprint binding returned invalid JSON";
             return false;
@@ -247,16 +241,15 @@ public:
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
     const common_tool_registry & registry;
 };
 
 class llama_plan_selector final {
 public:
-    llama_plan_selector(llama_model * model, const common_chat_templates * templates, const args & options)
-        : model(model), templates(templates), options(options) {}
+    llama_plan_selector(common_agent_inference & inference, const args & options)
+        : inference(inference), options(options) {}
 
     std::optional<std::string> select(
             const common_agent_request & request,
@@ -280,16 +273,14 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args selection_options = options;
         selection_options.n_predict = std::max(options.n_predict, 96);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, output, params, decoded, schema.dump())) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, schema.dump()}, inference_result)) {
             error = "plan selector generation failed";
             return std::nullopt;
         }
-        const auto choice = json::parse(output, nullptr, false);
+        const auto choice = json::parse(inference_result.output, nullptr, false);
         if (!choice.is_object()) {
             error = "plan selector returned invalid JSON";
             return std::nullopt;
@@ -311,40 +302,36 @@ public:
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
 };
 
 } // namespace
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
-        llama_model * model,
-        const common_chat_templates * templates,
+        common_agent_inference & inference,
         const args & options) {
-    return std::make_unique<llama_blueprint_selector>(model, templates, options);
+    return std::make_unique<llama_blueprint_selector>(inference, options);
 }
 
 std::optional<std::string> select_llama_cli_plan(
-        llama_model * model,
-        const common_chat_templates * templates,
+        common_agent_inference & inference,
         const args & options,
         const common_agent_request & request,
         const std::vector<common_plan_state> & candidates,
         std::string & error) {
-    llama_plan_selector selector(model, templates, options);
+    llama_plan_selector selector(inference, options);
     return selector.select(request, candidates, error);
 }
 
 bool bind_llama_cli_blueprint_tools(
-        llama_model * model,
-        const common_chat_templates * templates,
+        common_agent_inference & inference,
         const args & options,
         const common_tool_registry & registry,
         const common_agent_request & request,
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    llama_blueprint_binder binder(model, templates, options, registry);
+    llama_blueprint_binder binder(inference, options, registry);
     return binder.bind(request, store, plan_id, error);
 }

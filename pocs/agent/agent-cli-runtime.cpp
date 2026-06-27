@@ -2,7 +2,6 @@
 
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
-#include "../memory/memory-cli-chat.h"
 #include "memory/memory-context.h"
 #include "plan/plan-context.h"
 #include "plan/plan-json.h"
@@ -25,8 +24,8 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
 
 class llama_model_planner final : public common_planner {
 public:
-    llama_model_planner(llama_model * model, const common_chat_templates * templates, const args & options, const std::vector<common_chat_tool> & tools)
-        : model(model), templates(templates), options(options), tool_names(join_tool_names(tools)) {
+    llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
+        : inference(inference), options(options), tool_names(join_tool_names(tools)) {
         for (const auto & tool : tools) allowed_tools.push_back(tool.name);
     }
 
@@ -52,17 +51,15 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args planner_options = options;
         planner_options.n_predict = std::max(options.n_predict, 512);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, planner_options, output, params, decoded, common_plan_proposal_json_schema())) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, planner_options, common_plan_proposal_json_schema()}, inference_result)) {
             error = "model planner generation failed";
             return proposal;
         }
         std::string parse_error;
-        if (common_plan_parse_proposal_json(output, proposal.plan, proposal.operations, parse_error, 6)) {
+        if (common_plan_parse_proposal_json(inference_result.output, proposal.plan, proposal.operations, parse_error, 6)) {
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
@@ -87,15 +84,14 @@ public:
         step.status = common_plan_step_status::active;
         proposal.plan.steps.push_back(std::move(step));
         proposal.plan.active_step_id = "answer";
-        const auto preview = output.substr(0, 768);
+        const auto preview = inference_result.output.substr(0, 768);
         fprintf(stderr, "warning: planner JSON rejected; using bounded fallback plan (%s): %s\n", parse_error.c_str(), preview.c_str());
         error.clear();
         return proposal;
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
     std::vector<std::string> allowed_tools;
     std::string tool_names;
@@ -103,8 +99,8 @@ private:
 
 class llama_action_executor final : public common_action_executor {
 public:
-    llama_action_executor(llama_model * model, const common_chat_templates * templates, const args & options)
-        : model(model), templates(templates), options(options) {}
+    llama_action_executor(common_agent_inference & inference, const args & options)
+        : inference(inference), options(options) {}
 
     std::string generate_draft(const common_agent_request & request, const common_plan_state & plan, const std::vector<std::string> & guidance, std::string & error) override {
         common_chat_msg system;
@@ -117,17 +113,15 @@ public:
             user.content += "\n[Revision guidance]\n";
             for (const auto & item : guidance) user.content += "- " + item + "\n";
         }
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args draft_options = options;
         draft_options.n_predict = std::min(options.n_predict, 96);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, draft_options, output, params, decoded)) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, draft_options, {}}, inference_result)) {
             error = "model draft generation failed";
             return {};
         }
         error.clear();
-        return output;
+        return inference_result.output;
     }
 
     std::string generate_reasoning(const common_agent_request & request, const common_plan_state & plan, const common_plan_step & step, std::string & error) override {
@@ -142,30 +136,27 @@ public:
         memory_context_config.char_budget = 900;
         memory_context_config.per_memory_char_budget = 300;
         user.content = common_memory_render_context(common_memory_select_procedure_memories(request.memories, plan, step), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args reasoning_options = options;
         reasoning_options.n_predict = std::min(options.n_predict, 128);
         static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reasoning_options, output, params, decoded, reasoning_schema)) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reasoning_options, reasoning_schema}, inference_result)) {
             error = "model reasoning generation failed";
             return {};
         }
         error.clear();
-        return output;
+        return inference_result.output;
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
 };
 
 class llama_reflection_engine final : public common_reflection_engine {
 public:
-    llama_reflection_engine(llama_model * model, const common_chat_templates * templates, const args & options)
-        : model(model), templates(templates), options(options) {}
+    llama_reflection_engine(common_agent_inference & inference, const args & options)
+        : inference(inference), options(options) {}
 
     common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) override {
         common_reflection_result result;
@@ -181,17 +172,15 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = common_plan_render_context(plan) + "\n[User request]\n" + request.prompt + "\n[Draft]\n" + draft;
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args reflection_options = options;
         reflection_options.n_predict = std::max(options.n_predict, 256);
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reflection_options, output, params, decoded, reflection_schema)) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reflection_options, reflection_schema}, inference_result)) {
             error = "model reflection generation failed";
             return result;
         }
-        if (!common_reflection_parse_json(output, result, error, 8)) {
+        if (!common_reflection_parse_json(inference_result.output, result, error, 8)) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
             result.decision = common_reflection_decision::accept;
@@ -205,8 +194,7 @@ public:
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
 };
 
@@ -247,8 +235,8 @@ bool parse_memory_candidate_json(const std::string & text, common_memory_candida
 
 class llama_memory_candidate_extractor final : public common_memory_candidate_extractor {
 public:
-    llama_memory_candidate_extractor(llama_model * model, const common_chat_templates * templates, const args & options)
-        : model(model), templates(templates), options(options) {}
+    llama_memory_candidate_extractor(common_agent_inference & inference, const args & options)
+        : inference(inference), options(options) {}
 
     common_memory_candidate_result extract(const common_agent_request & request, const common_plan_state & plan, const common_agent_result & result, std::string & error) override {
         common_chat_msg system;
@@ -270,53 +258,46 @@ public:
             }
         }
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
-        std::string output;
-        common_chat_params params;
-        int decoded = 0;
         args extraction_options = options;
         extraction_options.n_predict = std::max(options.n_predict, 256);
-        if (!generate_chat_turn(model, templates, {system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, extraction_options, output, params, decoded, schema)) {
+        common_agent_inference_result inference_result;
+        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, extraction_options, schema}, inference_result)) {
             error = "model candidate generation failed";
             return {};
         }
         common_memory_candidate_result parsed;
-        if (!parse_memory_candidate_json(output, parsed, error)) return {};
+        if (!parse_memory_candidate_json(inference_result.output, parsed, error)) return {};
         return parsed;
     }
 
 private:
-    llama_model * model;
-    const common_chat_templates * templates;
+    common_agent_inference & inference;
     const args & options;
 };
 
 } // namespace
 
 std::unique_ptr<common_planner> make_llama_cli_planner(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options,
     const std::vector<common_chat_tool> & tools) {
-    return std::make_unique<llama_model_planner>(model, templates, options, tools);
+    return std::make_unique<llama_model_planner>(inference, options, tools);
 }
 
 std::unique_ptr<common_action_executor> make_llama_cli_action_executor(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options) {
-    return std::make_unique<llama_action_executor>(model, templates, options);
+    return std::make_unique<llama_action_executor>(inference, options);
 }
 
 std::unique_ptr<common_reflection_engine> make_llama_cli_reflection_engine(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options) {
-    return std::make_unique<llama_reflection_engine>(model, templates, options);
+    return std::make_unique<llama_reflection_engine>(inference, options);
 }
 
 std::unique_ptr<common_memory_candidate_extractor> make_llama_cli_memory_candidate_extractor(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options) {
-    return std::make_unique<llama_memory_candidate_extractor>(model, templates, options);
+    return std::make_unique<llama_memory_candidate_extractor>(inference, options);
 }

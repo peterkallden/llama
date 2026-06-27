@@ -1,10 +1,9 @@
 #pragma once
 
+#include "agent/agent-inference.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"
 #include "agent/tool-registry.h"
-#include "chat.h"
-#include "llama.h"
 #include "common/cli-config.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
@@ -28,21 +27,18 @@ bool export_agent_package(
     std::string & error);
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options);
 
 std::optional<std::string> select_llama_cli_plan(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options,
     const common_agent_request & request,
     const std::vector<common_plan_state> & candidates,
     std::string & error);
 
 bool bind_llama_cli_blueprint_tools(
-    llama_model * model,
-    const common_chat_templates * templates,
+    common_agent_inference & inference,
     const args & options,
     const common_tool_registry & registry,
     const common_agent_request & request,

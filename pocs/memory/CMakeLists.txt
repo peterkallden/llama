@@ -6,7 +6,7 @@ target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_REFLECTION)
-    target_sources(${TARGET} PRIVATE ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
+    target_sources(${TARGET} PRIVATE ../agent/agent-cli-inference.cpp ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 endif()
