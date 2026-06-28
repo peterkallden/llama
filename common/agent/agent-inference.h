@@ -95,10 +95,30 @@ struct common_agent_generation_result {
     std::string error_message;
 };
 
+inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
+    return result.status == common_agent_generation_status::completed;
+}
+
+inline common_agent_generated_text_result common_agent_generated_text_result_from_generation_result(
+        const common_agent_generation_result & result) {
+    return {
+        result.content,
+        result.decoded_tokens,
+        result.status,
+        result.stop_reason,
+        result.error_message,
+    };
+}
+
 class common_agent_inference {
 public:
     virtual ~common_agent_inference() = default;
     virtual bool generate(
         const common_agent_generation_request & request,
         common_agent_generation_result & result) = 0;
+    common_agent_generation_result generate_result(const common_agent_generation_request & request) {
+        common_agent_generation_result result;
+        generate(request, result);
+        return result;
+    }
 };

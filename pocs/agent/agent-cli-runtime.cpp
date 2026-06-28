@@ -103,30 +103,17 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::planner,
-                {system, user},
-                make_generation_options(options, std::max(options.n_predict, 512)),
-                common_plan_proposal_json_schema()), generation_result)) {
-            proposal.generation = common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            };
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::planner,
+            {system, user},
+            make_generation_options(options, std::max(options.n_predict, 512)),
+            common_plan_proposal_json_schema()));
+        proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model planner generation", generation_result);
             return proposal;
         }
-        proposal.generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
         std::string parse_error;
         if (common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6)) {
             for (auto & operation : proposal.operations) {
@@ -190,17 +177,17 @@ public:
             user.content += "\n[Revision guidance]\n";
             for (const auto & item : guidance) user.content += "- " + item + "\n";
         }
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::draft,
-                {system, user},
-                make_generation_options(options, std::min(options.n_predict, 96))), generation_result)) {
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::draft,
+            {system, user},
+            make_generation_options(options, std::min(options.n_predict, 96))));
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model draft generation", generation_result);
-            return {generation_result.content, generation_result.decoded_tokens, generation_result.status, generation_result.stop_reason, generation_result.error_message};
+            return common_agent_generated_text_result_from_generation_result(generation_result);
         }
         error.clear();
-        return {generation_result.content, generation_result.decoded_tokens, generation_result.status, generation_result.stop_reason, generation_result.error_message};
+        return common_agent_generated_text_result_from_generation_result(generation_result);
     }
 
     std::string generate_reasoning(const common_agent_request & request, const common_plan_state & plan, const common_plan_step & step, std::string & error) override {
@@ -224,18 +211,18 @@ public:
         memory_context_config.per_memory_char_budget = 300;
         user.content = common_memory_render_context(common_memory_select_procedure_memories(request.memories, plan, step), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
         static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::reasoning,
-                {system, user},
-                make_generation_options(options, std::min(options.n_predict, 128)),
-                reasoning_schema), generation_result)) {
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::reasoning,
+            {system, user},
+            make_generation_options(options, std::min(options.n_predict, 128)),
+            reasoning_schema));
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model reasoning generation", generation_result);
-            return {generation_result.content, generation_result.decoded_tokens, generation_result.status, generation_result.stop_reason, generation_result.error_message};
+            return common_agent_generated_text_result_from_generation_result(generation_result);
         }
         error.clear();
-        return {generation_result.content, generation_result.decoded_tokens, generation_result.status, generation_result.stop_reason, generation_result.error_message};
+        return common_agent_generated_text_result_from_generation_result(generation_result);
     }
 
 private:
@@ -271,30 +258,17 @@ public:
         user.role = "user";
         user.content = common_plan_render_context(plan) + "\n[User request]\n" + request.prompt + "\n[Draft]\n" + draft;
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::reflection,
-                {system, user},
-                make_generation_options(options, std::max(options.n_predict, 256)),
-                reflection_schema), generation_result)) {
-            result.generation = common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            };
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::reflection,
+            {system, user},
+            make_generation_options(options, std::max(options.n_predict, 256)),
+            reflection_schema));
+        result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model reflection generation", generation_result);
             return result;
         }
-        result.generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
         if (!common_reflection_parse_json(generation_result.content, result, error, 8)) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
@@ -381,29 +355,17 @@ public:
             }
         }
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::memory_learning,
-                {system, user},
-                make_generation_options(options, std::max(options.n_predict, 256)),
-                schema), generation_result)) {
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::memory_learning,
+            {system, user},
+            make_generation_options(options, std::max(options.n_predict, 256)),
+            schema));
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model candidate generation", generation_result);
-            return {{}, {}, common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            }};
+            return {{}, {}, common_agent_generated_text_result_from_generation_result(generation_result)};
         }
-        const auto generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
+        const auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
         common_memory_candidate_result parsed;
         if (!parse_memory_candidate_json(generation_result.content, parsed, error)) {
             return {{}, {}, generation};

@@ -206,31 +206,18 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::blueprint_selection,
-                {system, user},
-                make_generation_options(options, std::max(options.n_predict, 96)),
-                schema.dump()), generation_result)) {
-            result.generation = common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            };
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::blueprint_selection,
+            {system, user},
+            make_generation_options(options, std::max(options.n_predict, 96)),
+            schema.dump()));
+        result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
-        result.generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
         const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "blueprint selector returned invalid JSON";
@@ -278,29 +265,16 @@ public:
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::blueprint_binding,
-                {system, user},
-                make_generation_options(options, std::min(options.n_predict, 256))), generation_result)) {
-            result.generation = common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            };
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::blueprint_binding,
+            {system, user},
+            make_generation_options(options, std::min(options.n_predict, 256))));
+        result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("blueprint binding generation", generation_result);
             return result;
         }
-        result.generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
         const auto proposal = json::parse(generation_result.content, nullptr, false);
         if (!proposal.is_object() || !proposal.contains("bindings") || !proposal["bindings"].is_array()) {
             error = "blueprint binding returned invalid JSON";
@@ -400,30 +374,17 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        common_agent_generation_result generation_result;
-        if (!inference.generate(make_generation_request(
-                request,
-                common_agent_generation_purpose::plan_selection,
-                {system, user},
-                make_generation_options(options, std::max(options.n_predict, 96)),
-                schema.dump()), generation_result)) {
-            result.generation = common_agent_generated_text_result{
-                generation_result.content,
-                generation_result.decoded_tokens,
-                generation_result.status,
-                generation_result.stop_reason,
-                generation_result.error_message,
-            };
+        const auto generation_result = inference.generate_result(make_generation_request(
+            request,
+            common_agent_generation_purpose::plan_selection,
+            {system, user},
+            make_generation_options(options, std::max(options.n_predict, 96)),
+            schema.dump()));
+        result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("plan selector generation", generation_result);
             return result;
         }
-        result.generation = common_agent_generated_text_result{
-            generation_result.content,
-            generation_result.decoded_tokens,
-            generation_result.status,
-            generation_result.stop_reason,
-            generation_result.error_message,
-        };
         const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "plan selector returned invalid JSON";

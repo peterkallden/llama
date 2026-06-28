@@ -71,15 +71,30 @@ common_agent_generation_stop_reason map_server_stop_reason(stop_type stop) {
     return common_agent_generation_stop_reason::error;
 }
 
+void apply_server_success(
+        common_agent_generation_result & result,
+        std::string content,
+        int decoded_tokens,
+        common_agent_generation_stop_reason stop_reason) {
+    result.content = std::move(content);
+    result.decoded_tokens = decoded_tokens;
+    result.status = common_agent_generation_status::completed;
+    result.stop_reason = stop_reason;
+    result.error_message.clear();
+}
+
 void apply_server_error(
         const server_task_result * response,
         common_agent_generation_result & result,
         common_agent_generation_status status = common_agent_generation_status::errored,
-        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error) {
+        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error,
+        std::string fallback_error = {}) {
     result.status = status;
     result.stop_reason = stop_reason;
     if (auto * error = dynamic_cast<const server_task_result_error *>(response)) {
         result.error_message = error->err_msg;
+    } else {
+        result.error_message = std::move(fallback_error);
     }
 }
 
@@ -127,10 +142,7 @@ public:
                         decoded_tokens = partial->n_decoded;
                         const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
                         if (!parsed.is_discarded()) {
-                            result.content = content;
-                            result.decoded_tokens = decoded_tokens;
-                            result.status = common_agent_generation_status::completed;
-                            result.stop_reason = common_agent_generation_stop_reason::json_schema;
+                            apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
                             reader.stop();
                             return true;
                         }
@@ -140,13 +152,24 @@ public:
                     }
                 }
 
-                result.content = content;
+                if (final_result != nullptr) {
+                    content = final_result->content;
+                    decoded_tokens = final_result->n_decoded;
+                    const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
+                    if (!parsed.is_discarded()) {
+                        apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                        return true;
+                    }
+                }
+
+                result.content = std::move(content);
                 result.decoded_tokens = decoded_tokens;
-                result.status = common_agent_generation_status::errored;
-                result.stop_reason = final_result == nullptr
-                    ? common_agent_generation_stop_reason::error
-                    : map_server_stop_reason(final_result->stop);
-                result.error_message = "generation ended before producing valid JSON for the requested schema";
+                apply_server_error(
+                    final_result,
+                    result,
+                    common_agent_generation_status::errored,
+                    final_result == nullptr ? common_agent_generation_stop_reason::error : map_server_stop_reason(final_result->stop),
+                    "generation ended before producing valid JSON for the requested schema");
                 return false;
             }
 
@@ -155,32 +178,27 @@ public:
                 if (responses.error) {
                     apply_server_error(responses.error.get(), result);
                 } else {
-                    result.status = responses.is_terminated
-                        ? common_agent_generation_status::cancelled
-                        : common_agent_generation_status::errored;
-                    result.stop_reason = responses.is_terminated
-                        ? common_agent_generation_stop_reason::cancelled
-                        : common_agent_generation_stop_reason::error;
+                    apply_server_error(
+                        nullptr,
+                        result,
+                        responses.is_terminated ? common_agent_generation_status::cancelled : common_agent_generation_status::errored,
+                        responses.is_terminated ? common_agent_generation_stop_reason::cancelled : common_agent_generation_stop_reason::error,
+                        responses.is_terminated ? "server task was terminated" : "server task produced no completion result");
                 }
                 return false;
             }
 
             auto * final_result = dynamic_cast<server_task_result_cmpl_final *>(responses.results.front().get());
             if (final_result == nullptr) {
-                result.status = common_agent_generation_status::errored;
-                result.stop_reason = common_agent_generation_stop_reason::error;
+                apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
+                    "server returned a non-completion result");
                 return false;
             }
 
-            result.content = final_result->content;
-            result.decoded_tokens = final_result->n_decoded;
-            result.status = common_agent_generation_status::completed;
-            result.stop_reason = map_server_stop_reason(final_result->stop);
+            apply_server_success(result, final_result->content, final_result->n_decoded, map_server_stop_reason(final_result->stop));
             return true;
         } catch (const std::exception & err) {
-            result.status = common_agent_generation_status::errored;
-            result.stop_reason = common_agent_generation_stop_reason::error;
-            result.error_message = err.what();
+            apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error, err.what());
             std::fprintf(stderr, "server_context agent inference failed: %s\n", err.what());
             return false;
         }
