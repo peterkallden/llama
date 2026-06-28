@@ -11,6 +11,29 @@
 
 using json = nlohmann::ordered_json;
 
+namespace {
+
+common_agent_scope make_agent_scope(const args & a) {
+    common_agent_scope scope;
+    scope.memory_scope = a.memory_project.empty() ? common_memory_scope::session : common_memory_scope::project;
+    scope.plan_scope = scope.memory_scope == common_memory_scope::project
+        ? common_plan_scope::project
+        : common_plan_scope::session;
+    scope.namespace_id = a.memory_namespace;
+    scope.session_id = a.memory_session;
+    scope.project_id = a.memory_project;
+    scope.turn_id = a.memory_turn;
+    scope.memory_global_opt_in = a.memory_global_opt_in;
+    return scope;
+}
+
+std::string make_bootstrap_prefix(const common_agent_scope & scope) {
+    return "bootstrap:" + scope.namespace_id + ":" +
+        (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
+}
+
+} // namespace
+
 bool parse_plan_scope(const std::string & value, common_plan_scope & scope) {
     if (value == "turn")    { scope = common_plan_scope::turn; return true; }
     if (value == "session") { scope = common_plan_scope::session; return true; }
@@ -31,11 +54,9 @@ bool load_bootstrap_file(const std::string & path, common_agent_bootstrap_packag
 }
 
 bool export_agent_package(common_memory_store & memory_store, common_plan_store & plan_store, const args & a, std::string & error) {
+    const auto scope = make_agent_scope(a);
     common_memory_query query;
-    query.scope = a.memory_project.empty() ? common_memory_scope::session : common_memory_scope::project;
-    query.namespace_id = a.memory_namespace;
-    query.session_id = a.memory_session;
-    query.project_id = a.memory_project;
+    common_agent_scope_apply(scope, query);
     const auto memories = memory_store.list(query, error);
     if (!error.empty()) {
         return false;
@@ -45,8 +66,7 @@ bool export_agent_package(common_memory_store & memory_store, common_plan_store 
         return false;
     }
 
-    const std::string prefix = "bootstrap:" + a.memory_namespace + ":" +
-        (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) + ":";
+    const std::string prefix = make_bootstrap_prefix(scope);
     common_agent_bootstrap_package package;
     package.name = "agent-export";
     package.version = "v1";
