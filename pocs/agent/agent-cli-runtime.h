@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../common/cli-config.h"
+
 #include "agent/agent-inference.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"

@@ -43,7 +43,7 @@ std::string describe_generation_failure(
 
 common_agent_generation_options make_generation_options(const args & options, int n_predict) {
     return common_agent_generation_options_with_n_predict(
-        common_agent_generation_options_from_args(options),
+        common_agent_generation_options{options.n_predict},
         n_predict);
 }
 

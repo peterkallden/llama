@@ -12,7 +12,7 @@ public:
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
-        if (!generate_chat_turn_result(
+        return generate_chat_turn_result(
             model,
             templates,
             request.messages,
@@ -20,10 +20,8 @@ public:
             request.tool_choice,
             request.options,
             result,
-            request.json_schema)) {
-            return false;
-        }
-        return true;
+            nullptr,
+            request.json_schema);
     }
 
 private:

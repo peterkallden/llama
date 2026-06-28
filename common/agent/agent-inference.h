@@ -3,7 +3,6 @@
 #include "agent/agent-generation.h"
 #include "agent/agent-scope.h"
 #include "chat.h"
-#include "common/cli-config.h"
 
 #include <cstdint>
 #include <optional>
@@ -40,12 +39,6 @@ struct common_agent_generation_options {
     std::optional<int64_t> t_max_prompt_ms;
     std::optional<int64_t> t_max_predict_ms;
 };
-
-inline common_agent_generation_options common_agent_generation_options_from_args(const args & options) {
-    common_agent_generation_options result;
-    result.n_predict = options.n_predict;
-    return result;
-}
 
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(
         common_agent_generation_options options,
@@ -88,7 +81,6 @@ inline common_agent_generation_request common_agent_make_generation_request(
 
 struct common_agent_generation_result {
     std::string content;
-    common_chat_params chat_params;
     int decoded_tokens = 0;
     common_agent_generation_status status = common_agent_generation_status::errored;
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;

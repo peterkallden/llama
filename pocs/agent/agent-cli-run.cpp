@@ -624,11 +624,12 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::string output;
     common_chat_params chat_params;
     int n_decode = 0;
-    const auto generation_options = common_agent_generation_options_from_args(a);
+    common_agent_generation_options generation_options;
+    generation_options.n_predict = a.n_predict;
     common_agent_generation_result generation_result;
     if (!generate_chat_turn_result(model, chat_templates.get(), messages, tools,
             tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
-            generation_options, generation_result)) {
+            generation_options, generation_result, &chat_params)) {
         if (!generation_result.error_message.empty()) {
             fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
                 common_agent_generation_status_name(generation_result.status),
@@ -639,7 +640,6 @@ int run_agent_cli(common_memory_store & store, args a) {
         return 1;
     }
     output = generation_result.content;
-    chat_params = generation_result.chat_params;
     n_decode = generation_result.decoded_tokens;
 
     common_chat_parser_params parser_params(chat_params);
@@ -698,7 +698,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         if (!generate_chat_turn_result(model, chat_templates.get(), messages,
                 allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
                 allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
-                generation_options, next_generation_result)) {
+                generation_options, next_generation_result, &chat_params)) {
             if (!next_generation_result.error_message.empty()) {
                 fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
                     common_agent_generation_status_name(next_generation_result.status),
@@ -709,7 +709,6 @@ int run_agent_cli(common_memory_store & store, args a) {
             return 1;
         }
         output = next_generation_result.content;
-        chat_params = next_generation_result.chat_params;
         n_decode += next_generation_result.decoded_tokens;
         parser_params = common_chat_parser_params(chat_params);
         parser_params.parse_tool_calls = allow_another_tool_round && !tools.empty();

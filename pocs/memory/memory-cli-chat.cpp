@@ -35,6 +35,7 @@ bool generate_chat_turn_result(
         common_chat_tool_choice tool_choice,
         const common_agent_generation_options & options,
         common_agent_generation_result & result,
+        common_chat_params * chat_params,
         const std::string & json_schema) {
     result = {};
 
@@ -45,17 +46,20 @@ bool generate_chat_turn_result(
     chat_inputs.tool_choice = tool_choice;
     chat_inputs.parallel_tool_calls = false;
     chat_inputs.add_generation_prompt = true;
-    result.chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    if (chat_params != nullptr) {
+        *chat_params = generated_chat_params;
+    }
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
-    const int n_prompt = -llama_tokenize(vocab, result.chat_params.prompt.c_str(), result.chat_params.prompt.size(), nullptr, 0, true, true);
+    const int n_prompt = -llama_tokenize(vocab, generated_chat_params.prompt.c_str(), generated_chat_params.prompt.size(), nullptr, 0, true, true);
     if (n_prompt <= 0) {
         result.error_message = "failed to tokenize chat prompt";
         fprintf(stderr, "%s\n", result.error_message.c_str());
         return false;
     }
     std::vector<llama_token> prompt_tokens(n_prompt);
-    if (llama_tokenize(vocab, result.chat_params.prompt.c_str(), result.chat_params.prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
+    if (llama_tokenize(vocab, generated_chat_params.prompt.c_str(), generated_chat_params.prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
         result.error_message = "failed to tokenize chat prompt";
         fprintf(stderr, "%s\n", result.error_message.c_str());
         return false;
@@ -74,11 +78,11 @@ bool generate_chat_turn_result(
     common_params_sampling sampling;
     sampling.temp = 0.0f;
     sampling.grammar = json_schema.empty()
-        ? common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, result.chat_params.grammar }
+        ? common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar }
         : common_grammar{ COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(nlohmann::ordered_json::parse(json_schema)) };
-    sampling.grammar_lazy = result.chat_params.grammar_lazy;
-    sampling.grammar_triggers = result.chat_params.grammar_triggers;
-    sampling.generation_prompt = json_schema.empty() ? result.chat_params.generation_prompt : std::string{};
+    sampling.grammar_lazy = generated_chat_params.grammar_lazy;
+    sampling.grammar_triggers = generated_chat_params.grammar_triggers;
+    sampling.generation_prompt = json_schema.empty() ? generated_chat_params.generation_prompt : std::string{};
     if (!json_schema.empty()) {
         sampling.ignore_eos = true;
         for (llama_token token = 0; token < llama_vocab_n_tokens(vocab); ++token) {
@@ -168,7 +172,7 @@ bool generate_chat_turn(
         int & n_decode,
         const std::string & json_schema) {
     common_agent_generation_result result;
-    if (!generate_chat_turn_result(
+        if (!generate_chat_turn_result(
             model,
             chat_templates,
             messages,
@@ -176,14 +180,13 @@ bool generate_chat_turn(
             tool_choice,
             options,
             result,
+            &chat_params,
             json_schema)) {
         output = std::move(result.content);
-        chat_params = std::move(result.chat_params);
         n_decode = result.decoded_tokens;
         return false;
     }
     output = std::move(result.content);
-    chat_params = std::move(result.chat_params);
     n_decode = result.decoded_tokens;
     return true;
 }

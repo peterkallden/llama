@@ -112,16 +112,16 @@ public:
         result = {};
 
         try {
-            result.chat_params = apply_generation_request(templates, request);
+            const common_chat_params chat_params = apply_generation_request(templates, request);
 
             server_response_reader reader = server.get_response_reader();
             server_task task(SERVER_TASK_TYPE_COMPLETION);
             task.id = reader.get_new_id();
             task.cli = true;
-            task.cli_prompt = result.chat_params.prompt;
+            task.cli_prompt = chat_params.prompt;
             task.params = make_server_task_params(
                 request,
-                result.chat_params,
+                chat_params,
                 logit_bias_eog);
             task.params.stream = !request.json_schema.empty();
 

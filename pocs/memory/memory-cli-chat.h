@@ -15,6 +15,7 @@ bool generate_chat_turn_result(
     common_chat_tool_choice tool_choice,
     const common_agent_generation_options & options,
     common_agent_generation_result & result,
+    common_chat_params * chat_params = nullptr,
     const std::string & json_schema = {});
 
 bool generate_chat_turn(
