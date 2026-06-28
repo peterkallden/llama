@@ -1,5 +1,6 @@
 #include "memory-cli-memory.h"
 
+#include "agent/agent-contract.h"
 #include "common.h"
 #include "llama.h"
 #include "memory/memory-context.h"
@@ -22,6 +23,17 @@ constexpr size_t k_memory_search_max_limit = 8;
 constexpr size_t k_memory_search_max_query_chars = 1024;
 constexpr size_t k_memory_remember_max_content_chars = 512;
 constexpr size_t k_memory_remember_max_rationale_chars = 240;
+
+common_agent_scope make_memory_cli_scope(const args & a) {
+    common_agent_scope scope;
+    common_memory_scope_parse(a.memory_scope, scope.memory_scope);
+    scope.namespace_id = a.memory_namespace;
+    scope.session_id = a.memory_session;
+    scope.project_id = a.memory_project;
+    scope.turn_id = a.memory_turn;
+    scope.memory_global_opt_in = a.memory_global_opt_in;
+    return scope;
+}
 
 std::string embedding_model_path(const args & a) {
     if (!a.embedding_model.empty()) {
@@ -184,20 +196,11 @@ void log_memory_remember_audit(
 } // namespace
 
 void apply_memory_scope(const args & a, common_memory_record & record) {
-    common_memory_scope_parse(a.memory_scope, record.scope);
-    record.namespace_id = a.memory_namespace;
-    record.session_id = a.memory_session;
-    record.project_id = a.memory_project;
-    record.turn_id = a.memory_turn;
+    common_agent_scope_apply(make_memory_cli_scope(a), record);
 }
 
 void apply_memory_scope(const args & a, common_memory_query & query) {
-    common_memory_scope_parse(a.memory_scope, query.scope);
-    query.namespace_id = a.memory_namespace;
-    query.session_id = a.memory_session;
-    query.project_id = a.memory_project;
-    query.turn_id = a.memory_turn;
-    query.global_opt_in = a.memory_global_opt_in;
+    common_agent_scope_apply(make_memory_cli_scope(a), query);
 }
 
 bool ensure_memory_cli_embedding(
@@ -346,17 +349,18 @@ std::string memory_remember_tool_result(
         }
 
         common_memory_remember_request proposal;
+        const auto scope = make_memory_cli_scope(a);
         if (!common_memory_kind_parse(request.at("kind").get<std::string>(), proposal.kind)) {
             result["error"] = "unsupported memory kind";
             return result.dump();
         }
         proposal.content = request.at("content").get<std::string>();
-        common_memory_scope_parse(a.memory_scope, proposal.scope);
-        proposal.namespace_id = a.memory_namespace;
-        proposal.session_id = a.memory_session;
-        proposal.project_id = a.memory_project;
-        proposal.turn_id = a.memory_turn;
-        proposal.global_opt_in = a.memory_global_opt_in;
+        proposal.scope = scope.memory_scope;
+        proposal.namespace_id = scope.namespace_id;
+        proposal.session_id = scope.session_id;
+        proposal.project_id = scope.project_id;
+        proposal.turn_id = scope.turn_id;
+        proposal.global_opt_in = scope.memory_global_opt_in;
         if (proposal.content.empty() || proposal.content.size() > k_memory_remember_max_content_chars) {
             result["error"] = "content must contain between 1 and 512 characters";
             return result.dump();
