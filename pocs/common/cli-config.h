@@ -67,6 +67,7 @@ struct args {
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;
+    std::string agent_inference_backend = "cli";
 };
 
 bool resolve_agent_profile(args & a, std::string & error);

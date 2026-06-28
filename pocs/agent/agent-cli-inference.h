@@ -5,6 +5,7 @@
 #include "llama.h"
 
 #include <memory>
+#include <vector>
 
 struct server_context;
 
@@ -14,5 +15,5 @@ std::unique_ptr<common_agent_inference> make_llama_cli_agent_inference(
 
 std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
-    llama_model * model,
+    const std::vector<llama_logit_bias> & logit_bias_eog,
     const common_chat_templates * templates);

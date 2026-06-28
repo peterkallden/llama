@@ -17,6 +17,7 @@
 #include "agent/tool-chat-bridge.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
+#include "server-context.h"
 #endif
 
 #include "chat.h"
@@ -31,6 +32,7 @@
 #include <ctime>
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include <filesystem>
+#include <thread>
 #endif
 #include <memory>
 
@@ -38,6 +40,69 @@
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
+
+namespace {
+
+enum class agent_inference_backend {
+    cli,
+    server_context,
+};
+
+bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend) {
+    if (value == "cli") {
+        backend = agent_inference_backend::cli;
+        return true;
+    }
+    if (value == "server-context") {
+        backend = agent_inference_backend::server_context;
+        return true;
+    }
+    return false;
+}
+
+struct agent_resident_inference_host {
+    server_context server;
+    std::thread loop;
+    bool running = false;
+
+    ~agent_resident_inference_host() {
+        stop();
+    }
+
+    bool start(const args & a, std::string & error) {
+        common_params params;
+        params.model.path = a.model;
+        params.n_predict = a.n_predict;
+        params.n_gpu_layers = a.n_gpu_layers;
+        params.n_parallel = 1;
+        params.n_sequences = 1;
+        params.n_ctx = 0;
+        postprocess_cpu_params(params.cpuparams, nullptr);
+        postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+
+        if (!server.load_model(params)) {
+            error = "failed to load resident server_context model: " + a.model;
+            return false;
+        }
+
+        loop = std::thread([this]() {
+            server.start_loop();
+        });
+        running = true;
+        return true;
+    }
+
+    void stop() {
+        if (!running) return;
+        server.terminate();
+        if (loop.joinable()) {
+            loop.join();
+        }
+        running = false;
+    }
+};
+
+} // namespace
 #endif
 
 int run_agent_cli(common_memory_store & store, args a) {
@@ -249,25 +314,6 @@ int run_agent_cli(common_memory_store & store, args a) {
     const std::string memory_context = common_memory_render_context(hits, ctx_cfg);
 
     ggml_backend_load_all();
-
-    llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = a.n_gpu_layers;
-    if (!memory_enabled) {
-        fprintf(stderr,
-            "debug: chat fallback active, loading %s without memory retrieval or episode recording (%s)\n",
-            a.model.c_str(),
-            fallback_reason.c_str());
-    }
-    llama_model * model = llama_model_load_from_file(a.model.c_str(), model_params);
-    if (model == nullptr) {
-        fprintf(stderr, "failed to load model: %s\n", a.model.c_str());
-        return 1;
-    }
-
-    common_chat_templates_ptr chat_templates = common_chat_templates_init(model, "");
-#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-    auto agent_inference = make_llama_cli_agent_inference(model, chat_templates.get());
-#endif
     std::vector<common_chat_msg> messages;
     if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool || !a.tool_profile.empty()) && memory_enabled)) {
         common_chat_msg system_msg;
@@ -294,7 +340,6 @@ int run_agent_cli(common_memory_store & store, args a) {
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(a.tool_profile, bootstrap, error)) {
             fprintf(stderr, "tool bootstrap failed: %s\n", error.c_str());
-            llama_model_free(model);
             return 1;
         }
         common_native_tool_bindings bindings;
@@ -329,7 +374,6 @@ int run_agent_cli(common_memory_store & store, args a) {
         if (!common_register_native_tool_adapters(tool_catalog, a.tool_profile, bindings, tool_registry, adapters, error) ||
                 !common_tool_profile_to_chat_tools(tool_catalog, a.tool_profile, tool_registry, tools, error)) {
             fprintf(stderr, "tool profile setup failed: %s\n", error.c_str());
-            llama_model_free(model);
             return 1;
         }
         profile_tools_active = true;
@@ -347,6 +391,36 @@ int run_agent_cli(common_memory_store & store, args a) {
     } else if (!profile_tools_active && a.enable_memory_remember_tool) {
         fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
     }
+
+    llama_model * model = nullptr;
+    common_chat_templates_ptr chat_templates;
+    auto free_model = [&]() {
+        if (model != nullptr) {
+            llama_model_free(model);
+            model = nullptr;
+        }
+    };
+
+    auto load_cli_model = [&]() -> bool {
+        if (model != nullptr) {
+            return true;
+        }
+        llama_model_params model_params = llama_model_default_params();
+        model_params.n_gpu_layers = a.n_gpu_layers;
+        if (!memory_enabled) {
+            fprintf(stderr,
+                "debug: chat fallback active, loading %s without memory retrieval or episode recording (%s)\n",
+                a.model.c_str(),
+                fallback_reason.c_str());
+        }
+        model = llama_model_load_from_file(a.model.c_str(), model_params);
+        if (model == nullptr) {
+            fprintf(stderr, "failed to load model: %s\n", a.model.c_str());
+            return false;
+        }
+        chat_templates = common_chat_templates_init(model, "");
+        return true;
+    };
 
     auto finish_chat = [&](const std::string & final_output, int decoded_tokens) {
         printf("%s\n", final_output.c_str());
@@ -367,17 +441,42 @@ int run_agent_cli(common_memory_store & store, args a) {
             }
         }
         fprintf(stderr, "decoded %d tokens\n", decoded_tokens);
-        llama_model_free(model);
+        free_model();
         return 0;
     };
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
+        agent_inference_backend inference_backend_kind = agent_inference_backend::cli;
+        if (!parse_agent_inference_backend(a.agent_inference_backend, inference_backend_kind)) {
+            fprintf(stderr, "unsupported --agent-inference-backend: %s\n", a.agent_inference_backend.c_str());
+            return 1;
+        }
+
+        agent_resident_inference_host resident_host;
+        std::unique_ptr<common_agent_inference> agent_inference;
+        if (inference_backend_kind == agent_inference_backend::server_context) {
+            if (!resident_host.start(a, error)) {
+                fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
+            auto meta = resident_host.server.get_meta();
+            agent_inference = make_server_context_agent_inference(
+                resident_host.server,
+                meta.logit_bias_eog,
+                meta.chat_params.tmpls.get());
+        } else {
+            if (!load_cli_model()) {
+                return 1;
+            }
+            agent_inference = make_llama_cli_agent_inference(model, chat_templates.get());
+        }
+        fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
+
         if (a.agent_plan == "auto" && a.plan_id.empty()) {
             const auto plans = plan_store->list(error);
             if (!error.empty()) {
                 fprintf(stderr, "failed to list plan candidates: %s\n", error.c_str());
-                llama_model_free(model);
                 return 1;
             }
             std::vector<common_plan_state> candidates;
@@ -428,7 +527,6 @@ int run_agent_cli(common_memory_store & store, args a) {
             selection_request.plan_scope = requested_plan_scope;
             if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, *selector, installed_blueprint_candidates, config, selection, error)) {
                 fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
-                llama_model_free(model);
                 return 1;
             }
             if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
@@ -486,7 +584,6 @@ int run_agent_cli(common_memory_store & store, args a) {
         const common_agent_result result = runtime.run(request);
         if (!result.error.empty()) {
             fprintf(stderr, "agent runtime failed: %s\n", result.error.c_str());
-            llama_model_free(model);
             return 1;
         }
         if (a.memory_learn == "post-turn") {
@@ -513,13 +610,17 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 #endif
 
+    if (!load_cli_model()) {
+        return 1;
+    }
+
     std::string output;
     common_chat_params chat_params;
     int n_decode = 0;
     if (!generate_chat_turn(model, chat_templates.get(), messages, tools,
             tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
             a, output, chat_params, n_decode)) {
-        llama_model_free(model);
+        free_model();
         return 1;
     }
 
@@ -534,7 +635,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     while (!assistant_msg.tool_calls.empty()) {
         if (tool_rounds >= a.max_tool_rounds) {
             fprintf(stderr, "tool call round limit reached\n");
-            llama_model_free(model);
+            free_model();
             return 1;
         }
         if (profile_tools_active) {
@@ -542,7 +643,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             common_tool_chat_dispatch_result dispatched;
             if (!common_tool_dispatch_chat_calls(assistant_msg, tool_registry, 1, dispatched, error)) {
                 fprintf(stderr, "tool dispatch failed: %s\n", error.c_str());
-                llama_model_free(model);
+                free_model();
                 return 1;
             } else {
                 messages.push_back(std::move(assistant_msg));
@@ -580,7 +681,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
                 allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
                 a, output, chat_params, next_decode)) {
-            llama_model_free(model);
+            free_model();
             return 1;
         }
         n_decode += next_decode;

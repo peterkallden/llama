@@ -13,6 +13,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "usage:\n"
         "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--planning-mode off|mini] [--reflection-mode off|always] [--memory-learn off|post-turn]\n"
+        "         [--agent-inference-backend cli|server-context]\n"
         "         [--memory-search-tool|--memory-remember-tool]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
@@ -99,6 +100,8 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn_min_confidence = std::stof(v);
         } else if (strcmp(argv[i], "--memory-learn-min-reuse") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn_min_reuse = std::stof(v);
+        } else if (strcmp(argv[i], "--agent-inference-backend") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.agent_inference_backend = v;
         } else if (strcmp(argv[i], "--tool-profile") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v; out.tool_profile_explicit = true;
         } else if (strcmp(argv[i], "--planning-mode") == 0) {
