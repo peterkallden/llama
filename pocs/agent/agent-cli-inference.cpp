@@ -9,9 +9,9 @@ public:
     llama_cli_agent_inference(llama_model * model, const common_chat_templates * templates)
         : model(model), templates(templates) {}
 
-    bool infer(
-            const common_agent_inference_request & request,
-            common_agent_inference_result & result) override {
+    bool generate(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result) override {
         result = {};
         return generate_chat_turn(
             model,
@@ -20,9 +20,9 @@ public:
             request.tools,
             request.tool_choice,
             request.options,
-            result.output,
+            result.content,
             result.chat_params,
-            result.n_decode,
+            result.decoded_tokens,
             request.json_schema);
     }
 

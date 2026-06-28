@@ -103,6 +103,13 @@ bool export_agent_package(common_memory_store & memory_store, common_plan_store 
 
 namespace {
 
+std::string make_generation_trace_id(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose) {
+    const std::string base = !request.turn_id.empty() ? request.turn_id : request.session_id;
+    return base + ":" + common_agent_generation_purpose_name(purpose);
+}
+
 class llama_blueprint_selector final : public common_blueprint_selector {
 public:
     llama_blueprint_selector(common_agent_inference & inference, const args & options)
@@ -133,13 +140,20 @@ public:
         };
         args selection_options = options;
         selection_options.n_predict = std::max(options.n_predict, 96);
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, schema.dump()}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::blueprint_selection,
+                make_generation_trace_id(request, common_agent_generation_purpose::blueprint_selection),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                selection_options,
+                schema.dump()}, generation_result)) {
             error = "blueprint selector generation failed";
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
-        const auto choice = json::parse(inference_result.output, nullptr, false);
+        const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "blueprint selector returned invalid JSON";
             result.decision = common_blueprint_selection_decision::failed;
@@ -181,12 +195,19 @@ public:
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, bind_options, {}}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::blueprint_binding,
+                make_generation_trace_id(request, common_agent_generation_purpose::blueprint_binding),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                bind_options,
+                {}}, generation_result)) {
             error = "blueprint binding generation failed";
             return false;
         }
-        const auto proposal = json::parse(inference_result.output, nullptr, false);
+        const auto proposal = json::parse(generation_result.content, nullptr, false);
         if (!proposal.is_object() || !proposal.contains("bindings") || !proposal["bindings"].is_array()) {
             error = "blueprint binding returned invalid JSON";
             return false;
@@ -275,12 +296,19 @@ public:
         };
         args selection_options = options;
         selection_options.n_predict = std::max(options.n_predict, 96);
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, selection_options, schema.dump()}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::plan_selection,
+                make_generation_trace_id(request, common_agent_generation_purpose::plan_selection),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                selection_options,
+                schema.dump()}, generation_result)) {
             error = "plan selector generation failed";
             return std::nullopt;
         }
-        const auto choice = json::parse(inference_result.output, nullptr, false);
+        const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "plan selector returned invalid JSON";
             return std::nullopt;

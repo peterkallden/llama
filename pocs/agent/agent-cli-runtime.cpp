@@ -22,6 +22,13 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     return names.empty() ? "none" : names;
 }
 
+std::string make_generation_trace_id(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose) {
+    const std::string base = !request.turn_id.empty() ? request.turn_id : request.session_id;
+    return base + ":" + common_agent_generation_purpose_name(purpose);
+}
+
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
@@ -53,13 +60,20 @@ public:
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
         args planner_options = options;
         planner_options.n_predict = std::max(options.n_predict, 512);
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, planner_options, common_plan_proposal_json_schema()}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::planner,
+                make_generation_trace_id(request, common_agent_generation_purpose::planner),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                planner_options,
+                common_plan_proposal_json_schema()}, generation_result)) {
             error = "model planner generation failed";
             return proposal;
         }
         std::string parse_error;
-        if (common_plan_parse_proposal_json(inference_result.output, proposal.plan, proposal.operations, parse_error, 6)) {
+        if (common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6)) {
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
@@ -84,7 +98,7 @@ public:
         step.status = common_plan_step_status::active;
         proposal.plan.steps.push_back(std::move(step));
         proposal.plan.active_step_id = "answer";
-        const auto preview = inference_result.output.substr(0, 768);
+        const auto preview = generation_result.content.substr(0, 768);
         fprintf(stderr, "warning: planner JSON rejected; using bounded fallback plan (%s): %s\n", parse_error.c_str(), preview.c_str());
         error.clear();
         return proposal;
@@ -115,13 +129,20 @@ public:
         }
         args draft_options = options;
         draft_options.n_predict = std::min(options.n_predict, 96);
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, draft_options, {}}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::draft,
+                make_generation_trace_id(request, common_agent_generation_purpose::draft),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                draft_options,
+                {}}, generation_result)) {
             error = "model draft generation failed";
             return {};
         }
         error.clear();
-        return inference_result.output;
+        return generation_result.content;
     }
 
     std::string generate_reasoning(const common_agent_request & request, const common_plan_state & plan, const common_plan_step & step, std::string & error) override {
@@ -139,13 +160,20 @@ public:
         args reasoning_options = options;
         reasoning_options.n_predict = std::min(options.n_predict, 128);
         static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reasoning_options, reasoning_schema}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::reasoning,
+                make_generation_trace_id(request, common_agent_generation_purpose::reasoning),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                reasoning_options,
+                reasoning_schema}, generation_result)) {
             error = "model reasoning generation failed";
             return {};
         }
         error.clear();
-        return inference_result.output;
+        return generation_result.content;
     }
 
 private:
@@ -175,12 +203,19 @@ public:
         args reflection_options = options;
         reflection_options.n_predict = std::max(options.n_predict, 256);
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, reflection_options, reflection_schema}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::reflection,
+                make_generation_trace_id(request, common_agent_generation_purpose::reflection),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                reflection_options,
+                reflection_schema}, generation_result)) {
             error = "model reflection generation failed";
             return result;
         }
-        if (!common_reflection_parse_json(inference_result.output, result, error, 8)) {
+        if (!common_reflection_parse_json(generation_result.content, result, error, 8)) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
             result.decision = common_reflection_decision::accept;
@@ -260,13 +295,20 @@ public:
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
         args extraction_options = options;
         extraction_options.n_predict = std::max(options.n_predict, 256);
-        common_agent_inference_result inference_result;
-        if (!inference.infer({{system, user}, {}, COMMON_CHAT_TOOL_CHOICE_NONE, extraction_options, schema}, inference_result)) {
+        common_agent_generation_result generation_result;
+        if (!inference.generate({
+                common_agent_generation_purpose::memory_learning,
+                make_generation_trace_id(request, common_agent_generation_purpose::memory_learning),
+                {system, user},
+                {},
+                COMMON_CHAT_TOOL_CHOICE_NONE,
+                extraction_options,
+                schema}, generation_result)) {
             error = "model candidate generation failed";
             return {};
         }
         common_memory_candidate_result parsed;
-        if (!parse_memory_candidate_json(inference_result.output, parsed, error)) return {};
+        if (!parse_memory_candidate_json(generation_result.content, parsed, error)) return {};
         return parsed;
     }
 
