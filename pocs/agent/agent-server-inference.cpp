@@ -1,49 +1,14 @@
 #include "agent-cli-inference.h"
+#include "agent-server-generation.h"
 
-#include "../memory/memory-cli-chat.h"
-
-#include "json-schema-to-grammar.h"
+#include "agent/agent-prepared-generation.h"
 #include "server-context.h"
 #include "server-task.h"
 
-#include <cmath>
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
 namespace {
-
-task_params make_server_task_params(
-        const common_agent_generation_request & request,
-        const common_agent_prepared_generation & prepared,
-        const std::vector<llama_logit_bias> & logit_bias_eog) {
-    task_params params;
-    params.stream = false;
-    params.n_predict = request.options.n_predict;
-    if (request.options.t_max_prompt_ms) {
-        params.t_max_prompt_ms = *request.options.t_max_prompt_ms;
-    }
-    if (request.options.t_max_predict_ms) {
-        params.t_max_predict_ms = *request.options.t_max_predict_ms;
-    }
-    params.sampling.temp = 0.0f;
-    params.sampling.grammar = prepared.grammar;
-    params.sampling.grammar_lazy = prepared.grammar_lazy;
-    params.sampling.grammar_triggers = prepared.grammar_triggers;
-    params.sampling.generation_prompt = prepared.generation_prompt;
-    params.sampling.ignore_eos = prepared.ignore_eos;
-    if (prepared.suppress_eog) {
-        params.sampling.logit_bias = logit_bias_eog;
-    }
-    params.chat_parser_params.format = prepared.chat_format;
-    params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
-    params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
-
-    if (!prepared.parser.empty()) {
-        params.chat_parser_params.parser.load(prepared.parser);
-    }
-
-    return params;
-}
 
 common_agent_generation_stop_reason map_server_stop_reason(stop_type stop) {
     switch (stop) {
@@ -97,7 +62,7 @@ public:
 
         try {
             common_agent_prepared_generation prepared;
-            if (!prepare_chat_generation(templates, request, prepared)) {
+            if (!common_agent_prepare_chat_generation(templates, request, prepared)) {
                 result.error_message = "failed to prepare server generation";
                 return false;
             }
@@ -107,11 +72,10 @@ public:
             task.id = reader.get_new_id();
             task.cli = true;
             task.cli_prompt = prepared.prompt;
-            task.params = make_server_task_params(
+            task.params = make_server_task_params_from_prepared_generation(
                 request,
                 prepared,
                 logit_bias_eog);
-            task.params.stream = prepared.stream;
 
             reader.post_task(std::move(task));
 
