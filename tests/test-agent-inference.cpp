@@ -72,6 +72,43 @@ static args make_test_args() {
     return options;
 }
 
+static void test_generation_contract_helpers() {
+    common_agent_generation_options options;
+    options.n_predict = 64;
+    options.t_max_prompt_ms = 1500;
+    options.t_max_predict_ms = 2500;
+
+    const auto overridden = common_agent_generation_options_with_n_predict(options, 128);
+    assert(overridden.n_predict == 128);
+    assert(overridden.t_max_prompt_ms && *overridden.t_max_prompt_ms == 1500);
+    assert(overridden.t_max_predict_ms && *overridden.t_max_predict_ms == 2500);
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+
+    common_chat_msg user{"user", "Hello"};
+    const auto request = common_agent_make_generation_request(
+        common_agent_generation_purpose::draft,
+        std::string("trace-1"),
+        scope,
+        {user},
+        overridden,
+        R"({"type":"object"})");
+
+    assert(request.purpose == common_agent_generation_purpose::draft);
+    assert(request.trace_id && *request.trace_id == "trace-1");
+    assert(request.scope && request.scope->namespace_id == "tenant-a");
+    assert(request.scope && request.scope->session_id == "session-42");
+    assert(request.messages.size() == 1);
+    assert(request.messages[0].role == "user");
+    assert(request.messages[0].content == "Hello");
+    assert(request.options.n_predict == 128);
+    assert(request.options.t_max_prompt_ms && *request.options.t_max_prompt_ms == 1500);
+    assert(request.options.t_max_predict_ms && *request.options.t_max_predict_ms == 2500);
+    assert(request.json_schema == R"({"type":"object"})");
+}
+
 static common_agent_request make_request() {
     common_agent_request request;
     request.prompt = "Check status";
@@ -297,6 +334,7 @@ static void test_selection_generation_failure_metadata() {
 }
 
 int main() {
+    test_generation_contract_helpers();
     test_runtime_generation_metadata();
     test_selection_generation_metadata();
     test_runtime_generation_failure_metadata();

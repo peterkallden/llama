@@ -4,6 +4,7 @@
 #include "chat.h"
 #include "common/cli-config.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -71,12 +72,21 @@ inline const char * common_agent_generation_stop_reason_name(common_agent_genera
 
 struct common_agent_generation_options {
     int n_predict = 0;
+    std::optional<int64_t> t_max_prompt_ms;
+    std::optional<int64_t> t_max_predict_ms;
 };
 
 inline common_agent_generation_options common_agent_generation_options_from_args(const args & options) {
     common_agent_generation_options result;
     result.n_predict = options.n_predict;
     return result;
+}
+
+inline common_agent_generation_options common_agent_generation_options_with_n_predict(
+        common_agent_generation_options options,
+        int n_predict) {
+    options.n_predict = n_predict;
+    return options;
 }
 
 struct common_agent_generation_request {
@@ -89,6 +99,27 @@ struct common_agent_generation_request {
     common_agent_generation_options options;
     std::string json_schema;
 };
+
+inline common_agent_generation_request common_agent_make_generation_request(
+        common_agent_generation_purpose purpose,
+        std::optional<std::string> trace_id,
+        std::optional<common_agent_scope> scope,
+        std::vector<common_chat_msg> messages,
+        common_agent_generation_options options,
+        std::string json_schema = {},
+        std::vector<common_chat_tool> tools = {},
+        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE) {
+    common_agent_generation_request request;
+    request.purpose = purpose;
+    request.trace_id = std::move(trace_id);
+    request.scope = std::move(scope);
+    request.messages = std::move(messages);
+    request.tools = std::move(tools);
+    request.tool_choice = tool_choice;
+    request.options = std::move(options);
+    request.json_schema = std::move(json_schema);
+    return request;
+}
 
 struct common_agent_generation_result {
     std::string content;

@@ -29,6 +29,12 @@ task_params make_server_task_params(
     task_params params;
     params.stream = false;
     params.n_predict = request.options.n_predict;
+    if (request.options.t_max_prompt_ms) {
+        params.t_max_prompt_ms = *request.options.t_max_prompt_ms;
+    }
+    if (request.options.t_max_predict_ms) {
+        params.t_max_predict_ms = *request.options.t_max_predict_ms;
+    }
     params.sampling.temp = 0.0f;
     params.sampling.grammar_lazy = chat_params.grammar_lazy;
     params.sampling.grammar_triggers = chat_params.grammar_triggers;

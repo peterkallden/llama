@@ -143,13 +143,32 @@ std::string describe_generation_failure(
 }
 
 common_agent_generation_options make_generation_options(const args & options, int n_predict) {
-    auto generation_options = common_agent_generation_options_from_args(options);
-    generation_options.n_predict = n_predict;
-    return generation_options;
+    return common_agent_generation_options_with_n_predict(
+        common_agent_generation_options_from_args(options),
+        n_predict);
 }
 
 common_agent_scope make_generation_scope(const common_agent_request & request) {
     return common_agent_scope_from_request(request);
+}
+
+common_agent_generation_request make_generation_request(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose,
+        std::vector<common_chat_msg> messages,
+        common_agent_generation_options options,
+        std::string json_schema = {},
+        std::vector<common_chat_tool> tools = {},
+        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE) {
+    return common_agent_make_generation_request(
+        purpose,
+        make_generation_trace_id(request, purpose),
+        make_generation_scope(request),
+        std::move(messages),
+        std::move(options),
+        std::move(json_schema),
+        std::move(tools),
+        tool_choice);
 }
 
 class llama_blueprint_selector final : public common_blueprint_selector {
@@ -181,15 +200,12 @@ public:
             }},
         };
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::blueprint_selection,
-                make_generation_trace_id(request, common_agent_generation_purpose::blueprint_selection),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::max(options.n_predict, 96)),
-                schema.dump()}, generation_result)) {
+                schema.dump()), generation_result)) {
             error = describe_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
             return result;
@@ -235,15 +251,11 @@ public:
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::blueprint_binding,
-                make_generation_trace_id(request, common_agent_generation_purpose::blueprint_binding),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
-                make_generation_options(options, std::min(options.n_predict, 256)),
-                {}}, generation_result)) {
+                make_generation_options(options, std::min(options.n_predict, 256))), generation_result)) {
             error = describe_generation_failure("blueprint binding generation", generation_result);
             return false;
         }
@@ -335,15 +347,12 @@ public:
             }},
         };
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::plan_selection,
-                make_generation_trace_id(request, common_agent_generation_purpose::plan_selection),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::max(options.n_predict, 96)),
-                schema.dump()}, generation_result)) {
+                schema.dump()), generation_result)) {
             error = describe_generation_failure("plan selector generation", generation_result);
             return std::nullopt;
         }

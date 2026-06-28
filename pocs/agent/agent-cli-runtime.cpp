@@ -42,13 +42,32 @@ std::string describe_generation_failure(
 }
 
 common_agent_generation_options make_generation_options(const args & options, int n_predict) {
-    auto generation_options = common_agent_generation_options_from_args(options);
-    generation_options.n_predict = n_predict;
-    return generation_options;
+    return common_agent_generation_options_with_n_predict(
+        common_agent_generation_options_from_args(options),
+        n_predict);
 }
 
 common_agent_scope make_generation_scope(const common_agent_request & request) {
     return common_agent_scope_from_request(request);
+}
+
+common_agent_generation_request make_generation_request(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose,
+        std::vector<common_chat_msg> messages,
+        common_agent_generation_options options,
+        std::string json_schema = {},
+        std::vector<common_chat_tool> tools = {},
+        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE) {
+    return common_agent_make_generation_request(
+        purpose,
+        make_generation_trace_id(request, purpose),
+        make_generation_scope(request),
+        std::move(messages),
+        std::move(options),
+        std::move(json_schema),
+        std::move(tools),
+        tool_choice);
 }
 
 class llama_model_planner final : public common_planner {
@@ -81,15 +100,12 @@ public:
         user.role = "user";
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::planner,
-                make_generation_trace_id(request, common_agent_generation_purpose::planner),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::max(options.n_predict, 512)),
-                common_plan_proposal_json_schema()}, generation_result)) {
+                common_plan_proposal_json_schema()), generation_result)) {
             error = describe_generation_failure("model planner generation", generation_result);
             return proposal;
         }
@@ -149,15 +165,11 @@ public:
             for (const auto & item : guidance) user.content += "- " + item + "\n";
         }
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::draft,
-                make_generation_trace_id(request, common_agent_generation_purpose::draft),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
-                make_generation_options(options, std::min(options.n_predict, 96)),
-                {}}, generation_result)) {
+                make_generation_options(options, std::min(options.n_predict, 96))), generation_result)) {
             error = describe_generation_failure("model draft generation", generation_result);
             return {};
         }
@@ -179,15 +191,12 @@ public:
         user.content = common_memory_render_context(common_memory_select_procedure_memories(request.memories, plan, step), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
         static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::reasoning,
-                make_generation_trace_id(request, common_agent_generation_purpose::reasoning),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::min(options.n_predict, 128)),
-                reasoning_schema}, generation_result)) {
+                reasoning_schema), generation_result)) {
             error = describe_generation_failure("model reasoning generation", generation_result);
             return {};
         }
@@ -221,15 +230,12 @@ public:
         user.content = common_plan_render_context(plan) + "\n[User request]\n" + request.prompt + "\n[Draft]\n" + draft;
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::reflection,
-                make_generation_trace_id(request, common_agent_generation_purpose::reflection),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::max(options.n_predict, 256)),
-                reflection_schema}, generation_result)) {
+                reflection_schema), generation_result)) {
             error = describe_generation_failure("model reflection generation", generation_result);
             return result;
         }
@@ -312,15 +318,12 @@ public:
         }
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
         common_agent_generation_result generation_result;
-        if (!inference.generate({
+        if (!inference.generate(make_generation_request(
+                request,
                 common_agent_generation_purpose::memory_learning,
-                make_generation_trace_id(request, common_agent_generation_purpose::memory_learning),
-                make_generation_scope(request),
                 {system, user},
-                {},
-                COMMON_CHAT_TOOL_CHOICE_NONE,
                 make_generation_options(options, std::max(options.n_predict, 256)),
-                schema}, generation_result)) {
+                schema), generation_result)) {
             error = describe_generation_failure("model candidate generation", generation_result);
             return {};
         }
