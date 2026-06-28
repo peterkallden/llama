@@ -229,7 +229,7 @@ Procedure metadata makes the current promotion lifecycle explicit: an accepted l
 
 As a preparatory refactor, the llama-backed agent path now routes planner, blueprint selection and binding, reasoning, draft synthesis, reflection, and post-turn memory learning through a small `common_agent_inference` abstraction. The first implementation still uses the existing CLI-local `generate_chat_turn(...)` path; the immediate goal is only to create an agent inference abstraction before a later resident `server_context` host, not to add daemon or transport lifecycle yet.
 
-The request/result contract is also intentionally narrower than full CLI state now: agent generation requests carry only purpose, trace metadata, messages, tools, schema, and a small generation options struct instead of the whole top-level CLI `args`. That keeps resident hosting as an implementation detail of the inference backend instead of a new agent runtime architecture.
+The request/result contract is also intentionally narrower than full CLI state now: agent generation requests carry only purpose, trace metadata, optional agent scope metadata, messages, tools, schema, and a small generation options struct instead of the whole top-level CLI `args`. That keeps resident hosting as an implementation detail of the inference backend instead of a new agent runtime architecture.
 
 The next incremental step is equally small: keep the same `common_agent_generation_request` / `common_agent_generation_result` contract, but add a second adapter that can submit a single non-streaming completion through an already-running `server_context`.
 

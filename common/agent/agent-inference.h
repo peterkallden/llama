@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/agent-scope.h"
 #include "chat.h"
 #include "common/cli-config.h"
 
@@ -81,6 +82,7 @@ inline common_agent_generation_options common_agent_generation_options_from_args
 struct common_agent_generation_request {
     common_agent_generation_purpose purpose = common_agent_generation_purpose::draft;
     std::optional<std::string> trace_id;
+    std::optional<common_agent_scope> scope;
     std::vector<common_chat_msg> messages;
     std::vector<common_chat_tool> tools;
     common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;

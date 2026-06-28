@@ -47,6 +47,10 @@ common_agent_generation_options make_generation_options(const args & options, in
     return generation_options;
 }
 
+common_agent_scope make_generation_scope(const common_agent_request & request) {
+    return common_agent_scope_from_request(request);
+}
+
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
@@ -80,6 +84,7 @@ public:
         if (!inference.generate({
                 common_agent_generation_purpose::planner,
                 make_generation_trace_id(request, common_agent_generation_purpose::planner),
+                make_generation_scope(request),
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
@@ -147,6 +152,7 @@ public:
         if (!inference.generate({
                 common_agent_generation_purpose::draft,
                 make_generation_trace_id(request, common_agent_generation_purpose::draft),
+                make_generation_scope(request),
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
@@ -176,6 +182,7 @@ public:
         if (!inference.generate({
                 common_agent_generation_purpose::reasoning,
                 make_generation_trace_id(request, common_agent_generation_purpose::reasoning),
+                make_generation_scope(request),
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
@@ -217,6 +224,7 @@ public:
         if (!inference.generate({
                 common_agent_generation_purpose::reflection,
                 make_generation_trace_id(request, common_agent_generation_purpose::reflection),
+                make_generation_scope(request),
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
@@ -307,6 +315,7 @@ public:
         if (!inference.generate({
                 common_agent_generation_purpose::memory_learning,
                 make_generation_trace_id(request, common_agent_generation_purpose::memory_learning),
+                make_generation_scope(request),
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
