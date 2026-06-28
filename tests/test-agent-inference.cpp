@@ -133,9 +133,11 @@ static void test_runtime_generation_metadata() {
 
     auto planner = make_llama_cli_planner(inference, options, {});
     std::string error;
-    const auto proposal = planner->create_plan(request, error);
+    const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
     assert(!proposal.plan.id.empty());
+    assert(proposal.generation);
+    assert(proposal.generation->status == common_agent_generation_status::completed);
 
     auto executor = make_llama_cli_action_executor(inference, options);
     common_plan_state plan;
@@ -151,18 +153,22 @@ static void test_runtime_generation_metadata() {
     assert(error.empty() && reasoning == R"({"summary":"facts"})");
 
     auto reflector = make_llama_cli_reflection_engine(inference, options);
-    const auto reflection = reflector->evaluate(request, plan, draft, error);
+    const auto reflection = reflector->evaluate_result(request, plan, draft, error);
     assert(error.empty());
     assert(reflection.decision == common_reflection_decision::accept);
     assert(reflection.ready_to_answer);
+    assert(reflection.generation);
+    assert(reflection.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
     auto extractor = make_llama_cli_memory_candidate_extractor(inference, options);
     common_agent_result agent_result;
     agent_result.response = "Final answer";
-    const auto memory_candidate = extractor->extract(request, plan, agent_result, error);
+    const auto memory_candidate = extractor->extract_result(request, plan, agent_result, error);
     assert(error.empty());
     assert(memory_candidate.candidate);
     assert(memory_candidate.candidate->kind == common_memory_kind::procedure);
+    assert(memory_candidate.generation);
+    assert(memory_candidate.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
     assert(inference.seen.size() == 5);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
@@ -205,17 +211,21 @@ static void test_selection_generation_metadata() {
     first.goal = "Resume";
     first.next_action = "Continue";
     std::string error;
-    const auto selected = select_llama_cli_plan(inference, options, request, {first}, error);
-    assert(error.empty() && selected && *selected == "plan-1");
+    const auto selected = select_llama_cli_plan_result(inference, options, request, {first}, error);
+    assert(error.empty() && selected.plan_id && *selected.plan_id == "plan-1");
+    assert(selected.generation);
+    assert(selected.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
     std::vector<common_blueprint_candidate> candidates = {
         {"repo-change", "bootstrap:repo-change", "Repository change workflow"},
     };
     auto selector = make_llama_cli_blueprint_selector(inference, options);
-    const auto blueprint = selector->select(request, candidates, error);
+    const auto blueprint = selector->select_result(request, candidates, error);
     assert(error.empty());
     assert(blueprint.decision == common_blueprint_selection_decision::instantiate);
     assert(blueprint.logical_id && *blueprint.logical_id == "repo-change");
+    assert(blueprint.generation);
+    assert(blueprint.generation->decoded_tokens == 0);
 
     common_plan_in_memory_store store;
     assert(store.open("", error));
@@ -238,7 +248,11 @@ static void test_selection_generation_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    assert(bind_llama_cli_blueprint_tools(inference, options, registry, request, store, "task-1", error));
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, "task-1", error);
+    assert(error.empty());
+    assert(binding.applied);
+    assert(binding.bound_steps == 1);
+    assert(binding.generation);
     const auto updated = store.get("task-1", error);
     assert(updated && updated->steps.size() == 1);
     assert(updated->steps[0].tool_call);
@@ -304,8 +318,9 @@ static void test_selection_generation_failure_metadata() {
     first.id = "plan-1";
     first.goal = "Resume";
     first.next_action = "Continue";
-    const auto selected = select_llama_cli_plan(inference, options, request, {first}, error);
-    assert(!selected);
+    const auto selected = select_llama_cli_plan_result(inference, options, request, {first}, error);
+    assert(!selected.plan_id);
+    assert(selected.generation);
     assert(error == "plan selector generation failed (status=cancelled, stop=cancelled): resident inference cancelled");
 
     common_plan_in_memory_store store;
@@ -329,7 +344,9 @@ static void test_selection_generation_failure_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    assert(!bind_llama_cli_blueprint_tools(inference, options, registry, request, store, "task-1", error));
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, "task-1", error);
+    assert(!binding.applied);
+    assert(binding.generation);
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");
 }
 

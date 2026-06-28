@@ -513,9 +513,9 @@ int run_agent_cli(common_memory_store & store, args a) {
                 selection_request.prompt = a.prompt;
                 common_agent_scope_apply(agent_scope, selection_request);
                 std::string selection_error;
-                const auto selected = select_llama_cli_plan(*agent_inference, a, selection_request, candidates, selection_error);
-                if (selected) {
-                    a.plan_id = *selected;
+                const auto selection_result = select_llama_cli_plan_result(*agent_inference, a, selection_request, candidates, selection_error);
+                if (selection_result.plan_id) {
+                    a.plan_id = *selection_result.plan_id;
                     fprintf(stderr, "agent plan auto-selected: %s\n", a.plan_id.c_str());
                 } else if (!selection_error.empty()) {
                     fprintf(stderr, "agent plan auto-selection failed safely: %s; creating a new plan\n", selection_error.c_str());
@@ -546,7 +546,9 @@ int run_agent_cli(common_memory_store & store, args a) {
                     binding_request.prompt = a.prompt;
                     common_agent_scope_apply(agent_scope, binding_request);
                     std::string binding_error;
-                    if (!bind_llama_cli_blueprint_tools(*agent_inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error)) {
+                    const auto binding_result = bind_llama_cli_blueprint_tools_result(
+                        *agent_inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error);
+                    if (!binding_result.applied) {
                         fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
                     }
                 }

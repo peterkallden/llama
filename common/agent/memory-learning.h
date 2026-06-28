@@ -16,6 +16,13 @@ public:
         const common_plan_state & plan,
         const common_agent_result & result,
         std::string & error) = 0;
+    virtual common_memory_candidate_result extract_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const common_agent_result & result,
+            std::string & error) {
+        return extract(request, plan, result, error);
+    }
 };
 
 enum class common_memory_learning_decision {
@@ -39,6 +46,7 @@ struct common_memory_learning_result {
     std::string reason;
     size_t related_count = 0;
     std::optional<std::string> stored_memory_id;
+    std::optional<common_agent_generated_text_result> generation;
 };
 
 struct common_procedure_blueprint_promotion_result {

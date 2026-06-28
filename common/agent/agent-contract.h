@@ -198,6 +198,7 @@ struct common_agent_result {
     bool reflected = false;
     bool revised = false;
     bool limit_reached = false;
+    std::vector<common_agent_generation_record> generation_records;
 
     // Events contain structured outcomes only, never raw chain-of-thought.
     std::vector<common_agent_event> events;

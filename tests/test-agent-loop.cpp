@@ -97,6 +97,38 @@ public:
     }
 };
 
+class metadata_reasoning_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        return create_plan_result(request, error);
+    }
+    common_plan_proposal create_plan_result(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "metadata-turn";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        common_plan_step orient{"orient", "Orient", "Inspect the request"};
+        orient.mode = common_plan_step_mode::reasoning;
+        orient.status = common_plan_step_status::active;
+        common_plan_step answer{"answer", "Answer", "Return the answer"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"orient"};
+        proposal.plan.steps = {orient, answer};
+        proposal.plan.active_step_id = "orient";
+        proposal.plan.status = common_plan_status::active;
+        proposal.generation = common_agent_generated_text_result{
+            R"({"goal":"inspect"})",
+            5,
+            common_agent_generation_status::completed,
+            common_agent_generation_stop_reason::json_schema,
+            {},
+        };
+        return proposal;
+    }
+};
+
 class mixed_initial_plan_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
@@ -175,6 +207,31 @@ public:
         result.ready_to_answer = true;
         result.confidence = 0.9f;
         result.learning_hint = common_reflection_learning_hint{"tool_precondition", "Verify a path before reading it.", 0.8f};
+        return result;
+    }
+};
+
+class metadata_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) override {
+        return evaluate_result(request, plan, draft, error);
+    }
+    common_reflection_result evaluate_result(
+            const common_agent_request &,
+            const common_plan_state &,
+            const std::string &,
+            std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        result.generation = common_agent_generated_text_result{
+            R"({"decision":"accept"})",
+            3,
+            common_agent_generation_status::completed,
+            common_agent_generation_stop_reason::json_schema,
+            {},
+        };
         return result;
     }
 };
@@ -362,10 +419,14 @@ int main() {
 
     common_plan_in_memory_store metadata_store;
     assert(metadata_store.open("", error));
-    reasoning_planner metadata_planner;
+    metadata_reasoning_planner metadata_planner;
     metadata_executor metadata_exec;
-    common_agent_runtime metadata_runtime(metadata_store, metadata_planner, metadata_exec, r);
+    metadata_reflector metadata_reflect;
+    common_agent_runtime metadata_runtime(metadata_store, metadata_planner, metadata_exec, metadata_reflect);
     common_agent_request metadata_request = reasoning_request;
+    metadata_request.enable_reflection = true;
+    metadata_request.max_iterations = 2;
+    metadata_request.max_reflection_rounds = 1;
     const auto metadata_result = metadata_runtime.run(metadata_request);
     assert(metadata_result.error.empty() && metadata_result.response == "draft");
     assert(metadata_result.reasoning_decoded_tokens == 7);
@@ -373,5 +434,14 @@ int main() {
     assert(metadata_result.total_decoded_tokens == 18);
     assert(metadata_result.response_generation_status == common_agent_generation_status::completed);
     assert(metadata_result.response_stop_reason == common_agent_generation_stop_reason::eos);
+    assert(metadata_result.generation_records.size() == 4);
+    assert(metadata_result.generation_records[0].stage == common_agent_generation_stage::planner);
+    assert(metadata_result.generation_records[0].decoded_tokens == 5);
+    assert(metadata_result.generation_records[1].stage == common_agent_generation_stage::reasoning);
+    assert(metadata_result.generation_records[1].decoded_tokens == 7);
+    assert(metadata_result.generation_records[2].stage == common_agent_generation_stage::draft);
+    assert(metadata_result.generation_records[2].decoded_tokens == 11);
+    assert(metadata_result.generation_records[3].stage == common_agent_generation_stage::reflection);
+    assert(metadata_result.generation_records[3].decoded_tokens == 3);
     return 0;
 }

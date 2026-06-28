@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/agent-contract.h"
+#include "agent/agent-generation.h"
 #include "plan/plan-blueprint.h"
 #include "plan/plan-store.h"
 
@@ -23,6 +24,7 @@ struct common_blueprint_selection {
     std::optional<std::string> logical_id;
     float confidence = 0.0f;
     std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
 };
 
 class common_blueprint_selector {
@@ -32,6 +34,12 @@ public:
         const common_agent_request & request,
         const std::vector<common_blueprint_candidate> & candidates,
         std::string & error) = 0;
+    virtual common_blueprint_selection select_result(
+            const common_agent_request & request,
+            const std::vector<common_blueprint_candidate> & candidates,
+            std::string & error) {
+        return select(request, candidates, error);
+    }
 };
 
 // Adapts an explicit caller choice to the same bounded orchestration used by

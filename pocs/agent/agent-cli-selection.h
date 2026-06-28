@@ -30,11 +30,41 @@ std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
     common_agent_inference & inference,
     const args & options);
 
+struct common_agent_plan_selection_result {
+    std::optional<std::string> plan_id;
+    float confidence = 0.0f;
+    std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
+};
+
+common_agent_plan_selection_result select_llama_cli_plan_result(
+    common_agent_inference & inference,
+    const args & options,
+    const common_agent_request & request,
+    const std::vector<common_plan_state> & candidates,
+    std::string & error);
+
 std::optional<std::string> select_llama_cli_plan(
     common_agent_inference & inference,
     const args & options,
     const common_agent_request & request,
     const std::vector<common_plan_state> & candidates,
+    std::string & error);
+
+struct common_agent_blueprint_binding_result {
+    bool applied = false;
+    size_t bound_steps = 0;
+    std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
+};
+
+common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
+    common_agent_inference & inference,
+    const args & options,
+    const common_tool_registry & registry,
+    const common_agent_request & request,
+    common_plan_store & store,
+    const std::string & plan_id,
     std::string & error);
 
 bool bind_llama_cli_blueprint_tools(

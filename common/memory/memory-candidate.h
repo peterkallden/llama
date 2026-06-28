@@ -1,6 +1,7 @@
 // Backend-neutral durable-memory candidate types.
 #pragma once
 
+#include "agent/agent-generation.h"
 #include "memory/memory-types.h"
 
 #include <optional>
@@ -25,4 +26,5 @@ struct common_memory_candidate {
 struct common_memory_candidate_result {
     std::optional<common_memory_candidate> candidate;
     std::string reason;
+    std::optional<common_agent_generated_text_result> generation;
 };

@@ -219,8 +219,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         }
     }
     if (plan.id.empty()) {
-        auto proposal = planner.create_plan(request, error);
+        auto proposal = planner.create_plan_result(request, error);
         if (!error.empty()) { result.error = error; return result; }
+        if (proposal.generation) {
+            result.generation_records.push_back(common_agent_generation_record_from_result(
+                common_agent_generation_stage::planner,
+                *proposal.generation));
+        }
         if (!apply_request_objective(request, proposal.plan, error)) { result.error = error; return result; }
         if (!proposal.operations.empty() && !proposal.plan.steps.empty()) {
             proposal.plan.steps.clear();
@@ -360,6 +365,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 const auto reasoning_result = executor.generate_reasoning_result(request, plan, step, error);
                 std::string reasoning = reasoning_result.content;
                 if (!error.empty()) { result.error = "reasoning step failed: " + error; return result; }
+                result.generation_records.push_back(common_agent_generation_record_from_result(
+                    common_agent_generation_stage::reasoning,
+                    reasoning_result));
                 result.reasoning_decoded_tokens += reasoning_result.decoded_tokens;
                 result.total_decoded_tokens += reasoning_result.decoded_tokens;
                 auto parsed = json::parse(reasoning, nullptr, false);
@@ -489,6 +497,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
         auto draft = draft_result.content;
         if (!error.empty()) { result.error = error; return result; }
+        result.generation_records.push_back(common_agent_generation_record_from_result(
+            common_agent_generation_stage::draft,
+            draft_result));
         result.response_decoded_tokens = draft_result.decoded_tokens;
         result.total_decoded_tokens += draft_result.decoded_tokens;
         result.response_generation_status = draft_result.status;
@@ -499,8 +510,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             result.limit_reached = request.enable_reflection;
             break;
         }
-        auto reflection = reflector.evaluate(request, plan, draft, error);
+        auto reflection = reflector.evaluate_result(request, plan, draft, error);
         if (!error.empty()) { result.response = draft; result.error = "reflection failed safely: " + error; break; }
+        if (reflection.generation) {
+            result.generation_records.push_back(common_agent_generation_record_from_result(
+                common_agent_generation_stage::reflection,
+                *reflection.generation));
+        }
         result.reflected = true;
         result.events.push_back({common_agent_event_type::reflection_completed, "reflection completed", {}, plan.id});
         if (reflection.learning_hint) {
@@ -566,6 +582,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     }
     if (memory_learner && result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
         const auto learning = memory_learner->learn(request, plan, result);
+        if (learning.generation) {
+            result.generation_records.push_back(common_agent_generation_record_from_result(
+                common_agent_generation_stage::memory_learning,
+                *learning.generation));
+        }
         result.learned_memory_candidate = learning.candidate;
         result.memory_learning_summary = std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason;
         result.memory_learning_related_count = learning.related_count;

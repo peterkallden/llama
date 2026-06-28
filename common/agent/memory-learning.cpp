@@ -93,7 +93,8 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         const common_agent_result & result) {
     common_memory_learning_result outcome;
     std::string error;
-    const auto extracted = extractor.extract(request, plan, result, error);
+    const auto extracted = extractor.extract_result(request, plan, result, error);
+    outcome.generation = extracted.generation;
     if (!error.empty()) {
         outcome.decision = common_memory_learning_decision::failed;
         outcome.reason = "candidate extraction failed safely: " + error;

@@ -6,20 +6,19 @@
 
 class common_memory_post_turn_learner;
 
-struct common_agent_generated_text_result {
-    std::string content;
-    int decoded_tokens = 0;
-    common_agent_generation_status status = common_agent_generation_status::errored;
-    common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
-    std::string error_message;
-};
-
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };
 struct common_reflection_issue { std::string kind, description, correction; float severity = 0.5f; };
 struct common_reflection_learning_hint { std::string category, statement; float expected_reuse = 0.5f; };
-struct common_reflection_result { common_reflection_decision decision = common_reflection_decision::accept; std::vector<common_reflection_issue> issues; std::vector<common_plan_operation> proposed_plan_operations; std::optional<std::string> requested_action; std::vector<std::string> revision_guidance; std::optional<common_reflection_learning_hint> learning_hint; bool ready_to_answer = false; float confidence = 0.5f; };
-struct common_plan_proposal { common_plan_state plan; std::vector<common_plan_operation> operations; };
-class common_planner { public: virtual ~common_planner() = default; virtual common_plan_proposal create_plan(const common_agent_request & request, std::string & error) = 0; };
+struct common_reflection_result { common_reflection_decision decision = common_reflection_decision::accept; std::vector<common_reflection_issue> issues; std::vector<common_plan_operation> proposed_plan_operations; std::optional<std::string> requested_action; std::vector<std::string> revision_guidance; std::optional<common_reflection_learning_hint> learning_hint; bool ready_to_answer = false; float confidence = 0.5f; std::optional<common_agent_generated_text_result> generation; };
+struct common_plan_proposal { common_plan_state plan; std::vector<common_plan_operation> operations; std::optional<common_agent_generated_text_result> generation; };
+class common_planner {
+public:
+    virtual ~common_planner() = default;
+    virtual common_plan_proposal create_plan(const common_agent_request & request, std::string & error) = 0;
+    virtual common_plan_proposal create_plan_result(const common_agent_request & request, std::string & error) {
+        return create_plan(request, error);
+    }
+};
 class common_action_executor {
 public:
     virtual ~common_action_executor() = default;
@@ -65,5 +64,16 @@ public:
         return result;
     }
 };
-class common_reflection_engine { public: virtual ~common_reflection_engine() = default; virtual common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) = 0; };
+class common_reflection_engine {
+public:
+    virtual ~common_reflection_engine() = default;
+    virtual common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) = 0;
+    virtual common_reflection_result evaluate_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const std::string & draft,
+            std::string & error) {
+        return evaluate(request, plan, draft, error);
+    }
+};
 class common_agent_runtime { public: common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools = nullptr, common_memory_post_turn_learner * memory_learner = nullptr); common_agent_result run(const common_agent_request & request); private: common_plan_store & store; common_planner & planner; common_action_executor & executor; common_reflection_engine & reflector; const common_tool_registry * tools; common_memory_post_turn_learner * memory_learner; };

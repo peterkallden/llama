@@ -180,6 +180,13 @@ public:
             const common_agent_request & request,
             const std::vector<common_blueprint_candidate> & candidates,
             std::string & error) override {
+        return select_result(request, candidates, error);
+    }
+
+    common_blueprint_selection select_result(
+            const common_agent_request & request,
+            const std::vector<common_blueprint_candidate> & candidates,
+            std::string & error) override {
         common_blueprint_selection result;
         json ids = json::array({""});
         std::string available;
@@ -206,10 +213,24 @@ public:
                 {system, user},
                 make_generation_options(options, std::max(options.n_predict, 96)),
                 schema.dump()), generation_result)) {
+            result.generation = common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            };
             error = describe_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
+        result.generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "blueprint selector returned invalid JSON";
@@ -234,11 +255,18 @@ public:
     llama_blueprint_binder(common_agent_inference & inference, const args & options, const common_tool_registry & registry)
         : inference(inference), options(options), registry(registry) {}
 
-    bool bind(const common_agent_request & request, common_plan_store & store, const std::string & plan_id, std::string & error) const {
+    common_agent_blueprint_binding_result bind_result(
+            const common_agent_request & request,
+            common_plan_store & store,
+            const std::string & plan_id,
+            std::string & error) const {
+        common_agent_blueprint_binding_result result;
         const auto loaded = store.get(plan_id, error);
         if (!loaded || !loaded->derived_from_plan_id) {
             error.clear();
-            return true;
+            result.applied = true;
+            result.reason = "plan does not require blueprint binding";
+            return result;
         }
         const auto & plan = *loaded;
         std::string steps;
@@ -256,13 +284,27 @@ public:
                 common_agent_generation_purpose::blueprint_binding,
                 {system, user},
                 make_generation_options(options, std::min(options.n_predict, 256))), generation_result)) {
+            result.generation = common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            };
             error = describe_generation_failure("blueprint binding generation", generation_result);
-            return false;
+            return result;
         }
+        result.generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         const auto proposal = json::parse(generation_result.content, nullptr, false);
         if (!proposal.is_object() || !proposal.contains("bindings") || !proposal["bindings"].is_array()) {
             error = "blueprint binding returned invalid JSON";
-            return false;
+            return result;
         }
 
         common_plan_state updated = plan;
@@ -271,14 +313,14 @@ public:
             if (!binding.is_object() || !binding.contains("step_id") || !binding["step_id"].is_string() ||
                     !binding.contains("tool") || !binding["tool"].is_object()) {
                 error = "invalid blueprint binding";
-                return false;
+                return result;
             }
             const auto id = binding["step_id"].get<std::string>();
             const auto & tool = binding["tool"];
             if (!bound.insert(id).second || !tool.contains("name") || !tool["name"].is_string() ||
                     !tool.contains("arguments") || !tool["arguments"].is_object()) {
                 error = "invalid or duplicate blueprint binding";
-                return false;
+                return result;
             }
 
             auto found = std::find_if(updated.steps.begin(), updated.steps.end(), [&](const auto & step) {
@@ -287,7 +329,7 @@ public:
             if (found == updated.steps.end() || common_plan_step_effective_mode(*found) != common_plan_step_mode::reasoning ||
                     !registry.contains(tool["name"].get<std::string>()) || !registry.is_read_only(tool["name"].get<std::string>())) {
                 error = "blueprint binding chose an unavailable, final, or non-read-only tool step";
-                return false;
+                return result;
             }
 
             common_plan_step replacement = *found;
@@ -295,7 +337,7 @@ public:
             replacement.selected_tool = tool["name"].get<std::string>();
             replacement.tool_call = common_plan_tool_call{*replacement.selected_tool, tool["arguments"].dump()};
             if (!registry.validate({replacement.tool_call->name, replacement.tool_call->arguments_json}, error)) {
-                return false;
+                return result;
             }
 
             common_plan_operation operation;
@@ -305,12 +347,23 @@ public:
             operation.step = std::move(replacement);
             operation.reason_summary = "blueprint tool binding";
             if (!store.apply(operation, updated, error)) {
-                return false;
+                return result;
             }
         }
 
         error.clear();
-        return true;
+        result.applied = true;
+        result.bound_steps = bound.size();
+        if (bound.empty()) {
+            result.reason = "model declined blueprint tool binding";
+        } else {
+            result.reason = "blueprint tool binding applied";
+        }
+        return result;
+    }
+
+    bool bind(const common_agent_request & request, common_plan_store & store, const std::string & plan_id, std::string & error) const {
+        return bind_result(request, store, plan_id, error).applied;
     }
 
 private:
@@ -324,10 +377,11 @@ public:
     llama_plan_selector(common_agent_inference & inference, const args & options)
         : inference(inference), options(options) {}
 
-    std::optional<std::string> select(
+    common_agent_plan_selection_result select_result(
             const common_agent_request & request,
             const std::vector<common_plan_state> & candidates,
             std::string & error) const {
+        common_agent_plan_selection_result result;
         json ids = json::array({""});
         std::string available;
         for (const auto & candidate : candidates) {
@@ -353,28 +407,54 @@ public:
                 {system, user},
                 make_generation_options(options, std::max(options.n_predict, 96)),
                 schema.dump()), generation_result)) {
+            result.generation = common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            };
             error = describe_generation_failure("plan selector generation", generation_result);
-            return std::nullopt;
+            return result;
         }
+        result.generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         const auto choice = json::parse(generation_result.content, nullptr, false);
         if (!choice.is_object()) {
             error = "plan selector returned invalid JSON";
-            return std::nullopt;
+            return result;
         }
-        if (choice.value("decision", std::string{}) != "resume" || choice.value("confidence", 0.0f) < 0.75f ||
+        result.confidence = choice.value("confidence", 0.0f);
+        if (choice.value("decision", std::string{}) != "resume" || result.confidence < 0.75f ||
                 !choice.contains("plan_id") || !choice["plan_id"].is_string()) {
+            result.reason = "model declined or reported low confidence";
             error.clear();
-            return std::nullopt;
+            return result;
         }
         const std::string id = choice["plan_id"].get<std::string>();
         if (id.empty() || std::find_if(candidates.begin(), candidates.end(), [&](const auto & candidate) {
                 return candidate.id == id;
             }) == candidates.end()) {
+            result.reason = "model selected an unavailable plan";
             error.clear();
-            return std::nullopt;
+            return result;
         }
+        result.plan_id = id;
+        result.reason = "plan selected";
         error.clear();
-        return id;
+        return result;
+    }
+
+    std::optional<std::string> select(
+            const common_agent_request & request,
+            const std::vector<common_plan_state> & candidates,
+            std::string & error) const {
+        return select_result(request, candidates, error).plan_id;
     }
 
 private:
@@ -390,14 +470,35 @@ std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
     return std::make_unique<llama_blueprint_selector>(inference, options);
 }
 
-std::optional<std::string> select_llama_cli_plan(
+common_agent_plan_selection_result select_llama_cli_plan_result(
         common_agent_inference & inference,
         const args & options,
         const common_agent_request & request,
         const std::vector<common_plan_state> & candidates,
         std::string & error) {
     llama_plan_selector selector(inference, options);
-    return selector.select(request, candidates, error);
+    return selector.select_result(request, candidates, error);
+}
+
+std::optional<std::string> select_llama_cli_plan(
+        common_agent_inference & inference,
+        const args & options,
+        const common_agent_request & request,
+        const std::vector<common_plan_state> & candidates,
+        std::string & error) {
+    return select_llama_cli_plan_result(inference, options, request, candidates, error).plan_id;
+}
+
+common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
+        common_agent_inference & inference,
+        const args & options,
+        const common_tool_registry & registry,
+        const common_agent_request & request,
+        common_plan_store & store,
+        const std::string & plan_id,
+        std::string & error) {
+    llama_blueprint_binder binder(inference, options, registry);
+    return binder.bind_result(request, store, plan_id, error);
 }
 
 bool bind_llama_cli_blueprint_tools(
@@ -408,6 +509,5 @@ bool bind_llama_cli_blueprint_tools(
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    llama_blueprint_binder binder(inference, options, registry);
-    return binder.bind(request, store, plan_id, error);
+    return bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, plan_id, error).applied;
 }

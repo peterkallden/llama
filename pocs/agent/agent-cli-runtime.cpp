@@ -78,6 +78,10 @@ public:
     }
 
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        return create_plan_result(request, error);
+    }
+
+    common_plan_proposal create_plan_result(const common_agent_request & request, std::string & error) override {
         static std::atomic<uint64_t> sequence{0};
         common_plan_proposal proposal;
         proposal.plan.id = "chat-plan-" + std::to_string(std::time(nullptr)) + "-" + std::to_string(++sequence);
@@ -106,9 +110,23 @@ public:
                 {system, user},
                 make_generation_options(options, std::max(options.n_predict, 512)),
                 common_plan_proposal_json_schema()), generation_result)) {
+            proposal.generation = common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            };
             error = describe_generation_failure("model planner generation", generation_result);
             return proposal;
         }
+        proposal.generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         std::string parse_error;
         if (common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6)) {
             for (auto & operation : proposal.operations) {
@@ -231,6 +249,14 @@ public:
         : inference(inference), options(options) {}
 
     common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) override {
+        return evaluate_result(request, plan, draft, error);
+    }
+
+    common_reflection_result evaluate_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const std::string & draft,
+            std::string & error) override {
         common_reflection_result result;
         common_chat_msg system;
         system.role = "system";
@@ -252,9 +278,23 @@ public:
                 {system, user},
                 make_generation_options(options, std::max(options.n_predict, 256)),
                 reflection_schema), generation_result)) {
+            result.generation = common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            };
             error = describe_generation_failure("model reflection generation", generation_result);
             return result;
         }
+        result.generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         if (!common_reflection_parse_json(generation_result.content, result, error, 8)) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
@@ -314,6 +354,14 @@ public:
         : inference(inference), options(options) {}
 
     common_memory_candidate_result extract(const common_agent_request & request, const common_plan_state & plan, const common_agent_result & result, std::string & error) override {
+        return extract_result(request, plan, result, error);
+    }
+
+    common_memory_candidate_result extract_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const common_agent_result & result,
+            std::string & error) override {
         common_chat_msg system;
         system.role = "system";
         system.content = "Return only JSON matching the supplied schema. Propose at most one concise durable memory candidate, or null. "
@@ -341,10 +389,26 @@ public:
                 make_generation_options(options, std::max(options.n_predict, 256)),
                 schema), generation_result)) {
             error = describe_generation_failure("model candidate generation", generation_result);
-            return {};
+            return {{}, {}, common_agent_generated_text_result{
+                generation_result.content,
+                generation_result.decoded_tokens,
+                generation_result.status,
+                generation_result.stop_reason,
+                generation_result.error_message,
+            }};
         }
+        const auto generation = common_agent_generated_text_result{
+            generation_result.content,
+            generation_result.decoded_tokens,
+            generation_result.status,
+            generation_result.stop_reason,
+            generation_result.error_message,
+        };
         common_memory_candidate_result parsed;
-        if (!parse_memory_candidate_json(generation_result.content, parsed, error)) return {};
+        if (!parse_memory_candidate_json(generation_result.content, parsed, error)) {
+            return {{}, {}, generation};
+        }
+        parsed.generation = generation;
         return parsed;
     }
 
