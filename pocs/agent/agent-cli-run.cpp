@@ -623,12 +623,22 @@ int run_agent_cli(common_memory_store & store, args a) {
     common_chat_params chat_params;
     int n_decode = 0;
     const auto generation_options = common_agent_generation_options_from_args(a);
-    if (!generate_chat_turn(model, chat_templates.get(), messages, tools,
+    common_agent_generation_result generation_result;
+    if (!generate_chat_turn_result(model, chat_templates.get(), messages, tools,
             tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
-            generation_options, output, chat_params, n_decode)) {
+            generation_options, generation_result)) {
+        if (!generation_result.error_message.empty()) {
+            fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
+                common_agent_generation_status_name(generation_result.status),
+                common_agent_generation_stop_reason_name(generation_result.stop_reason),
+                generation_result.error_message.c_str());
+        }
         free_model();
         return 1;
     }
+    output = generation_result.content;
+    chat_params = generation_result.chat_params;
+    n_decode = generation_result.decoded_tokens;
 
     common_chat_parser_params parser_params(chat_params);
     parser_params.parse_tool_calls = !tools.empty();
@@ -682,15 +692,23 @@ int run_agent_cli(common_memory_store & store, args a) {
 
         ++tool_rounds;
         const bool allow_another_tool_round = tool_rounds < a.max_tool_rounds;
-        int next_decode = 0;
-        if (!generate_chat_turn(model, chat_templates.get(), messages,
+        common_agent_generation_result next_generation_result;
+        if (!generate_chat_turn_result(model, chat_templates.get(), messages,
                 allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
                 allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
-                generation_options, output, chat_params, next_decode)) {
+                generation_options, next_generation_result)) {
+            if (!next_generation_result.error_message.empty()) {
+                fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
+                    common_agent_generation_status_name(next_generation_result.status),
+                    common_agent_generation_stop_reason_name(next_generation_result.stop_reason),
+                    next_generation_result.error_message.c_str());
+            }
             free_model();
             return 1;
         }
-        n_decode += next_decode;
+        output = next_generation_result.content;
+        chat_params = next_generation_result.chat_params;
+        n_decode += next_generation_result.decoded_tokens;
         parser_params = common_chat_parser_params(chat_params);
         parser_params.parse_tool_calls = allow_another_tool_round && !tools.empty();
         if (!chat_params.parser.empty()) {

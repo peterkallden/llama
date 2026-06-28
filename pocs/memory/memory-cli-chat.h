@@ -7,6 +7,16 @@
 #include <string>
 #include <vector>
 
+bool generate_chat_turn_result(
+    llama_model * model,
+    const common_chat_templates * chat_templates,
+    const std::vector<common_chat_msg> & messages,
+    const std::vector<common_chat_tool> & tools,
+    common_chat_tool_choice tool_choice,
+    const common_agent_generation_options & options,
+    common_agent_generation_result & result,
+    const std::string & json_schema = {});
+
 bool generate_chat_turn(
     llama_model * model,
     const common_chat_templates * chat_templates,

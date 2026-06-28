@@ -71,6 +71,18 @@ common_agent_generation_stop_reason map_server_stop_reason(stop_type stop) {
     return common_agent_generation_stop_reason::error;
 }
 
+void apply_server_error(
+        const server_task_result * response,
+        common_agent_generation_result & result,
+        common_agent_generation_status status = common_agent_generation_status::errored,
+        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error) {
+    result.status = status;
+    result.stop_reason = stop_reason;
+    if (auto * error = dynamic_cast<const server_task_result_error *>(response)) {
+        result.error_message = error->err_msg;
+    }
+}
+
 class server_context_agent_inference final : public common_agent_inference {
 public:
     server_context_agent_inference(
@@ -103,11 +115,11 @@ public:
             if (!request.json_schema.empty()) {
                 std::string content;
                 int decoded_tokens = 0;
+                server_task_result_cmpl_final * final_result = nullptr;
 
                 while (auto response = reader.next([]() { return false; })) {
                     if (response->is_error()) {
-                        result.status = common_agent_generation_status::errored;
-                        result.stop_reason = common_agent_generation_stop_reason::error;
+                        apply_server_error(response.get(), result);
                         return false;
                     }
                     if (auto * partial = dynamic_cast<server_task_result_cmpl_partial *>(response.get())) {
@@ -123,30 +135,33 @@ public:
                             return true;
                         }
                     }
-                    if (dynamic_cast<server_task_result_cmpl_final *>(response.get()) != nullptr) {
+                    if ((final_result = dynamic_cast<server_task_result_cmpl_final *>(response.get())) != nullptr) {
                         break;
                     }
                 }
 
                 result.content = content;
                 result.decoded_tokens = decoded_tokens;
-                result.status = result.content.empty()
-                    ? common_agent_generation_status::errored
-                    : common_agent_generation_status::completed;
-                result.stop_reason = result.content.empty()
+                result.status = common_agent_generation_status::errored;
+                result.stop_reason = final_result == nullptr
                     ? common_agent_generation_stop_reason::error
-                    : common_agent_generation_stop_reason::json_schema;
-                return !result.content.empty();
+                    : map_server_stop_reason(final_result->stop);
+                result.error_message = "generation ended before producing valid JSON for the requested schema";
+                return false;
             }
 
             auto responses = reader.wait_for_all([]() { return false; });
             if (responses.is_terminated || responses.error || responses.results.empty()) {
-                result.status = responses.is_terminated
-                    ? common_agent_generation_status::cancelled
-                    : common_agent_generation_status::errored;
-                result.stop_reason = responses.is_terminated
-                    ? common_agent_generation_stop_reason::cancelled
-                    : common_agent_generation_stop_reason::error;
+                if (responses.error) {
+                    apply_server_error(responses.error.get(), result);
+                } else {
+                    result.status = responses.is_terminated
+                        ? common_agent_generation_status::cancelled
+                        : common_agent_generation_status::errored;
+                    result.stop_reason = responses.is_terminated
+                        ? common_agent_generation_stop_reason::cancelled
+                        : common_agent_generation_stop_reason::error;
+                }
                 return false;
             }
 
