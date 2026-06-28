@@ -14,4 +14,5 @@ std::unique_ptr<common_agent_inference> make_llama_cli_agent_inference(
 
 std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
+    llama_model * model,
     const common_chat_templates * templates);

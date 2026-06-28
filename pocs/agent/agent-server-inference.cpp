@@ -64,19 +64,16 @@ task_params make_server_task_params(
 
 class server_context_agent_inference final : public common_agent_inference {
 public:
-    server_context_agent_inference(server_context & server, const common_chat_templates * templates)
-        : server(server), templates(templates) {}
+    server_context_agent_inference(
+            server_context & server,
+            llama_model * model,
+            const common_chat_templates * templates)
+        : server(server), model(model), templates(templates) {}
 
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
         result = {};
-
-        llama_context * ctx = server.get_llama_context();
-        if (ctx == nullptr) {
-            std::fprintf(stderr, "server_context agent inference requires a live llama_context\n");
-            return false;
-        }
 
         try {
             result.chat_params = apply_generation_request(templates, request);
@@ -89,7 +86,7 @@ public:
             task.params = make_server_task_params(
                 request,
                 result.chat_params,
-                llama_model_get_vocab(llama_get_model(ctx)));
+                model == nullptr ? nullptr : llama_model_get_vocab(model));
 
             reader.post_task(std::move(task));
 
@@ -114,6 +111,7 @@ public:
 
 private:
     server_context & server;
+    llama_model * model;
     const common_chat_templates * templates;
 };
 
@@ -121,6 +119,7 @@ private:
 
 std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
+    llama_model * model,
     const common_chat_templates * templates) {
-    return std::make_unique<server_context_agent_inference>(server, templates);
+    return std::make_unique<server_context_agent_inference>(server, model, templates);
 }
