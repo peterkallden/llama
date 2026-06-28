@@ -4,6 +4,7 @@ add_executable(${TARGET}
     agent-cli-command.cpp
     agent-cli-config.cpp
     agent-cli-inference.cpp
+    agent-server-inference.cpp
     agent-cli-runtime.cpp
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp
@@ -15,12 +16,14 @@ set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_link_libraries(${TARGET} PRIVATE
     llama-memory
     llama-common
     llama
     llama-agent-poc
+    server-context
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)

@@ -1,13 +1,13 @@
 set(TARGET llama-memory-poc)
 add_executable(${TARGET} memory.cpp ../common/cli-config.cpp memory-cli-chat.cpp memory-cli-memory.cpp ../agent/agent-cli-command.cpp ../agent/agent-cli-config.cpp ../agent/agent-cli-run.cpp)
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
-target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../agent)
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../agent ${PROJECT_SOURCE_DIR}/tools/server)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_REFLECTION)
-    target_sources(${TARGET} PRIVATE ../agent/agent-cli-inference.cpp ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
-    target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+    target_sources(${TARGET} PRIVATE ../agent/agent-cli-inference.cpp ../agent/agent-server-inference.cpp ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
+    target_link_libraries(${TARGET} PRIVATE llama-agent-poc server-context)
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 endif()
 
