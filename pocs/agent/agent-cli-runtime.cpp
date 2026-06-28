@@ -29,6 +29,18 @@ std::string make_generation_trace_id(
     return base + ":" + common_agent_generation_purpose_name(purpose);
 }
 
+std::string describe_generation_failure(
+        const char * label,
+        const common_agent_generation_result & result) {
+    std::string text = std::string(label) + " failed";
+    text += " (status=" + std::string(common_agent_generation_status_name(result.status));
+    text += ", stop=" + std::string(common_agent_generation_stop_reason_name(result.stop_reason)) + ")";
+    if (!result.error_message.empty()) {
+        text += ": " + result.error_message;
+    }
+    return text;
+}
+
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
@@ -69,7 +81,7 @@ public:
                 COMMON_CHAT_TOOL_CHOICE_NONE,
                 planner_options,
                 common_plan_proposal_json_schema()}, generation_result)) {
-            error = "model planner generation failed";
+            error = describe_generation_failure("model planner generation", generation_result);
             return proposal;
         }
         std::string parse_error;
@@ -138,7 +150,7 @@ public:
                 COMMON_CHAT_TOOL_CHOICE_NONE,
                 draft_options,
                 {}}, generation_result)) {
-            error = "model draft generation failed";
+            error = describe_generation_failure("model draft generation", generation_result);
             return {};
         }
         error.clear();
@@ -169,7 +181,7 @@ public:
                 COMMON_CHAT_TOOL_CHOICE_NONE,
                 reasoning_options,
                 reasoning_schema}, generation_result)) {
-            error = "model reasoning generation failed";
+            error = describe_generation_failure("model reasoning generation", generation_result);
             return {};
         }
         error.clear();
@@ -212,7 +224,7 @@ public:
                 COMMON_CHAT_TOOL_CHOICE_NONE,
                 reflection_options,
                 reflection_schema}, generation_result)) {
-            error = "model reflection generation failed";
+            error = describe_generation_failure("model reflection generation", generation_result);
             return result;
         }
         if (!common_reflection_parse_json(generation_result.content, result, error, 8)) {
@@ -304,7 +316,7 @@ public:
                 COMMON_CHAT_TOOL_CHOICE_NONE,
                 extraction_options,
                 schema}, generation_result)) {
-            error = "model candidate generation failed";
+            error = describe_generation_failure("model candidate generation", generation_result);
             return {};
         }
         common_memory_candidate_result parsed;
