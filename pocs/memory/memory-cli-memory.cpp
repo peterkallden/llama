@@ -1,6 +1,6 @@
 #include "memory-cli-memory.h"
 
-#include "agent/agent-contract.h"
+#include "agent/agent-scope.h"
 #include "common.h"
 #include "llama.h"
 #include "memory/memory-context.h"

@@ -1,6 +1,7 @@
 // Backend-neutral agent feature contract for internal callers.
 #pragma once
 
+#include "agent/agent-scope.h"
 #include "chat.h"
 #include "agent/tool-registry.h"
 #include "memory/memory-types.h"
@@ -121,16 +122,6 @@ struct common_agent_objective {
     std::vector<std::string> constraints;
 };
 
-struct common_agent_scope {
-    common_memory_scope memory_scope = common_memory_scope::session;
-    common_plan_scope plan_scope = common_plan_scope::turn;
-    std::string namespace_id = "local";
-    std::string session_id = "default";
-    std::string project_id;
-    std::string turn_id;
-    bool memory_global_opt_in = false;
-};
-
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
 
@@ -173,23 +164,6 @@ inline common_agent_scope common_agent_scope_from_request(const common_agent_req
     scope.project_id = request.project_id;
     scope.turn_id = request.turn_id;
     return scope;
-}
-
-inline void common_agent_scope_apply(const common_agent_scope & scope, common_memory_record & record) {
-    record.scope = scope.memory_scope;
-    record.namespace_id = scope.namespace_id;
-    record.session_id = scope.session_id;
-    record.project_id = scope.project_id;
-    record.turn_id = scope.turn_id;
-}
-
-inline void common_agent_scope_apply(const common_agent_scope & scope, common_memory_query & query) {
-    query.scope = scope.memory_scope;
-    query.namespace_id = scope.namespace_id;
-    query.session_id = scope.session_id;
-    query.project_id = scope.project_id;
-    query.turn_id = scope.turn_id;
-    query.global_opt_in = scope.memory_global_opt_in;
 }
 
 inline void common_agent_scope_apply(const common_agent_scope & scope, common_agent_request & request) {
