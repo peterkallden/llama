@@ -37,6 +37,44 @@ public:
     }
 };
 
+class metadata_executor final : public common_action_executor {
+public:
+    std::string generate_draft(const common_agent_request &, const common_plan_state &, const std::vector<std::string> &, std::string & error) override {
+        error.clear();
+        return "draft";
+    }
+    common_agent_generated_text_result generate_draft_result(
+            const common_agent_request &,
+            const common_plan_state &,
+            const std::vector<std::string> &,
+            std::string & error) override {
+        error.clear();
+        common_agent_generated_text_result result;
+        result.content = "draft";
+        result.decoded_tokens = 11;
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::eos;
+        return result;
+    }
+    std::string generate_reasoning(const common_agent_request &, const common_plan_state &, const common_plan_step &, std::string & error) override {
+        error.clear();
+        return R"({"summary":"reasoned"})";
+    }
+    common_agent_generated_text_result generate_reasoning_result(
+            const common_agent_request &,
+            const common_plan_state &,
+            const common_plan_step &,
+            std::string & error) override {
+        error.clear();
+        common_agent_generated_text_result result;
+        result.content = R"({"summary":"reasoned"})";
+        result.decoded_tokens = 7;
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::json_schema;
+        return result;
+    }
+};
+
 class reasoning_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
@@ -321,5 +359,19 @@ int main() {
     const auto invalid_args_plan = invalid_args_store.get("invalid-tool-arguments", error);
     assert(invalid_args_plan && invalid_args_plan->observations.size() == 1);
     assert(invalid_args_plan->observations.front().summary.find("unexpected contract field: tool") != std::string::npos);
+
+    common_plan_in_memory_store metadata_store;
+    assert(metadata_store.open("", error));
+    reasoning_planner metadata_planner;
+    metadata_executor metadata_exec;
+    common_agent_runtime metadata_runtime(metadata_store, metadata_planner, metadata_exec, r);
+    common_agent_request metadata_request = reasoning_request;
+    const auto metadata_result = metadata_runtime.run(metadata_request);
+    assert(metadata_result.error.empty() && metadata_result.response == "draft");
+    assert(metadata_result.reasoning_decoded_tokens == 7);
+    assert(metadata_result.response_decoded_tokens == 11);
+    assert(metadata_result.total_decoded_tokens == 18);
+    assert(metadata_result.response_generation_status == common_agent_generation_status::completed);
+    assert(metadata_result.response_stop_reason == common_agent_generation_stop_reason::eos);
     return 0;
 }

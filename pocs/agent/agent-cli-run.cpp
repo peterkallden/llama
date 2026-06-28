@@ -611,7 +611,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "agent: event=%d plan=%s detail=%s\n", (int) event.type,
                 event.plan_id ? event.plan_id->c_str() : "", event.detail.c_str());
         }
-        return finish_chat(result.response, 0);
+        return finish_chat(result.response, result.total_decoded_tokens);
     }
 #endif
 

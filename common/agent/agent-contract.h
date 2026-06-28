@@ -2,6 +2,7 @@
 #pragma once
 
 #include "agent/agent-scope.h"
+#include "agent/agent-generation.h"
 #include "chat.h"
 #include "agent/tool-registry.h"
 #include "memory/memory-types.h"
@@ -178,6 +179,11 @@ inline void common_agent_scope_apply(const common_agent_scope & scope, common_ag
 struct common_agent_result {
     std::string response;
     std::string error;
+    int total_decoded_tokens = 0;
+    int response_decoded_tokens = 0;
+    int reasoning_decoded_tokens = 0;
+    common_agent_generation_status response_generation_status = common_agent_generation_status::errored;
+    common_agent_generation_stop_reason response_stop_reason = common_agent_generation_stop_reason::error;
 
     std::vector<std::string> memory_ids;
     std::optional<common_memory_candidate> learned_memory_candidate;

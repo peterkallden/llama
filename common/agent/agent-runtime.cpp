@@ -357,8 +357,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             std::optional<common_registered_tool_call> tool_call;
             std::string tool_step_id = "request";
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::reasoning && !executed_step_ids.count(step.id)) {
-                std::string reasoning = executor.generate_reasoning(request, plan, step, error);
+                const auto reasoning_result = executor.generate_reasoning_result(request, plan, step, error);
+                std::string reasoning = reasoning_result.content;
                 if (!error.empty()) { result.error = "reasoning step failed: " + error; return result; }
+                result.reasoning_decoded_tokens += reasoning_result.decoded_tokens;
+                result.total_decoded_tokens += reasoning_result.decoded_tokens;
                 auto parsed = json::parse(reasoning, nullptr, false);
                 // Reasoning is evidence only. Small local models occasionally
                 // ignore the requested JSON envelope; preserve that bounded
@@ -483,8 +486,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             result.events.push_back({common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id});
         }
 
-        auto draft = executor.generate_draft(request, plan, guidance, error);
+        const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
+        auto draft = draft_result.content;
         if (!error.empty()) { result.error = error; return result; }
+        result.response_decoded_tokens = draft_result.decoded_tokens;
+        result.total_decoded_tokens += draft_result.decoded_tokens;
+        result.response_generation_status = draft_result.status;
+        result.response_stop_reason = draft_result.stop_reason;
         if (!request.enable_reflection || iteration >= request.max_reflection_rounds) {
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;

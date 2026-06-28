@@ -6,6 +6,14 @@
 
 class common_memory_post_turn_learner;
 
+struct common_agent_generated_text_result {
+    std::string content;
+    int decoded_tokens = 0;
+    common_agent_generation_status status = common_agent_generation_status::errored;
+    common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
+    std::string error_message;
+};
+
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };
 struct common_reflection_issue { std::string kind, description, correction; float severity = 0.5f; };
 struct common_reflection_learning_hint { std::string category, statement; float expected_reuse = 0.5f; };
@@ -16,11 +24,45 @@ class common_action_executor {
 public:
     virtual ~common_action_executor() = default;
     virtual std::string generate_draft(const common_agent_request & request, const common_plan_state & plan, const std::vector<std::string> & guidance, std::string & error) = 0;
+    virtual common_agent_generated_text_result generate_draft_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const std::vector<std::string> & guidance,
+            std::string & error) {
+        common_agent_generated_text_result result;
+        result.content = generate_draft(request, plan, guidance, error);
+        if (!error.empty()) {
+            result.status = common_agent_generation_status::errored;
+            result.stop_reason = common_agent_generation_stop_reason::error;
+            result.error_message = error;
+            return result;
+        }
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::none;
+        return result;
+    }
     // Reasoning output is an observation, never user-visible text. Existing
     // executors remain source-compatible until they opt into this capability.
     virtual std::string generate_reasoning(const common_agent_request &, const common_plan_state &, const common_plan_step &, std::string & error) {
         error = "reasoning step generation is unavailable";
         return {};
+    }
+    virtual common_agent_generated_text_result generate_reasoning_result(
+            const common_agent_request & request,
+            const common_plan_state & plan,
+            const common_plan_step & step,
+            std::string & error) {
+        common_agent_generated_text_result result;
+        result.content = generate_reasoning(request, plan, step, error);
+        if (!error.empty()) {
+            result.status = common_agent_generation_status::errored;
+            result.stop_reason = common_agent_generation_stop_reason::error;
+            result.error_message = error;
+            return result;
+        }
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::none;
+        return result;
     }
 };
 class common_reflection_engine { public: virtual ~common_reflection_engine() = default; virtual common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) = 0; };
