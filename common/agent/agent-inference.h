@@ -68,13 +68,23 @@ inline const char * common_agent_generation_stop_reason_name(common_agent_genera
     return "error";
 }
 
+struct common_agent_generation_options {
+    int n_predict = 0;
+};
+
+inline common_agent_generation_options common_agent_generation_options_from_args(const args & options) {
+    common_agent_generation_options result;
+    result.n_predict = options.n_predict;
+    return result;
+}
+
 struct common_agent_generation_request {
     common_agent_generation_purpose purpose = common_agent_generation_purpose::draft;
     std::optional<std::string> trace_id;
     std::vector<common_chat_msg> messages;
     std::vector<common_chat_tool> tools;
     common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
-    args options;
+    common_agent_generation_options options;
     std::string json_schema;
 };
 

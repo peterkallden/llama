@@ -110,6 +110,11 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[2].trace_id && *inference.seen[2].trace_id == "turn-7:reasoning");
     assert(inference.seen[3].trace_id && *inference.seen[3].trace_id == "turn-7:reflection");
     assert(inference.seen[4].trace_id && *inference.seen[4].trace_id == "turn-7:memory_learning");
+    assert(inference.seen[0].options.n_predict == 512);
+    assert(inference.seen[1].options.n_predict == 64);
+    assert(inference.seen[2].options.n_predict == 64);
+    assert(inference.seen[3].options.n_predict == 256);
+    assert(inference.seen[4].options.n_predict == 256);
     assert(inference.queued.empty());
 }
 
@@ -176,6 +181,9 @@ static void test_selection_generation_metadata() {
     assert(inference.seen[0].trace_id && *inference.seen[0].trace_id == "session-42:plan_selection");
     assert(inference.seen[1].trace_id && *inference.seen[1].trace_id == "session-42:blueprint_selection");
     assert(inference.seen[2].trace_id && *inference.seen[2].trace_id == "session-42:blueprint_binding");
+    assert(inference.seen[0].options.n_predict == 96);
+    assert(inference.seen[1].options.n_predict == 96);
+    assert(inference.seen[2].options.n_predict == 64);
 }
 
 int main() {

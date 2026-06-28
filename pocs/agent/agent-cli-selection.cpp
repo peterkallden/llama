@@ -122,6 +122,12 @@ std::string describe_generation_failure(
     return text;
 }
 
+common_agent_generation_options make_generation_options(const args & options, int n_predict) {
+    auto generation_options = common_agent_generation_options_from_args(options);
+    generation_options.n_predict = n_predict;
+    return generation_options;
+}
+
 class llama_blueprint_selector final : public common_blueprint_selector {
 public:
     llama_blueprint_selector(common_agent_inference & inference, const args & options)
@@ -150,8 +156,6 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        args selection_options = options;
-        selection_options.n_predict = std::max(options.n_predict, 96);
         common_agent_generation_result generation_result;
         if (!inference.generate({
                 common_agent_generation_purpose::blueprint_selection,
@@ -159,7 +163,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                selection_options,
+                make_generation_options(options, std::max(options.n_predict, 96)),
                 schema.dump()}, generation_result)) {
             error = describe_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
@@ -202,8 +206,6 @@ public:
         }
         common_chat_msg system{"system", "Return only JSON. You may bind a registered read-only tool to an existing blueprint step. Do not add, remove, reorder, rename, or otherwise alter steps. Return no binding when reasoning is more appropriate."};
         common_chat_msg user{"user", "[Blueprint steps]\n" + steps + "[User request]\n" + request.prompt};
-        args bind_options = options;
-        bind_options.n_predict = std::min(options.n_predict, 256);
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
@@ -214,7 +216,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                bind_options,
+                make_generation_options(options, std::min(options.n_predict, 256)),
                 {}}, generation_result)) {
             error = describe_generation_failure("blueprint binding generation", generation_result);
             return false;
@@ -306,8 +308,6 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        args selection_options = options;
-        selection_options.n_predict = std::max(options.n_predict, 96);
         common_agent_generation_result generation_result;
         if (!inference.generate({
                 common_agent_generation_purpose::plan_selection,
@@ -315,7 +315,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                selection_options,
+                make_generation_options(options, std::max(options.n_predict, 96)),
                 schema.dump()}, generation_result)) {
             error = describe_generation_failure("plan selector generation", generation_result);
             return std::nullopt;

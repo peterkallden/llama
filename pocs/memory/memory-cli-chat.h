@@ -1,8 +1,8 @@
 #pragma once
 
+#include "agent/agent-inference.h"
 #include "chat.h"
 #include "llama.h"
-#include "common/cli-config.h"
 
 #include <string>
 #include <vector>
@@ -13,7 +13,7 @@ bool generate_chat_turn(
     const std::vector<common_chat_msg> & messages,
     const std::vector<common_chat_tool> & tools,
     common_chat_tool_choice tool_choice,
-    const args & a,
+    const common_agent_generation_options & options,
     std::string & output,
     common_chat_params & chat_params,
     int & n_decode,

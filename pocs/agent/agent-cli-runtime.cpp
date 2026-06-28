@@ -41,6 +41,12 @@ std::string describe_generation_failure(
     return text;
 }
 
+common_agent_generation_options make_generation_options(const args & options, int n_predict) {
+    auto generation_options = common_agent_generation_options_from_args(options);
+    generation_options.n_predict = n_predict;
+    return generation_options;
+}
+
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
@@ -70,8 +76,6 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt + "\n\n" + common_memory_render_context(request.memories, {});
-        args planner_options = options;
-        planner_options.n_predict = std::max(options.n_predict, 512);
         common_agent_generation_result generation_result;
         if (!inference.generate({
                 common_agent_generation_purpose::planner,
@@ -79,7 +83,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                planner_options,
+                make_generation_options(options, std::max(options.n_predict, 512)),
                 common_plan_proposal_json_schema()}, generation_result)) {
             error = describe_generation_failure("model planner generation", generation_result);
             return proposal;
@@ -139,8 +143,6 @@ public:
             user.content += "\n[Revision guidance]\n";
             for (const auto & item : guidance) user.content += "- " + item + "\n";
         }
-        args draft_options = options;
-        draft_options.n_predict = std::min(options.n_predict, 96);
         common_agent_generation_result generation_result;
         if (!inference.generate({
                 common_agent_generation_purpose::draft,
@@ -148,7 +150,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                draft_options,
+                make_generation_options(options, std::min(options.n_predict, 96)),
                 {}}, generation_result)) {
             error = describe_generation_failure("model draft generation", generation_result);
             return {};
@@ -169,8 +171,6 @@ public:
         memory_context_config.char_budget = 900;
         memory_context_config.per_memory_char_budget = 300;
         user.content = common_memory_render_context(common_memory_select_procedure_memories(request.memories, plan, step), memory_context_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config);
-        args reasoning_options = options;
-        reasoning_options.n_predict = std::min(options.n_predict, 128);
         static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
         common_agent_generation_result generation_result;
         if (!inference.generate({
@@ -179,7 +179,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                reasoning_options,
+                make_generation_options(options, std::min(options.n_predict, 128)),
                 reasoning_schema}, generation_result)) {
             error = describe_generation_failure("model reasoning generation", generation_result);
             return {};
@@ -212,8 +212,6 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = common_plan_render_context(plan) + "\n[User request]\n" + request.prompt + "\n[Draft]\n" + draft;
-        args reflection_options = options;
-        reflection_options.n_predict = std::max(options.n_predict, 256);
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         common_agent_generation_result generation_result;
         if (!inference.generate({
@@ -222,7 +220,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                reflection_options,
+                make_generation_options(options, std::max(options.n_predict, 256)),
                 reflection_schema}, generation_result)) {
             error = describe_generation_failure("model reflection generation", generation_result);
             return result;
@@ -305,8 +303,6 @@ public:
             }
         }
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
-        args extraction_options = options;
-        extraction_options.n_predict = std::max(options.n_predict, 256);
         common_agent_generation_result generation_result;
         if (!inference.generate({
                 common_agent_generation_purpose::memory_learning,
@@ -314,7 +310,7 @@ public:
                 {system, user},
                 {},
                 COMMON_CHAT_TOOL_CHOICE_NONE,
-                extraction_options,
+                make_generation_options(options, std::max(options.n_predict, 256)),
                 schema}, generation_result)) {
             error = describe_generation_failure("model candidate generation", generation_result);
             return {};

@@ -621,9 +621,10 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::string output;
     common_chat_params chat_params;
     int n_decode = 0;
+    const auto generation_options = common_agent_generation_options_from_args(a);
     if (!generate_chat_turn(model, chat_templates.get(), messages, tools,
             tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
-            a, output, chat_params, n_decode)) {
+            generation_options, output, chat_params, n_decode)) {
         free_model();
         return 1;
     }
@@ -684,7 +685,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         if (!generate_chat_turn(model, chat_templates.get(), messages,
                 allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
                 allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
-                a, output, chat_params, next_decode)) {
+                generation_options, output, chat_params, next_decode)) {
             free_model();
             return 1;
         }

@@ -15,7 +15,7 @@ bool generate_chat_turn(
         const std::vector<common_chat_msg> & messages,
         const std::vector<common_chat_tool> & tools,
         common_chat_tool_choice tool_choice,
-        const args & a,
+        const common_agent_generation_options & options,
         std::string & output,
         common_chat_params & chat_params,
         int & n_decode,
@@ -41,7 +41,7 @@ bool generate_chat_turn(
     }
 
     llama_context_params ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = n_prompt + a.n_predict;
+    ctx_params.n_ctx = n_prompt + options.n_predict;
     ctx_params.n_batch = n_prompt;
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == nullptr) {
@@ -70,7 +70,7 @@ bool generate_chat_turn(
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
     output.clear();
     n_decode = 0;
-    for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + a.n_predict; ) {
+    for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + options.n_predict; ) {
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "failed to decode\n");
             llama_free(ctx);
