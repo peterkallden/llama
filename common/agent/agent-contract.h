@@ -121,6 +121,16 @@ struct common_agent_objective {
     std::vector<std::string> constraints;
 };
 
+struct common_agent_scope {
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    bool memory_global_opt_in = false;
+};
+
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
 
@@ -153,6 +163,43 @@ struct common_agent_request {
     size_t max_tool_batches = 1;
     bool allow_policy_gated_tool_proposals = false;
 };
+
+inline common_agent_scope common_agent_scope_from_request(const common_agent_request & request) {
+    common_agent_scope scope;
+    scope.memory_scope = request.memory_scope;
+    scope.plan_scope = request.plan_scope;
+    scope.namespace_id = request.namespace_id;
+    scope.session_id = request.session_id;
+    scope.project_id = request.project_id;
+    scope.turn_id = request.turn_id;
+    return scope;
+}
+
+inline void common_agent_scope_apply(const common_agent_scope & scope, common_memory_record & record) {
+    record.scope = scope.memory_scope;
+    record.namespace_id = scope.namespace_id;
+    record.session_id = scope.session_id;
+    record.project_id = scope.project_id;
+    record.turn_id = scope.turn_id;
+}
+
+inline void common_agent_scope_apply(const common_agent_scope & scope, common_memory_query & query) {
+    query.scope = scope.memory_scope;
+    query.namespace_id = scope.namespace_id;
+    query.session_id = scope.session_id;
+    query.project_id = scope.project_id;
+    query.turn_id = scope.turn_id;
+    query.global_opt_in = scope.memory_global_opt_in;
+}
+
+inline void common_agent_scope_apply(const common_agent_scope & scope, common_agent_request & request) {
+    request.memory_scope = scope.memory_scope;
+    request.plan_scope = scope.plan_scope;
+    request.namespace_id = scope.namespace_id;
+    request.session_id = scope.session_id;
+    request.project_id = scope.project_id;
+    request.turn_id = scope.turn_id;
+}
 
 struct common_agent_result {
     std::string response;

@@ -60,6 +60,23 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
     return false;
 }
 
+common_agent_scope make_agent_scope(const args & a, common_plan_scope plan_scope) {
+    common_agent_scope scope;
+    common_memory_scope_parse(a.memory_scope, scope.memory_scope);
+    scope.plan_scope = plan_scope;
+    scope.namespace_id = a.memory_namespace;
+    scope.session_id = a.memory_session;
+    scope.project_id = a.memory_project;
+    scope.turn_id = a.memory_turn;
+    scope.memory_global_opt_in = a.memory_global_opt_in;
+    return scope;
+}
+
+std::string make_bootstrap_prefix(const common_agent_scope & scope) {
+    return "bootstrap:" + scope.namespace_id + ":" +
+        (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
+}
+
 struct agent_resident_inference_host {
     server_context server;
     std::thread loop;
@@ -201,11 +218,13 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::unique_ptr<common_plan_store> plan_store;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_plan_scope requested_plan_scope = common_plan_scope::turn;
+    common_agent_scope agent_scope = make_agent_scope(a, requested_plan_scope);
     if (a.planning_mode == "mini") {
         if (!parse_plan_scope(a.plan_scope, requested_plan_scope)) {
             fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
             return 1;
         }
+        agent_scope = make_agent_scope(a, requested_plan_scope);
         plan_store = make_plan_store(a, error);
         if (!plan_store || !plan_store->open(a.plan_db, error)) {
             fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
@@ -213,9 +232,9 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
         if (bootstrap_enabled) {
             common_agent_bootstrap_config bootstrap_config;
-            bootstrap_config.namespace_id = a.memory_namespace;
-            bootstrap_config.session_id = a.memory_session;
-            bootstrap_config.project_id = a.memory_project;
+            bootstrap_config.namespace_id = agent_scope.namespace_id;
+            bootstrap_config.session_id = agent_scope.session_id;
+            bootstrap_config.project_id = agent_scope.project_id;
             bootstrap_config.now = std::time(nullptr);
             common_agent_bootstrap_result bootstrap_result;
             const auto embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
@@ -240,8 +259,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 return 1;
             }
             if (bootstrap_config.install_blueprints) {
-                const std::string prefix = "bootstrap:" + a.memory_namespace + ":" +
-                    (a.memory_project.empty() ? "session:" + a.memory_session : "project:" + a.memory_project) + ":blueprint:";
+                const std::string prefix = make_bootstrap_prefix(agent_scope) + "blueprint:";
                 for (const auto & blueprint : package.blueprints) {
                     installed_blueprint_candidates.push_back({blueprint.id, prefix + blueprint.id,
                         blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description});
@@ -254,17 +272,13 @@ int run_agent_cli(common_memory_store & store, args a) {
                 common_explicit_blueprint_selector selector(a.agent_blueprint);
                 common_blueprint_selection_config selection_config;
                 selection_config.task_plan_id = a.plan_id;
-                selection_config.session_id = a.memory_session;
-                selection_config.scope = requested_plan_scope;
+                selection_config.session_id = agent_scope.session_id;
+                selection_config.scope = agent_scope.plan_scope;
                 selection_config.now = bootstrap_config.now;
                 common_blueprint_selection_result selection;
                 common_agent_request selection_request;
                 selection_request.prompt = a.prompt;
-                selection_request.namespace_id = a.memory_namespace;
-                selection_request.session_id = a.memory_session;
-                selection_request.project_id = a.memory_project;
-                selection_request.turn_id = a.memory_turn;
-                selection_request.plan_scope = requested_plan_scope;
+                common_agent_scope_apply(agent_scope, selection_request);
                 if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
                     fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
                     return 1;
@@ -486,7 +500,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             std::vector<common_plan_state> candidates;
             for (const auto & plan : plans) {
                 if (plan.kind != common_plan_kind::task || (plan.status != common_plan_status::active && plan.status != common_plan_status::blocked)) continue;
-                if (!common_plan_scope_matches(plan, requested_plan_scope, a.memory_namespace, a.memory_session, a.memory_project, a.memory_turn)) continue;
+                if (!common_plan_scope_matches(plan, agent_scope.plan_scope, agent_scope.namespace_id, agent_scope.session_id, agent_scope.project_id, agent_scope.turn_id)) continue;
                 candidates.push_back(plan);
             }
             std::sort(candidates.begin(), candidates.end(), [](const auto & lhs, const auto & rhs) {
@@ -497,11 +511,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             if (!candidates.empty()) {
                 common_agent_request selection_request;
                 selection_request.prompt = a.prompt;
-                selection_request.namespace_id = a.memory_namespace;
-                selection_request.session_id = a.memory_session;
-                selection_request.project_id = a.memory_project;
-                selection_request.turn_id = a.memory_turn;
-                selection_request.plan_scope = requested_plan_scope;
+                common_agent_scope_apply(agent_scope, selection_request);
                 std::string selection_error;
                 const auto selected = select_llama_cli_plan(*agent_inference, a, selection_request, candidates, selection_error);
                 if (selected) {
@@ -518,17 +528,13 @@ int run_agent_cli(common_memory_store & store, args a) {
             auto selector = make_llama_cli_blueprint_selector(*agent_inference, a);
             common_blueprint_selection_config config;
             config.task_plan_id = a.plan_id;
-            config.session_id = a.memory_session;
-            config.scope = requested_plan_scope;
+            config.session_id = agent_scope.session_id;
+            config.scope = agent_scope.plan_scope;
             config.now = std::time(nullptr);
             common_blueprint_selection_result selection;
             common_agent_request selection_request;
             selection_request.prompt = a.prompt;
-            selection_request.namespace_id = a.memory_namespace;
-            selection_request.session_id = a.memory_session;
-            selection_request.project_id = a.memory_project;
-            selection_request.turn_id = a.memory_turn;
-            selection_request.plan_scope = requested_plan_scope;
+            common_agent_scope_apply(agent_scope, selection_request);
             if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, *selector, installed_blueprint_candidates, config, selection, error)) {
                 fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
                 return 1;
@@ -538,9 +544,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 if (profile_tools_active) {
                     common_agent_request binding_request;
                     binding_request.prompt = a.prompt;
-                    binding_request.session_id = a.memory_session;
-                    binding_request.project_id = a.memory_project;
-                    binding_request.turn_id = a.memory_turn;
+                    common_agent_scope_apply(agent_scope, binding_request);
                     std::string binding_error;
                     if (!bind_llama_cli_blueprint_tools(*agent_inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error)) {
                         fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
@@ -575,12 +579,9 @@ int run_agent_cli(common_memory_store & store, args a) {
         request.enable_planning = true;
         request.enable_reflection = a.reflection_mode == "always";
         request.memory_scope = query.scope;
-        request.plan_scope = requested_plan_scope;
+        request.plan_scope = agent_scope.plan_scope;
         if (!a.plan_id.empty()) request.plan_id = a.plan_id;
-        request.namespace_id = a.memory_namespace;
-        request.session_id = a.memory_session;
-        request.project_id = a.memory_project;
-        request.turn_id = a.memory_turn;
+        common_agent_scope_apply(agent_scope, request);
         request.max_iterations = a.reflection_mode == "always" ? 2 : 1;
         request.max_reflection_rounds = a.reflection_mode == "always" ? 1 : 0;
         request.max_tool_batches = profile_tools_active ? a.max_tool_rounds : 0;
