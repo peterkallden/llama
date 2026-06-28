@@ -13,7 +13,7 @@ public:
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
         result = {};
-        return generate_chat_turn(
+        if (!generate_chat_turn(
             model,
             templates,
             request.messages,
@@ -23,7 +23,16 @@ public:
             result.content,
             result.chat_params,
             result.decoded_tokens,
-            request.json_schema);
+            request.json_schema)) {
+            result.status = common_agent_generation_status::errored;
+            result.stop_reason = common_agent_generation_stop_reason::error;
+            return false;
+        }
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = request.json_schema.empty()
+            ? common_agent_generation_stop_reason::none
+            : common_agent_generation_stop_reason::json_schema;
+        return true;
     }
 
 private:

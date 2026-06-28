@@ -11,6 +11,8 @@
 struct queued_generation {
     std::string content;
     int decoded_tokens = 0;
+    common_agent_generation_status status = common_agent_generation_status::completed;
+    common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none;
 };
 
 class fake_agent_inference final : public common_agent_inference {
@@ -30,6 +32,8 @@ public:
         result = {};
         result.content = next.content;
         result.decoded_tokens = next.decoded_tokens;
+        result.status = next.status;
+        result.stop_reason = next.stop_reason;
         return true;
     }
 };
@@ -106,6 +110,7 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[2].trace_id && *inference.seen[2].trace_id == "turn-7:reasoning");
     assert(inference.seen[3].trace_id && *inference.seen[3].trace_id == "turn-7:reflection");
     assert(inference.seen[4].trace_id && *inference.seen[4].trace_id == "turn-7:memory_learning");
+    assert(inference.queued.empty());
 }
 
 static void test_selection_generation_metadata() {

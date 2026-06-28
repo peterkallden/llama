@@ -179,6 +179,10 @@ int run_agent_cli(common_memory_store & store, args a) {
         fprintf(stderr, "--memory-learn post-turn requires --planning-mode mini\n");
         return 1;
     }
+    if (a.agent_inference_backend != "cli" && a.planning_mode != "mini") {
+        fprintf(stderr, "--agent-inference-backend currently requires --planning-mode mini\n");
+        return 1;
+    }
     if (a.memory_learn_min_confidence < 0.0f || a.memory_learn_min_confidence > 1.0f || a.memory_learn_min_reuse < 0.0f || a.memory_learn_min_reuse > 1.0f) {
         fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
         return 1;
