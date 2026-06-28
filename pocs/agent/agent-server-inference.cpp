@@ -1,5 +1,7 @@
 #include "agent-cli-inference.h"
 
+#include "../memory/memory-cli-chat.h"
+
 #include "json-schema-to-grammar.h"
 #include "server-context.h"
 #include "server-task.h"
@@ -10,21 +12,9 @@
 
 namespace {
 
-common_chat_params apply_generation_request(
-        const common_chat_templates * templates,
-        const common_agent_generation_request & request) {
-    common_chat_templates_inputs chat_inputs;
-    chat_inputs.messages = request.messages;
-    chat_inputs.tools = request.tools;
-    chat_inputs.tool_choice = request.tool_choice;
-    chat_inputs.parallel_tool_calls = false;
-    chat_inputs.add_generation_prompt = true;
-    return common_chat_templates_apply(templates, chat_inputs);
-}
-
 task_params make_server_task_params(
         const common_agent_generation_request & request,
-        const common_chat_params & chat_params,
+        const common_agent_prepared_generation & prepared,
         const std::vector<llama_logit_bias> & logit_bias_eog) {
     task_params params;
     params.stream = false;
@@ -36,27 +26,21 @@ task_params make_server_task_params(
         params.t_max_predict_ms = *request.options.t_max_predict_ms;
     }
     params.sampling.temp = 0.0f;
-    params.sampling.grammar_lazy = chat_params.grammar_lazy;
-    params.sampling.grammar_triggers = chat_params.grammar_triggers;
-    params.chat_parser_params = common_chat_parser_params(chat_params);
-    params.chat_parser_params.parse_tool_calls = !request.tools.empty();
-
-    if (!chat_params.parser.empty()) {
-        params.chat_parser_params.parser.load(chat_params.parser);
+    params.sampling.grammar = prepared.grammar;
+    params.sampling.grammar_lazy = prepared.grammar_lazy;
+    params.sampling.grammar_triggers = prepared.grammar_triggers;
+    params.sampling.generation_prompt = prepared.generation_prompt;
+    params.sampling.ignore_eos = prepared.ignore_eos;
+    if (prepared.suppress_eog) {
+        params.sampling.logit_bias = logit_bias_eog;
     }
+    params.chat_parser_params.format = prepared.chat_format;
+    params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
+    params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
-    if (request.json_schema.empty()) {
-        params.sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_TOOL_CALLS, chat_params.grammar};
-        params.sampling.generation_prompt = chat_params.generation_prompt;
-        return params;
+    if (!prepared.parser.empty()) {
+        params.chat_parser_params.parser.load(prepared.parser);
     }
-
-    params.sampling.grammar = common_grammar{
-        COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT,
-        json_schema_to_grammar(nlohmann::ordered_json::parse(request.json_schema)),
-    };
-    params.sampling.ignore_eos = true;
-    params.sampling.logit_bias = logit_bias_eog;
 
     return params;
 }
@@ -112,22 +96,26 @@ public:
         result = {};
 
         try {
-            const common_chat_params chat_params = apply_generation_request(templates, request);
+            common_agent_prepared_generation prepared;
+            if (!prepare_chat_generation(templates, request, prepared)) {
+                result.error_message = "failed to prepare server generation";
+                return false;
+            }
 
             server_response_reader reader = server.get_response_reader();
             server_task task(SERVER_TASK_TYPE_COMPLETION);
             task.id = reader.get_new_id();
             task.cli = true;
-            task.cli_prompt = chat_params.prompt;
+            task.cli_prompt = prepared.prompt;
             task.params = make_server_task_params(
                 request,
-                chat_params,
+                prepared,
                 logit_bias_eog);
-            task.params.stream = !request.json_schema.empty();
+            task.params.stream = prepared.stream;
 
             reader.post_task(std::move(task));
 
-            if (!request.json_schema.empty()) {
+            if (prepared.stream) {
                 std::string content;
                 int decoded_tokens = 0;
                 server_task_result_cmpl_final * final_result = nullptr;

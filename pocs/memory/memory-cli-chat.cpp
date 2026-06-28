@@ -27,6 +27,48 @@ bool budget_exceeded(
 
 } // namespace
 
+bool prepare_chat_generation(
+        const common_chat_templates * chat_templates,
+        const common_agent_generation_request & request,
+        common_agent_prepared_generation & prepared,
+        common_chat_params * chat_params) {
+    common_chat_templates_inputs chat_inputs;
+    chat_inputs.messages = request.messages;
+    chat_inputs.tools = request.tools;
+    chat_inputs.tool_choice = request.tool_choice;
+    chat_inputs.parallel_tool_calls = false;
+    chat_inputs.add_generation_prompt = true;
+
+    const common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    if (chat_params != nullptr) {
+        *chat_params = generated_chat_params;
+    }
+
+    prepared = {};
+    prepared.prompt = generated_chat_params.prompt;
+    prepared.grammar_lazy = generated_chat_params.grammar_lazy;
+    prepared.grammar_triggers = generated_chat_params.grammar_triggers;
+    prepared.parser_generation_prompt = generated_chat_params.generation_prompt;
+    prepared.chat_format = generated_chat_params.format;
+    prepared.parser = generated_chat_params.parser;
+    prepared.parse_tool_calls = !request.tools.empty();
+
+    if (request.json_schema.empty()) {
+        prepared.grammar = common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar };
+        prepared.generation_prompt = generated_chat_params.generation_prompt;
+        return true;
+    }
+
+    prepared.grammar = common_grammar{
+        COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT,
+        json_schema_to_grammar(nlohmann::ordered_json::parse(request.json_schema)),
+    };
+    prepared.ignore_eos = true;
+    prepared.suppress_eog = true;
+    prepared.stream = true;
+    return true;
+}
+
 bool generate_chat_turn_result(
         llama_model * model,
         const common_chat_templates * chat_templates,
@@ -39,27 +81,29 @@ bool generate_chat_turn_result(
         const std::string & json_schema) {
     result = {};
 
+    common_agent_generation_request request;
+    request.messages = messages;
+    request.tools = tools;
+    request.tool_choice = tool_choice;
+    request.options = options;
+    request.json_schema = json_schema;
+
     const auto prompt_started_at = steady_clock::now();
-    common_chat_templates_inputs chat_inputs;
-    chat_inputs.messages = messages;
-    chat_inputs.tools = tools;
-    chat_inputs.tool_choice = tool_choice;
-    chat_inputs.parallel_tool_calls = false;
-    chat_inputs.add_generation_prompt = true;
-    common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
-    if (chat_params != nullptr) {
-        *chat_params = generated_chat_params;
+    common_agent_prepared_generation prepared;
+    if (!prepare_chat_generation(chat_templates, request, prepared, chat_params)) {
+        result.error_message = "failed to prepare chat generation";
+        return false;
     }
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
-    const int n_prompt = -llama_tokenize(vocab, generated_chat_params.prompt.c_str(), generated_chat_params.prompt.size(), nullptr, 0, true, true);
+    const int n_prompt = -llama_tokenize(vocab, prepared.prompt.c_str(), prepared.prompt.size(), nullptr, 0, true, true);
     if (n_prompt <= 0) {
         result.error_message = "failed to tokenize chat prompt";
         fprintf(stderr, "%s\n", result.error_message.c_str());
         return false;
     }
     std::vector<llama_token> prompt_tokens(n_prompt);
-    if (llama_tokenize(vocab, generated_chat_params.prompt.c_str(), generated_chat_params.prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
+    if (llama_tokenize(vocab, prepared.prompt.c_str(), prepared.prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
         result.error_message = "failed to tokenize chat prompt";
         fprintf(stderr, "%s\n", result.error_message.c_str());
         return false;
@@ -77,17 +121,17 @@ bool generate_chat_turn_result(
 
     common_params_sampling sampling;
     sampling.temp = 0.0f;
-    sampling.grammar = json_schema.empty()
-        ? common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar }
-        : common_grammar{ COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(nlohmann::ordered_json::parse(json_schema)) };
-    sampling.grammar_lazy = generated_chat_params.grammar_lazy;
-    sampling.grammar_triggers = generated_chat_params.grammar_triggers;
-    sampling.generation_prompt = json_schema.empty() ? generated_chat_params.generation_prompt : std::string{};
-    if (!json_schema.empty()) {
+    sampling.grammar = prepared.grammar;
+    sampling.grammar_lazy = prepared.grammar_lazy;
+    sampling.grammar_triggers = prepared.grammar_triggers;
+    sampling.generation_prompt = prepared.generation_prompt;
+    if (prepared.ignore_eos) {
         sampling.ignore_eos = true;
-        for (llama_token token = 0; token < llama_vocab_n_tokens(vocab); ++token) {
-            if (llama_vocab_is_eog(vocab, token)) {
-                sampling.logit_bias.push_back({ token, -INFINITY });
+        if (prepared.suppress_eog) {
+            for (llama_token token = 0; token < llama_vocab_n_tokens(vocab); ++token) {
+                if (llama_vocab_is_eog(vocab, token)) {
+                    sampling.logit_bias.push_back({ token, -INFINITY });
+                }
             }
         }
     }
@@ -137,7 +181,7 @@ bool generate_chat_turn_result(
         result.content += piece;
         batch = llama_batch_get_one(&token, 1);
         result.decoded_tokens++;
-        if (!json_schema.empty()) {
+        if (prepared.stream) {
             const auto parsed = nlohmann::ordered_json::parse(result.content, nullptr, false);
             if (!parsed.is_discarded()) {
                 completed_json_schema = true;
@@ -148,7 +192,7 @@ bool generate_chat_turn_result(
     }
 
     llama_free(ctx);
-    if (!json_schema.empty() && !completed_json_schema) {
+    if (prepared.stream && !completed_json_schema) {
         result.status = common_agent_generation_status::errored;
         result.stop_reason = stop_reason;
         result.error_message = "generation ended before producing valid JSON for the requested schema";
