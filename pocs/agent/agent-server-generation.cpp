@@ -1,10 +1,17 @@
 #include "agent-server-generation.h"
 
 task_params make_server_task_params_from_prepared_generation(
+        const common_params & params_base,
         const common_agent_generation_request & request,
         const common_agent_prepared_generation & prepared,
         const std::vector<llama_logit_bias> & logit_bias_eog) {
     task_params params;
+    params.sampling = params_base.sampling;
+    params.speculative = params_base.speculative;
+    params.n_keep = params_base.n_keep;
+    params.n_cache_reuse = params_base.n_cache_reuse;
+    params.cache_prompt = params_base.cache_prompt;
+    params.antiprompt = params_base.antiprompt;
     params.stream = prepared.stream;
     params.n_predict = request.options.n_predict;
     if (request.options.t_max_prompt_ms) {

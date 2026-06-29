@@ -51,9 +51,10 @@ class server_context_agent_inference final : public common_agent_inference {
 public:
     server_context_agent_inference(
             server_context & server,
+            const common_params & params_base,
             const std::vector<llama_logit_bias> & logit_bias_eog,
             const common_chat_templates * templates)
-        : server(server), logit_bias_eog(logit_bias_eog), templates(templates) {}
+        : server(server), params_base(params_base), logit_bias_eog(logit_bias_eog), templates(templates) {}
 
     bool generate(
             const common_agent_generation_request & request,
@@ -73,6 +74,7 @@ public:
             task.cli = true;
             task.cli_prompt = prepared.prompt;
             task.params = make_server_task_params_from_prepared_generation(
+                params_base,
                 request,
                 prepared,
                 logit_bias_eog);
@@ -158,6 +160,7 @@ public:
 
 private:
     server_context & server;
+    common_params params_base;
     std::vector<llama_logit_bias> logit_bias_eog;
     const common_chat_templates * templates;
 };
@@ -166,7 +169,8 @@ private:
 
 std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
+    const common_params & params_base,
     const std::vector<llama_logit_bias> & logit_bias_eog,
     const common_chat_templates * templates) {
-    return std::make_unique<server_context_agent_inference>(server, logit_bias_eog, templates);
+    return std::make_unique<server_context_agent_inference>(server, params_base, logit_bias_eog, templates);
 }

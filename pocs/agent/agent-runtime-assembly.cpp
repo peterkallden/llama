@@ -14,6 +14,7 @@ namespace {
 
 struct agent_resident_inference_host {
     server_context server;
+    common_params params;
     std::thread loop;
     bool running = false;
 
@@ -22,7 +23,7 @@ struct agent_resident_inference_host {
     }
 
     bool start(const args & options, std::string & error) {
-        common_params params;
+        params = {};
         params.model.path = options.model;
         params.n_predict = options.n_predict;
         params.n_gpu_layers = options.n_gpu_layers;
@@ -90,6 +91,7 @@ bool make_agent_inference_session(
         session.templates = meta.chat_params.tmpls.get();
         session.inference = make_server_context_agent_inference(
             host->server,
+            host->params,
             meta.logit_bias_eog,
             session.templates);
         session.keepalive = std::move(host);
