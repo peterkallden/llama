@@ -4,6 +4,7 @@ add_executable(${TARGET}
     agent-cli-command.cpp
     agent-cli-config.cpp
     agent-cli-inference.cpp
+    agent-plan-orchestration.cpp
     agent-server-generation.cpp
     agent-server-inference.cpp
     agent-runtime-assembly.cpp

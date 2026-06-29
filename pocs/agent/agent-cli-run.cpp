@@ -4,12 +4,12 @@
 #include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+#include "agent-plan-orchestration.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
 #include "agent-runtime-assembly.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
-#include "agent/blueprint-selector.h"
 #include "agent/memory-learning.h"
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
@@ -41,11 +41,6 @@
 using json = nlohmann::ordered_json;
 
 namespace {
-
-std::string make_bootstrap_prefix(const common_agent_scope & scope) {
-    return "bootstrap:" + scope.namespace_id + ":" +
-        (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
-}
 
 } // namespace
 #endif
@@ -162,72 +157,16 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "bootstrap/import/export currently supports only session- or project-scoped package tenants\n");
             return 1;
         }
-        if (bootstrap_enabled) {
-            common_agent_bootstrap_config bootstrap_config;
-            bootstrap_config.namespace_id = agent_scope.namespace_id;
-            bootstrap_config.session_id = agent_scope.session_id;
-            bootstrap_config.project_id = agent_scope.project_id;
-            bootstrap_config.now = std::time(nullptr);
-            common_agent_bootstrap_result bootstrap_result;
-            const auto embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-                if (!ensure_memory_cli_embedding(a, text, embedding, "bootstrap procedure", embedding_error)) return false;
-                if (embedding.empty()) {
-                    embedding_error = "--agent-bootstrap default requires --embedding-model";
-                    return false;
-                }
-                return true;
-            };
-            common_agent_bootstrap_package package;
-            if (a.agent_import.empty()) {
-                package = common_agent_default_bootstrap_package();
-            } else {
-                if (!load_bootstrap_file(a.agent_import, package, error)) {
-                    fprintf(stderr, "agent import failed: %s\n", error.c_str());
-                    return 1;
-                }
-            }
-            if (!common_agent_install_bootstrap_package(store, *plan_store, bootstrap_config, package, embed, bootstrap_result, error)) {
-                fprintf(stderr, "agent bootstrap failed: %s\n", error.c_str());
-                return 1;
-            }
-            if (bootstrap_config.install_blueprints) {
-                const std::string prefix = make_bootstrap_prefix(agent_scope) + "blueprint:";
-                for (const auto & blueprint : package.blueprints) {
-                    installed_blueprint_candidates.push_back({blueprint.id, prefix + blueprint.id,
-                        blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description});
-                }
-            }
-            fprintf(stderr, "agent bootstrap: procedures installed=%zu existing=%zu; blueprints installed=%zu existing=%zu\n",
-                bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
-                bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
-            if (!a.agent_blueprint.empty() && a.agent_blueprint != "auto") {
-                common_explicit_blueprint_selector selector(a.agent_blueprint);
-                common_blueprint_selection_config selection_config;
-                selection_config.task_plan_id = a.plan_id;
-                selection_config.session_id = agent_scope.session_id;
-                selection_config.scope = agent_scope.plan_scope;
-                selection_config.now = bootstrap_config.now;
-                common_blueprint_selection_result selection;
-                common_agent_request selection_request;
-                selection_request.prompt = a.prompt;
-                common_agent_scope_apply(agent_scope, selection_request);
-                if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
-                    fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
-                    return 1;
-                }
-                if (selection.outcome != common_blueprint_selection_outcome::instantiated && selection.outcome != common_blueprint_selection_outcome::resumed) {
-                    fprintf(stderr, "agent blueprint selection failed safely: %s\n", selection.reason.c_str());
-                    return 1;
-                }
-                fprintf(stderr, "agent blueprint %s: %s\n", selection.outcome == common_blueprint_selection_outcome::instantiated ? "instantiated" : "resumed", a.plan_id.c_str());
-            }
+        if (!maybe_install_agent_bootstrap(store, *plan_store, a, agent_scope, installed_blueprint_candidates, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
         }
-        if (!a.agent_export.empty()) {
-            if (!export_agent_package(store, *plan_store, a, error)) {
-                fprintf(stderr, "agent export failed: %s\n", error.c_str());
-                return 1;
-            }
-            fprintf(stderr, "agent export written: %s\n", a.agent_export.c_str());
+        bool exported = false;
+        if (!maybe_export_agent_package(store, *plan_store, a, exported, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
+        }
+        if (exported) {
             return 0;
         }
     }
@@ -415,72 +354,22 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
         fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
 
-        if (a.agent_plan == "auto" && a.plan_id.empty()) {
-            const auto plans = plan_store->list(error);
-            if (!error.empty()) {
-                fprintf(stderr, "failed to list plan candidates: %s\n", error.c_str());
-                return 1;
-            }
-            std::vector<common_plan_state> candidates;
-            for (const auto & plan : plans) {
-                if (plan.kind != common_plan_kind::task || (plan.status != common_plan_status::active && plan.status != common_plan_status::blocked)) continue;
-                if (!common_plan_scope_matches(plan, agent_scope.plan_scope, agent_scope.namespace_id, agent_scope.session_id, agent_scope.project_id, agent_scope.turn_id)) continue;
-                candidates.push_back(plan);
-            }
-            std::sort(candidates.begin(), candidates.end(), [](const auto & lhs, const auto & rhs) {
-                if (lhs.updated_at != rhs.updated_at) return lhs.updated_at > rhs.updated_at;
-                return lhs.id < rhs.id;
-            });
-            if (candidates.size() > 8) candidates.resize(8);
-            if (!candidates.empty()) {
-                common_agent_request selection_request;
-                selection_request.prompt = a.prompt;
-                common_agent_scope_apply(agent_scope, selection_request);
-                std::string selection_error;
-                const auto selection_result = select_llama_cli_plan_result(*inference_session.inference, a, selection_request, candidates, selection_error);
-                if (selection_result.plan_id) {
-                    a.plan_id = *selection_result.plan_id;
-                    fprintf(stderr, "agent plan auto-selected: %s\n", a.plan_id.c_str());
-                } else if (!selection_error.empty()) {
-                    fprintf(stderr, "agent plan auto-selection failed safely: %s; creating a new plan\n", selection_error.c_str());
-                } else {
-                    fprintf(stderr, "agent plan auto-selection declined; creating a new plan\n");
-                }
-            }
+        if (!maybe_auto_select_plan(*inference_session.inference, a, a, agent_scope, *plan_store, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
         }
-        if (a.agent_blueprint == "auto") {
-            auto selector = make_llama_cli_blueprint_selector(*inference_session.inference, a);
-            common_blueprint_selection_config config;
-            config.task_plan_id = a.plan_id;
-            config.session_id = agent_scope.session_id;
-            config.scope = agent_scope.plan_scope;
-            config.now = std::time(nullptr);
-            common_blueprint_selection_result selection;
-            common_agent_request selection_request;
-            selection_request.prompt = a.prompt;
-            common_agent_scope_apply(agent_scope, selection_request);
-            if (!common_agent_select_and_instantiate_blueprint(*plan_store, selection_request, *selector, installed_blueprint_candidates, config, selection, error)) {
-                fprintf(stderr, "agent blueprint selection failed: %s\n", error.c_str());
-                return 1;
-            }
-            if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
-                fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), a.plan_id.c_str());
-                if (profile_tools_active) {
-                    common_agent_request binding_request;
-                    binding_request.prompt = a.prompt;
-                    common_agent_scope_apply(agent_scope, binding_request);
-                    std::string binding_error;
-                    const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                        *inference_session.inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error);
-                    if (!binding_result.applied) {
-                        fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
-                    }
-                }
-            } else if (selection.outcome == common_blueprint_selection_outcome::resumed) {
-                fprintf(stderr, "agent blueprint selection skipped: existing plan resumed\n");
-            } else {
-                fprintf(stderr, "agent blueprint auto-selection declined or failed safely; using normal plan creation\n");
-            }
+        if (!maybe_auto_select_blueprint(
+                *inference_session.inference,
+                a,
+                a,
+                agent_scope,
+                *plan_store,
+                installed_blueprint_candidates,
+                profile_tools_active,
+                profile_tools_active ? &tool_registry : nullptr,
+                error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
         }
         auto assembly = make_agent_runtime_assembly(
             store,
