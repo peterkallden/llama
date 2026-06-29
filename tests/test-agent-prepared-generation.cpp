@@ -84,6 +84,13 @@ void test_prepare_json_schema_generation() {
 
 void test_server_task_params_from_prepared_generation() {
     auto request = make_base_request();
+    common_params params_base;
+    params_base.n_keep = 9;
+    params_base.n_cache_reuse = 17;
+    params_base.cache_prompt = false;
+    params_base.antiprompt = {"<|stop|>"};
+    params_base.sampling.temp = 0.6f;
+    params_base.speculative.draft.n_max = 3;
 
     common_agent_prepared_generation prepared;
     prepared.prompt = "<|user|>Check status<|end|><|assistant|>";
@@ -101,17 +108,24 @@ void test_server_task_params_from_prepared_generation() {
         {2, -INFINITY},
     };
 
-    const auto params = make_server_task_params_from_prepared_generation(request, prepared, logit_bias_eog);
+    const auto params = make_server_task_params_from_prepared_generation(params_base, request, prepared, logit_bias_eog);
     assert(params.stream);
+    assert(!params.cache_prompt);
+    assert(params.n_keep == 9);
+    assert(params.n_cache_reuse == 17);
     assert(params.n_predict == 77);
     assert(params.t_max_prompt_ms == 111);
     assert(params.t_max_predict_ms == 222);
+    assert(std::fabs(params.sampling.temp) < 1e-6f);
     assert(params.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT);
     assert(params.sampling.grammar.grammar == "root ::= object");
     assert(params.sampling.grammar_lazy);
     assert(params.sampling.generation_prompt.empty());
     assert(params.sampling.ignore_eos);
     assert(params.sampling.logit_bias.size() == 2);
+    assert(params.speculative.draft.n_max == 3);
+    assert(params.antiprompt.size() == 1);
+    assert(params.antiprompt[0] == "<|stop|>");
     assert(params.chat_parser_params.generation_prompt == "<|assistant|>");
     assert(params.chat_parser_params.parse_tool_calls);
 }
