@@ -5,9 +5,10 @@
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "agent-plan-orchestration.h"
-#include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "agent-cli-runtime.h"
 #include "agent-runtime-assembly.h"
+#include "agent-runtime-execution.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
@@ -354,68 +355,24 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
         fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
 
-        if (!maybe_auto_select_plan(*inference_session.inference, a, a, agent_scope, *plan_store, error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        if (!maybe_auto_select_blueprint(
-                *inference_session.inference,
-                a,
-                a,
-                agent_scope,
-                *plan_store,
-                installed_blueprint_candidates,
-                profile_tools_active,
-                profile_tools_active ? &tool_registry : nullptr,
-                error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        auto assembly = make_agent_runtime_assembly(
+        common_agent_cli_runtime_execution execution{
             store,
             *plan_store,
             *inference_session.inference,
             a,
+            agent_scope,
+            installed_blueprint_candidates,
+            hits,
+            query.scope,
+            memory_enabled,
             tools,
-            profile_tools_active ? &tool_registry : nullptr);
-        common_agent_request request;
-        request.prompt = a.prompt;
-        request.memories = hits;
-        request.enable_memory = memory_enabled;
-        request.enable_planning = true;
-        request.enable_reflection = a.reflection_mode == "always";
-        request.memory_scope = query.scope;
-        request.plan_scope = agent_scope.plan_scope;
-        if (!a.plan_id.empty()) request.plan_id = a.plan_id;
-        common_agent_scope_apply(agent_scope, request);
-        request.max_iterations = a.reflection_mode == "always" ? 2 : 1;
-        request.max_reflection_rounds = a.reflection_mode == "always" ? 1 : 0;
-        request.max_tool_batches = profile_tools_active ? a.max_tool_rounds : 0;
-        request.allow_policy_gated_tool_proposals = a.tool_profile == "memory" || a.tool_profile == "research";
-        const common_agent_result result = assembly.runtime->run(request);
-        if (!result.error.empty()) {
-            fprintf(stderr, "agent runtime failed: %s\n", result.error.c_str());
+            profile_tools_active,
+            profile_tools_active ? &tool_registry : nullptr,
+        };
+        common_agent_result result;
+        if (!run_agent_cli_mini_runtime(execution, result, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
             return 1;
-        }
-        if (a.memory_learn == "post-turn") {
-            const auto * candidate = result.learned_memory_candidate ? &*result.learned_memory_candidate : nullptr;
-            fprintf(stderr, "audit: memory_learn summary=%s plan=%s candidate=%s confidence=%.2f reuse=%.2f related=%zu\n",
-                result.memory_learning_summary.c_str(), result.plan_id ? result.plan_id->c_str() : "",
-                candidate ? common_memory_kind_name(candidate->kind) : "none", candidate ? candidate->confidence : 0.0f,
-                candidate ? candidate->expected_reuse : 0.0f, result.memory_learning_related_count);
-            if (a.memory_learn_show_candidate && candidate) {
-                fprintf(stderr, "memory_learn candidate: kind=%s content=%s rationale=%s\n", common_memory_kind_name(candidate->kind), candidate->content.c_str(), candidate->rationale.c_str());
-            }
-        }
-        if (a.plan_show_summary && result.plan_id) {
-            const auto plan = plan_store->get(*result.plan_id, error);
-            if (plan) fprintf(stderr, "plan: id=%s version=%llu steps=%zu observations=%zu reflected=%s revised=%s\n",
-                plan->id.c_str(), (unsigned long long) plan->version, plan->steps.size(), plan->observations.size(),
-                result.reflected ? "yes" : "no", result.revised ? "yes" : "no");
-        }
-        if (a.agent_trace) for (const auto & event : result.events) {
-            fprintf(stderr, "agent: event=%d plan=%s detail=%s\n", (int) event.type,
-                event.plan_id ? event.plan_id->c_str() : "", event.detail.c_str());
         }
         return finish_chat(result.response, result.total_decoded_tokens);
     }
