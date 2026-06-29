@@ -6,6 +6,7 @@ add_executable(${TARGET}
     agent-cli-inference.cpp
     agent-server-generation.cpp
     agent-server-inference.cpp
+    agent-runtime-assembly.cpp
     agent-cli-runtime.cpp
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp

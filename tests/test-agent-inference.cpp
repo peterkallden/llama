@@ -1,9 +1,11 @@
 #include "agent/agent-inference.h"
 #include "agent/tool-registry.h"
 #include "memory/memory-candidate.h"
+#include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "agent-runtime-assembly.h"
 #include "common/cli-scope.h"
 
 #include <cassert>
@@ -133,6 +135,38 @@ static void test_cli_scope_helpers() {
     const auto explicit_scope = common_cli_make_agent_scope(project_args, common_plan_scope::session);
     assert(explicit_scope.memory_scope == common_memory_scope::project);
     assert(explicit_scope.plan_scope == common_plan_scope::session);
+}
+
+static void test_runtime_assembly_helpers() {
+    agent_inference_backend backend = agent_inference_backend::server_context;
+    assert(parse_agent_inference_backend("cli", backend));
+    assert(backend == agent_inference_backend::cli);
+    assert(parse_agent_inference_backend("server-context", backend));
+    assert(backend == agent_inference_backend::server_context);
+    assert(!parse_agent_inference_backend("invalid", backend));
+
+    fake_agent_inference inference;
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.memory_learn = "off";
+    auto assembly = make_agent_runtime_assembly(memories, plans, inference, options, {}, nullptr);
+    assert(assembly.planner);
+    assert(assembly.executor);
+    assert(assembly.reflector);
+    assert(!assembly.candidate_extractor);
+    assert(!assembly.memory_learner);
+    assert(assembly.runtime);
+
+    options.memory_learn = "post-turn";
+    auto learning_assembly = make_agent_runtime_assembly(memories, plans, inference, options, {}, nullptr);
+    assert(learning_assembly.candidate_extractor);
+    assert(learning_assembly.memory_learner);
+    assert(learning_assembly.runtime);
 }
 
 static common_agent_request make_request() {
@@ -381,6 +415,8 @@ static bool run_named_test(const std::string & name) {
         test_generation_contract_helpers();
     } else if (name == "cli-scope") {
         test_cli_scope_helpers();
+    } else if (name == "runtime-assembly") {
+        test_runtime_assembly_helpers();
     } else if (name == "runtime-metadata") {
         test_runtime_generation_metadata();
     } else if (name == "selection-metadata") {
@@ -406,6 +442,7 @@ int main(int argc, char ** argv) {
     const char * tests[] = {
         "generation-contract",
         "cli-scope",
+        "runtime-assembly",
         "runtime-metadata",
         "selection-metadata",
         "runtime-failure",

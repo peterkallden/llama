@@ -4,9 +4,9 @@
 #include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-#include "agent-cli-inference.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "agent-runtime-assembly.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
 #include "agent/blueprint-selector.h"
@@ -17,7 +17,6 @@
 #include "agent/tool-chat-bridge.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
-#include "server-context.h"
 #endif
 
 #include "chat.h"
@@ -33,7 +32,6 @@
 #include <ctime>
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include <filesystem>
-#include <thread>
 #endif
 #include <memory>
 
@@ -44,69 +42,10 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-enum class agent_inference_backend {
-    cli,
-    server_context,
-};
-
-bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend) {
-    if (value == "cli") {
-        backend = agent_inference_backend::cli;
-        return true;
-    }
-    if (value == "server-context") {
-        backend = agent_inference_backend::server_context;
-        return true;
-    }
-    return false;
-}
-
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
     return "bootstrap:" + scope.namespace_id + ":" +
         (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
 }
-
-struct agent_resident_inference_host {
-    server_context server;
-    std::thread loop;
-    bool running = false;
-
-    ~agent_resident_inference_host() {
-        stop();
-    }
-
-    bool start(const args & a, std::string & error) {
-        common_params params;
-        params.model.path = a.model;
-        params.n_predict = a.n_predict;
-        params.n_gpu_layers = a.n_gpu_layers;
-        params.n_parallel = 1;
-        params.n_sequences = 1;
-        params.n_ctx = 0;
-        postprocess_cpu_params(params.cpuparams, nullptr);
-        postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
-
-        if (!server.load_model(params)) {
-            error = "failed to load resident server_context model: " + a.model;
-            return false;
-        }
-
-        loop = std::thread([this]() {
-            server.start_loop();
-        });
-        running = true;
-        return true;
-    }
-
-    void stop() {
-        if (!running) return;
-        server.terminate();
-        if (loop.joinable()) {
-            loop.join();
-        }
-        running = false;
-    }
-};
 
 } // namespace
 #endif
@@ -464,23 +403,15 @@ int run_agent_cli(common_memory_store & store, args a) {
             return 1;
         }
 
-        agent_resident_inference_host resident_host;
-        std::unique_ptr<common_agent_inference> agent_inference;
-        if (inference_backend_kind == agent_inference_backend::server_context) {
-            if (!resident_host.start(a, error)) {
-                fprintf(stderr, "%s\n", error.c_str());
-                return 1;
-            }
-            auto meta = resident_host.server.get_meta();
-            agent_inference = make_server_context_agent_inference(
-                resident_host.server,
-                meta.logit_bias_eog,
-                meta.chat_params.tmpls.get());
-        } else {
+        common_agent_inference_session inference_session;
+        if (inference_backend_kind == agent_inference_backend::cli) {
             if (!load_cli_model()) {
                 return 1;
             }
-            agent_inference = make_llama_cli_agent_inference(model, chat_templates.get());
+        }
+        if (!make_agent_inference_session(a, inference_backend_kind, model, chat_templates.get(), inference_session, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
         }
         fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
 
@@ -506,7 +437,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 selection_request.prompt = a.prompt;
                 common_agent_scope_apply(agent_scope, selection_request);
                 std::string selection_error;
-                const auto selection_result = select_llama_cli_plan_result(*agent_inference, a, selection_request, candidates, selection_error);
+                const auto selection_result = select_llama_cli_plan_result(*inference_session.inference, a, selection_request, candidates, selection_error);
                 if (selection_result.plan_id) {
                     a.plan_id = *selection_result.plan_id;
                     fprintf(stderr, "agent plan auto-selected: %s\n", a.plan_id.c_str());
@@ -518,7 +449,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             }
         }
         if (a.agent_blueprint == "auto") {
-            auto selector = make_llama_cli_blueprint_selector(*agent_inference, a);
+            auto selector = make_llama_cli_blueprint_selector(*inference_session.inference, a);
             common_blueprint_selection_config config;
             config.task_plan_id = a.plan_id;
             config.session_id = agent_scope.session_id;
@@ -540,7 +471,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                     common_agent_scope_apply(agent_scope, binding_request);
                     std::string binding_error;
                     const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                        *agent_inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error);
+                        *inference_session.inference, a, tool_registry, binding_request, *plan_store, a.plan_id, binding_error);
                     if (!binding_result.applied) {
                         fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
                     }
@@ -551,22 +482,13 @@ int run_agent_cli(common_memory_store & store, args a) {
                 fprintf(stderr, "agent blueprint auto-selection declined or failed safely; using normal plan creation\n");
             }
         }
-        auto planner = make_llama_cli_planner(*agent_inference, a, tools);
-        auto executor = make_llama_cli_action_executor(*agent_inference, a);
-        auto reflector = make_llama_cli_reflection_engine(*agent_inference, a);
-        std::unique_ptr<common_memory_candidate_extractor> candidate_extractor;
-        std::unique_ptr<common_memory_post_turn_learner> memory_learner;
-        if (a.memory_learn == "post-turn") {
-            candidate_extractor = make_llama_cli_memory_candidate_extractor(*agent_inference, a);
-            common_memory_learning_config learning_config;
-            learning_config.min_confidence = a.memory_learn_min_confidence;
-            learning_config.min_expected_reuse = a.memory_learn_min_reuse;
-            memory_learner = std::make_unique<common_memory_post_turn_learner>(store, *candidate_extractor,
-                [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-                    return ensure_memory_cli_embedding(a, text, embedding, "memory candidate", embedding_error);
-                }, learning_config);
-        }
-        common_agent_runtime runtime(*plan_store, *planner, *executor, *reflector, profile_tools_active ? &tool_registry : nullptr, memory_learner.get());
+        auto assembly = make_agent_runtime_assembly(
+            store,
+            *plan_store,
+            *inference_session.inference,
+            a,
+            tools,
+            profile_tools_active ? &tool_registry : nullptr);
         common_agent_request request;
         request.prompt = a.prompt;
         request.memories = hits;
@@ -581,7 +503,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         request.max_reflection_rounds = a.reflection_mode == "always" ? 1 : 0;
         request.max_tool_batches = profile_tools_active ? a.max_tool_rounds : 0;
         request.allow_policy_gated_tool_proposals = a.tool_profile == "memory" || a.tool_profile == "research";
-        const common_agent_result result = runtime.run(request);
+        const common_agent_result result = assembly.runtime->run(request);
         if (!result.error.empty()) {
             fprintf(stderr, "agent runtime failed: %s\n", result.error.c_str());
             return 1;
