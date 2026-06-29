@@ -6,6 +6,7 @@
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
 #include "agent-runtime-assembly.h"
+#include "agent-runtime-execution.h"
 #include "common/cli-scope.h"
 
 #include <cassert>
@@ -421,6 +422,63 @@ static void test_selection_generation_failure_metadata() {
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");
 }
 
+static void test_mini_runtime_smoke() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"(not-json)"),
+        make_success("draft-content", 7),
+    };
+
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.memory_learn = "off";
+    options.reflection_mode = "off";
+    options.agent_plan = "off";
+    options.agent_blueprint = "off";
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+    scope.turn_id = "turn-7";
+    scope.memory_scope = common_memory_scope::session;
+    scope.plan_scope = common_plan_scope::turn;
+
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> hits;
+    const std::vector<common_chat_tool> tools;
+    common_agent_cli_runtime_execution execution{
+        memories,
+        plans,
+        inference,
+        options,
+        scope,
+        blueprints,
+        hits,
+        common_memory_scope::session,
+        true,
+        tools,
+        false,
+        nullptr,
+    };
+
+    common_agent_result result;
+    assert(run_agent_cli_mini_runtime(execution, result, error));
+    assert(error.empty());
+    assert(result.error.empty());
+    assert(result.response == "draft-content");
+    assert(result.plan_id);
+    assert(!result.plan_id->empty());
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::draft);
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -436,6 +494,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_generation_failure_metadata();
     } else if (name == "selection-failure") {
         test_selection_generation_failure_metadata();
+    } else if (name == "mini-runtime-smoke") {
+        test_mini_runtime_smoke();
     } else {
         return false;
     }
@@ -458,6 +518,7 @@ int main(int argc, char ** argv) {
         "selection-metadata",
         "runtime-failure",
         "selection-failure",
+        "mini-runtime-smoke",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {
