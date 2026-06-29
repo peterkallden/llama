@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+struct common_agent_generation_config;
+
 bool maybe_install_agent_bootstrap(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
@@ -29,6 +31,7 @@ bool maybe_export_agent_package(
 
 bool maybe_auto_select_plan(
     common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
     const args & options,
     args & mutable_options,
     const common_agent_scope & scope,
@@ -37,6 +40,7 @@ bool maybe_auto_select_plan(
 
 bool maybe_auto_select_blueprint(
     common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
     const args & options,
     args & mutable_options,
     const common_agent_scope & scope,

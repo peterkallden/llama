@@ -31,8 +31,10 @@ bool run_agent_cli_mini_runtime(
     common_agent_cli_runtime_execution & execution,
     common_agent_result & result,
     std::string & error) {
+    const auto generation_config = make_agent_generation_config(execution.options);
     if (!maybe_auto_select_plan(
             execution.inference,
+            generation_config,
             execution.options,
             execution.options,
             execution.scope,
@@ -43,6 +45,7 @@ bool run_agent_cli_mini_runtime(
 
     if (!maybe_auto_select_blueprint(
             execution.inference,
+            generation_config,
             execution.options,
             execution.options,
             execution.scope,

@@ -1,4 +1,5 @@
 #include "agent-cli-runtime.h"
+#include "agent-runtime-assembly.h"
 
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
@@ -41,9 +42,9 @@ std::string describe_generation_failure(
     return text;
 }
 
-common_agent_generation_options make_generation_options(const args & options, int n_predict) {
+common_agent_generation_options make_generation_options(const common_agent_generation_config & generation_config, int n_predict) {
     return common_agent_generation_options_with_n_predict(
-        common_agent_generation_options{options.n_predict},
+        common_agent_generation_options{generation_config.n_predict},
         n_predict);
 }
 
@@ -72,8 +73,8 @@ common_agent_generation_request make_generation_request(
 
 class llama_model_planner final : public common_planner {
 public:
-    llama_model_planner(common_agent_inference & inference, const args & options, const std::vector<common_chat_tool> & tools)
-        : inference(inference), options(options), tool_names(join_tool_names(tools)) {
+    llama_model_planner(common_agent_inference & inference, const common_agent_generation_config & generation_config, const std::vector<common_chat_tool> & tools)
+        : inference(inference), generation_config(generation_config), tool_names(join_tool_names(tools)) {
         for (const auto & tool : tools) allowed_tools.push_back(tool.name);
     }
 
@@ -107,7 +108,7 @@ public:
             request,
             common_agent_generation_purpose::planner,
             {system, user},
-            make_generation_options(options, std::max(options.n_predict, 512)),
+            make_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
             common_plan_proposal_json_schema()));
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
@@ -148,15 +149,15 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
     std::vector<std::string> allowed_tools;
     std::string tool_names;
 };
 
 class llama_action_executor final : public common_action_executor {
 public:
-    llama_action_executor(common_agent_inference & inference, const args & options)
-        : inference(inference), options(options) {}
+    llama_action_executor(common_agent_inference & inference, const common_agent_generation_config & generation_config)
+        : inference(inference), generation_config(generation_config) {}
 
     std::string generate_draft(const common_agent_request & request, const common_plan_state & plan, const std::vector<std::string> & guidance, std::string & error) override {
         return generate_draft_result(request, plan, guidance, error).content;
@@ -181,7 +182,7 @@ public:
             request,
             common_agent_generation_purpose::draft,
             {system, user},
-            make_generation_options(options, std::min(options.n_predict, 96))));
+            make_generation_options(generation_config, std::min(generation_config.n_predict, 96))));
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model draft generation", generation_result);
             return common_agent_generated_text_result_from_generation_result(generation_result);
@@ -215,7 +216,7 @@ public:
             request,
             common_agent_generation_purpose::reasoning,
             {system, user},
-            make_generation_options(options, std::min(options.n_predict, 128)),
+            make_generation_options(generation_config, std::min(generation_config.n_predict, 128)),
             reasoning_schema));
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model reasoning generation", generation_result);
@@ -227,13 +228,13 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
 };
 
 class llama_reflection_engine final : public common_reflection_engine {
 public:
-    llama_reflection_engine(common_agent_inference & inference, const args & options)
-        : inference(inference), options(options) {}
+    llama_reflection_engine(common_agent_inference & inference, const common_agent_generation_config & generation_config)
+        : inference(inference), generation_config(generation_config) {}
 
     common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan, const std::string & draft, std::string & error) override {
         return evaluate_result(request, plan, draft, error);
@@ -262,7 +263,7 @@ public:
             request,
             common_agent_generation_purpose::reflection,
             {system, user},
-            make_generation_options(options, std::max(options.n_predict, 256)),
+            make_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
             reflection_schema));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
@@ -284,7 +285,7 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
 };
 
 bool parse_memory_candidate_json(const std::string & text, common_memory_candidate_result & result, std::string & error) {
@@ -324,8 +325,8 @@ bool parse_memory_candidate_json(const std::string & text, common_memory_candida
 
 class llama_memory_candidate_extractor final : public common_memory_candidate_extractor {
 public:
-    llama_memory_candidate_extractor(common_agent_inference & inference, const args & options)
-        : inference(inference), options(options) {}
+    llama_memory_candidate_extractor(common_agent_inference & inference, const common_agent_generation_config & generation_config)
+        : inference(inference), generation_config(generation_config) {}
 
     common_memory_candidate_result extract(const common_agent_request & request, const common_plan_state & plan, const common_agent_result & result, std::string & error) override {
         return extract_result(request, plan, result, error);
@@ -359,7 +360,7 @@ public:
             request,
             common_agent_generation_purpose::memory_learning,
             {system, user},
-            make_generation_options(options, std::max(options.n_predict, 256)),
+            make_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
             schema));
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("model candidate generation", generation_result);
@@ -376,32 +377,32 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
 };
 
 } // namespace
 
 std::unique_ptr<common_planner> make_llama_cli_planner(
     common_agent_inference & inference,
-    const args & options,
+    const common_agent_generation_config & generation_config,
     const std::vector<common_chat_tool> & tools) {
-    return std::make_unique<llama_model_planner>(inference, options, tools);
+    return std::make_unique<llama_model_planner>(inference, generation_config, tools);
 }
 
 std::unique_ptr<common_action_executor> make_llama_cli_action_executor(
     common_agent_inference & inference,
-    const args & options) {
-    return std::make_unique<llama_action_executor>(inference, options);
+    const common_agent_generation_config & generation_config) {
+    return std::make_unique<llama_action_executor>(inference, generation_config);
 }
 
 std::unique_ptr<common_reflection_engine> make_llama_cli_reflection_engine(
     common_agent_inference & inference,
-    const args & options) {
-    return std::make_unique<llama_reflection_engine>(inference, options);
+    const common_agent_generation_config & generation_config) {
+    return std::make_unique<llama_reflection_engine>(inference, generation_config);
 }
 
 std::unique_ptr<common_memory_candidate_extractor> make_llama_cli_memory_candidate_extractor(
     common_agent_inference & inference,
-    const args & options) {
-    return std::make_unique<llama_memory_candidate_extractor>(inference, options);
+    const common_agent_generation_config & generation_config) {
+    return std::make_unique<llama_memory_candidate_extractor>(inference, generation_config);
 }

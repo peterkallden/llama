@@ -22,7 +22,7 @@ struct agent_resident_inference_host {
         stop();
     }
 
-    bool start(const args & options, std::string & error) {
+    bool start(const common_agent_inference_options & options, std::string & error) {
         params = {};
         params.model.path = options.model;
         params.n_predict = options.n_predict;
@@ -59,6 +59,20 @@ struct agent_resident_inference_host {
 
 } // namespace
 
+common_agent_generation_config make_agent_generation_config(const args & options) {
+    common_agent_generation_config config;
+    config.n_predict = options.n_predict;
+    return config;
+}
+
+common_agent_inference_options make_agent_inference_options(const args & options) {
+    common_agent_inference_options config;
+    config.model = options.model;
+    config.n_predict = options.n_predict;
+    config.n_gpu_layers = options.n_gpu_layers;
+    return config;
+}
+
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend) {
     if (value == "cli") {
         backend = agent_inference_backend::cli;
@@ -72,7 +86,7 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
 }
 
 bool make_agent_inference_session(
-    const args & options,
+    const common_agent_inference_options & options,
     agent_inference_backend backend,
     llama_model * model,
     const common_chat_templates * templates,
@@ -112,12 +126,13 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     const std::vector<common_chat_tool> & tools,
     const common_tool_registry * tool_registry) {
     common_agent_runtime_assembly assembly;
-    assembly.planner = make_llama_cli_planner(inference, options, tools);
-    assembly.executor = make_llama_cli_action_executor(inference, options);
-    assembly.reflector = make_llama_cli_reflection_engine(inference, options);
+    const auto generation_config = make_agent_generation_config(options);
+    assembly.planner = make_llama_cli_planner(inference, generation_config, tools);
+    assembly.executor = make_llama_cli_action_executor(inference, generation_config);
+    assembly.reflector = make_llama_cli_reflection_engine(inference, generation_config);
 
     if (options.memory_learn == "post-turn") {
-        assembly.candidate_extractor = make_llama_cli_memory_candidate_extractor(inference, options);
+        assembly.candidate_extractor = make_llama_cli_memory_candidate_extractor(inference, generation_config);
         common_memory_learning_config learning_config;
         learning_config.min_confidence = options.memory_learn_min_confidence;
         learning_config.min_expected_reuse = options.memory_learn_min_reuse;

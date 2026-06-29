@@ -77,6 +77,10 @@ static args make_test_args() {
     return options;
 }
 
+static common_agent_generation_config make_test_generation_config() {
+    return make_agent_generation_config(make_test_args());
+}
+
 static void test_generation_contract_helpers() {
     common_agent_generation_options options;
     options.n_predict = 64;
@@ -150,7 +154,7 @@ static void test_runtime_assembly_helpers() {
     std::string error;
     auto * fake_model = reinterpret_cast<llama_model *>(0x1);
     auto * fake_templates = reinterpret_cast<const common_chat_templates *>(0x2);
-    assert(make_agent_inference_session(make_test_args(), agent_inference_backend::cli, fake_model, fake_templates, cli_session, error));
+    assert(make_agent_inference_session(make_agent_inference_options(make_test_args()), agent_inference_backend::cli, fake_model, fake_templates, cli_session, error));
     assert(cli_session.backend == agent_inference_backend::cli);
     assert(cli_session.model == fake_model);
     assert(cli_session.templates == fake_templates);
@@ -203,7 +207,7 @@ static void test_runtime_generation_metadata() {
     const args options = make_test_args();
     const common_agent_request request = make_request();
 
-    auto planner = make_llama_cli_planner(inference, options, {});
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), {});
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
@@ -211,7 +215,7 @@ static void test_runtime_generation_metadata() {
     assert(proposal.generation);
     assert(proposal.generation->status == common_agent_generation_status::completed);
 
-    auto executor = make_llama_cli_action_executor(inference, options);
+    auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
     common_plan_state plan;
     plan.id = "plan-1";
     plan.goal = request.prompt;
@@ -224,7 +228,7 @@ static void test_runtime_generation_metadata() {
     const auto reasoning = executor->generate_reasoning(request, plan, step, error);
     assert(error.empty() && reasoning == R"({"summary":"facts"})");
 
-    auto reflector = make_llama_cli_reflection_engine(inference, options);
+    auto reflector = make_llama_cli_reflection_engine(inference, make_agent_generation_config(options));
     const auto reflection = reflector->evaluate_result(request, plan, draft, error);
     assert(error.empty());
     assert(reflection.decision == common_reflection_decision::accept);
@@ -232,7 +236,7 @@ static void test_runtime_generation_metadata() {
     assert(reflection.generation);
     assert(reflection.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
-    auto extractor = make_llama_cli_memory_candidate_extractor(inference, options);
+    auto extractor = make_llama_cli_memory_candidate_extractor(inference, make_agent_generation_config(options));
     common_agent_result agent_result;
     agent_result.response = "Final answer";
     const auto memory_candidate = extractor->extract_result(request, plan, agent_result, error);
@@ -283,7 +287,7 @@ static void test_selection_generation_metadata() {
     first.goal = "Resume";
     first.next_action = "Continue";
     std::string error;
-    const auto selected = select_llama_cli_plan_result(inference, options, request, {first}, error);
+    const auto selected = select_llama_cli_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
     assert(error.empty() && selected.plan_id && *selected.plan_id == "plan-1");
     assert(selected.generation);
     assert(selected.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
@@ -291,7 +295,7 @@ static void test_selection_generation_metadata() {
     std::vector<common_blueprint_candidate> candidates = {
         {"repo-change", "bootstrap:repo-change", "Repository change workflow"},
     };
-    auto selector = make_llama_cli_blueprint_selector(inference, options);
+    auto selector = make_llama_cli_blueprint_selector(inference, make_agent_generation_config(options));
     const auto blueprint = selector->select_result(request, candidates, error);
     assert(error.empty());
     assert(blueprint.decision == common_blueprint_selection_decision::instantiate);
@@ -320,7 +324,7 @@ static void test_selection_generation_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, "task-1", error);
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), registry, request, store, "task-1", error);
     assert(error.empty());
     assert(binding.applied);
     assert(binding.bound_steps == 1);
@@ -356,13 +360,13 @@ static void test_runtime_generation_failure_metadata() {
     const args options = make_test_args();
     const common_agent_request request = make_request();
 
-    auto planner = make_llama_cli_planner(inference, options, {});
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), {});
     std::string error;
     const auto proposal = planner->create_plan(request, error);
     assert(!proposal.plan.id.empty());
     assert(error == "model planner generation failed (status=cancelled, stop=cancelled): resident host shutting down");
 
-    auto executor = make_llama_cli_action_executor(inference, options);
+    auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
     common_plan_state plan;
     plan.id = "plan-1";
     plan.goal = request.prompt;
@@ -390,7 +394,7 @@ static void test_selection_generation_failure_metadata() {
     first.id = "plan-1";
     first.goal = "Resume";
     first.next_action = "Continue";
-    const auto selected = select_llama_cli_plan_result(inference, options, request, {first}, error);
+    const auto selected = select_llama_cli_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
     assert(!selected.plan_id);
     assert(selected.generation);
     assert(error == "plan selector generation failed (status=cancelled, stop=cancelled): resident inference cancelled");
@@ -416,7 +420,7 @@ static void test_selection_generation_failure_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, "task-1", error);
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), registry, request, store, "task-1", error);
     assert(!binding.applied);
     assert(binding.generation);
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");

@@ -23,7 +23,7 @@ struct common_agent_cli_runtime_session {
 };
 
 bool initialize_agent_cli_runtime_session(
-    const args & options,
+    const common_agent_inference_options & options,
     agent_inference_backend backend,
     bool memory_enabled,
     const std::string & fallback_reason,

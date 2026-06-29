@@ -21,6 +21,20 @@ enum class agent_inference_backend {
 
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend);
 
+struct common_agent_generation_config {
+    int n_predict = 0;
+};
+
+common_agent_generation_config make_agent_generation_config(const args & options);
+
+struct common_agent_inference_options {
+    std::string model;
+    int n_predict = -1;
+    int n_gpu_layers = 0;
+};
+
+common_agent_inference_options make_agent_inference_options(const args & options);
+
 struct common_agent_inference_session {
     agent_inference_backend backend = agent_inference_backend::cli;
     std::shared_ptr<void> keepalive;
@@ -30,7 +44,7 @@ struct common_agent_inference_session {
 };
 
 bool make_agent_inference_session(
-    const args & options,
+    const common_agent_inference_options & options,
     agent_inference_backend backend,
     llama_model * model,
     const common_chat_templates * templates,

@@ -310,6 +310,7 @@ int run_agent_cli(common_memory_store & store, args a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
+        const auto inference_options = make_agent_inference_options(a);
         agent_inference_backend inference_backend_kind = agent_inference_backend::cli;
         if (!parse_agent_inference_backend(a.agent_inference_backend, inference_backend_kind)) {
             fprintf(stderr, "unsupported --agent-inference-backend: %s\n", a.agent_inference_backend.c_str());
@@ -317,7 +318,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
 
         common_agent_inference_session inference_session;
-        if (!initialize_agent_cli_runtime_session(a, inference_backend_kind, memory_enabled, fallback_reason, runtime_session, error)) {
+        if (!initialize_agent_cli_runtime_session(inference_options, inference_backend_kind, memory_enabled, fallback_reason, runtime_session, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
@@ -347,7 +348,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 #endif
 
-    if (!initialize_agent_cli_runtime_session(a, agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
+    if (!initialize_agent_cli_runtime_session(make_agent_inference_options(a), agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }

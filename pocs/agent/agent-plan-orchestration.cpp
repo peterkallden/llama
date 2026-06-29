@@ -130,6 +130,7 @@ bool maybe_export_agent_package(
 
 bool maybe_auto_select_plan(
     common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
     const args & options,
     args & mutable_options,
     const common_agent_scope & scope,
@@ -173,7 +174,7 @@ bool maybe_auto_select_plan(
         selection_request.prompt = options.prompt;
         common_agent_scope_apply(scope, selection_request);
         std::string selection_error;
-        const auto selection_result = select_llama_cli_plan_result(inference, options, selection_request, candidates, selection_error);
+        const auto selection_result = select_llama_cli_plan_result(inference, generation_config, selection_request, candidates, selection_error);
         if (selection_result.plan_id) {
             mutable_options.plan_id = *selection_result.plan_id;
             fprintf(stderr, "agent plan auto-selected: %s\n", mutable_options.plan_id.c_str());
@@ -190,6 +191,7 @@ bool maybe_auto_select_plan(
 
 bool maybe_auto_select_blueprint(
     common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
     const args & options,
     args & mutable_options,
     const common_agent_scope & scope,
@@ -203,7 +205,7 @@ bool maybe_auto_select_blueprint(
         return true;
     }
 
-    auto selector = make_llama_cli_blueprint_selector(inference, options);
+    auto selector = make_llama_cli_blueprint_selector(inference, generation_config);
     common_blueprint_selection_config config;
     config.task_plan_id = mutable_options.plan_id;
     config.session_id = scope.session_id;
@@ -226,7 +228,7 @@ bool maybe_auto_select_blueprint(
             common_agent_scope_apply(scope, binding_request);
             std::string binding_error;
             const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                inference, options, *tool_registry, binding_request, plan_store, mutable_options.plan_id, binding_error);
+                inference, generation_config, *tool_registry, binding_request, plan_store, mutable_options.plan_id, binding_error);
             if (!binding_result.applied) {
                 fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
             }

@@ -1,4 +1,5 @@
 #include "agent-cli-selection.h"
+#include "agent-runtime-assembly.h"
 
 #include "agent/agent-package-json.h"
 #include "common/cli-scope.h"
@@ -133,9 +134,9 @@ std::string describe_generation_failure(
     return text;
 }
 
-common_agent_generation_options make_generation_options(const args & options, int n_predict) {
+common_agent_generation_options make_generation_options(const common_agent_generation_config & generation_config, int n_predict) {
     return common_agent_generation_options_with_n_predict(
-        common_agent_generation_options{options.n_predict},
+        common_agent_generation_options{generation_config.n_predict},
         n_predict);
 }
 
@@ -164,8 +165,8 @@ common_agent_generation_request make_generation_request(
 
 class llama_blueprint_selector final : public common_blueprint_selector {
 public:
-    llama_blueprint_selector(common_agent_inference & inference, const args & options)
-        : inference(inference), options(options) {}
+    llama_blueprint_selector(common_agent_inference & inference, const common_agent_generation_config & generation_config)
+        : inference(inference), generation_config(generation_config) {}
 
     common_blueprint_selection select(
             const common_agent_request & request,
@@ -201,7 +202,7 @@ public:
             request,
             common_agent_generation_purpose::blueprint_selection,
             {system, user},
-            make_generation_options(options, std::max(options.n_predict, 96)),
+            make_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
             schema.dump()));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
@@ -225,13 +226,13 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
 };
 
 class llama_blueprint_binder final {
 public:
-    llama_blueprint_binder(common_agent_inference & inference, const args & options, const common_tool_registry & registry)
-        : inference(inference), options(options), registry(registry) {}
+    llama_blueprint_binder(common_agent_inference & inference, const common_agent_generation_config & generation_config, const common_tool_registry & registry)
+        : inference(inference), generation_config(generation_config), registry(registry) {}
 
     common_agent_blueprint_binding_result bind_result(
             const common_agent_request & request,
@@ -260,7 +261,7 @@ public:
             request,
             common_agent_generation_purpose::blueprint_binding,
             {system, user},
-            make_generation_options(options, std::min(options.n_predict, 256))));
+            make_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("blueprint binding generation", generation_result);
@@ -333,14 +334,14 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
     const common_tool_registry & registry;
 };
 
 class llama_plan_selector final {
 public:
-    llama_plan_selector(common_agent_inference & inference, const args & options)
-        : inference(inference), options(options) {}
+    llama_plan_selector(common_agent_inference & inference, const common_agent_generation_config & generation_config)
+        : inference(inference), generation_config(generation_config) {}
 
     common_agent_plan_selection_result select_result(
             const common_agent_request & request,
@@ -369,7 +370,7 @@ public:
             request,
             common_agent_generation_purpose::plan_selection,
             {system, user},
-            make_generation_options(options, std::max(options.n_predict, 96)),
+            make_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
             schema.dump()));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
@@ -411,55 +412,55 @@ public:
 
 private:
     common_agent_inference & inference;
-    const args & options;
+    common_agent_generation_config generation_config;
 };
 
 } // namespace
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
         common_agent_inference & inference,
-        const args & options) {
-    return std::make_unique<llama_blueprint_selector>(inference, options);
+        const common_agent_generation_config & generation_config) {
+    return std::make_unique<llama_blueprint_selector>(inference, generation_config);
 }
 
 common_agent_plan_selection_result select_llama_cli_plan_result(
         common_agent_inference & inference,
-        const args & options,
+        const common_agent_generation_config & generation_config,
         const common_agent_request & request,
         const std::vector<common_plan_state> & candidates,
         std::string & error) {
-    llama_plan_selector selector(inference, options);
+    llama_plan_selector selector(inference, generation_config);
     return selector.select_result(request, candidates, error);
 }
 
 std::optional<std::string> select_llama_cli_plan(
         common_agent_inference & inference,
-        const args & options,
+        const common_agent_generation_config & generation_config,
         const common_agent_request & request,
         const std::vector<common_plan_state> & candidates,
         std::string & error) {
-    return select_llama_cli_plan_result(inference, options, request, candidates, error).plan_id;
+    return select_llama_cli_plan_result(inference, generation_config, request, candidates, error).plan_id;
 }
 
 common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
         common_agent_inference & inference,
-        const args & options,
+        const common_agent_generation_config & generation_config,
         const common_tool_registry & registry,
         const common_agent_request & request,
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    llama_blueprint_binder binder(inference, options, registry);
+    llama_blueprint_binder binder(inference, generation_config, registry);
     return binder.bind_result(request, store, plan_id, error);
 }
 
 bool bind_llama_cli_blueprint_tools(
         common_agent_inference & inference,
-        const args & options,
+        const common_agent_generation_config & generation_config,
         const common_tool_registry & registry,
         const common_agent_request & request,
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    return bind_llama_cli_blueprint_tools_result(inference, options, registry, request, store, plan_id, error).applied;
+    return bind_llama_cli_blueprint_tools_result(inference, generation_config, registry, request, store, plan_id, error).applied;
 }
