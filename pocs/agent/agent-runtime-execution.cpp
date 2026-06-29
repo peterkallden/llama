@@ -5,8 +5,8 @@
 
 #include <cstdio>
 
-common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & options) {
-    common_agent_cli_runtime_policy policy;
+common_agent_runtime_policy make_agent_runtime_policy(const args & options) {
+    common_agent_runtime_policy policy;
     policy.agent_inference_backend = options.agent_inference_backend;
     policy.tool_profile = options.tool_profile;
     policy.memory_learn = options.memory_learn;
@@ -22,8 +22,8 @@ common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & optio
     return policy;
 }
 
-common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
-    common_agent_cli_runtime_inputs & inputs,
+common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
+    common_agent_runtime_driver_inputs & inputs,
     common_agent_inference & inference) {
     return {
         inputs.memory_store,
@@ -44,8 +44,8 @@ common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
     };
 }
 
-common_agent_request make_agent_cli_runtime_request(
-    const common_agent_cli_runtime_execution & execution) {
+common_agent_request make_agent_runtime_driver_request(
+    const common_agent_runtime_driver_execution & execution) {
     common_agent_request request;
     request.memories = execution.memories;
     request.enable_memory = execution.memory_enabled;
@@ -65,9 +65,9 @@ common_agent_request make_agent_cli_runtime_request(
     return request;
 }
 
-bool run_agent_cli_mini_runtime_session(
-    common_agent_cli_runtime_inputs & inputs,
-    common_agent_cli_runtime_session & session,
+bool run_agent_runtime_driver_session(
+    common_agent_runtime_driver_inputs & inputs,
+    common_agent_runtime_session & session,
     common_agent_result & result,
     std::string & error) {
     agent_inference_backend inference_backend_kind = agent_inference_backend::cli;
@@ -76,7 +76,7 @@ bool run_agent_cli_mini_runtime_session(
         return false;
     }
 
-    if (!initialize_agent_cli_runtime_session(
+    if (!initialize_agent_runtime_session(
             inputs.inference_options,
             inference_backend_kind,
             inputs.memory_enabled,
@@ -87,12 +87,12 @@ bool run_agent_cli_mini_runtime_session(
     }
 
     fprintf(stderr, "agent inference backend: %s\n", inputs.policy.agent_inference_backend.c_str());
-    auto execution = make_agent_cli_runtime_execution(inputs, *session.inference_session.inference);
-    return run_agent_cli_mini_runtime(execution, result, error);
+    auto execution = make_agent_runtime_driver_execution(inputs, *session.inference_session.inference);
+    return run_agent_runtime_driver(execution, result, error);
 }
 
-bool run_agent_cli_mini_runtime(
-    common_agent_cli_runtime_execution & execution,
+bool run_agent_runtime_driver(
+    common_agent_runtime_driver_execution & execution,
     common_agent_result & result,
     std::string & error) {
     if (!maybe_auto_select_plan(
@@ -128,7 +128,7 @@ bool run_agent_cli_mini_runtime(
         execution.tools,
         execution.tool_registry);
 
-    const common_agent_request request = make_agent_cli_runtime_request(execution);
+    const common_agent_request request = make_agent_runtime_driver_request(execution);
     result = assembly.runtime->run(request);
     if (!result.error.empty()) {
         error = "agent runtime failed: " + result.error;

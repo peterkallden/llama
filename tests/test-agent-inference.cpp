@@ -466,11 +466,11 @@ static void test_mini_runtime_smoke() {
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id;
-    common_agent_cli_runtime_execution execution{
+    common_agent_runtime_driver_execution execution{
         memories,
         plans,
         inference,
-        make_agent_cli_runtime_policy(options),
+        make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
         make_agent_orchestration_config(options),
         current_plan_id,
@@ -485,7 +485,7 @@ static void test_mini_runtime_smoke() {
     };
 
     common_agent_result result;
-    assert(run_agent_cli_mini_runtime(execution, result, error));
+    assert(run_agent_runtime_driver(execution, result, error));
     assert(error.empty());
     assert(result.error.empty());
     assert(result.response == "draft-content");
@@ -531,11 +531,11 @@ static void test_runtime_request_builder() {
     const std::vector<common_memory_hit> hits = {hit};
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id = "plan-1";
-    const common_agent_cli_runtime_execution execution{
+    const common_agent_runtime_driver_execution execution{
         memories,
         plans,
         inference,
-        make_agent_cli_runtime_policy(options),
+        make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
         make_agent_orchestration_config(options),
         current_plan_id,
@@ -549,7 +549,7 @@ static void test_runtime_request_builder() {
         nullptr,
     };
 
-    const auto request = make_agent_cli_runtime_request(execution);
+    const auto request = make_agent_runtime_driver_request(execution);
     assert(request.prompt == "Check status");
     assert(request.plan_id && *request.plan_id == "plan-1");
     assert(request.enable_memory);
@@ -572,11 +572,11 @@ static void test_runtime_request_builder() {
     options.max_tool_rounds = 4;
     options.tool_profile = "safe";
     std::string no_tools_plan_id = "plan-1";
-    const common_agent_cli_runtime_execution no_tools_execution{
+    const common_agent_runtime_driver_execution no_tools_execution{
         memories,
         plans,
         inference,
-        make_agent_cli_runtime_policy(options),
+        make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
         make_agent_orchestration_config(options),
         no_tools_plan_id,
@@ -590,7 +590,7 @@ static void test_runtime_request_builder() {
         nullptr,
     };
 
-    const auto no_tools_request = make_agent_cli_runtime_request(no_tools_execution);
+    const auto no_tools_request = make_agent_runtime_driver_request(no_tools_execution);
     assert(!no_tools_request.enable_memory);
     assert(!no_tools_request.enable_reflection);
     assert(no_tools_request.max_iterations == 1);
@@ -641,11 +641,11 @@ static void test_runtime_execution_builder() {
     };
     const std::string fallback_reason = "embedding disabled";
     std::string current_plan_id = options.plan_id;
-    common_agent_cli_runtime_inputs inputs{
+    common_agent_runtime_driver_inputs inputs{
         memories,
         plans,
         make_agent_inference_options(options),
-        make_agent_cli_runtime_policy(options),
+        make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
         make_agent_orchestration_config(options),
         current_plan_id,
@@ -660,7 +660,7 @@ static void test_runtime_execution_builder() {
         nullptr,
     };
 
-    const auto execution = make_agent_cli_runtime_execution(inputs, inference);
+    const auto execution = make_agent_runtime_driver_execution(inputs, inference);
     assert(&execution.memory_store == &memories);
     assert(&execution.plan_store == &plans);
     assert(&execution.inference == &inference);

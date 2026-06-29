@@ -3,7 +3,7 @@ param(
     [string]$BuildDir = "build-plan-cozo-ssl",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$EmbeddingModel = "$HOME\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
-    [string]$WorkSubdir = "work\agent-server-context-smoke",
+    [string]$WorkSubdir = "work\agent-runtime-driver-server-context-smoke",
     [string]$Prompt = "Say OK after making a tiny plan.",
     [switch]$Build
 )
@@ -109,7 +109,7 @@ $exePath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-memory.exe"
 $workDir = Join-Path $repoRoot $WorkSubdir
 $memoryDb = Join-Path $workDir "memory.cozo"
 $planDb = Join-Path $workDir "plan.cozo"
-$logPath = Join-Path $workDir "server-context-smoke.log"
+$logPath = Join-Path $workDir "runtime-driver-server-context-smoke.log"
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
@@ -130,7 +130,7 @@ if ($Build) {
 Assert-PathExists -Path $exePath -Label "llama-memory executable"
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
-Invoke-LoggedCommand -Name "agent server-context smoke" -LogPath $logPath -FilePath $exePath -ArgumentList @(
+Invoke-LoggedCommand -Name "agent runtime driver server-context smoke" -LogPath $logPath -FilePath $exePath -ArgumentList @(
     "chat",
     "--memory-db", $memoryDb,
     "--plan-db", $planDb,

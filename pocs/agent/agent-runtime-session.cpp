@@ -4,7 +4,7 @@
 
 #include <cstdio>
 
-common_agent_cli_runtime_session & common_agent_cli_runtime_session::operator=(common_agent_cli_runtime_session && other) {
+common_agent_runtime_session & common_agent_runtime_session::operator=(common_agent_runtime_session && other) {
     if (this != &other) {
         reset();
         model = other.model;
@@ -15,11 +15,11 @@ common_agent_cli_runtime_session & common_agent_cli_runtime_session::operator=(c
     return *this;
 }
 
-common_agent_cli_runtime_session::~common_agent_cli_runtime_session() {
+common_agent_runtime_session::~common_agent_runtime_session() {
     reset();
 }
 
-void common_agent_cli_runtime_session::reset() {
+void common_agent_runtime_session::reset() {
     inference_session = {};
     chat_templates.reset();
     if (model != nullptr) {
@@ -28,12 +28,12 @@ void common_agent_cli_runtime_session::reset() {
     }
 }
 
-bool initialize_agent_cli_runtime_session(
+bool initialize_agent_runtime_session(
     const common_agent_inference_options & options,
     agent_inference_backend backend,
     bool memory_enabled,
     const std::string & fallback_reason,
-    common_agent_cli_runtime_session & session,
+    common_agent_runtime_session & session,
     std::string & error) {
     session.reset();
 

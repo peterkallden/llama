@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-struct common_agent_cli_runtime_policy {
+struct common_agent_runtime_policy {
     std::string agent_inference_backend = "cli";
     std::string tool_profile;
     std::string memory_learn = "off";
@@ -28,13 +28,14 @@ struct common_agent_cli_runtime_policy {
     bool allow_policy_gated_tool_proposals = false;
 };
 
-common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & options);
+common_agent_runtime_policy make_agent_runtime_policy(const args & options);
 
-struct common_agent_cli_runtime_inputs {
+// Driver inputs are runtime-owned contracts, stores, and prebuilt scope/tool state.
+struct common_agent_runtime_driver_inputs {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_inference_options inference_options;
-    common_agent_cli_runtime_policy policy;
+    common_agent_runtime_policy policy;
     common_agent_runtime_config runtime_config;
     common_agent_orchestration_config orchestration_config;
     std::string & current_plan_id;
@@ -49,11 +50,11 @@ struct common_agent_cli_runtime_inputs {
     const common_tool_registry * tool_registry = nullptr;
 };
 
-struct common_agent_cli_runtime_execution {
+struct common_agent_runtime_driver_execution {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_inference & inference;
-    common_agent_cli_runtime_policy policy;
+    common_agent_runtime_policy policy;
     common_agent_runtime_config runtime_config;
     common_agent_orchestration_config orchestration_config;
     std::string & current_plan_id;
@@ -67,20 +68,20 @@ struct common_agent_cli_runtime_execution {
     const common_tool_registry * tool_registry = nullptr;
 };
 
-common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
-    common_agent_cli_runtime_inputs & inputs,
+common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
+    common_agent_runtime_driver_inputs & inputs,
     common_agent_inference & inference);
 
-common_agent_request make_agent_cli_runtime_request(
-    const common_agent_cli_runtime_execution & execution);
+common_agent_request make_agent_runtime_driver_request(
+    const common_agent_runtime_driver_execution & execution);
 
-bool run_agent_cli_mini_runtime_session(
-    common_agent_cli_runtime_inputs & inputs,
-    common_agent_cli_runtime_session & session,
+bool run_agent_runtime_driver_session(
+    common_agent_runtime_driver_inputs & inputs,
+    common_agent_runtime_session & session,
     common_agent_result & result,
     std::string & error);
 
-bool run_agent_cli_mini_runtime(
-    common_agent_cli_runtime_execution & execution,
+bool run_agent_runtime_driver(
+    common_agent_runtime_driver_execution & execution,
     common_agent_result & result,
     std::string & error);

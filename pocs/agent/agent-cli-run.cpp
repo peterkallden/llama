@@ -295,7 +295,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
     }
 
-    common_agent_cli_runtime_session runtime_session;
+    common_agent_runtime_session runtime_session;
 
     auto finish_chat = [&](const std::string & final_output, int decoded_tokens) {
         printf("%s\n", final_output.c_str());
@@ -322,11 +322,11 @@ int run_agent_cli(common_memory_store & store, args a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        common_agent_cli_runtime_inputs inputs{
+        common_agent_runtime_driver_inputs inputs{
             store,
             *plan_store,
             make_agent_inference_options(a),
-            make_agent_cli_runtime_policy(a),
+            make_agent_runtime_policy(a),
             make_agent_runtime_config(a),
             orchestration_config,
             active_plan_id,
@@ -341,7 +341,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             profile_tools_active ? &tool_registry : nullptr,
         };
         common_agent_result result;
-        if (!run_agent_cli_mini_runtime_session(inputs, runtime_session, result, error)) {
+        if (!run_agent_runtime_driver_session(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
@@ -349,7 +349,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 #endif
 
-    if (!initialize_agent_cli_runtime_session(make_agent_inference_options(a), agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
+    if (!initialize_agent_runtime_session(make_agent_inference_options(a), agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
