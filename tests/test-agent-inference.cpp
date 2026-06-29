@@ -145,10 +145,21 @@ static void test_runtime_assembly_helpers() {
     assert(backend == agent_inference_backend::server_context);
     assert(!parse_agent_inference_backend("invalid", backend));
 
+    common_agent_inference_session cli_session;
+    std::string error;
+    auto * fake_model = reinterpret_cast<llama_model *>(0x1);
+    auto * fake_templates = reinterpret_cast<const common_chat_templates *>(0x2);
+    assert(make_agent_inference_session(make_test_args(), agent_inference_backend::cli, fake_model, fake_templates, cli_session, error));
+    assert(cli_session.backend == agent_inference_backend::cli);
+    assert(cli_session.model == fake_model);
+    assert(cli_session.templates == fake_templates);
+    assert(!cli_session.keepalive);
+    assert(cli_session.inference);
+
     fake_agent_inference inference;
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
-    std::string error;
+    error.clear();
     assert(memories.open("", error));
     assert(plans.open("", error));
 

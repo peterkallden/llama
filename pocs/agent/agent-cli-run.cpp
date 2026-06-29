@@ -9,6 +9,7 @@
 #include "agent-cli-runtime.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-execution.h"
+#include "agent-runtime-session.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
@@ -282,35 +283,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
     }
 
-    llama_model * model = nullptr;
-    common_chat_templates_ptr chat_templates;
-    auto free_model = [&]() {
-        if (model != nullptr) {
-            llama_model_free(model);
-            model = nullptr;
-        }
-    };
-
-    auto load_cli_model = [&]() -> bool {
-        if (model != nullptr) {
-            return true;
-        }
-        llama_model_params model_params = llama_model_default_params();
-        model_params.n_gpu_layers = a.n_gpu_layers;
-        if (!memory_enabled) {
-            fprintf(stderr,
-                "debug: chat fallback active, loading %s without memory retrieval or episode recording (%s)\n",
-                a.model.c_str(),
-                fallback_reason.c_str());
-        }
-        model = llama_model_load_from_file(a.model.c_str(), model_params);
-        if (model == nullptr) {
-            fprintf(stderr, "failed to load model: %s\n", a.model.c_str());
-            return false;
-        }
-        chat_templates = common_chat_templates_init(model, "");
-        return true;
-    };
+    common_agent_cli_runtime_session runtime_session;
 
     auto finish_chat = [&](const std::string & final_output, int decoded_tokens) {
         printf("%s\n", final_output.c_str());
@@ -331,7 +304,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             }
         }
         fprintf(stderr, "decoded %d tokens\n", decoded_tokens);
-        free_model();
+        runtime_session.reset();
         return 0;
     };
 
@@ -344,15 +317,11 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
 
         common_agent_inference_session inference_session;
-        if (inference_backend_kind == agent_inference_backend::cli) {
-            if (!load_cli_model()) {
-                return 1;
-            }
-        }
-        if (!make_agent_inference_session(a, inference_backend_kind, model, chat_templates.get(), inference_session, error)) {
+        if (!initialize_agent_cli_runtime_session(a, inference_backend_kind, memory_enabled, fallback_reason, runtime_session, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
+        inference_session = std::move(runtime_session.inference_session);
         fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
 
         common_agent_cli_runtime_execution execution{
@@ -378,7 +347,8 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 #endif
 
-    if (!load_cli_model()) {
+    if (!initialize_agent_cli_runtime_session(a, agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
 
@@ -388,7 +358,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     common_agent_generation_options generation_options;
     generation_options.n_predict = a.n_predict;
     common_agent_generation_result generation_result;
-    if (!generate_chat_turn_result(model, chat_templates.get(), messages, tools,
+    if (!generate_chat_turn_result(runtime_session.model, runtime_session.chat_templates.get(), messages, tools,
             tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
             generation_options, generation_result, &chat_params)) {
         if (!generation_result.error_message.empty()) {
@@ -397,7 +367,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                 common_agent_generation_stop_reason_name(generation_result.stop_reason),
                 generation_result.error_message.c_str());
         }
-        free_model();
+        runtime_session.reset();
         return 1;
     }
     output = generation_result.content;
@@ -414,7 +384,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     while (!assistant_msg.tool_calls.empty()) {
         if (tool_rounds >= a.max_tool_rounds) {
             fprintf(stderr, "tool call round limit reached\n");
-            free_model();
+            runtime_session.reset();
             return 1;
         }
         if (profile_tools_active) {
@@ -422,7 +392,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             common_tool_chat_dispatch_result dispatched;
             if (!common_tool_dispatch_chat_calls(assistant_msg, tool_registry, 1, dispatched, error)) {
                 fprintf(stderr, "tool dispatch failed: %s\n", error.c_str());
-                free_model();
+                runtime_session.reset();
                 return 1;
             } else {
                 messages.push_back(std::move(assistant_msg));
@@ -456,7 +426,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         ++tool_rounds;
         const bool allow_another_tool_round = tool_rounds < a.max_tool_rounds;
         common_agent_generation_result next_generation_result;
-        if (!generate_chat_turn_result(model, chat_templates.get(), messages,
+        if (!generate_chat_turn_result(runtime_session.model, runtime_session.chat_templates.get(), messages,
                 allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
                 allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
                 generation_options, next_generation_result, &chat_params)) {
@@ -466,7 +436,7 @@ int run_agent_cli(common_memory_store & store, args a) {
                     common_agent_generation_stop_reason_name(next_generation_result.stop_reason),
                     next_generation_result.error_message.c_str());
             }
-            free_model();
+            runtime_session.reset();
             return 1;
         }
         output = next_generation_result.content;

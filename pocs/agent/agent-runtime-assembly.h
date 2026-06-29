@@ -22,7 +22,10 @@ enum class agent_inference_backend {
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend);
 
 struct common_agent_inference_session {
-    std::shared_ptr<void> owner;
+    agent_inference_backend backend = agent_inference_backend::cli;
+    std::shared_ptr<void> keepalive;
+    llama_model * model = nullptr;
+    const common_chat_templates * templates = nullptr;
     std::unique_ptr<common_agent_inference> inference;
 };
 

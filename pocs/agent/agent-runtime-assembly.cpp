@@ -78,17 +78,21 @@ bool make_agent_inference_session(
     common_agent_inference_session & session,
     std::string & error) {
     session = {};
+    session.backend = backend;
+    session.model = model;
+    session.templates = templates;
     if (backend == agent_inference_backend::server_context) {
         auto host = std::make_shared<agent_resident_inference_host>();
         if (!host->start(options, error)) {
             return false;
         }
         auto meta = host->server.get_meta();
+        session.templates = meta.chat_params.tmpls.get();
         session.inference = make_server_context_agent_inference(
             host->server,
             meta.logit_bias_eog,
-            meta.chat_params.tmpls.get());
-        session.owner = std::move(host);
+            session.templates);
+        session.keepalive = std::move(host);
         error.clear();
         return true;
     }
