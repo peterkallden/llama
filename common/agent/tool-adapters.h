@@ -15,7 +15,7 @@ struct common_native_tool_bindings {
     common_memory_store * memory_store = nullptr;
     common_plan_store * plan_store = nullptr;
     common_memory_query memory_query;
-    std::string plan_id;
+    const std::string * plan_id = nullptr;
     // Canonical repository root supplied by the runtime, never by the model.
     // An empty value leaves repository tools unavailable.
     std::string repository_root;

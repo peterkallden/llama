@@ -144,12 +144,16 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_plan_scope requested_plan_scope = common_plan_scope::turn;
     common_agent_scope agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
+    std::string active_plan_id = a.plan_id;
+    const auto orchestration_config = make_agent_orchestration_config(a);
+    const auto bootstrap_runtime_config = make_agent_bootstrap_runtime_config(a);
     if (a.planning_mode == "mini") {
         if (!parse_plan_scope(a.plan_scope, requested_plan_scope)) {
             fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
             return 1;
         }
         agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
+        active_plan_id = a.plan_id;
         plan_store = make_plan_store(a, error);
         if (!plan_store || !plan_store->open(a.plan_db, error)) {
             fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
@@ -159,12 +163,20 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "bootstrap/import/export currently supports only session- or project-scoped package tenants\n");
             return 1;
         }
-        if (!maybe_install_agent_bootstrap(store, *plan_store, a, agent_scope, installed_blueprint_candidates, error)) {
+        if (!maybe_install_agent_bootstrap(
+                store,
+                *plan_store,
+                orchestration_config,
+                bootstrap_runtime_config,
+                agent_scope,
+                active_plan_id,
+                installed_blueprint_candidates,
+                error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
         bool exported = false;
-        if (!maybe_export_agent_package(store, *plan_store, a, exported, error)) {
+        if (!maybe_export_agent_package(store, *plan_store, orchestration_config, agent_scope, exported, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
@@ -236,7 +248,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         common_native_tool_bindings bindings;
         if (!a.repository_root.empty()) bindings.repository_root = std::filesystem::weakly_canonical(a.repository_root).string();
         bindings.plan_store = plan_store.get();
-        bindings.plan_id = a.plan_id;
+        bindings.plan_id = &active_plan_id;
         if (memory_enabled) {
             bindings.memory_store = &store;
             bindings.memory_query = query;
@@ -313,9 +325,11 @@ int run_agent_cli(common_memory_store & store, args a) {
         common_agent_cli_runtime_inputs inputs{
             store,
             *plan_store,
-            a,
+            make_agent_inference_options(a),
             make_agent_cli_runtime_policy(a),
             make_agent_runtime_config(a),
+            orchestration_config,
+            active_plan_id,
             agent_scope,
             installed_blueprint_candidates,
             hits,

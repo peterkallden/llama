@@ -25,7 +25,8 @@ bool load_bootstrap_file(
 bool export_agent_package(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
-    const args & a,
+    const common_agent_scope & scope,
+    const std::string & output_path,
     std::string & error);
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(

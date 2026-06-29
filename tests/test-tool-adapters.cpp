@@ -34,7 +34,8 @@ int main() {
     bindings.plan_store = &plans;
     bindings.memory_query.scope = common_memory_scope::session;
     bindings.memory_query.session_id = "session-1";
-    bindings.plan_id = "plan-1";
+    std::string active_plan_id = "plan-1";
+    bindings.plan_id = &active_plan_id;
     common_tool_adapter_result adapters;
     assert(common_register_native_tool_adapters(catalog, "memory-read", bindings, registry, adapters, error));
     assert(adapters.registered.size() == 5);

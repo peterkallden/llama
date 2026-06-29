@@ -713,19 +713,19 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             }, error);
         } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_remember_proposal) {
             installed = register_definition(definition, registry, bindings.memory_remember_proposal, error, false, true);
-        } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && !bindings.plan_id.empty()) {
+        } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && bindings.plan_id != nullptr && !bindings.plan_id->empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.plan_get.invalid_arguments", std::move(err));
-                const auto plan = bindings.plan_store->get(bindings.plan_id, err);
+                const auto plan = bindings.plan_store->get(*bindings.plan_id, err);
                 if (!err.empty()) return tool_execution_failure("tool.plan_get.load_failed", std::move(err), "Plan could not be loaded.");
                 if (!plan) return tool_not_found_failure("tool.plan_get.unavailable", "bound plan is unavailable", "Bound plan is unavailable.");
                 json steps = json::array();
                 for (const auto & step : plan->steps) steps.push_back({{"id", step.id}, {"title", step.title}, {"objective", step.objective}, {"status", (int) step.status}, {"selected_tool", step.selected_tool}});
                 json response = {{"plan_id", plan->id}, {"version", plan->version}, {"goal", plan->goal}, {"active_step", plan->active_step_id}, {"next_action", plan->next_action}, {"steps", steps}};
                 if (arguments.value("include_history", false)) {
-                    const auto history = bindings.plan_store->history(bindings.plan_id, err);
+                    const auto history = bindings.plan_store->history(*bindings.plan_id, err);
                     if (!err.empty()) return tool_execution_failure("tool.plan_get.history_failed", std::move(err), "Plan history could not be loaded.");
                     response["history_count"] = history.size();
                 }

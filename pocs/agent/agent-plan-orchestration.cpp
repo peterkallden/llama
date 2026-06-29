@@ -20,14 +20,42 @@ std::string make_bootstrap_prefix(const common_agent_scope & scope) {
 
 } // namespace
 
+common_agent_orchestration_config make_agent_orchestration_config(const args & options) {
+    common_agent_orchestration_config config;
+    config.prompt = options.prompt;
+    config.agent_plan = options.agent_plan;
+    config.agent_blueprint = options.agent_blueprint;
+    config.agent_bootstrap = options.agent_bootstrap;
+    config.agent_import = options.agent_import;
+    config.agent_export = options.agent_export;
+    return config;
+}
+
+common_agent_bootstrap_runtime_config make_agent_bootstrap_runtime_config(const args & options) {
+    common_agent_bootstrap_runtime_config config;
+    config.embed_procedure = [&options](const std::string & text, std::vector<float> & embedding, std::string & error) {
+        if (!ensure_memory_cli_embedding(options, text, embedding, "bootstrap procedure", error)) {
+            return false;
+        }
+        if (embedding.empty()) {
+            error = "--agent-bootstrap default requires --embedding-model";
+            return false;
+        }
+        return true;
+    };
+    return config;
+}
+
 bool maybe_install_agent_bootstrap(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
-    const args & options,
+    const common_agent_orchestration_config & config,
+    const common_agent_bootstrap_runtime_config & runtime_config,
     const common_agent_scope & scope,
+    std::string & current_plan_id,
     std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
     std::string & error) {
-    if (options.agent_bootstrap != "default" && options.agent_import.empty()) {
+    if (config.agent_bootstrap != "default" && config.agent_import.empty()) {
         error.clear();
         return true;
     }
@@ -39,26 +67,15 @@ bool maybe_install_agent_bootstrap(
     bootstrap_config.now = std::time(nullptr);
     common_agent_bootstrap_result bootstrap_result;
 
-    const auto embed = [&options](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-        if (!ensure_memory_cli_embedding(options, text, embedding, "bootstrap procedure", embedding_error)) {
-            return false;
-        }
-        if (embedding.empty()) {
-            embedding_error = "--agent-bootstrap default requires --embedding-model";
-            return false;
-        }
-        return true;
-    };
-
     common_agent_bootstrap_package package;
-    if (options.agent_import.empty()) {
+    if (config.agent_import.empty()) {
         package = common_agent_default_bootstrap_package();
-    } else if (!load_bootstrap_file(options.agent_import, package, error)) {
+    } else if (!load_bootstrap_file(config.agent_import, package, error)) {
         error = "agent import failed: " + error;
         return false;
     }
 
-    if (!common_agent_install_bootstrap_package(memory_store, plan_store, bootstrap_config, package, embed, bootstrap_result, error)) {
+    if (!common_agent_install_bootstrap_package(memory_store, plan_store, bootstrap_config, package, runtime_config.embed_procedure, bootstrap_result, error)) {
         error = "agent bootstrap failed: " + error;
         return false;
     }
@@ -78,16 +95,16 @@ bool maybe_install_agent_bootstrap(
         bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
         bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
 
-    if (!options.agent_blueprint.empty() && options.agent_blueprint != "auto") {
-        common_explicit_blueprint_selector selector(options.agent_blueprint);
+    if (!config.agent_blueprint.empty() && config.agent_blueprint != "auto") {
+        common_explicit_blueprint_selector selector(config.agent_blueprint);
         common_blueprint_selection_config selection_config;
-        selection_config.task_plan_id = options.plan_id;
+        selection_config.task_plan_id = current_plan_id;
         selection_config.session_id = scope.session_id;
         selection_config.scope = scope.plan_scope;
         selection_config.now = bootstrap_config.now;
         common_blueprint_selection_result selection;
         common_agent_request selection_request;
-        selection_request.prompt = options.prompt;
+        selection_request.prompt = config.prompt;
         common_agent_scope_apply(scope, selection_request);
         if (!common_agent_select_and_instantiate_blueprint(plan_store, selection_request, selector, installed_blueprint_candidates, selection_config, selection, error)) {
             error = "agent blueprint selection failed: " + error;
@@ -100,7 +117,7 @@ bool maybe_install_agent_bootstrap(
         }
         fprintf(stderr, "agent blueprint %s: %s\n",
             selection.outcome == common_blueprint_selection_outcome::instantiated ? "instantiated" : "resumed",
-            options.plan_id.c_str());
+            current_plan_id.c_str());
     }
 
     error.clear();
@@ -110,19 +127,20 @@ bool maybe_install_agent_bootstrap(
 bool maybe_export_agent_package(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
-    const args & options,
+    const common_agent_orchestration_config & config,
+    const common_agent_scope & scope,
     bool & exported,
     std::string & error) {
     exported = false;
-    if (options.agent_export.empty()) {
+    if (config.agent_export.empty()) {
         error.clear();
         return true;
     }
-    if (!export_agent_package(memory_store, plan_store, options, error)) {
+    if (!export_agent_package(memory_store, plan_store, scope, config.agent_export, error)) {
         error = "agent export failed: " + error;
         return false;
     }
-    fprintf(stderr, "agent export written: %s\n", options.agent_export.c_str());
+    fprintf(stderr, "agent export written: %s\n", config.agent_export.c_str());
     exported = true;
     error.clear();
     return true;
@@ -131,12 +149,12 @@ bool maybe_export_agent_package(
 bool maybe_auto_select_plan(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
-    const args & options,
-    args & mutable_options,
+    const common_agent_orchestration_config & config,
+    std::string & current_plan_id,
     const common_agent_scope & scope,
     common_plan_store & plan_store,
     std::string & error) {
-    if (options.agent_plan != "auto" || !mutable_options.plan_id.empty()) {
+    if (config.agent_plan != "auto" || !current_plan_id.empty()) {
         error.clear();
         return true;
     }
@@ -171,13 +189,13 @@ bool maybe_auto_select_plan(
 
     if (!candidates.empty()) {
         common_agent_request selection_request;
-        selection_request.prompt = options.prompt;
+        selection_request.prompt = config.prompt;
         common_agent_scope_apply(scope, selection_request);
         std::string selection_error;
         const auto selection_result = select_llama_cli_plan_result(inference, generation_config, selection_request, candidates, selection_error);
         if (selection_result.plan_id) {
-            mutable_options.plan_id = *selection_result.plan_id;
-            fprintf(stderr, "agent plan auto-selected: %s\n", mutable_options.plan_id.c_str());
+            current_plan_id = *selection_result.plan_id;
+            fprintf(stderr, "agent plan auto-selected: %s\n", current_plan_id.c_str());
         } else if (!selection_error.empty()) {
             fprintf(stderr, "agent plan auto-selection failed safely: %s; creating a new plan\n", selection_error.c_str());
         } else {
@@ -192,43 +210,43 @@ bool maybe_auto_select_plan(
 bool maybe_auto_select_blueprint(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
-    const args & options,
-    args & mutable_options,
+    const common_agent_orchestration_config & config,
+    std::string & current_plan_id,
     const common_agent_scope & scope,
     common_plan_store & plan_store,
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
     bool profile_tools_active,
     const common_tool_registry * tool_registry,
     std::string & error) {
-    if (options.agent_blueprint != "auto") {
+    if (config.agent_blueprint != "auto") {
         error.clear();
         return true;
     }
 
     auto selector = make_llama_cli_blueprint_selector(inference, generation_config);
-    common_blueprint_selection_config config;
-    config.task_plan_id = mutable_options.plan_id;
-    config.session_id = scope.session_id;
-    config.scope = scope.plan_scope;
-    config.now = std::time(nullptr);
+    common_blueprint_selection_config selection_config;
+    selection_config.task_plan_id = current_plan_id;
+    selection_config.session_id = scope.session_id;
+    selection_config.scope = scope.plan_scope;
+    selection_config.now = std::time(nullptr);
     common_blueprint_selection_result selection;
     common_agent_request selection_request;
-    selection_request.prompt = options.prompt;
+    selection_request.prompt = config.prompt;
     common_agent_scope_apply(scope, selection_request);
-    if (!common_agent_select_and_instantiate_blueprint(plan_store, selection_request, *selector, installed_blueprint_candidates, config, selection, error)) {
+    if (!common_agent_select_and_instantiate_blueprint(plan_store, selection_request, *selector, installed_blueprint_candidates, selection_config, selection, error)) {
         error = "agent blueprint selection failed: " + error;
         return false;
     }
 
     if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
-        fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), mutable_options.plan_id.c_str());
+        fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), current_plan_id.c_str());
         if (profile_tools_active && tool_registry != nullptr) {
             common_agent_request binding_request;
-            binding_request.prompt = options.prompt;
+            binding_request.prompt = config.prompt;
             common_agent_scope_apply(scope, binding_request);
             std::string binding_error;
             const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                inference, generation_config, *tool_registry, binding_request, plan_store, mutable_options.plan_id, binding_error);
+                inference, generation_config, *tool_registry, binding_request, plan_store, current_plan_id, binding_error);
             if (!binding_result.applied) {
                 fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
             }

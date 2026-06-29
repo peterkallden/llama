@@ -7,8 +7,6 @@
 
 common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & options) {
     common_agent_cli_runtime_policy policy;
-    policy.prompt = options.prompt;
-    policy.plan_id = options.plan_id;
     policy.agent_inference_backend = options.agent_inference_backend;
     policy.tool_profile = options.tool_profile;
     policy.memory_learn = options.memory_learn;
@@ -31,9 +29,10 @@ common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
         inputs.memory_store,
         inputs.plan_store,
         inference,
-        inputs.options,
         inputs.policy,
         inputs.runtime_config,
+        inputs.orchestration_config,
+        inputs.current_plan_id,
         inputs.scope,
         inputs.installed_blueprint_candidates,
         inputs.memories,
@@ -48,15 +47,15 @@ common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
 common_agent_request make_agent_cli_runtime_request(
     const common_agent_cli_runtime_execution & execution) {
     common_agent_request request;
-    request.prompt = execution.policy.prompt;
     request.memories = execution.memories;
     request.enable_memory = execution.memory_enabled;
     request.enable_planning = true;
     request.enable_reflection = execution.policy.enable_reflection;
     request.memory_scope = execution.memory_scope;
     request.plan_scope = execution.scope.plan_scope;
-    if (!execution.policy.plan_id.empty()) {
-        request.plan_id = execution.policy.plan_id;
+    request.prompt = execution.orchestration_config.prompt;
+    if (!execution.current_plan_id.empty()) {
+        request.plan_id = execution.current_plan_id;
     }
     common_agent_scope_apply(execution.scope, request);
     request.max_iterations = execution.policy.max_iterations;
@@ -78,7 +77,7 @@ bool run_agent_cli_mini_runtime_session(
     }
 
     if (!initialize_agent_cli_runtime_session(
-            make_agent_inference_options(inputs.options),
+            inputs.inference_options,
             inference_backend_kind,
             inputs.memory_enabled,
             inputs.fallback_reason,
@@ -99,21 +98,19 @@ bool run_agent_cli_mini_runtime(
     if (!maybe_auto_select_plan(
             execution.inference,
             execution.runtime_config.generation_config,
-            execution.mutable_options,
-            execution.mutable_options,
+            execution.orchestration_config,
+            execution.current_plan_id,
             execution.scope,
             execution.plan_store,
             error)) {
         return false;
     }
 
-    execution.policy.plan_id = execution.mutable_options.plan_id;
-
     if (!maybe_auto_select_blueprint(
             execution.inference,
             execution.runtime_config.generation_config,
-            execution.mutable_options,
-            execution.mutable_options,
+            execution.orchestration_config,
+            execution.current_plan_id,
             execution.scope,
             execution.plan_store,
             execution.installed_blueprint_candidates,
@@ -122,8 +119,6 @@ bool run_agent_cli_mini_runtime(
             error)) {
         return false;
     }
-
-    execution.policy.plan_id = execution.mutable_options.plan_id;
 
     auto assembly = make_agent_runtime_assembly(
         execution.memory_store,

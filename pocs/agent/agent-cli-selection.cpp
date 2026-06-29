@@ -41,8 +41,12 @@ bool load_bootstrap_file(const std::string & path, common_agent_bootstrap_packag
     return common_agent_package_parse_json(text.str(), package, error);
 }
 
-bool export_agent_package(common_memory_store & memory_store, common_plan_store & plan_store, const args & a, std::string & error) {
-    const auto scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
+bool export_agent_package(
+        common_memory_store & memory_store,
+        common_plan_store & plan_store,
+        const common_agent_scope & scope,
+        const std::string & output_path,
+        std::string & error) {
     if (!common_cli_supports_bootstrap_package_scope(scope)) {
         error = "--agent-export currently supports only session- or project-scoped bootstrap packages";
         return false;
@@ -98,7 +102,7 @@ bool export_agent_package(common_memory_store & memory_store, common_plan_store 
     if (!common_agent_package_to_json(package, text, error)) {
         return false;
     }
-    std::ofstream file(a.agent_export, std::ios::binary | std::ios::trunc);
+    std::ofstream file(output_path, std::ios::binary | std::ios::trunc);
     if (!file) {
         error = "cannot open --agent-export path";
         return false;

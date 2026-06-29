@@ -6,6 +6,7 @@
 #include "agent/agent-inference.h"
 #include "agent/blueprint-selector.h"
 #include "agent/tool-registry.h"
+#include "agent-plan-orchestration.h"
 #include "agent-runtime-session.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
@@ -14,8 +15,6 @@
 #include <vector>
 
 struct common_agent_cli_runtime_policy {
-    std::string prompt;
-    std::string plan_id;
     std::string agent_inference_backend = "cli";
     std::string tool_profile;
     std::string memory_learn = "off";
@@ -34,9 +33,11 @@ common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & optio
 struct common_agent_cli_runtime_inputs {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
-    args & options;
+    common_agent_inference_options inference_options;
     common_agent_cli_runtime_policy policy;
     common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string & current_plan_id;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;
@@ -52,9 +53,10 @@ struct common_agent_cli_runtime_execution {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_inference & inference;
-    args & mutable_options;
     common_agent_cli_runtime_policy policy;
     common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string & current_plan_id;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;

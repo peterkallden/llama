@@ -465,13 +465,15 @@ static void test_mini_runtime_smoke() {
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools;
+    std::string current_plan_id;
     common_agent_cli_runtime_execution execution{
         memories,
         plans,
         inference,
-        options,
         make_agent_cli_runtime_policy(options),
         make_agent_runtime_config(options),
+        make_agent_orchestration_config(options),
+        current_plan_id,
         scope,
         blueprints,
         hits,
@@ -528,13 +530,15 @@ static void test_runtime_request_builder() {
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits = {hit};
     const std::vector<common_chat_tool> tools;
+    std::string current_plan_id = "plan-1";
     const common_agent_cli_runtime_execution execution{
         memories,
         plans,
         inference,
-        options,
         make_agent_cli_runtime_policy(options),
         make_agent_runtime_config(options),
+        make_agent_orchestration_config(options),
+        current_plan_id,
         scope,
         blueprints,
         hits,
@@ -567,13 +571,15 @@ static void test_runtime_request_builder() {
     options.reflection_mode = "off";
     options.max_tool_rounds = 4;
     options.tool_profile = "safe";
+    std::string no_tools_plan_id = "plan-1";
     const common_agent_cli_runtime_execution no_tools_execution{
         memories,
         plans,
         inference,
-        options,
         make_agent_cli_runtime_policy(options),
         make_agent_runtime_config(options),
+        make_agent_orchestration_config(options),
+        no_tools_plan_id,
         scope,
         blueprints,
         hits,
@@ -634,12 +640,15 @@ static void test_runtime_execution_builder() {
         {"lookup", "Look up a record", R"({"type":"object"})"},
     };
     const std::string fallback_reason = "embedding disabled";
+    std::string current_plan_id = options.plan_id;
     common_agent_cli_runtime_inputs inputs{
         memories,
         plans,
-        options,
+        make_agent_inference_options(options),
         make_agent_cli_runtime_policy(options),
         make_agent_runtime_config(options),
+        make_agent_orchestration_config(options),
+        current_plan_id,
         scope,
         blueprints,
         hits,
@@ -655,9 +664,8 @@ static void test_runtime_execution_builder() {
     assert(&execution.memory_store == &memories);
     assert(&execution.plan_store == &plans);
     assert(&execution.inference == &inference);
-    assert(&execution.mutable_options == &options);
-    assert(execution.policy.prompt == "Check status");
-    assert(execution.policy.plan_id == "plan-1");
+    assert(execution.orchestration_config.prompt == "Check status");
+    assert(execution.current_plan_id == "plan-1");
     assert(execution.policy.enable_reflection);
     assert(execution.policy.max_iterations == 2);
     assert(execution.policy.max_reflection_rounds == 1);
