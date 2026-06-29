@@ -310,37 +310,22 @@ int run_agent_cli(common_memory_store & store, args a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        const auto inference_options = make_agent_inference_options(a);
-        agent_inference_backend inference_backend_kind = agent_inference_backend::cli;
-        if (!parse_agent_inference_backend(a.agent_inference_backend, inference_backend_kind)) {
-            fprintf(stderr, "unsupported --agent-inference-backend: %s\n", a.agent_inference_backend.c_str());
-            return 1;
-        }
-
-        common_agent_inference_session inference_session;
-        if (!initialize_agent_cli_runtime_session(inference_options, inference_backend_kind, memory_enabled, fallback_reason, runtime_session, error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        inference_session = std::move(runtime_session.inference_session);
-        fprintf(stderr, "agent inference backend: %s\n", a.agent_inference_backend.c_str());
-
-        common_agent_cli_runtime_execution execution{
+        common_agent_cli_runtime_inputs inputs{
             store,
             *plan_store,
-            *inference_session.inference,
             a,
             agent_scope,
             installed_blueprint_candidates,
             hits,
             query.scope,
             memory_enabled,
+            fallback_reason,
             tools,
             profile_tools_active,
             profile_tools_active ? &tool_registry : nullptr,
         };
         common_agent_result result;
-        if (!run_agent_cli_mini_runtime(execution, result, error)) {
+        if (!run_agent_cli_mini_runtime_session(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }

@@ -578,6 +578,70 @@ static void test_runtime_request_builder() {
     assert(!no_tools_request.allow_policy_gated_tool_proposals);
 }
 
+static void test_runtime_execution_builder() {
+    fake_agent_inference inference;
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.tool_profile = "research";
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+    scope.turn_id = "turn-7";
+    scope.memory_scope = common_memory_scope::project;
+    scope.plan_scope = common_plan_scope::session;
+
+    common_memory_record record;
+    record.id = "mem-1";
+    record.kind = common_memory_kind::fact;
+    common_memory_hit hit;
+    hit.memory = record;
+    hit.final_score = 0.9f;
+
+    const std::vector<common_blueprint_candidate> blueprints = {
+        {"repo-change", "bootstrap:repo-change", "Repository change workflow"},
+    };
+    const std::vector<common_memory_hit> hits = {hit};
+    const std::vector<common_chat_tool> tools = {
+        {"lookup", "Look up a record", R"({"type":"object"})"},
+    };
+    const std::string fallback_reason = "embedding disabled";
+    common_agent_cli_runtime_inputs inputs{
+        memories,
+        plans,
+        options,
+        scope,
+        blueprints,
+        hits,
+        common_memory_scope::project,
+        true,
+        fallback_reason,
+        tools,
+        true,
+        nullptr,
+    };
+
+    const auto execution = make_agent_cli_runtime_execution(inputs, inference);
+    assert(&execution.memory_store == &memories);
+    assert(&execution.plan_store == &plans);
+    assert(&execution.inference == &inference);
+    assert(&execution.options == &options);
+    assert(&execution.scope == &scope);
+    assert(&execution.installed_blueprint_candidates == &blueprints);
+    assert(&execution.memories == &hits);
+    assert(execution.memory_scope == common_memory_scope::project);
+    assert(execution.memory_enabled);
+    assert(&execution.tools == &tools);
+    assert(execution.profile_tools_active);
+    assert(!execution.tool_registry);
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -597,6 +661,8 @@ static bool run_named_test(const std::string & name) {
         test_mini_runtime_smoke();
     } else if (name == "runtime-request-builder") {
         test_runtime_request_builder();
+    } else if (name == "runtime-execution-builder") {
+        test_runtime_execution_builder();
     } else {
         return false;
     }
@@ -621,6 +687,7 @@ int main(int argc, char ** argv) {
         "selection-failure",
         "mini-runtime-smoke",
         "runtime-request-builder",
+        "runtime-execution-builder",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

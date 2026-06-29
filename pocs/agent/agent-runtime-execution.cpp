@@ -5,6 +5,25 @@
 
 #include <cstdio>
 
+common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
+    common_agent_cli_runtime_inputs & inputs,
+    common_agent_inference & inference) {
+    return {
+        inputs.memory_store,
+        inputs.plan_store,
+        inference,
+        inputs.options,
+        inputs.scope,
+        inputs.installed_blueprint_candidates,
+        inputs.memories,
+        inputs.memory_scope,
+        inputs.memory_enabled,
+        inputs.tools,
+        inputs.profile_tools_active,
+        inputs.tool_registry,
+    };
+}
+
 common_agent_request make_agent_cli_runtime_request(
     const common_agent_cli_runtime_execution & execution) {
     common_agent_request request;
@@ -25,6 +44,32 @@ common_agent_request make_agent_cli_runtime_request(
     request.allow_policy_gated_tool_proposals =
         execution.options.tool_profile == "memory" || execution.options.tool_profile == "research";
     return request;
+}
+
+bool run_agent_cli_mini_runtime_session(
+    common_agent_cli_runtime_inputs & inputs,
+    common_agent_cli_runtime_session & session,
+    common_agent_result & result,
+    std::string & error) {
+    agent_inference_backend inference_backend_kind = agent_inference_backend::cli;
+    if (!parse_agent_inference_backend(inputs.options.agent_inference_backend, inference_backend_kind)) {
+        error = "unsupported --agent-inference-backend: " + inputs.options.agent_inference_backend;
+        return false;
+    }
+
+    if (!initialize_agent_cli_runtime_session(
+            make_agent_inference_options(inputs.options),
+            inference_backend_kind,
+            inputs.memory_enabled,
+            inputs.fallback_reason,
+            session,
+            error)) {
+        return false;
+    }
+
+    fprintf(stderr, "agent inference backend: %s\n", inputs.options.agent_inference_backend.c_str());
+    auto execution = make_agent_cli_runtime_execution(inputs, *session.inference_session.inference);
+    return run_agent_cli_mini_runtime(execution, result, error);
 }
 
 bool run_agent_cli_mini_runtime(
