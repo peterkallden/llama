@@ -27,6 +27,9 @@ struct common_agent_cli_runtime_execution {
     const common_tool_registry * tool_registry = nullptr;
 };
 
+common_agent_request make_agent_cli_runtime_request(
+    const common_agent_cli_runtime_execution & execution);
+
 bool run_agent_cli_mini_runtime(
     common_agent_cli_runtime_execution & execution,
     common_agent_result & result,

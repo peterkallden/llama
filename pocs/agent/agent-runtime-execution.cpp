@@ -5,6 +5,28 @@
 
 #include <cstdio>
 
+common_agent_request make_agent_cli_runtime_request(
+    const common_agent_cli_runtime_execution & execution) {
+    common_agent_request request;
+    request.prompt = execution.options.prompt;
+    request.memories = execution.memories;
+    request.enable_memory = execution.memory_enabled;
+    request.enable_planning = true;
+    request.enable_reflection = execution.options.reflection_mode == "always";
+    request.memory_scope = execution.memory_scope;
+    request.plan_scope = execution.scope.plan_scope;
+    if (!execution.options.plan_id.empty()) {
+        request.plan_id = execution.options.plan_id;
+    }
+    common_agent_scope_apply(execution.scope, request);
+    request.max_iterations = execution.options.reflection_mode == "always" ? 2 : 1;
+    request.max_reflection_rounds = execution.options.reflection_mode == "always" ? 1 : 0;
+    request.max_tool_batches = execution.profile_tools_active ? execution.options.max_tool_rounds : 0;
+    request.allow_policy_gated_tool_proposals =
+        execution.options.tool_profile == "memory" || execution.options.tool_profile == "research";
+    return request;
+}
+
 bool run_agent_cli_mini_runtime(
     common_agent_cli_runtime_execution & execution,
     common_agent_result & result,
@@ -40,24 +62,7 @@ bool run_agent_cli_mini_runtime(
         execution.tools,
         execution.tool_registry);
 
-    common_agent_request request;
-    request.prompt = execution.options.prompt;
-    request.memories = execution.memories;
-    request.enable_memory = execution.memory_enabled;
-    request.enable_planning = true;
-    request.enable_reflection = execution.options.reflection_mode == "always";
-    request.memory_scope = execution.memory_scope;
-    request.plan_scope = execution.scope.plan_scope;
-    if (!execution.options.plan_id.empty()) {
-        request.plan_id = execution.options.plan_id;
-    }
-    common_agent_scope_apply(execution.scope, request);
-    request.max_iterations = execution.options.reflection_mode == "always" ? 2 : 1;
-    request.max_reflection_rounds = execution.options.reflection_mode == "always" ? 1 : 0;
-    request.max_tool_batches = execution.profile_tools_active ? execution.options.max_tool_rounds : 0;
-    request.allow_policy_gated_tool_proposals =
-        execution.options.tool_profile == "memory" || execution.options.tool_profile == "research";
-
+    const common_agent_request request = make_agent_cli_runtime_request(execution);
     result = assembly.runtime->run(request);
     if (!result.error.empty()) {
         error = "agent runtime failed: " + result.error;
