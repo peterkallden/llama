@@ -6,7 +6,7 @@ target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_REFLECTION)
-    target_sources(${TARGET} PRIVATE ../agent/agent-cli-inference.cpp ../agent/agent-plan-orchestration.cpp ../agent/agent-runtime-chat-driver.cpp ../agent/agent-runtime-execution.cpp ../agent/agent-runtime-session.cpp ../agent/agent-server-generation.cpp ../agent/agent-server-inference.cpp ../agent/agent-runtime-assembly.cpp ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
+    target_sources(${TARGET} PRIVATE ../agent/agent-cli-inference.cpp ../agent/agent-plan-orchestration.cpp ../agent/agent-runtime-chat-driver.cpp ../agent/agent-runtime-host.cpp ../agent/agent-runtime-execution.cpp ../agent/agent-runtime-session.cpp ../agent/agent-server-generation.cpp ../agent/agent-server-inference.cpp ../agent/agent-runtime-assembly.cpp ../agent/agent-cli-runtime.cpp ../agent/agent-cli-selection.cpp)
     target_link_libraries(${TARGET} PRIVATE llama-agent-poc server-context)
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 endif()

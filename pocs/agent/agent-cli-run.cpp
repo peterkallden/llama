@@ -9,6 +9,7 @@
 #include "agent-cli-runtime.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-chat-driver.h"
+#include "agent-runtime-host.h"
 #include "agent-runtime-execution.h"
 #include "agent-runtime-session.h"
 #include "agent/agent-bootstrap.h"
@@ -43,9 +44,7 @@
 
 using json = nlohmann::ordered_json;
 
-namespace {
-
-} // namespace
+namespace {} // namespace
 #endif
 
 int run_agent_cli(common_memory_store & store, args a) {
@@ -323,37 +322,41 @@ int run_agent_cli(common_memory_store & store, args a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        common_agent_runtime_driver_inputs inputs{
+        common_agent_request runtime_request;
+        runtime_request.prompt = a.prompt;
+        runtime_request.enable_memory = memory_enabled;
+        runtime_request.memories = hits;
+        common_agent_scope_apply(agent_scope, runtime_request);
+        common_agent_runtime_host_inputs inputs{
+            common_agent_runtime_host_mode::mini,
             store,
-            *plan_store,
+            plan_store.get(),
             make_agent_inference_options(a),
             make_agent_runtime_policy(a),
             make_agent_runtime_config(a),
             orchestration_config,
-            active_plan_id,
-            agent_scope,
-            installed_blueprint_candidates,
-            hits,
+            &active_plan_id,
+            &agent_scope,
+            &installed_blueprint_candidates,
+            &hits,
             query.scope,
             memory_enabled,
-            fallback_reason,
+            &fallback_reason,
+            std::move(runtime_request),
+            {},
             tools,
             profile_tools_active,
             profile_tools_active ? &tool_registry : nullptr,
+            {},
         };
         common_agent_result result;
-        if (!run_agent_runtime_driver_session(inputs, runtime_session, result, error)) {
+        if (!run_agent_runtime_host_session(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
         return finish_chat(result.response, result.total_decoded_tokens);
     }
 #endif
-
-    if (!initialize_agent_runtime_session(make_agent_inference_options(a), agent_inference_backend::cli, memory_enabled, fallback_reason, runtime_session, error)) {
-        fprintf(stderr, "%s\n", error.c_str());
-        return 1;
-    }
 
     common_agent_request request;
     request.messages = messages;
@@ -364,11 +367,23 @@ int run_agent_cli(common_memory_store & store, args a) {
 
     common_agent_generation_options generation_options;
     generation_options.n_predict = a.n_predict;
-    common_agent_chat_runtime_execution execution{
-        *runtime_session.inference_session.inference,
+    common_agent_runtime_host_inputs inputs{
+        common_agent_runtime_host_mode::chat,
+        store,
+        nullptr,
+        make_agent_inference_options(a),
+        make_agent_runtime_policy(a),
+        make_agent_runtime_config(a),
+        {},
+        nullptr,
+        nullptr,
+        nullptr,
+        &hits,
+        query.scope,
+        memory_enabled,
+        &fallback_reason,
         std::move(request),
         generation_options,
-        {a.max_tool_rounds},
         tools,
         profile_tools_active,
         profile_tools_active ? &tool_registry : nullptr,
@@ -385,7 +400,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     };
 
     common_agent_result result;
-    if (!run_agent_chat_runtime(execution, result, error)) {
+    if (!run_agent_runtime_host_session(inputs, runtime_session, result, error)) {
         fprintf(stderr, "%s\n", error.c_str());
         runtime_session.reset();
         return 1;

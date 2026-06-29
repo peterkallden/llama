@@ -6,6 +6,7 @@
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
 #include "agent-runtime-chat-driver.h"
+#include "agent-runtime-host.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-execution.h"
 #include "chat-peg-parser.h"
@@ -766,6 +767,131 @@ static void test_chat_runtime_driver_smoke() {
     assert(inference.seen[1].messages[2].tool_name == "memory_search");
 }
 
+static void test_runtime_host_chat_smoke() {
+    fake_agent_inference inference;
+    const std::vector<common_chat_tool> tools = {
+        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+    };
+    inference.queued = {
+        make_success(
+            R"(Inspecting first.<tool_calls>[{"name":"memory_search","arguments":{"query":"status"}}]</tool_calls>)",
+            5,
+            common_agent_generation_stop_reason::none,
+            make_tool_call_chat_params(tools)),
+        make_success("Status is green.", 7),
+    };
+
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+
+    common_agent_request request = make_request();
+    request.messages = {{"user", "Check status"}};
+    common_agent_generation_options options;
+    options.n_predict = 64;
+
+    common_agent_runtime_host_inputs inputs{
+        common_agent_runtime_host_mode::chat,
+        memories,
+        nullptr,
+        {},
+        {},
+        {},
+        {},
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        common_memory_scope::session,
+        true,
+        nullptr,
+        request,
+        options,
+        tools,
+        false,
+        nullptr,
+        [](const common_chat_tool_call & call) {
+            assert(call.name == "memory_search");
+            return std::string(R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})");
+        },
+    };
+
+    auto execution = make_agent_runtime_host_execution(inputs, inference);
+    common_agent_result result;
+    assert(run_agent_runtime_host(execution, result, error));
+    assert(error.empty());
+    assert(result.response == "Status is green.");
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::conversation);
+}
+
+static void test_runtime_host_mini_smoke() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"(not-json)"),
+        make_success("draft-content", 7),
+    };
+
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.memory_learn = "off";
+    options.reflection_mode = "off";
+    options.agent_plan = "off";
+    options.agent_blueprint = "off";
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+    scope.turn_id = "turn-7";
+    scope.memory_scope = common_memory_scope::session;
+    scope.plan_scope = common_plan_scope::turn;
+
+    common_agent_request request = make_request();
+    request.enable_memory = true;
+
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> hits;
+    const std::vector<common_chat_tool> tools;
+    std::string current_plan_id;
+    common_agent_runtime_host_inputs inputs{
+        common_agent_runtime_host_mode::mini,
+        memories,
+        &plans,
+        {},
+        make_agent_runtime_policy(options),
+        make_agent_runtime_config(options),
+        make_agent_orchestration_config(options),
+        &current_plan_id,
+        &scope,
+        &blueprints,
+        &hits,
+        common_memory_scope::session,
+        true,
+        nullptr,
+        request,
+        {},
+        tools,
+        false,
+        nullptr,
+        {},
+    };
+
+    auto execution = make_agent_runtime_host_execution(inputs, inference);
+    common_agent_result result;
+    assert(run_agent_runtime_host(execution, result, error));
+    assert(error.empty());
+    assert(result.response == "draft-content");
+    assert(result.plan_id);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -789,6 +915,10 @@ static bool run_named_test(const std::string & name) {
         test_runtime_execution_builder();
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
+    } else if (name == "runtime-host-chat-smoke") {
+        test_runtime_host_chat_smoke();
+    } else if (name == "runtime-host-mini-smoke") {
+        test_runtime_host_mini_smoke();
     } else {
         return false;
     }
@@ -815,6 +945,8 @@ int main(int argc, char ** argv) {
         "runtime-request-builder",
         "runtime-execution-builder",
         "chat-runtime-driver-smoke",
+        "runtime-host-chat-smoke",
+        "runtime-host-mini-smoke",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

@@ -1,0 +1,71 @@
+#pragma once
+
+#include "agent-runtime-chat-driver.h"
+#include "agent-runtime-execution.h"
+
+#include <string>
+
+enum class common_agent_runtime_host_mode {
+    chat,
+    mini,
+};
+
+struct common_agent_runtime_host_inputs {
+    common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
+    common_memory_store & memory_store;
+    common_plan_store * plan_store = nullptr;
+    common_agent_inference_options inference_options;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string * current_plan_id = nullptr;
+    const common_agent_scope * scope = nullptr;
+    const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
+    const std::vector<common_memory_hit> * memories = nullptr;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    const std::string * fallback_reason = nullptr;
+    common_agent_request request;
+    common_agent_generation_options generation_options;
+    const std::vector<common_chat_tool> & tools;
+    bool profile_tools_active = false;
+    const common_tool_registry * tool_registry = nullptr;
+    common_agent_chat_tool_handler tool_handler;
+};
+
+struct common_agent_runtime_host_execution {
+    common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
+    common_memory_store & memory_store;
+    common_plan_store * plan_store = nullptr;
+    common_agent_inference & inference;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string * current_plan_id = nullptr;
+    const common_agent_scope * scope = nullptr;
+    const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
+    const std::vector<common_memory_hit> * memories = nullptr;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    common_agent_request request;
+    common_agent_generation_options generation_options;
+    const std::vector<common_chat_tool> & tools;
+    bool profile_tools_active = false;
+    const common_tool_registry * tool_registry = nullptr;
+    common_agent_chat_tool_handler tool_handler;
+};
+
+common_agent_runtime_host_execution make_agent_runtime_host_execution(
+    common_agent_runtime_host_inputs & inputs,
+    common_agent_inference & inference);
+
+bool run_agent_runtime_host_session(
+    common_agent_runtime_host_inputs & inputs,
+    common_agent_runtime_session & session,
+    common_agent_result & result,
+    std::string & error);
+
+bool run_agent_runtime_host(
+    common_agent_runtime_host_execution & execution,
+    common_agent_result & result,
+    std::string & error);
