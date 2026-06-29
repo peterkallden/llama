@@ -33,6 +33,7 @@ common_agent_cli_runtime_execution make_agent_cli_runtime_execution(
         inference,
         inputs.options,
         inputs.policy,
+        inputs.runtime_config,
         inputs.scope,
         inputs.installed_blueprint_candidates,
         inputs.memories,
@@ -95,10 +96,9 @@ bool run_agent_cli_mini_runtime(
     common_agent_cli_runtime_execution & execution,
     common_agent_result & result,
     std::string & error) {
-    const auto generation_config = make_agent_generation_config(execution.mutable_options);
     if (!maybe_auto_select_plan(
             execution.inference,
-            generation_config,
+            execution.runtime_config.generation_config,
             execution.mutable_options,
             execution.mutable_options,
             execution.scope,
@@ -111,7 +111,7 @@ bool run_agent_cli_mini_runtime(
 
     if (!maybe_auto_select_blueprint(
             execution.inference,
-            generation_config,
+            execution.runtime_config.generation_config,
             execution.mutable_options,
             execution.mutable_options,
             execution.scope,
@@ -129,7 +129,7 @@ bool run_agent_cli_mini_runtime(
         execution.memory_store,
         execution.plan_store,
         execution.inference,
-        execution.mutable_options,
+        execution.runtime_config,
         execution.tools,
         execution.tool_registry);
 

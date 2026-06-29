@@ -170,7 +170,10 @@ static void test_runtime_assembly_helpers() {
 
     args options = make_test_args();
     options.memory_learn = "off";
-    auto assembly = make_agent_runtime_assembly(memories, plans, inference, options, {}, nullptr);
+    auto runtime_config = make_agent_runtime_config(options);
+    assert(runtime_config.generation_config.n_predict == 64);
+    assert(!runtime_config.enable_memory_learning);
+    auto assembly = make_agent_runtime_assembly(memories, plans, inference, runtime_config, {}, nullptr);
     assert(assembly.planner);
     assert(assembly.executor);
     assert(assembly.reflector);
@@ -179,7 +182,13 @@ static void test_runtime_assembly_helpers() {
     assert(assembly.runtime);
 
     options.memory_learn = "post-turn";
-    auto learning_assembly = make_agent_runtime_assembly(memories, plans, inference, options, {}, nullptr);
+    options.memory_learn_min_confidence = 0.6f;
+    options.memory_learn_min_reuse = 0.4f;
+    auto learning_config = make_agent_runtime_config(options);
+    assert(learning_config.enable_memory_learning);
+    assert(learning_config.memory_learning_config.min_confidence == 0.6f);
+    assert(learning_config.memory_learning_config.min_expected_reuse == 0.4f);
+    auto learning_assembly = make_agent_runtime_assembly(memories, plans, inference, learning_config, {}, nullptr);
     assert(learning_assembly.candidate_extractor);
     assert(learning_assembly.memory_learner);
     assert(learning_assembly.runtime);
@@ -462,6 +471,7 @@ static void test_mini_runtime_smoke() {
         inference,
         options,
         make_agent_cli_runtime_policy(options),
+        make_agent_runtime_config(options),
         scope,
         blueprints,
         hits,
@@ -524,6 +534,7 @@ static void test_runtime_request_builder() {
         inference,
         options,
         make_agent_cli_runtime_policy(options),
+        make_agent_runtime_config(options),
         scope,
         blueprints,
         hits,
@@ -562,6 +573,7 @@ static void test_runtime_request_builder() {
         inference,
         options,
         make_agent_cli_runtime_policy(options),
+        make_agent_runtime_config(options),
         scope,
         blueprints,
         hits,
@@ -627,6 +639,7 @@ static void test_runtime_execution_builder() {
         plans,
         options,
         make_agent_cli_runtime_policy(options),
+        make_agent_runtime_config(options),
         scope,
         blueprints,
         hits,
@@ -654,6 +667,9 @@ static void test_runtime_execution_builder() {
     assert(execution.policy.memory_learn_show_candidate);
     assert(execution.policy.plan_show_summary);
     assert(execution.policy.agent_trace);
+    assert(execution.runtime_config.generation_config.n_predict == 64);
+    assert(execution.runtime_config.enable_memory_learning);
+    assert(execution.runtime_config.embed_memory);
     assert(&execution.scope == &scope);
     assert(&execution.installed_blueprint_candidates == &blueprints);
     assert(&execution.memories == &hits);

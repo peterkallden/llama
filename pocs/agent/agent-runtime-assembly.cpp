@@ -73,6 +73,18 @@ common_agent_inference_options make_agent_inference_options(const args & options
     return config;
 }
 
+common_agent_runtime_config make_agent_runtime_config(const args & options) {
+    common_agent_runtime_config config;
+    config.generation_config = make_agent_generation_config(options);
+    config.enable_memory_learning = options.memory_learn == "post-turn";
+    config.memory_learning_config.min_confidence = options.memory_learn_min_confidence;
+    config.memory_learning_config.min_expected_reuse = options.memory_learn_min_reuse;
+    config.embed_memory = [&options](const std::string & text, std::vector<float> & embedding, std::string & error) {
+        return ensure_memory_cli_embedding(options, text, embedding, "memory candidate", error);
+    };
+    return config;
+}
+
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend) {
     if (value == "cli") {
         backend = agent_inference_backend::cli;
@@ -122,27 +134,21 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
     common_agent_inference & inference,
-    const args & options,
+    const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
     const common_tool_registry * tool_registry) {
     common_agent_runtime_assembly assembly;
-    const auto generation_config = make_agent_generation_config(options);
-    assembly.planner = make_llama_cli_planner(inference, generation_config, tools);
-    assembly.executor = make_llama_cli_action_executor(inference, generation_config);
-    assembly.reflector = make_llama_cli_reflection_engine(inference, generation_config);
+    assembly.planner = make_llama_cli_planner(inference, runtime_config.generation_config, tools);
+    assembly.executor = make_llama_cli_action_executor(inference, runtime_config.generation_config);
+    assembly.reflector = make_llama_cli_reflection_engine(inference, runtime_config.generation_config);
 
-    if (options.memory_learn == "post-turn") {
-        assembly.candidate_extractor = make_llama_cli_memory_candidate_extractor(inference, generation_config);
-        common_memory_learning_config learning_config;
-        learning_config.min_confidence = options.memory_learn_min_confidence;
-        learning_config.min_expected_reuse = options.memory_learn_min_reuse;
+    if (runtime_config.enable_memory_learning) {
+        assembly.candidate_extractor = make_llama_cli_memory_candidate_extractor(inference, runtime_config.generation_config);
         assembly.memory_learner = std::make_unique<common_memory_post_turn_learner>(
             memory_store,
             *assembly.candidate_extractor,
-            [&options](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-                return ensure_memory_cli_embedding(options, text, embedding, "memory candidate", embedding_error);
-            },
-            learning_config);
+            runtime_config.embed_memory,
+            runtime_config.memory_learning_config);
     }
 
     assembly.runtime = std::make_unique<common_agent_runtime>(

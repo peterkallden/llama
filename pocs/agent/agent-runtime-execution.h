@@ -36,6 +36,7 @@ struct common_agent_cli_runtime_inputs {
     common_plan_store & plan_store;
     args & options;
     common_agent_cli_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;
@@ -53,6 +54,7 @@ struct common_agent_cli_runtime_execution {
     common_agent_inference & inference;
     args & mutable_options;
     common_agent_cli_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;

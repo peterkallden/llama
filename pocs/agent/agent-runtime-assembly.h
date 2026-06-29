@@ -10,6 +10,7 @@
 #include "llama.h"
 #include "memory/memory-store.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +35,15 @@ struct common_agent_inference_options {
 };
 
 common_agent_inference_options make_agent_inference_options(const args & options);
+
+struct common_agent_runtime_config {
+    common_agent_generation_config generation_config;
+    bool enable_memory_learning = false;
+    common_memory_learning_config memory_learning_config;
+    std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
+};
+
+common_agent_runtime_config make_agent_runtime_config(const args & options);
 
 struct common_agent_inference_session {
     agent_inference_backend backend = agent_inference_backend::cli;
@@ -64,6 +74,6 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_memory_store & memory_store,
     common_plan_store & plan_store,
     common_agent_inference & inference,
-    const args & options,
+    const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
     const common_tool_registry * tool_registry);
