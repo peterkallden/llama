@@ -13,10 +13,29 @@
 #include <string>
 #include <vector>
 
+struct common_agent_cli_runtime_policy {
+    std::string prompt;
+    std::string plan_id;
+    std::string agent_inference_backend = "cli";
+    std::string tool_profile;
+    std::string memory_learn = "off";
+    bool memory_learn_show_candidate = false;
+    bool plan_show_summary = false;
+    bool agent_trace = false;
+    bool enable_reflection = false;
+    size_t max_iterations = 1;
+    size_t max_reflection_rounds = 0;
+    size_t max_tool_rounds = 0;
+    bool allow_policy_gated_tool_proposals = false;
+};
+
+common_agent_cli_runtime_policy make_agent_cli_runtime_policy(const args & options);
+
 struct common_agent_cli_runtime_inputs {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     args & options;
+    common_agent_cli_runtime_policy policy;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;
@@ -32,7 +51,8 @@ struct common_agent_cli_runtime_execution {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_inference & inference;
-    args & options;
+    args & mutable_options;
+    common_agent_cli_runtime_policy policy;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;

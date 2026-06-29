@@ -314,6 +314,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             store,
             *plan_store,
             a,
+            make_agent_cli_runtime_policy(a),
             agent_scope,
             installed_blueprint_candidates,
             hits,

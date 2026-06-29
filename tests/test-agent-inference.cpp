@@ -461,6 +461,7 @@ static void test_mini_runtime_smoke() {
         plans,
         inference,
         options,
+        make_agent_cli_runtime_policy(options),
         scope,
         blueprints,
         hits,
@@ -522,6 +523,7 @@ static void test_runtime_request_builder() {
         plans,
         inference,
         options,
+        make_agent_cli_runtime_policy(options),
         scope,
         blueprints,
         hits,
@@ -559,6 +561,7 @@ static void test_runtime_request_builder() {
         plans,
         inference,
         options,
+        make_agent_cli_runtime_policy(options),
         scope,
         blueprints,
         hits,
@@ -588,7 +591,14 @@ static void test_runtime_execution_builder() {
 
     args options = make_test_args();
     options.prompt = "Check status";
+    options.plan_id = "plan-1";
+    options.reflection_mode = "always";
+    options.max_tool_rounds = 3;
     options.tool_profile = "research";
+    options.memory_learn = "post-turn";
+    options.memory_learn_show_candidate = true;
+    options.plan_show_summary = true;
+    options.agent_trace = true;
 
     common_agent_scope scope;
     scope.namespace_id = "tenant-a";
@@ -616,6 +626,7 @@ static void test_runtime_execution_builder() {
         memories,
         plans,
         options,
+        make_agent_cli_runtime_policy(options),
         scope,
         blueprints,
         hits,
@@ -631,7 +642,18 @@ static void test_runtime_execution_builder() {
     assert(&execution.memory_store == &memories);
     assert(&execution.plan_store == &plans);
     assert(&execution.inference == &inference);
-    assert(&execution.options == &options);
+    assert(&execution.mutable_options == &options);
+    assert(execution.policy.prompt == "Check status");
+    assert(execution.policy.plan_id == "plan-1");
+    assert(execution.policy.enable_reflection);
+    assert(execution.policy.max_iterations == 2);
+    assert(execution.policy.max_reflection_rounds == 1);
+    assert(execution.policy.max_tool_rounds == 3);
+    assert(execution.policy.allow_policy_gated_tool_proposals);
+    assert(execution.policy.memory_learn == "post-turn");
+    assert(execution.policy.memory_learn_show_candidate);
+    assert(execution.policy.plan_show_summary);
+    assert(execution.policy.agent_trace);
     assert(&execution.scope == &scope);
     assert(&execution.installed_blueprint_candidates == &blueprints);
     assert(&execution.memories == &hits);
