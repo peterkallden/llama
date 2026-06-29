@@ -5,6 +5,7 @@ add_executable(${TARGET}
     agent-cli-config.cpp
     agent-cli-inference.cpp
     agent-plan-orchestration.cpp
+    agent-runtime-chat-driver.cpp
     agent-runtime-execution.cpp
     agent-runtime-session.cpp
     agent-server-generation.cpp

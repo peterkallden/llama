@@ -8,6 +8,7 @@
 #include "agent-cli-selection.h"
 #include "agent-cli-runtime.h"
 #include "agent-runtime-assembly.h"
+#include "agent-runtime-chat-driver.h"
 #include "agent-runtime-execution.h"
 #include "agent-runtime-session.h"
 #include "agent/agent-bootstrap.h"
@@ -354,102 +355,40 @@ int run_agent_cli(common_memory_store & store, args a) {
         return 1;
     }
 
-    std::string output;
-    common_chat_params chat_params;
-    int n_decode = 0;
+    common_agent_request request;
+    request.messages = messages;
+    request.prompt = a.prompt;
+    request.enable_memory = memory_enabled;
+    request.memories = hits;
+    common_agent_scope_apply(common_cli_make_agent_scope_with_matching_plan_scope(a), request);
+
     common_agent_generation_options generation_options;
     generation_options.n_predict = a.n_predict;
-    common_agent_generation_result generation_result;
-    if (!generate_chat_turn_result(runtime_session.model, runtime_session.chat_templates.get(), messages, tools,
-            tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO,
-            generation_options, generation_result, &chat_params)) {
-        if (!generation_result.error_message.empty()) {
-            fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
-                common_agent_generation_status_name(generation_result.status),
-                common_agent_generation_stop_reason_name(generation_result.stop_reason),
-                generation_result.error_message.c_str());
-        }
+    common_agent_chat_runtime_execution execution{
+        *runtime_session.inference_session.inference,
+        std::move(request),
+        generation_options,
+        {a.max_tool_rounds},
+        tools,
+        profile_tools_active,
+        profile_tools_active ? &tool_registry : nullptr,
+        [&store, &a](const common_chat_tool_call & call) {
+            if (call.name == "memory_search") {
+                return memory_search_tool_result(store, a, call.arguments);
+            }
+            if (call.name == "memory_remember") {
+                return memory_remember_tool_result(store, a, call.arguments);
+            }
+            fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
+            return std::string(R"({"ok":false,"error":"unsupported memory tool"})");
+        },
+    };
+
+    common_agent_result result;
+    if (!run_agent_chat_runtime(execution, result, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
         runtime_session.reset();
         return 1;
     }
-    output = generation_result.content;
-    n_decode = generation_result.decoded_tokens;
-
-    common_chat_parser_params parser_params(chat_params);
-    parser_params.parse_tool_calls = !tools.empty();
-    if (!chat_params.parser.empty()) {
-        parser_params.parser.load(chat_params.parser);
-    }
-    common_chat_msg assistant_msg = common_chat_parse(output, false, parser_params);
-
-    size_t tool_rounds = 0;
-    while (!assistant_msg.tool_calls.empty()) {
-        if (tool_rounds >= a.max_tool_rounds) {
-            fprintf(stderr, "tool call round limit reached\n");
-            runtime_session.reset();
-            return 1;
-        }
-        if (profile_tools_active) {
-#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-            common_tool_chat_dispatch_result dispatched;
-            if (!common_tool_dispatch_chat_calls(assistant_msg, tool_registry, 1, dispatched, error)) {
-                fprintf(stderr, "tool dispatch failed: %s\n", error.c_str());
-                runtime_session.reset();
-                return 1;
-            } else {
-                messages.push_back(std::move(assistant_msg));
-                for (auto & tool_message : dispatched.tool_messages) messages.push_back(std::move(tool_message));
-            }
-#endif
-        } else {
-            common_chat_msg tool_msg;
-            tool_msg.role = "tool";
-            if (assistant_msg.tool_calls.size() != 1) {
-                tool_msg.content = R"({"ok":false,"error":"only one memory tool call is allowed per chat turn"})";
-                fprintf(stderr, "warning: rejected unsupported memory tool call\n");
-            } else {
-                const common_chat_tool_call & call = assistant_msg.tool_calls.front();
-                tool_msg.tool_name = call.name;
-                tool_msg.tool_call_id = call.id.empty() ? "memory-tool-1" : call.id;
-                assistant_msg.tool_calls.front().id = tool_msg.tool_call_id;
-                if (call.name == "memory_search") {
-                    tool_msg.content = memory_search_tool_result(store, a, call.arguments);
-                } else if (call.name == "memory_remember") {
-                    tool_msg.content = memory_remember_tool_result(store, a, call.arguments);
-                } else {
-                    tool_msg.content = R"({"ok":false,"error":"unsupported memory tool"})";
-                    fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
-                }
-            }
-            messages.push_back(std::move(assistant_msg));
-            messages.push_back(std::move(tool_msg));
-        }
-
-        ++tool_rounds;
-        const bool allow_another_tool_round = tool_rounds < a.max_tool_rounds;
-        common_agent_generation_result next_generation_result;
-        if (!generate_chat_turn_result(runtime_session.model, runtime_session.chat_templates.get(), messages,
-                allow_another_tool_round ? tools : std::vector<common_chat_tool>{},
-                allow_another_tool_round && !tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
-                generation_options, next_generation_result, &chat_params)) {
-            if (!next_generation_result.error_message.empty()) {
-                fprintf(stderr, "chat generation failed (status=%s, stop=%s): %s\n",
-                    common_agent_generation_status_name(next_generation_result.status),
-                    common_agent_generation_stop_reason_name(next_generation_result.stop_reason),
-                    next_generation_result.error_message.c_str());
-            }
-            runtime_session.reset();
-            return 1;
-        }
-        output = next_generation_result.content;
-        n_decode += next_generation_result.decoded_tokens;
-        parser_params = common_chat_parser_params(chat_params);
-        parser_params.parse_tool_calls = allow_another_tool_round && !tools.empty();
-        if (!chat_params.parser.empty()) {
-            parser_params.parser.load(chat_params.parser);
-        }
-        assistant_msg = common_chat_parse(output, false, parser_params);
-    }
-
-    return finish_chat(assistant_msg.content.empty() ? output : assistant_msg.content, n_decode);
+    return finish_chat(result.response, result.total_decoded_tokens);
 }

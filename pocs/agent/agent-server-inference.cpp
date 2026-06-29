@@ -63,10 +63,12 @@ public:
 
         try {
             common_agent_prepared_generation prepared;
-            if (!common_agent_prepare_chat_generation(templates, request, prepared)) {
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(templates, request, prepared, &chat_params)) {
                 result.error_message = "failed to prepare server generation";
                 return false;
             }
+            result.chat_params = chat_params;
 
             server_response_reader reader = server.get_response_reader();
             server_task task(SERVER_TASK_TYPE_COMPLETION);

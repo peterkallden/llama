@@ -5,13 +5,17 @@
 #include "plan/plan-in-memory.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "agent-runtime-chat-driver.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-execution.h"
+#include "chat-peg-parser.h"
 #include "common/cli-scope.h"
 
 #include <cassert>
 #include <deque>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 struct queued_generation {
     bool ok = true;
@@ -20,6 +24,7 @@ struct queued_generation {
     common_agent_generation_status status = common_agent_generation_status::completed;
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none;
     std::string error_message;
+    std::optional<common_chat_params> chat_params;
 };
 
 class fake_agent_inference final : public common_agent_inference {
@@ -42,6 +47,7 @@ public:
         result.status = next.status;
         result.stop_reason = next.stop_reason;
         result.error_message = next.error_message;
+        result.chat_params = next.chat_params;
         return next.ok;
     }
 };
@@ -49,13 +55,15 @@ public:
 static queued_generation make_success(
         const std::string & content,
         int decoded_tokens = 0,
-        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none) {
+        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none,
+        std::optional<common_chat_params> chat_params = std::nullopt) {
     queued_generation result;
     result.ok = true;
     result.content = content;
     result.decoded_tokens = decoded_tokens;
     result.status = common_agent_generation_status::completed;
     result.stop_reason = stop_reason;
+    result.chat_params = std::move(chat_params);
     return result;
 }
 
@@ -201,6 +209,22 @@ static common_agent_request make_request() {
     request.turn_id = "turn-7";
     request.namespace_id = "tenant-a";
     return request;
+}
+
+static common_chat_params make_tool_call_chat_params(const std::vector<common_chat_tool> & tools) {
+    common_chat_params params;
+    params.format = COMMON_CHAT_FORMAT_PEG_NATIVE;
+    const auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
+        auto tool_call = p.standard_json_tools(
+            "<tool_calls>[",
+            "]</tool_calls>",
+            common_chat_tools_to_json_oaicompat(tools),
+            false,
+            false);
+        return p.content(p.until("<tool_calls>")) + p.optional(tool_call) + p.end();
+    });
+    params.parser = parser.save();
+    return params;
 }
 
 static void test_runtime_generation_metadata() {
@@ -688,6 +712,60 @@ static void test_runtime_execution_builder() {
     assert(!execution.tool_registry);
 }
 
+static void test_chat_runtime_driver_smoke() {
+    fake_agent_inference inference;
+    const std::vector<common_chat_tool> tools = {
+        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+    };
+    inference.queued = {
+        make_success(
+            R"(Inspecting first.<tool_calls>[{"name":"memory_search","arguments":{"query":"status"}}]</tool_calls>)",
+            5,
+            common_agent_generation_stop_reason::none,
+            make_tool_call_chat_params(tools)),
+        make_success("Status is green.", 7),
+    };
+
+    common_agent_request request = make_request();
+    request.messages = {{"user", "Check status"}};
+    common_agent_generation_options options;
+    options.n_predict = 64;
+
+    common_agent_chat_runtime_execution execution{
+        inference,
+        request,
+        options,
+        {2},
+        tools,
+        false,
+        nullptr,
+        [](const common_chat_tool_call & call) {
+            assert(call.name == "memory_search");
+            return std::string(R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})");
+        },
+    };
+
+    common_agent_result result;
+    std::string error;
+    assert(run_agent_chat_runtime(execution, result, error));
+    assert(error.empty());
+    assert(result.response == "Status is green.");
+    assert(result.total_decoded_tokens == 12);
+    assert(result.response_decoded_tokens == 7);
+    assert(result.response_generation_status == common_agent_generation_status::completed);
+    assert(result.response_stop_reason == common_agent_generation_stop_reason::none);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::conversation);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::tool_followup);
+    assert(inference.seen[0].trace_id && *inference.seen[0].trace_id == "turn-7:conversation");
+    assert(inference.seen[1].trace_id && *inference.seen[1].trace_id == "turn-7:tool_followup");
+    assert(inference.seen[1].messages.size() == 3);
+    assert(inference.seen[1].messages[1].role == "assistant");
+    assert(inference.seen[1].messages[1].tool_calls.size() == 1);
+    assert(inference.seen[1].messages[2].role == "tool");
+    assert(inference.seen[1].messages[2].tool_name == "memory_search");
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -709,6 +787,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_request_builder();
     } else if (name == "runtime-execution-builder") {
         test_runtime_execution_builder();
+    } else if (name == "chat-runtime-driver-smoke") {
+        test_chat_runtime_driver_smoke();
     } else {
         return false;
     }
@@ -734,6 +814,7 @@ int main(int argc, char ** argv) {
         "mini-runtime-smoke",
         "runtime-request-builder",
         "runtime-execution-builder",
+        "chat-runtime-driver-smoke",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

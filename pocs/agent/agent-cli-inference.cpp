@@ -12,7 +12,8 @@ public:
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
-        return generate_chat_turn_result(
+        common_chat_params chat_params;
+        const bool ok = generate_chat_turn_result(
             model,
             templates,
             request.messages,
@@ -20,8 +21,10 @@ public:
             request.tool_choice,
             request.options,
             result,
-            nullptr,
+            &chat_params,
             request.json_schema);
+        result.chat_params = chat_params;
+        return ok;
     }
 
 private:

@@ -14,6 +14,8 @@ enum class common_agent_generation_purpose {
     plan_selection,
     blueprint_selection,
     blueprint_binding,
+    conversation,
+    tool_followup,
     draft,
     reasoning,
     reflection,
@@ -26,6 +28,8 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
         case common_agent_generation_purpose::plan_selection:      return "plan_selection";
         case common_agent_generation_purpose::blueprint_selection: return "blueprint_selection";
         case common_agent_generation_purpose::blueprint_binding:   return "blueprint_binding";
+        case common_agent_generation_purpose::conversation:        return "conversation";
+        case common_agent_generation_purpose::tool_followup:       return "tool_followup";
         case common_agent_generation_purpose::draft:               return "draft";
         case common_agent_generation_purpose::reasoning:           return "reasoning";
         case common_agent_generation_purpose::reflection:          return "reflection";
@@ -85,6 +89,7 @@ struct common_agent_generation_result {
     common_agent_generation_status status = common_agent_generation_status::errored;
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
     std::string error_message;
+    std::optional<common_chat_params> chat_params;
 };
 
 inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
