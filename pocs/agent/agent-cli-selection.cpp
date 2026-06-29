@@ -1,6 +1,7 @@
 #include "agent-cli-selection.h"
 
 #include "agent/agent-package-json.h"
+#include "common/cli-scope.h"
 
 #include <algorithm>
 #include <fstream>
@@ -12,20 +13,6 @@
 using json = nlohmann::ordered_json;
 
 namespace {
-
-common_agent_scope make_agent_scope(const args & a) {
-    common_agent_scope scope;
-    scope.memory_scope = a.memory_project.empty() ? common_memory_scope::session : common_memory_scope::project;
-    scope.plan_scope = scope.memory_scope == common_memory_scope::project
-        ? common_plan_scope::project
-        : common_plan_scope::session;
-    scope.namespace_id = a.memory_namespace;
-    scope.session_id = a.memory_session;
-    scope.project_id = a.memory_project;
-    scope.turn_id = a.memory_turn;
-    scope.memory_global_opt_in = a.memory_global_opt_in;
-    return scope;
-}
 
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
     return "bootstrap:" + scope.namespace_id + ":" +
@@ -54,7 +41,11 @@ bool load_bootstrap_file(const std::string & path, common_agent_bootstrap_packag
 }
 
 bool export_agent_package(common_memory_store & memory_store, common_plan_store & plan_store, const args & a, std::string & error) {
-    const auto scope = make_agent_scope(a);
+    const auto scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
+    if (!common_cli_supports_bootstrap_package_scope(scope)) {
+        error = "--agent-export currently supports only session- or project-scoped bootstrap packages";
+        return false;
+    }
     common_memory_query query;
     common_agent_scope_apply(scope, query);
     const auto memories = memory_store.list(query, error);

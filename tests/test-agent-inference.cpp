@@ -4,9 +4,11 @@
 #include "plan/plan-in-memory.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "common/cli-scope.h"
 
 #include <cassert>
 #include <deque>
+#include <string>
 
 struct queued_generation {
     bool ok = true;
@@ -107,6 +109,30 @@ static void test_generation_contract_helpers() {
     assert(request.options.t_max_prompt_ms && *request.options.t_max_prompt_ms == 1500);
     assert(request.options.t_max_predict_ms && *request.options.t_max_predict_ms == 2500);
     assert(request.json_schema == R"({"type":"object"})");
+}
+
+static void test_cli_scope_helpers() {
+    args project_args;
+    project_args.memory_scope = "project";
+    project_args.memory_namespace = "tenant-a";
+    project_args.memory_session = "session-42";
+    project_args.memory_project = "repo-1";
+    const auto project_scope = common_cli_make_agent_scope_with_matching_plan_scope(project_args);
+    assert(project_scope.memory_scope == common_memory_scope::project);
+    assert(project_scope.plan_scope == common_plan_scope::project);
+    assert(common_cli_supports_bootstrap_package_scope(project_scope));
+
+    args global_args;
+    global_args.memory_scope = "global";
+    global_args.memory_global_opt_in = true;
+    const auto global_scope = common_cli_make_agent_scope_with_matching_plan_scope(global_args);
+    assert(global_scope.memory_scope == common_memory_scope::global);
+    assert(global_scope.plan_scope == common_plan_scope::global);
+    assert(!common_cli_supports_bootstrap_package_scope(global_scope));
+
+    const auto explicit_scope = common_cli_make_agent_scope(project_args, common_plan_scope::session);
+    assert(explicit_scope.memory_scope == common_memory_scope::project);
+    assert(explicit_scope.plan_scope == common_plan_scope::session);
 }
 
 static common_agent_request make_request() {
@@ -350,11 +376,45 @@ static void test_selection_generation_failure_metadata() {
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");
 }
 
-int main() {
-    test_generation_contract_helpers();
-    test_runtime_generation_metadata();
-    test_selection_generation_metadata();
-    test_runtime_generation_failure_metadata();
-    test_selection_generation_failure_metadata();
+static bool run_named_test(const std::string & name) {
+    if (name == "generation-contract") {
+        test_generation_contract_helpers();
+    } else if (name == "cli-scope") {
+        test_cli_scope_helpers();
+    } else if (name == "runtime-metadata") {
+        test_runtime_generation_metadata();
+    } else if (name == "selection-metadata") {
+        test_selection_generation_metadata();
+    } else if (name == "runtime-failure") {
+        test_runtime_generation_failure_metadata();
+    } else if (name == "selection-failure") {
+        test_selection_generation_failure_metadata();
+    } else {
+        return false;
+    }
+    return true;
+}
+
+int main(int argc, char ** argv) {
+    if (argc > 1) {
+        if (!run_named_test(argv[1])) {
+            return 2;
+        }
+        return 0;
+    }
+
+    const char * tests[] = {
+        "generation-contract",
+        "cli-scope",
+        "runtime-metadata",
+        "selection-metadata",
+        "runtime-failure",
+        "selection-failure",
+    };
+    for (const char * name : tests) {
+        if (!run_named_test(name)) {
+            return 2;
+        }
+    }
     return 0;
 }

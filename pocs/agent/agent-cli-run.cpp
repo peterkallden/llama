@@ -22,6 +22,7 @@
 
 #include "chat.h"
 #include "common.h"
+#include "common/cli-scope.h"
 #include "llama.h"
 #include "memory/memory-context.h"
 #include "memory/memory-policy.h"
@@ -58,18 +59,6 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
         return true;
     }
     return false;
-}
-
-common_agent_scope make_agent_scope(const args & a, common_plan_scope plan_scope) {
-    common_agent_scope scope;
-    common_memory_scope_parse(a.memory_scope, scope.memory_scope);
-    scope.plan_scope = plan_scope;
-    scope.namespace_id = a.memory_namespace;
-    scope.session_id = a.memory_session;
-    scope.project_id = a.memory_project;
-    scope.turn_id = a.memory_turn;
-    scope.memory_global_opt_in = a.memory_global_opt_in;
-    return scope;
 }
 
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
@@ -218,16 +207,20 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::unique_ptr<common_plan_store> plan_store;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_plan_scope requested_plan_scope = common_plan_scope::turn;
-    common_agent_scope agent_scope = make_agent_scope(a, requested_plan_scope);
+    common_agent_scope agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
     if (a.planning_mode == "mini") {
         if (!parse_plan_scope(a.plan_scope, requested_plan_scope)) {
             fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
             return 1;
         }
-        agent_scope = make_agent_scope(a, requested_plan_scope);
+        agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
         plan_store = make_plan_store(a, error);
         if (!plan_store || !plan_store->open(a.plan_db, error)) {
             fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
+            return 1;
+        }
+        if ((bootstrap_enabled || !a.agent_export.empty()) && !common_cli_supports_bootstrap_package_scope(agent_scope)) {
+            fprintf(stderr, "bootstrap/import/export currently supports only session- or project-scoped package tenants\n");
             return 1;
         }
         if (bootstrap_enabled) {

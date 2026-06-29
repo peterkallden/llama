@@ -1,6 +1,7 @@
 #include "memory-cli-memory.h"
 
 #include "agent/agent-scope.h"
+#include "common/cli-scope.h"
 #include "common.h"
 #include "llama.h"
 #include "memory/memory-context.h"
@@ -25,14 +26,7 @@ constexpr size_t k_memory_remember_max_content_chars = 512;
 constexpr size_t k_memory_remember_max_rationale_chars = 240;
 
 common_agent_scope make_memory_cli_scope(const args & a) {
-    common_agent_scope scope;
-    common_memory_scope_parse(a.memory_scope, scope.memory_scope);
-    scope.namespace_id = a.memory_namespace;
-    scope.session_id = a.memory_session;
-    scope.project_id = a.memory_project;
-    scope.turn_id = a.memory_turn;
-    scope.memory_global_opt_in = a.memory_global_opt_in;
-    return scope;
+    return common_cli_make_agent_scope(a, common_plan_scope::turn);
 }
 
 std::string embedding_model_path(const args & a) {

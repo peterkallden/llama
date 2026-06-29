@@ -154,7 +154,9 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
     common_json_contract_value j;
     if (!common_json_contract_parse_object(text, j, error)) return false;
     try {
+        auto generation = std::move(result.generation);
         result = {};
+        result.generation = std::move(generation);
         std::string d;
         if (!common_json_contract_required_string(j, "decision", 32, d, error)) return false;
         if (d == "accept") result.decision = common_reflection_decision::accept;
