@@ -82,7 +82,7 @@ The host inputs now carry a CLI-free runtime turn request: request payload, scop
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 
-There is now also a small resident chat-host helper on top of that wrapper. Its job is deliberately narrow: take a base runtime turn request, stamp per-turn prompt and turn identity onto it, and run ordinary chat turns through the resident host. This is meant as a builder/lifecycle seam for the future resident process, not as a second runtime path.
+There are now small resident host helpers on top of that wrapper for both ordinary chat turns and mini planning turns. Their job is deliberately narrow: take a base runtime turn request, stamp per-turn prompt and turn identity onto it, and run the turn through the resident host. The mini helper also keeps track of the active plan identity after a completed turn. These helpers are meant as builder/lifecycle seams for the future resident process, not as separate runtime paths.
 
 ### Runtime Drivers
 

@@ -1164,13 +1164,75 @@ static void test_runtime_resident_chat_host_builder() {
     assert(result.response == "counted");
     assert(inference_ptr->calls == 1);
 
-    const auto request = make_agent_runtime_resident_chat_turn_request(base_turn_request, "Prompt text", "turn-10");
+    const auto request = make_agent_runtime_resident_turn_request(base_turn_request, "Prompt text", "turn-10");
     assert(request.request.prompt == "Prompt text");
     assert(request.request.messages.size() == 1);
     assert(request.request.messages[0].content == "Prompt text");
     assert(request.request.turn_id == "turn-10");
     assert(request.scope.turn_id == "turn-10");
     assert(request.orchestration_config.prompt == "Prompt text");
+}
+
+static void test_runtime_resident_mini_host_builder() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"(not-json)"),
+        make_success("draft-content", 7),
+    };
+
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.memory_learn = "off";
+    options.reflection_mode = "off";
+    options.agent_plan = "off";
+    options.agent_blueprint = "off";
+
+    common_agent_runtime_turn_request base_turn_request;
+    base_turn_request.scope.namespace_id = "tenant-a";
+    base_turn_request.scope.session_id = "session-42";
+    base_turn_request.scope.memory_scope = common_memory_scope::session;
+    base_turn_request.scope.plan_scope = common_plan_scope::turn;
+    base_turn_request.request.session_id = "session-42";
+    base_turn_request.request.namespace_id = "tenant-a";
+    base_turn_request.policy = make_agent_runtime_policy(options);
+    base_turn_request.runtime_config = make_agent_runtime_config(options);
+    base_turn_request.orchestration_config = make_agent_orchestration_config(options);
+    base_turn_request.memory_scope = common_memory_scope::session;
+    base_turn_request.memory_enabled = true;
+
+    common_agent_runtime_resident_mini_host host({
+        memories,
+        plans,
+        base_turn_request,
+        {},
+        {},
+        {},
+        false,
+        nullptr,
+    });
+
+    host.runtime_host().session().inference_session.backend = agent_inference_backend::cli;
+    host.runtime_host().session().inference_session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
+    auto * inference_ptr = static_cast<fake_agent_inference *>(host.runtime_host().session().inference_session.inference.get());
+    host.runtime_host().session().initialized = true;
+    host.runtime_host().session().initialized_backend = agent_inference_backend::cli;
+    host.runtime_host().session().initialized_options = {};
+
+    common_agent_result result;
+    assert(host.run_prompt("Check status", "turn-11", result, error));
+    assert(error.empty());
+    assert(result.response == "draft-content");
+    assert(result.plan_id);
+    assert(host.current_plan_id() == *result.plan_id);
+    assert(inference_ptr->seen.size() == 2);
+    assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:planner");
+    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:draft");
 }
 
 static void test_cli_runtime_host_adapter_chat_inputs() {
@@ -1285,6 +1347,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_resident_host_multi_turn_smoke();
     } else if (name == "runtime-resident-chat-host-builder") {
         test_runtime_resident_chat_host_builder();
+    } else if (name == "runtime-resident-mini-host-builder") {
+        test_runtime_resident_mini_host_builder();
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
     } else if (name == "runtime-session-reuse") {
@@ -1321,6 +1385,7 @@ int main(int argc, char ** argv) {
         "runtime-host-turn-completion",
         "runtime-resident-host-multi-turn",
         "runtime-resident-chat-host-builder",
+        "runtime-resident-mini-host-builder",
         "cli-runtime-host-adapter-chat",
         "runtime-session-reuse",
     };

@@ -225,7 +225,7 @@ void common_agent_runtime_resident_host::reset() {
     runtime_session.reset();
 }
 
-common_agent_runtime_turn_request make_agent_runtime_resident_chat_turn_request(
+common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
         const common_agent_runtime_turn_request & base_turn_request,
         const std::string & prompt,
         const std::string & turn_id) {
@@ -252,7 +252,7 @@ bool common_agent_runtime_resident_chat_host::run_prompt(
     common_agent_runtime_host_build_context build_context{
         memory_store,
         nullptr,
-        make_agent_runtime_resident_chat_turn_request(base_turn_request, prompt, turn_id),
+        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
         nullptr,
         nullptr,
         memories,
@@ -266,5 +266,46 @@ bool common_agent_runtime_resident_chat_host::run_prompt(
 }
 
 void common_agent_runtime_resident_chat_host::reset() {
+    host.reset();
+}
+
+common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host(
+        common_agent_runtime_resident_mini_host_config config)
+    : memory_store(config.memory_store),
+      plan_store(config.plan_store),
+      base_turn_request(std::move(config.base_turn_request)),
+      resident_current_plan_id(std::move(config.current_plan_id)),
+      installed_blueprint_candidates(std::move(config.installed_blueprint_candidates)),
+      tools(std::move(config.tools)),
+      profile_tools_active(config.profile_tools_active),
+      tool_registry(config.tool_registry) {}
+
+bool common_agent_runtime_resident_mini_host::run_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error) {
+    const std::vector<common_memory_hit> memories;
+    common_agent_runtime_host_build_context build_context{
+        memory_store,
+        &plan_store,
+        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
+        &resident_current_plan_id,
+        &installed_blueprint_candidates,
+        memories,
+        tools,
+        profile_tools_active,
+        tool_registry,
+        {},
+    };
+    auto inputs = make_agent_runtime_host_mini_inputs(build_context, build_context.turn_request.orchestration_config);
+    const bool ok = host.run_turn(inputs, result, error);
+    if (ok && result.plan_id) {
+        resident_current_plan_id = *result.plan_id;
+    }
+    return ok;
+}
+
+void common_agent_runtime_resident_mini_host::reset() {
     host.reset();
 }
