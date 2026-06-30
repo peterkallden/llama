@@ -97,25 +97,31 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    common_agent_runtime_resident_chat_host host({
+    common_agent_runtime_resident_runtime runtime({
         memory_store,
+        nullptr,
         make_base_turn_request(options, options.first_prompt),
+        {},
+        {},
+        {},
+        false,
+        nullptr,
     });
     common_agent_result first_result;
     common_agent_result second_result;
     void * first_keepalive = nullptr;
     void * second_keepalive = nullptr;
 
-    if (!host.run_prompt(options.first_prompt, "turn-1", first_result, error)) {
+    if (!runtime.run_chat_prompt(options.first_prompt, "turn-1", first_result, error)) {
         std::fprintf(stderr, "first resident turn failed: %s\n", error.c_str());
         return 1;
     }
-    first_keepalive = host.runtime_host().session().inference_session.keepalive.get();
-    if (!host.run_prompt(options.second_prompt, "turn-2", second_result, error)) {
+    first_keepalive = runtime.runtime_host().session().inference_session.keepalive.get();
+    if (!runtime.run_chat_prompt(options.second_prompt, "turn-2", second_result, error)) {
         std::fprintf(stderr, "second resident turn failed: %s\n", error.c_str());
         return 1;
     }
-    second_keepalive = host.runtime_host().session().inference_session.keepalive.get();
+    second_keepalive = runtime.runtime_host().session().inference_session.keepalive.get();
 
     if (first_keepalive == nullptr || second_keepalive == nullptr || first_keepalive != second_keepalive) {
         std::fprintf(stderr, "resident host did not reuse the same server_context keepalive across turns\n");

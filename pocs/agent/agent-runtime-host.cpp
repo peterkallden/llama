@@ -238,39 +238,8 @@ common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
     return turn_request;
 }
 
-common_agent_runtime_resident_chat_host::common_agent_runtime_resident_chat_host(
-        common_agent_runtime_resident_chat_host_config config)
-    : memory_store(config.memory_store), base_turn_request(std::move(config.base_turn_request)) {}
-
-bool common_agent_runtime_resident_chat_host::run_prompt(
-        const std::string & prompt,
-        const std::string & turn_id,
-        common_agent_result & result,
-        std::string & error) {
-    const std::vector<common_memory_hit> memories;
-    const std::vector<common_chat_tool> tools;
-    common_agent_runtime_host_build_context build_context{
-        memory_store,
-        nullptr,
-        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
-        nullptr,
-        nullptr,
-        memories,
-        tools,
-        false,
-        nullptr,
-        {},
-    };
-    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
-    return host.run_turn(inputs, result, error);
-}
-
-void common_agent_runtime_resident_chat_host::reset() {
-    host.reset();
-}
-
-common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host(
-        common_agent_runtime_resident_mini_host_config config)
+common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
+        common_agent_runtime_resident_runtime_config config)
     : memory_store(config.memory_store),
       plan_store(config.plan_store),
       base_turn_request(std::move(config.base_turn_request)),
@@ -280,7 +249,7 @@ common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host
       profile_tools_active(config.profile_tools_active),
       tool_registry(config.tool_registry) {}
 
-bool common_agent_runtime_resident_mini_host::run_prompt(
+bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,
         common_agent_result & result,
@@ -288,7 +257,34 @@ bool common_agent_runtime_resident_mini_host::run_prompt(
     const std::vector<common_memory_hit> memories;
     common_agent_runtime_host_build_context build_context{
         memory_store,
-        &plan_store,
+        nullptr,
+        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
+        nullptr,
+        nullptr,
+        memories,
+        tools,
+        profile_tools_active,
+        tool_registry,
+        {},
+    };
+    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
+    return host.run_turn(inputs, result, error);
+}
+
+bool common_agent_runtime_resident_runtime::run_mini_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error) {
+    if (plan_store == nullptr) {
+        error = "resident mini runtime requires a plan store";
+        return false;
+    }
+
+    const std::vector<common_memory_hit> memories;
+    common_agent_runtime_host_build_context build_context{
+        memory_store,
+        plan_store,
         make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
         &resident_current_plan_id,
         &installed_blueprint_candidates,
@@ -306,6 +302,56 @@ bool common_agent_runtime_resident_mini_host::run_prompt(
     return ok;
 }
 
-void common_agent_runtime_resident_mini_host::reset() {
+void common_agent_runtime_resident_runtime::reset() {
     host.reset();
+}
+
+common_agent_runtime_resident_chat_host::common_agent_runtime_resident_chat_host(
+        common_agent_runtime_resident_chat_host_config config)
+    : runtime({
+        config.memory_store,
+        nullptr,
+        std::move(config.base_turn_request),
+        {},
+        {},
+        {},
+        false,
+        nullptr,
+    }) {}
+
+bool common_agent_runtime_resident_chat_host::run_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error) {
+    return runtime.run_chat_prompt(prompt, turn_id, result, error);
+}
+
+void common_agent_runtime_resident_chat_host::reset() {
+    runtime.reset();
+}
+
+common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host(
+        common_agent_runtime_resident_mini_host_config config)
+    : runtime({
+        config.memory_store,
+        &config.plan_store,
+        std::move(config.base_turn_request),
+        std::move(config.current_plan_id),
+        std::move(config.installed_blueprint_candidates),
+        std::move(config.tools),
+        config.profile_tools_active,
+        config.tool_registry,
+    }) {}
+
+bool common_agent_runtime_resident_mini_host::run_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error) {
+    return runtime.run_mini_prompt(prompt, turn_id, result, error);
+}
+
+void common_agent_runtime_resident_mini_host::reset() {
+    runtime.reset();
 }
