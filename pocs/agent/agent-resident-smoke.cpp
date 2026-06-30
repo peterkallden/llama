@@ -83,6 +83,7 @@ int main(int argc, char ** argv) {
                 options.first_prompt,
                 "resident-smoke-session",
                 "resident-smoke",
+                {},
                 options.model,
                 options.n_predict,
                 options.n_gpu_layers,

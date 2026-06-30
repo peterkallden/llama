@@ -232,8 +232,10 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.request.messages = {{"user", config.prompt}};
     turn_request.request.session_id = config.session_id;
     turn_request.request.namespace_id = config.namespace_id;
+    turn_request.request.project_id = config.project_id;
     turn_request.scope.namespace_id = config.namespace_id;
     turn_request.scope.session_id = config.session_id;
+    turn_request.scope.project_id = config.project_id;
     turn_request.scope.memory_scope = config.memory_scope;
     turn_request.scope.plan_scope = config.plan_scope;
     turn_request.inference_options.model = config.model;
@@ -401,6 +403,9 @@ common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_tu
     resident_request.prompt = request.prompt;
     resident_request.session_id = request.session_id;
     resident_request.namespace_id = request.namespace_id;
+    resident_request.project_id = request.project_id;
+    resident_request.memory_scope = request.memory_scope;
+    resident_request.plan_scope = request.plan_scope;
     if (request.n_predict > 0) {
         resident_request.n_predict = request.n_predict;
     }
@@ -410,7 +415,7 @@ common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_tu
     turn_request.runtime_config = config.runtime_config;
     turn_request.orchestration_config = config.orchestration_config;
     turn_request.orchestration_config.prompt = request.prompt;
-    turn_request.memory_scope = config.memory_scope;
+    turn_request.memory_scope = request.memory_scope;
     turn_request.memory_enabled = config.memory_enabled;
     if (turn_request.generation_options.n_predict == 0) {
         turn_request.generation_options.n_predict = resident_request.n_predict;
@@ -427,6 +432,9 @@ bool common_agent_runtime_daemon_host::ensure_runtime(
         !runtime ||
         active_session_id != request.session_id ||
         active_namespace_id != request.namespace_id ||
+        active_project_id != request.project_id ||
+        active_memory_scope != request.memory_scope ||
+        active_plan_scope != request.plan_scope ||
         active_n_predict != requested_n_predict;
 
     if (!needs_new_runtime) {
@@ -448,6 +456,9 @@ bool common_agent_runtime_daemon_host::ensure_runtime(
             config.tool_registry));
     active_session_id = request.session_id;
     active_namespace_id = request.namespace_id;
+    active_project_id = request.project_id;
+    active_memory_scope = request.memory_scope;
+    active_plan_scope = request.plan_scope;
     active_n_predict = requested_n_predict;
     error.clear();
     return true;
@@ -471,6 +482,16 @@ bool common_agent_runtime_daemon_host::run_turn(
     }
     if (request.namespace_id.empty()) {
         error = "daemon turn request requires a namespace_id";
+        result.error = error;
+        return false;
+    }
+    if (request.memory_scope == common_memory_scope::project && request.project_id.empty()) {
+        error = "project-scoped daemon turn request requires a project_id";
+        result.error = error;
+        return false;
+    }
+    if (request.memory_scope == common_memory_scope::turn && request.turn_id.empty()) {
+        error = "turn-scoped daemon turn request requires a turn_id";
         result.error = error;
         return false;
     }
@@ -509,6 +530,9 @@ void common_agent_runtime_daemon_host::reset() {
     runtime.reset();
     active_session_id.clear();
     active_namespace_id.clear();
+    active_project_id.clear();
+    active_memory_scope = common_memory_scope::session;
+    active_plan_scope = common_plan_scope::turn;
     active_n_predict = 0;
     generated_turn_counter = 0;
 }

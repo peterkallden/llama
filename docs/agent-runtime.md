@@ -88,7 +88,9 @@ There is now a small resident runtime layer on top of that wrapper. It owns the 
 
 The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
 
-On top of that, the CLI now has a thin `daemon-chat` adapter. It starts the foreground daemon as a child process, sends one chat turn over the JSONL protocol, reads one response, and shuts the child down. This path is deliberately conservative: it currently supports only session-scoped chat with the `server-context` inference backend and does not yet expose the full planning or tool-runtime surface.
+On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop.
+
+The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
 ### Runtime Drivers
 
@@ -222,5 +224,6 @@ The resident-inference branch has been validated with:
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
 - foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
+- multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.

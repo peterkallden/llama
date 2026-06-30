@@ -1178,6 +1178,7 @@ static void test_runtime_resident_request_builders() {
         "Reply with OK only.",
         "resident-session",
         "tenant-a",
+        "repo-1",
         "model.gguf",
         64,
         2,
@@ -1193,8 +1194,10 @@ static void test_runtime_resident_request_builders() {
     assert(base_turn_request.request.messages[0].content == "Reply with OK only.");
     assert(base_turn_request.request.session_id == "resident-session");
     assert(base_turn_request.request.namespace_id == "tenant-a");
+    assert(base_turn_request.request.project_id == "repo-1");
     assert(base_turn_request.scope.session_id == "resident-session");
     assert(base_turn_request.scope.namespace_id == "tenant-a");
+    assert(base_turn_request.scope.project_id == "repo-1");
     assert(base_turn_request.scope.memory_scope == common_memory_scope::project);
     assert(base_turn_request.scope.plan_scope == common_plan_scope::session);
     assert(base_turn_request.inference_options.model == "model.gguf");
@@ -1220,10 +1223,16 @@ static void test_runtime_resident_request_builders() {
     daemon_request.prompt = "Check status";
     daemon_request.session_id = "resident-session";
     daemon_request.namespace_id = "tenant-a";
+    daemon_request.project_id = "repo-1";
     daemon_request.turn_id = "turn-3";
+    daemon_request.memory_scope = common_memory_scope::project;
+    daemon_request.plan_scope = common_plan_scope::project;
     daemon_request.n_predict = 32;
     assert(daemon_request.mode == common_agent_runtime_host_mode::mini);
+    assert(daemon_request.project_id == "repo-1");
     assert(daemon_request.turn_id == "turn-3");
+    assert(daemon_request.memory_scope == common_memory_scope::project);
+    assert(daemon_request.plan_scope == common_plan_scope::project);
 
     common_agent_runtime_daemon_turn_result daemon_result;
     daemon_result.ok = true;
@@ -1255,6 +1264,7 @@ static void test_runtime_resident_runtime_builder() {
         "session-42",
         "tenant-a",
         {},
+        "model.gguf",
         0,
         0,
         true,
@@ -1329,6 +1339,7 @@ static void test_runtime_resident_mini_host_builder() {
         "session-42",
         "tenant-a",
         {},
+        "model.gguf",
         0,
         0,
         true,

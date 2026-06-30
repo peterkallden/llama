@@ -64,8 +64,8 @@ if ($Build) {
 Assert-PathExists -Path $exePath -Label "Daemon executable"
 
 $requests = @(
-    '{"mode":"chat","prompt":"Reply with OK only.","session_id":"smoke-session","namespace_id":"smoke"}',
-    '{"mode":"chat","prompt":"Reply with DONE only.","session_id":"smoke-session","namespace_id":"smoke"}',
+    '{"mode":"chat","prompt":"Reply with OK only.","session_id":"smoke-session","namespace_id":"smoke","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
+    '{"mode":"chat","prompt":"Reply with DONE only.","session_id":"smoke-session","namespace_id":"smoke","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
     '{"command":"shutdown"}'
 )
 

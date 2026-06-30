@@ -1,5 +1,6 @@
 #include "agent-cli-command.h"
 
+#include "agent-cli-selection.h"
 #include "agent-cli-config.h"
 #include "agent-cli-run.h"
 
@@ -8,6 +9,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -82,141 +85,298 @@ bool write_protocol_message(FILE * stream, const json & message, std::string & e
     return true;
 }
 
-int run_daemon_chat_command(const char * argv0, args a) {
-    if (a.model.empty() || a.prompt.empty()) {
-        print_agent_usage(argv0, "daemon-chat");
-        return 1;
+struct daemon_client_request {
+    std::string prompt;
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string turn_id;
+    std::string memory_scope;
+    std::string plan_scope;
+    int n_predict = 0;
+    std::string mode = "chat";
+};
+
+class agent_daemon_client_session {
+public:
+    bool start(const char * argv0, const args & a, std::string & error) {
+        error.clear();
+        if (running) {
+            error = "daemon session already running";
+            return false;
+        }
+
+        daemon_path = get_daemon_executable_path(argv0);
+        if (!std::filesystem::exists(daemon_path)) {
+            error = "agent daemon executable not found: " + daemon_path.string();
+            return false;
+        }
+
+        command_line = {
+            daemon_path.string(),
+            "--model", a.model,
+            "--default-mode", a.planning_mode == "mini" ? "mini" : "chat",
+            "--planning-mode", a.planning_mode,
+            "--reflection-mode", a.reflection_mode,
+            "--memory-learn", a.memory_learn,
+            "--agent-plan", a.agent_plan,
+            "--n-predict", std::to_string(a.n_predict),
+            "--n-gpu-layers", std::to_string(a.n_gpu_layers),
+        };
+        auto argv = to_cstr_vec(command_line);
+        const int options =
+            subprocess_option_no_window |
+            subprocess_option_enable_async |
+            subprocess_option_combined_stdout_stderr |
+            subprocess_option_inherit_environment;
+
+        if (subprocess_create(argv.data(), options, &proc) != 0) {
+            error = "failed to spawn agent daemon";
+            return false;
+        }
+
+        daemon_in = subprocess_stdin(&proc);
+        daemon_out = subprocess_stdout(&proc);
+        if (daemon_in == nullptr || daemon_out == nullptr) {
+            error = "failed to acquire daemon pipes";
+            subprocess_terminate(&proc);
+            subprocess_join(&proc, &exit_code);
+            subprocess_destroy(&proc);
+            daemon_in = nullptr;
+            daemon_out = nullptr;
+            return false;
+        }
+
+        json ready;
+        if (!read_protocol_message(daemon_out, ready, error)) {
+            terminate_if_running();
+            return false;
+        }
+        if (!ready.value("ok", false) || ready.value("event", "") != "ready") {
+            error = "unexpected daemon ready response: " + ready.dump();
+            terminate_if_running();
+            return false;
+        }
+
+        running = true;
+        return true;
     }
 
+    bool run_turn(
+            const daemon_client_request & request,
+            json & response,
+            std::string & error) {
+        response = json();
+        if (!running || daemon_in == nullptr || daemon_out == nullptr) {
+            error = "daemon session is not running";
+            return false;
+        }
+
+        json protocol_request = {
+            {"prompt", request.prompt},
+            {"session_id", request.session_id},
+            {"namespace_id", request.namespace_id},
+            {"project_id", request.project_id},
+            {"turn_id", request.turn_id},
+            {"memory_scope", request.memory_scope},
+            {"plan_scope", request.plan_scope},
+            {"n_predict", request.n_predict},
+            {"mode", request.mode},
+        };
+
+        if (!write_protocol_message(daemon_in, protocol_request, error)) {
+            return false;
+        }
+        return read_protocol_message(daemon_out, response, error);
+    }
+
+    bool shutdown(std::string & error) {
+        error.clear();
+        if (!running) {
+            return true;
+        }
+
+        json response;
+        bool ok = write_protocol_message(daemon_in, json({{"command", "shutdown"}}), error) &&
+                  read_protocol_message(daemon_out, response, error);
+        if (ok && (!response.value("ok", false) || response.value("event", "") != "shutdown")) {
+            error = "unexpected daemon shutdown response: " + response.dump();
+            ok = false;
+        }
+
+        subprocess_join(&proc, &exit_code);
+        subprocess_destroy(&proc);
+        running = false;
+        daemon_in = nullptr;
+        daemon_out = nullptr;
+        return ok && exit_code == 0;
+    }
+
+    ~agent_daemon_client_session() {
+        std::string ignored;
+        if (running) {
+            terminate_if_running();
+        }
+    }
+
+private:
+    void terminate_if_running() {
+        if (!daemon_in && !daemon_out && !running) {
+            return;
+        }
+        subprocess_terminate(&proc);
+        subprocess_join(&proc, &exit_code);
+        subprocess_destroy(&proc);
+        running = false;
+        daemon_in = nullptr;
+        daemon_out = nullptr;
+    }
+
+    std::filesystem::path daemon_path;
+    std::vector<std::string> command_line;
+    subprocess_s proc{};
+    FILE * daemon_in = nullptr;
+    FILE * daemon_out = nullptr;
+    int exit_code = 1;
+    bool running = false;
+};
+
+bool validate_daemon_command_args(const char * argv0, const args & a, bool require_prompt) {
+    if (a.model.empty() || (require_prompt && a.prompt.empty())) {
+        print_agent_usage(argv0, require_prompt ? "daemon-chat" : "daemon-session");
+        return false;
+    }
     if (a.agent_inference_backend != "server-context") {
         std::fprintf(stderr, "daemon-chat currently requires --agent-inference-backend server-context\n");
-        return 1;
+        return false;
     }
 
     std::string error;
     if (!validate_agent_memory_scope(a, error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
-        return 1;
+        return false;
     }
-    if (a.memory_scope != "session") {
-        std::fprintf(stderr, "daemon-chat currently supports only --memory-scope session\n");
-        return 1;
+    common_plan_scope parsed_plan_scope = common_plan_scope::turn;
+    if (!parse_plan_scope(a.plan_scope, parsed_plan_scope)) {
+        std::fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
+        return false;
     }
-    if (a.planning_mode != "off") {
-        std::fprintf(stderr, "daemon-chat currently supports only --planning-mode off\n");
-        return 1;
+    if (a.planning_mode == "off" && a.agent_plan != "off") {
+        std::fprintf(stderr, "daemon daemon commands require --planning-mode mini when --agent-plan is enabled\n");
+        return false;
     }
+    if (a.memory_learn == "post-turn" && a.planning_mode != "mini") {
+        std::fprintf(stderr, "daemon daemon commands require --planning-mode mini when --memory-learn post-turn is enabled\n");
+        return false;
+    }
+    return true;
+}
 
-    const auto daemon_path = get_daemon_executable_path(argv0);
-    if (!std::filesystem::exists(daemon_path)) {
-        std::fprintf(stderr, "agent daemon executable not found: %s\n", daemon_path.string().c_str());
-        return 1;
-    }
-
-    std::vector<std::string> command_line = {
-        daemon_path.string(),
-        "--model", a.model,
-        "--default-mode", a.planning_mode == "mini" ? "mini" : "chat",
-        "--n-predict", std::to_string(a.n_predict),
-        "--n-gpu-layers", std::to_string(a.n_gpu_layers),
+daemon_client_request make_daemon_client_request(const args & a, const std::string & prompt, const std::string & turn_id = {}) {
+    return {
+        prompt,
+        a.memory_session,
+        a.memory_namespace,
+        a.memory_project,
+        turn_id.empty() ? a.memory_turn : turn_id,
+        a.memory_scope,
+        a.plan_scope,
+        a.n_predict,
+        a.planning_mode == "mini" ? "mini" : "chat",
     };
+}
 
-    subprocess_s proc;
-    const int options =
-        subprocess_option_no_window |
-        subprocess_option_enable_async |
-        subprocess_option_combined_stdout_stderr |
-        subprocess_option_inherit_environment;
-    auto argv = to_cstr_vec(command_line);
-
-    if (subprocess_create(argv.data(), options, &proc) != 0) {
-        std::fprintf(stderr, "failed to spawn agent daemon\n");
+int run_daemon_chat_command(const char * argv0, const args & a) {
+    if (!validate_daemon_command_args(argv0, a, true)) {
         return 1;
     }
 
-    int exit_code = 1;
-    int result_code = 1;
-    FILE * daemon_in = subprocess_stdin(&proc);
-    FILE * daemon_out = subprocess_stdout(&proc);
-    if (daemon_in == nullptr || daemon_out == nullptr) {
-        std::fprintf(stderr, "failed to acquire daemon pipes\n");
-        subprocess_terminate(&proc);
-        subprocess_join(&proc, &exit_code);
-        subprocess_destroy(&proc);
+    std::string error;
+    agent_daemon_client_session session;
+    if (!session.start(argv0, a, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
 
     json response;
-    json shutdown_response;
-    bool joined = false;
-    bool destroy_needed = true;
-
-    do {
-        if (!read_protocol_message(daemon_out, response, error)) {
+    if (!session.run_turn(make_daemon_client_request(a, a.prompt), response, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        session.shutdown(error);
+        return 1;
+    }
+    if (!session.shutdown(error)) {
+        if (!error.empty()) {
             std::fprintf(stderr, "%s\n", error.c_str());
-            break;
         }
-        if (!response.value("ok", false) || response.value("event", "") != "ready") {
-            std::fprintf(stderr, "unexpected daemon ready response: %s\n", response.dump().c_str());
-            break;
-        }
+        return 1;
+    }
+    if (!response.value("ok", false)) {
+        std::fprintf(stderr, "%s\n", response.value("error", "daemon turn failed").c_str());
+        return 1;
+    }
+    std::printf("%s\n", response.value("response", "").c_str());
+    return 0;
+}
 
-        json request = {
-            {"prompt", a.prompt},
-            {"session_id", a.memory_session},
-            {"namespace_id", a.memory_namespace},
-            {"turn_id", a.memory_turn},
-            {"n_predict", a.n_predict},
-            {"mode", "chat"},
-        };
+int run_daemon_session_command(const char * argv0, const args & a) {
+    if (!validate_daemon_command_args(argv0, a, false)) {
+        return 1;
+    }
 
-        if (!write_protocol_message(daemon_in, request, error)) {
+    std::string error;
+    agent_daemon_client_session session;
+    if (!session.start(argv0, a, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+
+    int prompts_sent = 0;
+    auto run_one = [&](const std::string & prompt, const std::string & turn_id = std::string()) -> bool {
+        json response;
+        if (!session.run_turn(make_daemon_client_request(a, prompt, turn_id), response, error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
-            break;
+            return false;
         }
-        if (!read_protocol_message(daemon_out, response, error)) {
-            std::fprintf(stderr, "%s\n", error.c_str());
-            break;
-        }
-
-        if (!write_protocol_message(daemon_in, json({{"command", "shutdown"}}), error)) {
-            std::fprintf(stderr, "%s\n", error.c_str());
-            break;
-        }
-        if (!read_protocol_message(daemon_out, shutdown_response, error)) {
-            std::fprintf(stderr, "%s\n", error.c_str());
-            break;
-        }
-
-        subprocess_join(&proc, &exit_code);
-        joined = true;
-
         if (!response.value("ok", false)) {
             std::fprintf(stderr, "%s\n", response.value("error", "daemon turn failed").c_str());
-            result_code = 1;
-            break;
+            return false;
         }
-        if (!shutdown_response.value("ok", false) || shutdown_response.value("event", "") != "shutdown") {
-            std::fprintf(stderr, "unexpected daemon shutdown response: %s\n", shutdown_response.dump().c_str());
-            break;
-        }
-        if (exit_code != 0) {
-            std::fprintf(stderr, "agent daemon exited with code %d\n", exit_code);
-            break;
-        }
-
         std::printf("%s\n", response.value("response", "").c_str());
-        result_code = 0;
-    } while (false);
+        ++prompts_sent;
+        return true;
+    };
 
-    if (!joined) {
-        subprocess_terminate(&proc);
-        subprocess_join(&proc, &exit_code);
+    if (!a.prompt.empty() && !run_one(a.prompt)) {
+        session.shutdown(error);
+        return 1;
     }
-    if (destroy_needed) {
-        subprocess_destroy(&proc);
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        if (line == "/quit" || line == "/exit") {
+            break;
+        }
+        if (!run_one(line)) {
+            session.shutdown(error);
+            return 1;
+        }
     }
-    return result_code;
+
+    if (!session.shutdown(error)) {
+        if (!error.empty()) {
+            std::fprintf(stderr, "%s\n", error.c_str());
+        }
+        return 1;
+    }
+
+    if (prompts_sent == 0) {
+        std::fprintf(stderr, "daemon-session requires at least one prompt via --prompt or stdin\n");
+        return 1;
+    }
+    return 0;
 }
 
 } // namespace
@@ -246,6 +406,9 @@ int run_agent_command_main(const char * argv0, int argc, char ** argv) {
 
     if (a.command == "daemon-chat") {
         return run_daemon_chat_command(argv0, a);
+    }
+    if (a.command == "daemon-session") {
+        return run_daemon_session_command(argv0, a);
     }
 
     if (a.model.empty() || a.prompt.empty()) {

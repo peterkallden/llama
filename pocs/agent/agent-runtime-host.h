@@ -111,6 +111,7 @@ struct common_agent_runtime_resident_request_config {
     std::string prompt;
     std::string session_id;
     std::string namespace_id;
+    std::string project_id;
     std::string model;
     int n_predict = 0;
     int n_gpu_layers = 0;
@@ -212,7 +213,10 @@ struct common_agent_runtime_daemon_turn_request {
     std::string prompt;
     std::string session_id;
     std::string namespace_id;
+    std::string project_id;
     std::string turn_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
     int n_predict = 0;
 };
 
@@ -263,6 +267,9 @@ private:
     common_agent_runtime_daemon_config config;
     std::string active_session_id;
     std::string active_namespace_id;
+    std::string active_project_id;
+    common_memory_scope active_memory_scope = common_memory_scope::session;
+    common_plan_scope active_plan_scope = common_plan_scope::turn;
     int active_n_predict = 0;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;

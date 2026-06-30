@@ -19,6 +19,10 @@ struct daemon_options {
     std::string default_mode = "chat";
     int n_predict = 64;
     int n_gpu_layers = 0;
+    std::string planning_mode = "off";
+    std::string reflection_mode = "off";
+    std::string memory_learn = "off";
+    std::string agent_plan = "off";
 };
 
 bool parse_args(int argc, char ** argv, daemon_options & options) {
@@ -39,6 +43,14 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_predict = std::stoi(value);
         } else if (std::strcmp(argv[i], "-ngl") == 0 || std::strcmp(argv[i], "--n-gpu-layers") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_gpu_layers = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--planning-mode") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.planning_mode = value;
+        } else if (std::strcmp(argv[i], "--reflection-mode") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.reflection_mode = value;
+        } else if (std::strcmp(argv[i], "--memory-learn") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn = value;
+        } else if (std::strcmp(argv[i], "--agent-plan") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.agent_plan = value;
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             return false;
         } else {
@@ -56,13 +68,30 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--default-mode must be chat or mini\n");
         return false;
     }
+    if (options.planning_mode != "off" && options.planning_mode != "mini") {
+        std::fprintf(stderr, "--planning-mode must be off or mini\n");
+        return false;
+    }
+    if (options.reflection_mode != "off" && options.reflection_mode != "always") {
+        std::fprintf(stderr, "--reflection-mode must be off or always\n");
+        return false;
+    }
+    if (options.memory_learn != "off" && options.memory_learn != "post-turn") {
+        std::fprintf(stderr, "--memory-learn must be off or post-turn\n");
+        return false;
+    }
+    if (options.agent_plan != "off" && options.agent_plan != "auto") {
+        std::fprintf(stderr, "--agent-plan must be off or auto\n");
+        return false;
+    }
 
     return true;
 }
 
 void usage(const char * argv0) {
     std::fprintf(stderr,
-        "usage: %s --model MODEL [--default-mode chat|mini] [--n-predict N] [-ngl N]\n",
+        "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
+        "         [--memory-learn off|post-turn] [--agent-plan off|auto] [--n-predict N] [-ngl N]\n",
         argv0);
 }
 
@@ -77,6 +106,22 @@ bool parse_mode(
         mode = common_agent_runtime_host_mode::mini;
         return true;
     }
+    return false;
+}
+
+bool parse_memory_scope(
+        const std::string & value,
+        common_memory_scope & scope) {
+    return common_memory_scope_parse(value, scope);
+}
+
+bool parse_plan_scope(
+        const std::string & value,
+        common_plan_scope & scope) {
+    if (value == "turn")    { scope = common_plan_scope::turn; return true; }
+    if (value == "session") { scope = common_plan_scope::session; return true; }
+    if (value == "project") { scope = common_plan_scope::project; return true; }
+    if (value == "global")  { scope = common_plan_scope::global; return true; }
     return false;
 }
 
@@ -126,10 +171,11 @@ int main(int argc, char ** argv) {
 
     args runtime_args;
     runtime_args.prompt = "";
-    runtime_args.agent_plan = "off";
+    runtime_args.planning_mode = options.planning_mode;
+    runtime_args.agent_plan = options.agent_plan;
     runtime_args.agent_blueprint = "off";
-    runtime_args.reflection_mode = "off";
-    runtime_args.memory_learn = "off";
+    runtime_args.reflection_mode = options.reflection_mode;
+    runtime_args.memory_learn = options.memory_learn;
 
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     if (!parse_mode(options.default_mode, default_mode)) {
@@ -141,6 +187,7 @@ int main(int argc, char ** argv) {
         memory_store,
         plan_store,
         {
+            "",
             "",
             "",
             "",
@@ -193,13 +240,30 @@ int main(int argc, char ** argv) {
         request.prompt = parsed.value("prompt", "");
         request.session_id = parsed.value("session_id", "default-session");
         request.namespace_id = parsed.value("namespace_id", "default-namespace");
+        request.project_id = parsed.value("project_id", "");
         request.turn_id = parsed.value("turn_id", "");
         request.n_predict = parsed.value("n_predict", 0);
         request.mode = default_mode;
+        request.memory_scope = common_memory_scope::session;
+        request.plan_scope = common_plan_scope::turn;
 
         const std::string mode_value = parsed.value("mode", options.default_mode);
         if (!parse_mode(mode_value, request.mode)) {
             std::cout << make_error_response("unsupported mode: " + mode_value).dump() << std::endl;
+            continue;
+        }
+
+        const std::string memory_scope_value = parsed.value("memory_scope", "session");
+        if (!parse_memory_scope(memory_scope_value, request.memory_scope)) {
+            std::cout << make_error_response("unsupported memory_scope: " + memory_scope_value).dump() << std::endl;
+            continue;
+        }
+
+        const std::string plan_scope_value = parsed.value("plan_scope", request.memory_scope == common_memory_scope::turn    ? "turn" :
+                                                                         request.memory_scope == common_memory_scope::session ? "session" :
+                                                                         request.memory_scope == common_memory_scope::project ? "project" : "global");
+        if (!parse_plan_scope(plan_scope_value, request.plan_scope)) {
+            std::cout << make_error_response("unsupported plan_scope: " + plan_scope_value).dump() << std::endl;
             continue;
         }
 
