@@ -1132,6 +1132,47 @@ static void test_runtime_resident_host_multi_turn_smoke() {
     assert(!host.session().initialized);
 }
 
+static void test_runtime_resident_chat_host_builder() {
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+
+    common_agent_runtime_turn_request base_turn_request;
+    base_turn_request.request.session_id = "resident-chat";
+    base_turn_request.request.namespace_id = "tenant-a";
+    base_turn_request.scope.session_id = "resident-chat";
+    base_turn_request.scope.namespace_id = "tenant-a";
+    base_turn_request.inference_options = {};
+    base_turn_request.generation_options.n_predict = 24;
+
+    common_agent_runtime_resident_chat_host host({
+        memories,
+        base_turn_request,
+    });
+
+    auto inference = std::make_unique<counting_agent_inference>();
+    auto * inference_ptr = inference.get();
+    host.runtime_host().session().inference_session.backend = agent_inference_backend::cli;
+    host.runtime_host().session().inference_session.inference = std::move(inference);
+    host.runtime_host().session().initialized = true;
+    host.runtime_host().session().initialized_backend = agent_inference_backend::cli;
+    host.runtime_host().session().initialized_options = {};
+
+    common_agent_result result;
+    assert(host.run_prompt("Reply with TEST only.", "turn-9", result, error));
+    assert(error.empty());
+    assert(result.response == "counted");
+    assert(inference_ptr->calls == 1);
+
+    const auto request = make_agent_runtime_resident_chat_turn_request(base_turn_request, "Prompt text", "turn-10");
+    assert(request.request.prompt == "Prompt text");
+    assert(request.request.messages.size() == 1);
+    assert(request.request.messages[0].content == "Prompt text");
+    assert(request.request.turn_id == "turn-10");
+    assert(request.scope.turn_id == "turn-10");
+    assert(request.orchestration_config.prompt == "Prompt text");
+}
+
 static void test_cli_runtime_host_adapter_chat_inputs() {
     common_memory_in_memory_store memories;
     std::string error;
@@ -1242,6 +1283,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_turn_completion();
     } else if (name == "runtime-resident-host-multi-turn") {
         test_runtime_resident_host_multi_turn_smoke();
+    } else if (name == "runtime-resident-chat-host-builder") {
+        test_runtime_resident_chat_host_builder();
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
     } else if (name == "runtime-session-reuse") {
@@ -1277,6 +1320,7 @@ int main(int argc, char ** argv) {
         "runtime-host-input-builders",
         "runtime-host-turn-completion",
         "runtime-resident-host-multi-turn",
+        "runtime-resident-chat-host-builder",
         "cli-runtime-host-adapter-chat",
         "runtime-session-reuse",
     };

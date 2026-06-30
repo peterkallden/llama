@@ -224,3 +224,47 @@ bool common_agent_runtime_resident_host::run_turn(
 void common_agent_runtime_resident_host::reset() {
     runtime_session.reset();
 }
+
+common_agent_runtime_turn_request make_agent_runtime_resident_chat_turn_request(
+        const common_agent_runtime_turn_request & base_turn_request,
+        const std::string & prompt,
+        const std::string & turn_id) {
+    auto turn_request = base_turn_request;
+    turn_request.request.prompt = prompt;
+    turn_request.request.messages = {{"user", prompt}};
+    turn_request.request.turn_id = turn_id;
+    turn_request.scope.turn_id = turn_id;
+    turn_request.orchestration_config.prompt = prompt;
+    return turn_request;
+}
+
+common_agent_runtime_resident_chat_host::common_agent_runtime_resident_chat_host(
+        common_agent_runtime_resident_chat_host_config config)
+    : memory_store(config.memory_store), base_turn_request(std::move(config.base_turn_request)) {}
+
+bool common_agent_runtime_resident_chat_host::run_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error) {
+    const std::vector<common_memory_hit> memories;
+    const std::vector<common_chat_tool> tools;
+    common_agent_runtime_host_build_context build_context{
+        memory_store,
+        nullptr,
+        make_agent_runtime_resident_chat_turn_request(base_turn_request, prompt, turn_id),
+        nullptr,
+        nullptr,
+        memories,
+        tools,
+        false,
+        nullptr,
+        {},
+    };
+    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
+    return host.run_turn(inputs, result, error);
+}
+
+void common_agent_runtime_resident_chat_host::reset() {
+    host.reset();
+}

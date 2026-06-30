@@ -106,6 +106,37 @@ private:
     common_agent_runtime_session runtime_session;
 };
 
+struct common_agent_runtime_resident_chat_host_config {
+    common_memory_store & memory_store;
+    common_agent_runtime_turn_request base_turn_request;
+};
+
+common_agent_runtime_turn_request make_agent_runtime_resident_chat_turn_request(
+    const common_agent_runtime_turn_request & base_turn_request,
+    const std::string & prompt,
+    const std::string & turn_id);
+
+class common_agent_runtime_resident_chat_host {
+public:
+    explicit common_agent_runtime_resident_chat_host(common_agent_runtime_resident_chat_host_config config);
+
+    bool run_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        common_agent_result & result,
+        std::string & error);
+
+    void reset();
+
+    const common_agent_runtime_resident_host & runtime_host() const { return host; }
+    common_agent_runtime_resident_host & runtime_host() { return host; }
+
+private:
+    common_memory_store & memory_store;
+    common_agent_runtime_turn_request base_turn_request;
+    common_agent_runtime_resident_host host;
+};
+
 struct common_agent_runtime_host_build_context {
     common_memory_store & memory_store;
     common_plan_store * plan_store = nullptr;
