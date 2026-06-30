@@ -892,6 +892,99 @@ static void test_runtime_host_mini_smoke() {
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
 }
 
+static void test_runtime_host_input_builders() {
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.plan_id = "plan-1";
+    options.reflection_mode = "always";
+    options.max_tool_rounds = 3;
+    options.tool_profile = "research";
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+    scope.turn_id = "turn-7";
+    scope.project_id = "repo-1";
+    scope.memory_scope = common_memory_scope::project;
+    scope.plan_scope = common_plan_scope::session;
+
+    std::string current_plan_id = "plan-1";
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> hits;
+    const std::vector<common_chat_tool> tools = {
+        {"lookup", "Look up a record", R"({"type":"object"})"},
+    };
+    common_agent_request request;
+    request.messages = {{"user", "Check status"}};
+    common_agent_generation_options generation_options;
+
+    common_agent_runtime_host_build_context build_context{
+        memories,
+        &plans,
+        options,
+        scope,
+        &current_plan_id,
+        &blueprints,
+        hits,
+        common_memory_scope::project,
+        true,
+        error,
+        tools,
+        true,
+        nullptr,
+        {},
+        request,
+        generation_options,
+    };
+
+    auto chat_inputs = make_agent_runtime_host_chat_inputs(build_context);
+    assert(chat_inputs.mode == common_agent_runtime_host_mode::chat);
+    assert(chat_inputs.plan_store == nullptr);
+    assert(chat_inputs.request.prompt == "Check status");
+    assert(chat_inputs.request.enable_memory);
+    assert(chat_inputs.request.namespace_id == "tenant-a");
+    assert(chat_inputs.request.project_id == "repo-1");
+    assert(chat_inputs.policy.enable_reflection);
+    assert(chat_inputs.policy.max_tool_rounds == 3);
+
+    common_agent_request mini_request;
+    common_agent_runtime_host_build_context mini_context{
+        memories,
+        &plans,
+        options,
+        scope,
+        &current_plan_id,
+        &blueprints,
+        hits,
+        common_memory_scope::project,
+        true,
+        error,
+        tools,
+        true,
+        nullptr,
+        {},
+        mini_request,
+        {},
+    };
+
+    const auto orchestration_config = make_agent_orchestration_config(options);
+    auto mini_inputs = make_agent_runtime_host_mini_inputs(mini_context, orchestration_config);
+    assert(mini_inputs.mode == common_agent_runtime_host_mode::mini);
+    assert(mini_inputs.plan_store == &plans);
+    assert(mini_inputs.current_plan_id == &current_plan_id);
+    assert(mini_inputs.scope == &scope);
+    assert(mini_inputs.installed_blueprint_candidates == &blueprints);
+    assert(mini_inputs.request.prompt == "Check status");
+    assert(mini_inputs.request.plan_scope == common_plan_scope::session);
+    assert(mini_inputs.orchestration_config.prompt == "Check status");
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -919,6 +1012,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_chat_smoke();
     } else if (name == "runtime-host-mini-smoke") {
         test_runtime_host_mini_smoke();
+    } else if (name == "runtime-host-input-builders") {
+        test_runtime_host_input_builders();
     } else {
         return false;
     }
@@ -947,6 +1042,7 @@ int main(int argc, char ** argv) {
         "chat-runtime-driver-smoke",
         "runtime-host-chat-smoke",
         "runtime-host-mini-smoke",
+        "runtime-host-input-builders",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

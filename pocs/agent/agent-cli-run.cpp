@@ -322,33 +322,24 @@ int run_agent_cli(common_memory_store & store, args a) {
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        common_agent_request runtime_request;
-        runtime_request.prompt = a.prompt;
-        runtime_request.enable_memory = memory_enabled;
-        runtime_request.memories = hits;
-        common_agent_scope_apply(agent_scope, runtime_request);
-        common_agent_runtime_host_inputs inputs{
-            common_agent_runtime_host_mode::mini,
+        common_agent_runtime_host_build_context build_context{
             store,
             plan_store.get(),
-            make_agent_inference_options(a),
-            make_agent_runtime_policy(a),
-            make_agent_runtime_config(a),
-            orchestration_config,
+            a,
+            agent_scope,
             &active_plan_id,
-            &agent_scope,
             &installed_blueprint_candidates,
-            &hits,
+            hits,
             query.scope,
             memory_enabled,
-            &fallback_reason,
-            std::move(runtime_request),
-            {},
+            fallback_reason,
             tools,
             profile_tools_active,
             profile_tools_active ? &tool_registry : nullptr,
             {},
+            {},
         };
+        auto inputs = make_agent_runtime_host_mini_inputs(build_context, orchestration_config);
         common_agent_result result;
         if (!run_agent_runtime_host_session(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
@@ -358,32 +349,21 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 #endif
 
+    common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
     common_agent_request request;
     request.messages = messages;
-    request.prompt = a.prompt;
-    request.enable_memory = memory_enabled;
-    request.memories = hits;
-    common_agent_scope_apply(common_cli_make_agent_scope_with_matching_plan_scope(a), request);
-
     common_agent_generation_options generation_options;
-    generation_options.n_predict = a.n_predict;
-    common_agent_runtime_host_inputs inputs{
-        common_agent_runtime_host_mode::chat,
+    common_agent_runtime_host_build_context build_context{
         store,
         nullptr,
-        make_agent_inference_options(a),
-        make_agent_runtime_policy(a),
-        make_agent_runtime_config(a),
-        {},
+        a,
+        runtime_scope,
         nullptr,
         nullptr,
-        nullptr,
-        &hits,
+        hits,
         query.scope,
         memory_enabled,
-        &fallback_reason,
-        std::move(request),
-        generation_options,
+        fallback_reason,
         tools,
         profile_tools_active,
         profile_tools_active ? &tool_registry : nullptr,
@@ -397,7 +377,10 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
             return std::string(R"({"ok":false,"error":"unsupported memory tool"})");
         },
+        std::move(request),
+        generation_options,
     };
+    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
 
     common_agent_result result;
     if (!run_agent_runtime_host_session(inputs, runtime_session, result, error)) {

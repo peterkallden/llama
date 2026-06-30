@@ -8,6 +8,74 @@ const std::string k_empty_fallback_reason;
 
 } // namespace
 
+common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
+        common_agent_runtime_host_build_context & context) {
+    common_agent_request request = std::move(context.request);
+    request.prompt = context.options.prompt;
+    request.enable_memory = context.memory_enabled;
+    request.memories = context.memories;
+    common_agent_scope_apply(context.scope, request);
+
+    common_agent_generation_options generation_options = context.generation_options;
+    generation_options.n_predict = context.options.n_predict;
+
+    return {
+        common_agent_runtime_host_mode::chat,
+        context.memory_store,
+        nullptr,
+        make_agent_inference_options(context.options),
+        make_agent_runtime_policy(context.options),
+        make_agent_runtime_config(context.options),
+        {},
+        nullptr,
+        nullptr,
+        nullptr,
+        &context.memories,
+        context.memory_scope,
+        context.memory_enabled,
+        &context.fallback_reason,
+        std::move(request),
+        generation_options,
+        context.tools,
+        context.profile_tools_active,
+        context.tool_registry,
+        context.tool_handler,
+    };
+}
+
+common_agent_runtime_host_inputs make_agent_runtime_host_mini_inputs(
+        common_agent_runtime_host_build_context & context,
+        const common_agent_orchestration_config & orchestration_config) {
+    common_agent_request request = std::move(context.request);
+    request.prompt = context.options.prompt;
+    request.enable_memory = context.memory_enabled;
+    request.memories = context.memories;
+    common_agent_scope_apply(context.scope, request);
+
+    return {
+        common_agent_runtime_host_mode::mini,
+        context.memory_store,
+        context.plan_store,
+        make_agent_inference_options(context.options),
+        make_agent_runtime_policy(context.options),
+        make_agent_runtime_config(context.options),
+        orchestration_config,
+        context.current_plan_id,
+        &context.scope,
+        context.installed_blueprint_candidates,
+        &context.memories,
+        context.memory_scope,
+        context.memory_enabled,
+        &context.fallback_reason,
+        std::move(request),
+        context.generation_options,
+        context.tools,
+        context.profile_tools_active,
+        context.tool_registry,
+        context.tool_handler,
+    };
+}
+
 common_agent_runtime_host_execution make_agent_runtime_host_execution(
         common_agent_runtime_host_inputs & inputs,
         common_agent_inference & inference) {
