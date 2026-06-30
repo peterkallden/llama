@@ -1046,6 +1046,92 @@ static void test_runtime_host_turn_completion() {
     assert(session.inference_session.inference == nullptr);
 }
 
+static void test_runtime_resident_host_multi_turn_smoke() {
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success("First answer", 5),
+        make_success("Second answer", 6),
+    };
+
+    common_agent_runtime_resident_host host;
+    host.session().inference_session.backend = agent_inference_backend::cli;
+    host.session().inference_session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
+    auto * inference_ptr = static_cast<fake_agent_inference *>(host.session().inference_session.inference.get());
+    host.session().initialized = true;
+    host.session().initialized_backend = agent_inference_backend::cli;
+    host.session().initialized_options = {};
+
+    const std::vector<common_chat_tool> tools;
+
+    common_agent_runtime_turn_request first_turn;
+    first_turn.request = make_request();
+    first_turn.request.messages = {{"user", "Turn one"}};
+    first_turn.request.prompt = "Turn one";
+    first_turn.generation_options.n_predict = 32;
+    common_agent_runtime_host_inputs first_inputs{
+        common_agent_runtime_host_mode::chat,
+        memories,
+        nullptr,
+        first_turn,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        tools,
+        false,
+        nullptr,
+        {},
+        true,
+        {},
+    };
+
+    common_agent_result first_result;
+    assert(host.run_turn(first_inputs, first_result, error));
+    assert(error.empty());
+    assert(first_result.response == "First answer");
+    assert(host.session().inference_session.inference.get() == inference_ptr);
+    assert(host.session().initialized);
+
+    common_agent_runtime_turn_request second_turn;
+    second_turn.request = make_request();
+    second_turn.request.turn_id = "turn-8";
+    second_turn.request.messages = {{"user", "Turn two"}};
+    second_turn.request.prompt = "Turn two";
+    second_turn.generation_options.n_predict = 32;
+    common_agent_runtime_host_inputs second_inputs{
+        common_agent_runtime_host_mode::chat,
+        memories,
+        nullptr,
+        second_turn,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        tools,
+        false,
+        nullptr,
+        {},
+        true,
+        {},
+    };
+
+    common_agent_result second_result;
+    assert(host.run_turn(second_inputs, second_result, error));
+    assert(error.empty());
+    assert(second_result.response == "Second answer");
+    assert(host.session().inference_session.inference.get() == inference_ptr);
+    assert(inference_ptr->seen.size() == 2);
+    assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-7:conversation");
+    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-8:conversation");
+
+    host.reset();
+    assert(!host.session().initialized);
+}
+
 static void test_cli_runtime_host_adapter_chat_inputs() {
     common_memory_in_memory_store memories;
     std::string error;
@@ -1154,6 +1240,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_input_builders();
     } else if (name == "runtime-host-turn-completion") {
         test_runtime_host_turn_completion();
+    } else if (name == "runtime-resident-host-multi-turn") {
+        test_runtime_resident_host_multi_turn_smoke();
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
     } else if (name == "runtime-session-reuse") {
@@ -1188,6 +1276,7 @@ int main(int argc, char ** argv) {
         "runtime-host-mini-smoke",
         "runtime-host-input-builders",
         "runtime-host-turn-completion",
+        "runtime-resident-host-multi-turn",
         "cli-runtime-host-adapter-chat",
         "runtime-session-reuse",
     };

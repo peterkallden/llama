@@ -209,3 +209,18 @@ bool run_agent_runtime_host(
     error = "unsupported runtime host mode";
     return false;
 }
+
+bool common_agent_runtime_resident_host::run_turn(
+        common_agent_runtime_host_inputs & inputs,
+        common_agent_result & result,
+        std::string & error) {
+    const bool original_reset = inputs.reset_session_on_completion;
+    inputs.reset_session_on_completion = false;
+    const bool ok = run_agent_runtime_host_turn(inputs, runtime_session, result, error);
+    inputs.reset_session_on_completion = original_reset;
+    return ok;
+}
+
+void common_agent_runtime_resident_host::reset() {
+    runtime_session.reset();
+}

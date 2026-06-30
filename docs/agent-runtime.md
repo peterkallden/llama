@@ -80,6 +80,8 @@ The runtime host does not parse CLI arguments. It should remain small enough tha
 
 The host inputs now carry a CLI-free runtime turn request: request payload, scope, inference options, runtime policy, runtime config, orchestration config, generation options, and memory authority. The CLI adapter translates `args` into that request at the edge.
 
+A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
+
 ### Runtime Drivers
 
 The runtime drivers contain the agent behavior.

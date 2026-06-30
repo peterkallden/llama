@@ -90,6 +90,22 @@ bool run_agent_runtime_host(
     common_agent_result & result,
     std::string & error);
 
+class common_agent_runtime_resident_host {
+public:
+    bool run_turn(
+        common_agent_runtime_host_inputs & inputs,
+        common_agent_result & result,
+        std::string & error);
+
+    void reset();
+
+    const common_agent_runtime_session & session() const { return runtime_session; }
+    common_agent_runtime_session & session() { return runtime_session; }
+
+private:
+    common_agent_runtime_session runtime_session;
+};
+
 struct common_agent_runtime_host_build_context {
     common_memory_store & memory_store;
     common_plan_store * plan_store = nullptr;
