@@ -59,28 +59,6 @@ void usage(const char * argv0) {
         argv0);
 }
 
-common_agent_runtime_turn_request make_base_turn_request(
-        const resident_smoke_options & options,
-        const std::string & prompt) {
-    common_agent_runtime_turn_request turn_request;
-    turn_request.request.prompt = prompt;
-    turn_request.request.messages = {{"user", prompt}};
-    turn_request.request.session_id = "resident-smoke-session";
-    turn_request.request.namespace_id = "resident-smoke";
-    turn_request.scope.namespace_id = "resident-smoke";
-    turn_request.scope.session_id = "resident-smoke-session";
-    turn_request.scope.memory_scope = common_memory_scope::session;
-    turn_request.scope.plan_scope = common_plan_scope::turn;
-    turn_request.inference_options.model = options.model;
-    turn_request.inference_options.n_predict = options.n_predict;
-    turn_request.inference_options.n_gpu_layers = options.n_gpu_layers;
-    turn_request.inference_options.fit_params = false;
-    turn_request.policy.agent_inference_backend = "server-context";
-    turn_request.orchestration_config.prompt = prompt;
-    turn_request.generation_options.n_predict = options.n_predict;
-    return turn_request;
-}
-
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -97,16 +75,22 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    common_agent_runtime_resident_runtime runtime({
-        memory_store,
-        nullptr,
-        make_base_turn_request(options, options.first_prompt),
-        {},
-        {},
-        {},
-        false,
-        nullptr,
-    });
+    common_agent_runtime_resident_runtime runtime(
+        make_agent_runtime_resident_runtime_config(
+            memory_store,
+            nullptr,
+            make_agent_runtime_resident_base_turn_request({
+                options.first_prompt,
+                "resident-smoke-session",
+                "resident-smoke",
+                options.model,
+                options.n_predict,
+                options.n_gpu_layers,
+                false,
+                "server-context",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+            })));
     common_agent_result first_result;
     common_agent_result second_result;
     void * first_keepalive = nullptr;

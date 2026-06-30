@@ -17,8 +17,11 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--memory-search-tool|--memory-remember-tool]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
-        "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n",
-        argv0, command_name);
+        "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
+        "  %s daemon-chat --model MODEL --prompt TEXT [--planning-mode off] [--memory-scope session]\n"
+        "         [--memory-namespace ID] [--memory-session ID]\n"
+        "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n",
+        argv0, command_name, argv0);
 }
 
 static bool parse_embedding(const std::string & value, std::vector<float> & out) {
@@ -40,7 +43,7 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
         return false;
     }
     out.command = argv[1];
-    if (out.command != "run" && out.command != "chat") {
+    if (out.command != "run" && out.command != "chat" && out.command != "daemon-chat") {
         fprintf(stderr, "unsupported agent command: %s\n", out.command.c_str());
         return false;
     }

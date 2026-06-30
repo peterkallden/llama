@@ -34,7 +34,9 @@ runtime host
                 +--> memory learning
 ```
 
-There is no daemon lifecycle yet. There are no named pipes, Unix sockets, HTTP endpoints, MCP transports, async workers, or background tool queues in this slice.
+There is still no real daemon lifecycle yet. There are no named pipes, Unix sockets, HTTP endpoints, MCP transports, async workers, or background tool queues in this slice.
+
+A small foreground daemon smoke now exists on top of the resident runtime builders. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one process, one host-owned model config, synchronous turn handling, explicit shutdown, and no detached lifetime management.
 
 ## Layer Responsibilities
 
@@ -83,6 +85,10 @@ The host inputs now carry a CLI-free runtime turn request: request payload, scop
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 
 There is now a small resident runtime layer on top of that wrapper. It owns the reusable resident host session plus the base runtime turn contract, and it can run either ordinary chat turns or mini planning turns against the same keepalive-backed model session. The thinner resident chat and mini helpers now delegate to that layer. Their job remains deliberately narrow: stamp per-turn prompt and turn identity onto the base request, run the turn, and in mini mode keep track of the active plan identity after completion.
+
+The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
+
+On top of that, the CLI now has a thin `daemon-chat` adapter. It starts the foreground daemon as a child process, sends one chat turn over the JSONL protocol, reads one response, and shuts the child down. This path is deliberately conservative: it currently supports only session-scoped chat with the `server-context` inference backend and does not yet expose the full planning or tool-runtime surface.
 
 ### Runtime Drivers
 
@@ -214,5 +220,7 @@ The resident-inference branch has been validated with:
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
+- foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
+- CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.

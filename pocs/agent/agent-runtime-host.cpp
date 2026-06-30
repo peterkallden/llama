@@ -225,6 +225,27 @@ void common_agent_runtime_resident_host::reset() {
     runtime_session.reset();
 }
 
+common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
+        const common_agent_runtime_resident_request_config & config) {
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request.prompt = config.prompt;
+    turn_request.request.messages = {{"user", config.prompt}};
+    turn_request.request.session_id = config.session_id;
+    turn_request.request.namespace_id = config.namespace_id;
+    turn_request.scope.namespace_id = config.namespace_id;
+    turn_request.scope.session_id = config.session_id;
+    turn_request.scope.memory_scope = config.memory_scope;
+    turn_request.scope.plan_scope = config.plan_scope;
+    turn_request.inference_options.model = config.model;
+    turn_request.inference_options.n_predict = config.n_predict;
+    turn_request.inference_options.n_gpu_layers = config.n_gpu_layers;
+    turn_request.inference_options.fit_params = config.fit_params;
+    turn_request.policy.agent_inference_backend = config.inference_backend;
+    turn_request.orchestration_config.prompt = config.prompt;
+    turn_request.generation_options.n_predict = config.n_predict;
+    return turn_request;
+}
+
 common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
         const common_agent_runtime_turn_request & base_turn_request,
         const std::string & prompt,
@@ -236,6 +257,27 @@ common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
     turn_request.scope.turn_id = turn_id;
     turn_request.orchestration_config.prompt = prompt;
     return turn_request;
+}
+
+common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime_config(
+        common_memory_store & memory_store,
+        common_plan_store * plan_store,
+        common_agent_runtime_turn_request base_turn_request,
+        std::string current_plan_id,
+        std::vector<common_blueprint_candidate> installed_blueprint_candidates,
+        std::vector<common_chat_tool> tools,
+        bool profile_tools_active,
+        const common_tool_registry * tool_registry) {
+    return {
+        memory_store,
+        plan_store,
+        std::move(base_turn_request),
+        std::move(current_plan_id),
+        std::move(installed_blueprint_candidates),
+        std::move(tools),
+        profile_tools_active,
+        tool_registry,
+    };
 }
 
 common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
@@ -308,16 +350,10 @@ void common_agent_runtime_resident_runtime::reset() {
 
 common_agent_runtime_resident_chat_host::common_agent_runtime_resident_chat_host(
         common_agent_runtime_resident_chat_host_config config)
-    : runtime({
+    : runtime(make_agent_runtime_resident_runtime_config(
         config.memory_store,
         nullptr,
-        std::move(config.base_turn_request),
-        {},
-        {},
-        {},
-        false,
-        nullptr,
-    }) {}
+        std::move(config.base_turn_request))) {}
 
 bool common_agent_runtime_resident_chat_host::run_prompt(
         const std::string & prompt,
@@ -333,7 +369,7 @@ void common_agent_runtime_resident_chat_host::reset() {
 
 common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host(
         common_agent_runtime_resident_mini_host_config config)
-    : runtime({
+    : runtime(make_agent_runtime_resident_runtime_config(
         config.memory_store,
         &config.plan_store,
         std::move(config.base_turn_request),
@@ -341,8 +377,7 @@ common_agent_runtime_resident_mini_host::common_agent_runtime_resident_mini_host
         std::move(config.installed_blueprint_candidates),
         std::move(config.tools),
         config.profile_tools_active,
-        config.tool_registry,
-    }) {}
+        config.tool_registry)) {}
 
 bool common_agent_runtime_resident_mini_host::run_prompt(
         const std::string & prompt,
@@ -354,4 +389,126 @@ bool common_agent_runtime_resident_mini_host::run_prompt(
 
 void common_agent_runtime_resident_mini_host::reset() {
     runtime.reset();
+}
+
+common_agent_runtime_daemon_host::common_agent_runtime_daemon_host(
+        common_agent_runtime_daemon_config config)
+    : config(std::move(config)) {}
+
+common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_turn_request(
+        const common_agent_runtime_daemon_turn_request & request) const {
+    auto resident_request = config.resident_request;
+    resident_request.prompt = request.prompt;
+    resident_request.session_id = request.session_id;
+    resident_request.namespace_id = request.namespace_id;
+    if (request.n_predict > 0) {
+        resident_request.n_predict = request.n_predict;
+    }
+
+    auto turn_request = make_agent_runtime_resident_base_turn_request(resident_request);
+    turn_request.policy = config.policy;
+    turn_request.runtime_config = config.runtime_config;
+    turn_request.orchestration_config = config.orchestration_config;
+    turn_request.orchestration_config.prompt = request.prompt;
+    turn_request.memory_scope = config.memory_scope;
+    turn_request.memory_enabled = config.memory_enabled;
+    if (turn_request.generation_options.n_predict == 0) {
+        turn_request.generation_options.n_predict = resident_request.n_predict;
+    }
+    return turn_request;
+}
+
+bool common_agent_runtime_daemon_host::ensure_runtime(
+        const common_agent_runtime_daemon_turn_request & request,
+        bool & reused,
+        std::string & error) {
+    const int requested_n_predict = request.n_predict > 0 ? request.n_predict : config.resident_request.n_predict;
+    const bool needs_new_runtime =
+        !runtime ||
+        active_session_id != request.session_id ||
+        active_namespace_id != request.namespace_id ||
+        active_n_predict != requested_n_predict;
+
+    if (!needs_new_runtime) {
+        reused = true;
+        error.clear();
+        return true;
+    }
+
+    reused = false;
+    runtime = std::make_unique<common_agent_runtime_resident_runtime>(
+        make_agent_runtime_resident_runtime_config(
+            config.memory_store,
+            &config.plan_store,
+            make_base_turn_request(request),
+            {},
+            config.installed_blueprint_candidates,
+            config.tools,
+            config.profile_tools_active,
+            config.tool_registry));
+    active_session_id = request.session_id;
+    active_namespace_id = request.namespace_id;
+    active_n_predict = requested_n_predict;
+    error.clear();
+    return true;
+}
+
+bool common_agent_runtime_daemon_host::run_turn(
+        const common_agent_runtime_daemon_turn_request & request,
+        common_agent_runtime_daemon_turn_result & result,
+        std::string & error) {
+    result = {};
+
+    if (request.prompt.empty()) {
+        error = "daemon turn request requires a prompt";
+        result.error = error;
+        return false;
+    }
+    if (request.session_id.empty()) {
+        error = "daemon turn request requires a session_id";
+        result.error = error;
+        return false;
+    }
+    if (request.namespace_id.empty()) {
+        error = "daemon turn request requires a namespace_id";
+        result.error = error;
+        return false;
+    }
+
+    bool runtime_reused = false;
+    if (!ensure_runtime(request, runtime_reused, error)) {
+        result.error = error;
+        return false;
+    }
+
+    const std::string turn_id = request.turn_id.empty()
+        ? "daemon-turn-" + std::to_string(++generated_turn_counter)
+        : request.turn_id;
+
+    common_agent_result agent_result;
+    bool ok = false;
+    switch (request.mode) {
+        case common_agent_runtime_host_mode::chat:
+            ok = runtime->run_chat_prompt(request.prompt, turn_id, agent_result, error);
+            break;
+        case common_agent_runtime_host_mode::mini:
+            ok = runtime->run_mini_prompt(request.prompt, turn_id, agent_result, error);
+            break;
+    }
+
+    result.ok = ok;
+    result.runtime_reused = runtime_reused;
+    result.response = agent_result.response;
+    result.plan_id = agent_result.plan_id ? *agent_result.plan_id : "";
+    result.total_decoded_tokens = agent_result.total_decoded_tokens;
+    result.error = ok ? std::string() : error;
+    return ok;
+}
+
+void common_agent_runtime_daemon_host::reset() {
+    runtime.reset();
+    active_session_id.clear();
+    active_namespace_id.clear();
+    active_n_predict = 0;
+    generated_turn_counter = 0;
 }

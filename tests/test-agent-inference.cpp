@@ -1173,6 +1173,69 @@ static void test_runtime_resident_chat_host_builder() {
     assert(request.orchestration_config.prompt == "Prompt text");
 }
 
+static void test_runtime_resident_request_builders() {
+    const auto base_turn_request = make_agent_runtime_resident_base_turn_request({
+        "Reply with OK only.",
+        "resident-session",
+        "tenant-a",
+        "model.gguf",
+        64,
+        2,
+        false,
+        "server-context",
+        common_memory_scope::project,
+        common_plan_scope::session,
+    });
+
+    assert(base_turn_request.request.prompt == "Reply with OK only.");
+    assert(base_turn_request.request.messages.size() == 1);
+    assert(base_turn_request.request.messages[0].role == "user");
+    assert(base_turn_request.request.messages[0].content == "Reply with OK only.");
+    assert(base_turn_request.request.session_id == "resident-session");
+    assert(base_turn_request.request.namespace_id == "tenant-a");
+    assert(base_turn_request.scope.session_id == "resident-session");
+    assert(base_turn_request.scope.namespace_id == "tenant-a");
+    assert(base_turn_request.scope.memory_scope == common_memory_scope::project);
+    assert(base_turn_request.scope.plan_scope == common_plan_scope::session);
+    assert(base_turn_request.inference_options.model == "model.gguf");
+    assert(base_turn_request.inference_options.n_predict == 64);
+    assert(base_turn_request.inference_options.n_gpu_layers == 2);
+    assert(!base_turn_request.inference_options.fit_params);
+    assert(base_turn_request.policy.agent_inference_backend == "server-context");
+    assert(base_turn_request.generation_options.n_predict == 64);
+
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+    auto runtime_config = make_agent_runtime_resident_runtime_config(
+        memories,
+        nullptr,
+        base_turn_request);
+    assert(&runtime_config.memory_store == &memories);
+    assert(runtime_config.plan_store == nullptr);
+    assert(runtime_config.base_turn_request.request.session_id == "resident-session");
+
+    common_agent_runtime_daemon_turn_request daemon_request;
+    daemon_request.mode = common_agent_runtime_host_mode::mini;
+    daemon_request.prompt = "Check status";
+    daemon_request.session_id = "resident-session";
+    daemon_request.namespace_id = "tenant-a";
+    daemon_request.turn_id = "turn-3";
+    daemon_request.n_predict = 32;
+    assert(daemon_request.mode == common_agent_runtime_host_mode::mini);
+    assert(daemon_request.turn_id == "turn-3");
+
+    common_agent_runtime_daemon_turn_result daemon_result;
+    daemon_result.ok = true;
+    daemon_result.response = "All set";
+    daemon_result.plan_id = "plan-1";
+    daemon_result.total_decoded_tokens = 12;
+    assert(daemon_result.ok);
+    assert(daemon_result.response == "All set");
+    assert(daemon_result.plan_id == "plan-1");
+    assert(daemon_result.total_decoded_tokens == 12);
+}
+
 static void test_runtime_resident_runtime_builder() {
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -1187,13 +1250,18 @@ static void test_runtime_resident_runtime_builder() {
     options.agent_plan = "off";
     options.agent_blueprint = "off";
 
-    common_agent_runtime_turn_request base_turn_request;
-    base_turn_request.scope.namespace_id = "tenant-a";
-    base_turn_request.scope.session_id = "session-42";
-    base_turn_request.scope.memory_scope = common_memory_scope::session;
-    base_turn_request.scope.plan_scope = common_plan_scope::turn;
-    base_turn_request.request.session_id = "session-42";
-    base_turn_request.request.namespace_id = "tenant-a";
+    auto base_turn_request = make_agent_runtime_resident_base_turn_request({
+        options.prompt,
+        "session-42",
+        "tenant-a",
+        {},
+        0,
+        0,
+        true,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    });
     base_turn_request.policy = make_agent_runtime_policy(options);
     base_turn_request.runtime_config = make_agent_runtime_config(options);
     base_turn_request.orchestration_config = make_agent_orchestration_config(options);
@@ -1201,16 +1269,10 @@ static void test_runtime_resident_runtime_builder() {
     base_turn_request.memory_enabled = true;
     base_turn_request.generation_options.n_predict = 24;
 
-    common_agent_runtime_resident_runtime runtime({
+    common_agent_runtime_resident_runtime runtime(make_agent_runtime_resident_runtime_config(
         memories,
         &plans,
-        base_turn_request,
-        {},
-        {},
-        {},
-        false,
-        nullptr,
-    });
+        base_turn_request));
 
     fake_agent_inference inference;
     inference.queued = {
@@ -1262,13 +1324,18 @@ static void test_runtime_resident_mini_host_builder() {
     options.agent_plan = "off";
     options.agent_blueprint = "off";
 
-    common_agent_runtime_turn_request base_turn_request;
-    base_turn_request.scope.namespace_id = "tenant-a";
-    base_turn_request.scope.session_id = "session-42";
-    base_turn_request.scope.memory_scope = common_memory_scope::session;
-    base_turn_request.scope.plan_scope = common_plan_scope::turn;
-    base_turn_request.request.session_id = "session-42";
-    base_turn_request.request.namespace_id = "tenant-a";
+    auto base_turn_request = make_agent_runtime_resident_base_turn_request({
+        options.prompt,
+        "session-42",
+        "tenant-a",
+        {},
+        0,
+        0,
+        true,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    });
     base_turn_request.policy = make_agent_runtime_policy(options);
     base_turn_request.runtime_config = make_agent_runtime_config(options);
     base_turn_request.orchestration_config = make_agent_orchestration_config(options);
@@ -1416,6 +1483,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_resident_host_multi_turn_smoke();
     } else if (name == "runtime-resident-chat-host-builder") {
         test_runtime_resident_chat_host_builder();
+    } else if (name == "runtime-resident-request-builders") {
+        test_runtime_resident_request_builders();
     } else if (name == "runtime-resident-runtime-builder") {
         test_runtime_resident_runtime_builder();
     } else if (name == "runtime-resident-mini-host-builder") {
@@ -1456,6 +1525,7 @@ int main(int argc, char ** argv) {
         "runtime-host-turn-completion",
         "runtime-resident-host-multi-turn",
         "runtime-resident-chat-host-builder",
+        "runtime-resident-request-builders",
         "runtime-resident-runtime-builder",
         "runtime-resident-mini-host-builder",
         "cli-runtime-host-adapter-chat",
