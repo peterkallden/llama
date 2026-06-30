@@ -65,6 +65,19 @@ if ($Build) {
 Assert-PathExists -Path $cliPath -Label "Agent CLI executable"
 Assert-PathExists -Path $daemonPath -Label "Agent daemon executable"
 
+function Show-Diagnostics {
+    param([string]$Path)
+
+    if (Test-Path -LiteralPath $Path) {
+        $diag = Get-Content -LiteralPath $Path
+        if ($diag.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Daemon diagnostics:"
+            $diag | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+        }
+    }
+}
+
 $stdinLines = @(
     "Reply with DONE only."
 )
@@ -83,23 +96,44 @@ $argumentList = @(
     "-ngl", "0"
 )
 
-$output = $stdinLines | & $cliPath @argumentList
-if ($LASTEXITCODE -ne 0) {
-    throw "daemon-session smoke failed with exit code $LASTEXITCODE"
-}
+$stdinPath = Join-Path $env:TEMP "llama-agent-daemon-session-smoke-stdin.txt"
+$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-session-smoke-stdout.log"
+$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-session-smoke-stderr.log"
+Set-Content -LiteralPath $stdinPath -Value $stdinLines -Encoding Ascii
+Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
 
-$stdoutLines = @($output | Where-Object { $_ -and $_.Trim().Length -gt 0 })
-if ($stdoutLines.Count -lt 2) {
-    throw "Expected at least 2 stdout lines, got $($stdoutLines.Count)"
-}
-if ($stdoutLines[0].Trim() -ne "OK") {
-    throw "First daemon-session response mismatch: $($stdoutLines[0])"
-}
-if ($stdoutLines[1].Trim() -ne "DONE") {
-    throw "Second daemon-session response mismatch: $($stdoutLines[1])"
-}
+try {
+    $quotedArgs = ($argumentList | ForEach-Object { "`"$_`"" }) -join " "
+    $cmd = "type `"$stdinPath`" | `"$cliPath`" $quotedArgs 1> `"$stdoutPath`" 2> `"$stderrPath`""
+    cmd /d /c $cmd | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Show-Diagnostics -Path $stderrPath
+        throw "daemon-session smoke failed with exit code $LASTEXITCODE"
+    }
 
-Write-Host ""
-Write-Host "Agent daemon-session smoke test complete."
-Write-Host $stdoutLines[0]
-Write-Host $stdoutLines[1]
+    $output = Get-Content -LiteralPath $stdoutPath
+    $stdoutLines = @($output | Where-Object { $_ -and $_.Trim().Length -gt 0 })
+    if ($stdoutLines.Count -ne 2) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Expected exactly 2 stdout lines, got $($stdoutLines.Count)"
+    }
+    if ($stdoutLines[0].Trim() -ne "OK") {
+        Show-Diagnostics -Path $stderrPath
+        throw "First daemon-session response mismatch: $($stdoutLines[0])"
+    }
+    if ($stdoutLines[1].Trim() -ne "DONE") {
+        Show-Diagnostics -Path $stderrPath
+        throw "Second daemon-session response mismatch: $($stdoutLines[1])"
+    }
+
+    Write-Host ""
+    Write-Host "Agent daemon-session smoke test complete."
+    Write-Host $stdoutLines[0]
+    Write-Host $stdoutLines[1]
+}
+finally {
+    Remove-Item -LiteralPath $stdinPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
+}

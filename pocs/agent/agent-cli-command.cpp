@@ -8,10 +8,12 @@
 #include <sheredom/subprocess.h>
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 using json = nlohmann::ordered_json;
@@ -59,8 +61,8 @@ bool read_protocol_message(FILE * stream, json & out, std::string & error) {
 
         const auto parsed = json::parse(line, nullptr, false);
         if (parsed.is_discarded() || !parsed.is_object()) {
-            std::fprintf(stderr, "%s\n", line.c_str());
-            continue;
+            error = "daemon emitted a non-JSON protocol line: " + line;
+            return false;
         }
 
         out = parsed;
@@ -97,6 +99,18 @@ struct daemon_client_request {
     std::string mode = "chat";
 };
 
+void forward_daemon_diagnostics(FILE * stream) {
+    if (stream == nullptr) {
+        return;
+    }
+
+    char buffer[4096];
+    while (std::fgets(buffer, sizeof(buffer), stream) != nullptr) {
+        std::fwrite(buffer, 1, std::strlen(buffer), stderr);
+        std::fflush(stderr);
+    }
+}
+
 class agent_daemon_client_session {
 public:
     bool start(const char * argv0, const args & a, std::string & error) {
@@ -127,7 +141,6 @@ public:
         const int options =
             subprocess_option_no_window |
             subprocess_option_enable_async |
-            subprocess_option_combined_stdout_stderr |
             subprocess_option_inherit_environment;
 
         if (subprocess_create(argv.data(), options, &proc) != 0) {
@@ -137,15 +150,19 @@ public:
 
         daemon_in = subprocess_stdin(&proc);
         daemon_out = subprocess_stdout(&proc);
-        if (daemon_in == nullptr || daemon_out == nullptr) {
+        daemon_err = subprocess_stderr(&proc);
+        if (daemon_in == nullptr || daemon_out == nullptr || daemon_err == nullptr) {
             error = "failed to acquire daemon pipes";
             subprocess_terminate(&proc);
             subprocess_join(&proc, &exit_code);
             subprocess_destroy(&proc);
             daemon_in = nullptr;
             daemon_out = nullptr;
+            daemon_err = nullptr;
             return false;
         }
+
+        daemon_err_thread = std::thread(forward_daemon_diagnostics, daemon_err);
 
         json ready;
         if (!read_protocol_message(daemon_out, ready, error)) {
@@ -209,6 +226,10 @@ public:
         running = false;
         daemon_in = nullptr;
         daemon_out = nullptr;
+        daemon_err = nullptr;
+        if (daemon_err_thread.joinable()) {
+            daemon_err_thread.join();
+        }
         return ok && exit_code == 0;
     }
 
@@ -230,6 +251,10 @@ private:
         running = false;
         daemon_in = nullptr;
         daemon_out = nullptr;
+        daemon_err = nullptr;
+        if (daemon_err_thread.joinable()) {
+            daemon_err_thread.join();
+        }
     }
 
     std::filesystem::path daemon_path;
@@ -237,6 +262,8 @@ private:
     subprocess_s proc{};
     FILE * daemon_in = nullptr;
     FILE * daemon_out = nullptr;
+    FILE * daemon_err = nullptr;
+    std::thread daemon_err_thread;
     int exit_code = 1;
     bool running = false;
 };

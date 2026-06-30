@@ -1,5 +1,6 @@
 #include "agent-runtime-host.h"
 
+#include "log.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
@@ -156,6 +157,7 @@ int main(int argc, char ** argv) {
         usage(argv[0]);
         return 2;
     }
+    common_log_set_verbosity_thold(LOG_LEVEL_WARN);
 
     common_memory_in_memory_store memory_store;
     common_plan_in_memory_store plan_store;
