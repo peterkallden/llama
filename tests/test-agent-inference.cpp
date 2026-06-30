@@ -5,6 +5,7 @@
 #include "plan/plan-in-memory.h"
 #include "agent-cli-runtime.h"
 #include "agent-cli-selection.h"
+#include "agent-cli-host-adapter.h"
 #include "agent-runtime-chat-driver.h"
 #include "agent-runtime-host.h"
 #include "agent-runtime-assembly.h"
@@ -1038,6 +1039,51 @@ static void test_runtime_host_turn_completion() {
     assert(session.inference_session.inference == nullptr);
 }
 
+static void test_cli_runtime_host_adapter_chat_inputs() {
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "Check status";
+    options.memory_namespace = "tenant-a";
+    options.memory_session = "session-42";
+    options.memory_turn = "turn-7";
+    options.memory_project = "repo-1";
+    options.memory_scope = "project";
+    options.plan_scope = "session";
+
+    const std::vector<common_chat_msg> messages = {
+        {"user", "Check status"},
+    };
+    const std::vector<common_memory_hit> hits;
+    const std::vector<common_chat_tool> tools = {
+        {"memory_search", "Search memory", R"({"type":"object"})"},
+    };
+
+    auto inputs = make_agent_cli_runtime_host_chat_inputs(
+        memories,
+        options,
+        messages,
+        common_memory_scope::project,
+        hits,
+        true,
+        error,
+        tools,
+        false,
+        nullptr,
+        {});
+
+    assert(inputs.mode == common_agent_runtime_host_mode::chat);
+    assert(inputs.reset_session_on_completion);
+    assert(inputs.request.prompt == "Check status");
+    assert(inputs.request.namespace_id == "tenant-a");
+    assert(inputs.request.project_id == "repo-1");
+    assert(inputs.request.plan_scope == common_plan_scope::session);
+    assert(inputs.request.enable_memory);
+    assert(inputs.tool_handler);
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -1069,6 +1115,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_input_builders();
     } else if (name == "runtime-host-turn-completion") {
         test_runtime_host_turn_completion();
+    } else if (name == "cli-runtime-host-adapter-chat") {
+        test_cli_runtime_host_adapter_chat_inputs();
     } else {
         return false;
     }
@@ -1099,6 +1147,7 @@ int main(int argc, char ** argv) {
         "runtime-host-mini-smoke",
         "runtime-host-input-builders",
         "runtime-host-turn-completion",
+        "cli-runtime-host-adapter-chat",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

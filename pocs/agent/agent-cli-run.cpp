@@ -4,6 +4,7 @@
 #include "../memory/memory-cli-memory.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+#include "agent-cli-host-adapter.h"
 #include "agent-plan-orchestration.h"
 #include "agent-cli-selection.h"
 #include "agent-cli-runtime.h"
@@ -33,7 +34,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <ctime>
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include <filesystem>
 #endif
@@ -296,109 +296,52 @@ int run_agent_cli(common_memory_store & store, args a) {
     }
 
     common_agent_runtime_session runtime_session;
-    const auto runtime_post_run = [&store, &a, memory_enabled](const common_agent_result &, std::string & hook_error) {
-        if (!a.record_episode) {
-            hook_error.clear();
-            return true;
-        }
-        if (!memory_enabled) {
-            fprintf(stderr, "warning: skipping episode recording because no query embedding could be generated\n");
-            hook_error.clear();
-            return true;
-        }
-
-        common_memory_record episode;
-        episode.id = "episode-" + std::to_string(std::time(nullptr));
-        episode.kind = common_memory_kind::episode;
-        episode.content = a.prompt;
-        episode.created_at = std::time(nullptr);
-        episode.accessed_at = episode.created_at;
-        episode.importance = 0.5f;
-        episode.confidence = 0.5f;
-        apply_memory_scope(a, episode);
-        if (!store.put(episode, hook_error)) {
-            fprintf(stderr, "failed to record memory episode: %s\n", hook_error.c_str());
-            hook_error.clear();
-        }
-        return true;
-    };
-
-    auto finish_chat = [&](const common_agent_result & result) {
-        printf("%s\n", result.response.c_str());
-        fprintf(stderr, "decoded %d tokens\n", result.total_decoded_tokens);
-        return 0;
-    };
+    auto runtime_post_run = make_agent_cli_runtime_post_run(store, a, memory_enabled);
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     if (a.planning_mode == "mini") {
-        common_agent_runtime_host_build_context build_context{
+        auto inputs = make_agent_cli_runtime_host_mini_inputs(
             store,
-            plan_store.get(),
+            *plan_store,
             a,
             agent_scope,
-            &active_plan_id,
-            &installed_blueprint_candidates,
-            hits,
+            active_plan_id,
+            installed_blueprint_candidates,
+            orchestration_config,
             query.scope,
+            hits,
             memory_enabled,
             fallback_reason,
             tools,
             profile_tools_active,
             profile_tools_active ? &tool_registry : nullptr,
-            {},
-            {},
-        };
-        auto inputs = make_agent_runtime_host_mini_inputs(build_context, orchestration_config);
-        inputs.reset_session_on_completion = true;
-        inputs.post_run = runtime_post_run;
+            runtime_post_run);
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
         }
-        return finish_chat(result);
+        return finish_agent_cli_runtime_result(result);
     }
 #endif
 
-    common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
-    common_agent_request request;
-    request.messages = messages;
-    common_agent_generation_options generation_options;
-    common_agent_runtime_host_build_context build_context{
+    auto inputs = make_agent_cli_runtime_host_chat_inputs(
         store,
-        nullptr,
         a,
-        runtime_scope,
-        nullptr,
-        nullptr,
-        hits,
+        messages,
         query.scope,
+        hits,
         memory_enabled,
         fallback_reason,
         tools,
         profile_tools_active,
         profile_tools_active ? &tool_registry : nullptr,
-        [&store, &a](const common_chat_tool_call & call) {
-            if (call.name == "memory_search") {
-                return memory_search_tool_result(store, a, call.arguments);
-            }
-            if (call.name == "memory_remember") {
-                return memory_remember_tool_result(store, a, call.arguments);
-            }
-            fprintf(stderr, "warning: rejected unsupported memory tool call: %s\n", call.name.c_str());
-            return std::string(R"({"ok":false,"error":"unsupported memory tool"})");
-        },
-        std::move(request),
-        generation_options,
-    };
-    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
-    inputs.reset_session_on_completion = true;
-    inputs.post_run = runtime_post_run;
+        runtime_post_run);
 
     common_agent_result result;
     if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    return finish_chat(result);
+    return finish_agent_cli_runtime_result(result);
 }

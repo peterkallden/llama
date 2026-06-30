@@ -3,6 +3,7 @@ add_executable(${TARGET}
     agent.cpp
     agent-cli-command.cpp
     agent-cli-config.cpp
+    agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
     agent-plan-orchestration.cpp
     agent-runtime-chat-driver.cpp
