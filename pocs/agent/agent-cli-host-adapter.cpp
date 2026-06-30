@@ -2,6 +2,9 @@
 
 #include "../memory/memory-cli-memory.h"
 
+#include "agent-plan-orchestration.h"
+#include "agent-runtime-assembly.h"
+#include "agent-runtime-execution.h"
 #include "common/cli-scope.h"
 
 #include <cstdio>
@@ -54,6 +57,29 @@ common_agent_chat_tool_handler make_agent_cli_runtime_tool_handler(
     };
 }
 
+common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
+        const args & options,
+        const common_agent_scope & scope,
+        const common_agent_orchestration_config & orchestration_config,
+        common_memory_scope memory_scope,
+        bool memory_enabled,
+        const std::string & fallback_reason,
+        common_agent_request request,
+        common_agent_generation_options generation_options) {
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request = std::move(request);
+    turn_request.scope = scope;
+    turn_request.inference_options = make_agent_inference_options(options);
+    turn_request.policy = make_agent_runtime_policy(options);
+    turn_request.runtime_config = make_agent_runtime_config(options);
+    turn_request.orchestration_config = orchestration_config;
+    turn_request.generation_options = generation_options;
+    turn_request.memory_scope = memory_scope;
+    turn_request.memory_enabled = memory_enabled;
+    turn_request.fallback_reason = fallback_reason;
+    return turn_request;
+}
+
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         common_memory_store & store,
         args & options,
@@ -70,23 +96,26 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     common_agent_request request;
     request.messages = messages;
     common_agent_generation_options generation_options;
-    common_agent_runtime_host_build_context build_context{
-        store,
-        nullptr,
+    auto turn_request = make_agent_cli_runtime_turn_request(
         options,
         runtime_scope,
-        nullptr,
-        nullptr,
-        memories,
+        make_agent_orchestration_config(options),
         memory_scope,
         memory_enabled,
         fallback_reason,
+        std::move(request),
+        generation_options);
+    common_agent_runtime_host_build_context build_context{
+        store,
+        nullptr,
+        std::move(turn_request),
+        nullptr,
+        nullptr,
+        memories,
         tools,
         profile_tools_active,
         tool_registry,
         make_agent_cli_runtime_tool_handler(store, options),
-        std::move(request),
-        generation_options,
     };
     auto inputs = make_agent_runtime_host_chat_inputs(build_context);
     inputs.reset_session_on_completion = true;
@@ -110,22 +139,23 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         bool profile_tools_active,
         const common_tool_registry * tool_registry,
         common_agent_runtime_host_post_run post_run) {
+    auto turn_request = make_agent_cli_runtime_turn_request(
+        options,
+        scope,
+        orchestration_config,
+        memory_scope,
+        memory_enabled,
+        fallback_reason);
     common_agent_runtime_host_build_context build_context{
         store,
         &plan_store,
-        options,
-        scope,
+        std::move(turn_request),
         &current_plan_id,
         &installed_blueprint_candidates,
         memories,
-        memory_scope,
-        memory_enabled,
-        fallback_reason,
         tools,
         profile_tools_active,
         tool_registry,
-        {},
-        {},
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, orchestration_config);
     inputs.reset_session_on_completion = true;

@@ -81,6 +81,22 @@ static queued_generation make_failure(
     return result;
 }
 
+class counting_agent_inference final : public common_agent_inference {
+public:
+    int calls = 0;
+
+    bool generate(
+            const common_agent_generation_request &,
+            common_agent_generation_result & result) override {
+        ++calls;
+        result = {};
+        result.content = "counted";
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::none;
+        return true;
+    }
+};
+
 static args make_test_args() {
     args options;
     options.n_predict = 64;
@@ -790,24 +806,20 @@ static void test_runtime_host_chat_smoke() {
     request.messages = {{"user", "Check status"}};
     common_agent_generation_options options;
     options.n_predict = 64;
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request = request;
+    turn_request.generation_options = options;
+    turn_request.memory_enabled = true;
 
     common_agent_runtime_host_inputs inputs{
         common_agent_runtime_host_mode::chat,
         memories,
         nullptr,
-        {},
-        {},
-        {},
-        {},
+        turn_request,
         nullptr,
         nullptr,
         nullptr,
         nullptr,
-        common_memory_scope::session,
-        true,
-        nullptr,
-        request,
-        options,
         tools,
         false,
         nullptr,
@@ -855,6 +867,14 @@ static void test_runtime_host_mini_smoke() {
 
     common_agent_request request = make_request();
     request.enable_memory = true;
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request = request;
+    turn_request.scope = scope;
+    turn_request.policy = make_agent_runtime_policy(options);
+    turn_request.runtime_config = make_agent_runtime_config(options);
+    turn_request.orchestration_config = make_agent_orchestration_config(options);
+    turn_request.memory_scope = common_memory_scope::session;
+    turn_request.memory_enabled = true;
 
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
@@ -864,19 +884,11 @@ static void test_runtime_host_mini_smoke() {
         common_agent_runtime_host_mode::mini,
         memories,
         &plans,
-        {},
-        make_agent_runtime_policy(options),
-        make_agent_runtime_config(options),
-        make_agent_orchestration_config(options),
+        turn_request,
         &current_plan_id,
         &scope,
         &blueprints,
         &hits,
-        common_memory_scope::session,
-        true,
-        nullptr,
-        request,
-        {},
         tools,
         false,
         nullptr,
@@ -924,53 +936,56 @@ static void test_runtime_host_input_builders() {
     common_agent_request request;
     request.messages = {{"user", "Check status"}};
     common_agent_generation_options generation_options;
+    common_agent_runtime_turn_request turn_request = make_agent_cli_runtime_turn_request(
+        options,
+        scope,
+        make_agent_orchestration_config(options),
+        common_memory_scope::project,
+        true,
+        error,
+        std::move(request),
+        generation_options);
 
     common_agent_runtime_host_build_context build_context{
         memories,
         &plans,
-        options,
-        scope,
+        turn_request,
         &current_plan_id,
         &blueprints,
         hits,
-        common_memory_scope::project,
-        true,
-        error,
         tools,
         true,
         nullptr,
         {},
-        request,
-        generation_options,
     };
 
     auto chat_inputs = make_agent_runtime_host_chat_inputs(build_context);
     assert(chat_inputs.mode == common_agent_runtime_host_mode::chat);
     assert(chat_inputs.plan_store == nullptr);
-    assert(chat_inputs.request.prompt == "Check status");
-    assert(chat_inputs.request.enable_memory);
-    assert(chat_inputs.request.namespace_id == "tenant-a");
-    assert(chat_inputs.request.project_id == "repo-1");
-    assert(chat_inputs.policy.enable_reflection);
-    assert(chat_inputs.policy.max_tool_rounds == 3);
+    assert(chat_inputs.turn_request.request.prompt == "Check status");
+    assert(chat_inputs.turn_request.request.enable_memory);
+    assert(chat_inputs.turn_request.request.namespace_id == "tenant-a");
+    assert(chat_inputs.turn_request.request.project_id == "repo-1");
+    assert(chat_inputs.turn_request.policy.enable_reflection);
+    assert(chat_inputs.turn_request.policy.max_tool_rounds == 3);
 
-    common_agent_request mini_request;
+    common_agent_runtime_turn_request mini_turn_request = make_agent_cli_runtime_turn_request(
+        options,
+        scope,
+        make_agent_orchestration_config(options),
+        common_memory_scope::project,
+        true,
+        error);
     common_agent_runtime_host_build_context mini_context{
         memories,
         &plans,
-        options,
-        scope,
+        mini_turn_request,
         &current_plan_id,
         &blueprints,
         hits,
-        common_memory_scope::project,
-        true,
-        error,
         tools,
         true,
         nullptr,
-        {},
-        mini_request,
         {},
     };
 
@@ -979,11 +994,11 @@ static void test_runtime_host_input_builders() {
     assert(mini_inputs.mode == common_agent_runtime_host_mode::mini);
     assert(mini_inputs.plan_store == &plans);
     assert(mini_inputs.current_plan_id == &current_plan_id);
-    assert(mini_inputs.scope == &scope);
+    assert(mini_inputs.scope == &mini_inputs.turn_request.scope);
     assert(mini_inputs.installed_blueprint_candidates == &blueprints);
-    assert(mini_inputs.request.prompt == "Check status");
-    assert(mini_inputs.request.plan_scope == common_plan_scope::session);
-    assert(mini_inputs.orchestration_config.prompt == "Check status");
+    assert(mini_inputs.turn_request.request.prompt == "Check status");
+    assert(mini_inputs.turn_request.request.plan_scope == common_plan_scope::session);
+    assert(mini_inputs.turn_request.orchestration_config.prompt == "Check status");
 }
 
 static void test_runtime_host_turn_completion() {
@@ -1000,18 +1015,10 @@ static void test_runtime_host_turn_completion() {
         memories,
         nullptr,
         {},
-        {},
-        {},
-        {},
         nullptr,
         nullptr,
         nullptr,
         nullptr,
-        common_memory_scope::session,
-        false,
-        nullptr,
-        request,
-        {},
         tools,
         false,
         nullptr,
@@ -1076,12 +1083,44 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
 
     assert(inputs.mode == common_agent_runtime_host_mode::chat);
     assert(inputs.reset_session_on_completion);
-    assert(inputs.request.prompt == "Check status");
-    assert(inputs.request.namespace_id == "tenant-a");
-    assert(inputs.request.project_id == "repo-1");
-    assert(inputs.request.plan_scope == common_plan_scope::session);
-    assert(inputs.request.enable_memory);
+    assert(inputs.turn_request.request.prompt == "Check status");
+    assert(inputs.turn_request.request.namespace_id == "tenant-a");
+    assert(inputs.turn_request.request.project_id == "repo-1");
+    assert(inputs.turn_request.request.plan_scope == common_plan_scope::session);
+    assert(inputs.turn_request.request.enable_memory);
     assert(inputs.tool_handler);
+}
+
+static void test_runtime_session_reuse() {
+    common_agent_runtime_session session;
+    auto * fake_model = reinterpret_cast<llama_model *>(0x1);
+    auto * fake_templates = reinterpret_cast<const common_chat_templates *>(0x2);
+    auto inference = std::make_unique<counting_agent_inference>();
+    auto * inference_ptr = inference.get();
+
+    session.model = fake_model;
+    session.inference_session.backend = agent_inference_backend::cli;
+    session.inference_session.model = fake_model;
+    session.inference_session.templates = fake_templates;
+    session.inference_session.inference = std::move(inference);
+    session.initialized = true;
+    session.initialized_backend = agent_inference_backend::cli;
+    session.initialized_options = make_agent_inference_options(make_test_args());
+
+    std::string error;
+    assert(initialize_agent_runtime_session(
+        make_agent_inference_options(make_test_args()),
+        agent_inference_backend::cli,
+        true,
+        {},
+        session,
+        error));
+    assert(error.empty());
+    assert(session.model == fake_model);
+    assert(session.inference_session.inference.get() == inference_ptr);
+    session.model = nullptr;
+    session.inference_session = {};
+    session.initialized = false;
 }
 
 static bool run_named_test(const std::string & name) {
@@ -1117,6 +1156,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_turn_completion();
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
+    } else if (name == "runtime-session-reuse") {
+        test_runtime_session_reuse();
     } else {
         return false;
     }
@@ -1148,6 +1189,7 @@ int main(int argc, char ** argv) {
         "runtime-host-input-builders",
         "runtime-host-turn-completion",
         "cli-runtime-host-adapter-chat",
+        "runtime-session-reuse",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {

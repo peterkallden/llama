@@ -16,6 +16,16 @@ common_agent_chat_tool_handler make_agent_cli_runtime_tool_handler(
     common_memory_store & store,
     const args & options);
 
+common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
+    const args & options,
+    const common_agent_scope & scope,
+    const common_agent_orchestration_config & orchestration_config,
+    common_memory_scope memory_scope,
+    bool memory_enabled,
+    const std::string & fallback_reason,
+    common_agent_request request = {},
+    common_agent_generation_options generation_options = {});
+
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     common_memory_store & store,
     args & options,

@@ -11,6 +11,10 @@ common_agent_runtime_session & common_agent_runtime_session::operator=(common_ag
         other.model = nullptr;
         chat_templates = std::move(other.chat_templates);
         inference_session = std::move(other.inference_session);
+        initialized = other.initialized;
+        initialized_backend = other.initialized_backend;
+        initialized_options = std::move(other.initialized_options);
+        other.initialized = false;
     }
     return *this;
 }
@@ -26,6 +30,17 @@ void common_agent_runtime_session::reset() {
         llama_model_free(model);
         model = nullptr;
     }
+    initialized = false;
+    initialized_backend = agent_inference_backend::cli;
+    initialized_options = {};
+}
+
+static bool common_agent_inference_options_match(
+        const common_agent_inference_options & lhs,
+        const common_agent_inference_options & rhs) {
+    return lhs.model == rhs.model &&
+        lhs.n_predict == rhs.n_predict &&
+        lhs.n_gpu_layers == rhs.n_gpu_layers;
 }
 
 bool initialize_agent_runtime_session(
@@ -35,6 +50,14 @@ bool initialize_agent_runtime_session(
     const std::string & fallback_reason,
     common_agent_runtime_session & session,
     std::string & error) {
+    if (session.initialized &&
+            session.inference_session.inference &&
+            session.initialized_backend == backend &&
+            common_agent_inference_options_match(session.initialized_options, options)) {
+        error.clear();
+        return true;
+    }
+
     session.reset();
 
     if (backend == agent_inference_backend::cli) {
@@ -65,6 +88,9 @@ bool initialize_agent_runtime_session(
         return false;
     }
 
+    session.initialized = true;
+    session.initialized_backend = backend;
+    session.initialized_options = options;
     error.clear();
     return true;
 }

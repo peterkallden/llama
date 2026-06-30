@@ -72,11 +72,13 @@ It is responsible for:
 
 - Receiving already-built host inputs.
 - Selecting and initializing the inference backend.
-- Owning the runtime session lifecycle for the turn.
+- Owning the runtime session lifecycle for the turn, including whether a prepared session is reused or reset after completion.
 - Dispatching to chat mode or mini-planning mode.
 - Running completion hooks and session reset policy.
 
 The runtime host does not parse CLI arguments. It should remain small enough that a future resident host can provide equivalent inputs directly.
+
+The host inputs now carry a CLI-free runtime turn request: request payload, scope, inference options, runtime policy, runtime config, orchestration config, generation options, and memory authority. The CLI adapter translates `args` into that request at the edge.
 
 ### Runtime Drivers
 
@@ -96,6 +98,8 @@ The current backends are:
 - `server-context`: an in-process resident smoke backend using `server_context`.
 
 The generation request/result contract is narrower than top-level CLI state. Requests carry purpose, trace metadata, scope, messages, tools, optional schema, and generation options. Results return content, decoded-token counts, status, stop reason, parser metadata, and errors in one shared envelope.
+
+Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
 
 ### Stores and Scope
 
@@ -173,9 +177,9 @@ The current code should remain useful without any of these. The next steps shoul
 
 ## Next Steps
 
-1. Introduce a CLI-free runtime turn request.
+1. Use the runtime turn request end-to-end outside CLI.
 
-   The host builders still have some helper paths that accept CLI `args`. The next cleanup is to define a `common_agent_runtime_turn_request` or equivalent contract that contains only runtime concepts: prompt/messages, scope, stores, tools, policy, inference options, generation options, memory hits, plan identity, and completion hooks.
+   The host builders now accept a CLI-free runtime turn request. The next cleanup is to move more callers onto that contract directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
 
 2. Make tool provider discovery explicit.
 
@@ -191,7 +195,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 5. Split resident host lifecycle from inference backend.
 
-   The current `server-context` path is an in-process smoke backend. A real resident host should own model lifetime, session cache, cancellation, and resource shutdown separately from CLI process lifetime.
+   The current `server-context` path is an in-process smoke backend. A real resident host should own model lifetime, session reuse policy, cancellation, and resource shutdown separately from CLI process lifetime.
 
 6. Create MCP client/provider support after the internal provider contract exists.
 

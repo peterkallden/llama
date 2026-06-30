@@ -13,6 +13,9 @@ struct common_agent_runtime_session {
     llama_model * model = nullptr;
     common_chat_templates_ptr chat_templates;
     common_agent_inference_session inference_session;
+    bool initialized = false;
+    agent_inference_backend initialized_backend = agent_inference_backend::cli;
+    common_agent_inference_options initialized_options;
 
     common_agent_runtime_session() = default;
     common_agent_runtime_session(common_agent_runtime_session &&) = default;
