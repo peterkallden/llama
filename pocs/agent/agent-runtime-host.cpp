@@ -40,6 +40,8 @@ common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
         context.profile_tools_active,
         context.tool_registry,
         context.tool_handler,
+        false,
+        {},
     };
 }
 
@@ -73,6 +75,8 @@ common_agent_runtime_host_inputs make_agent_runtime_host_mini_inputs(
         context.profile_tools_active,
         context.tool_registry,
         context.tool_handler,
+        false,
+        {},
     };
 }
 
@@ -126,6 +130,41 @@ bool run_agent_runtime_host_session(
 
     auto execution = make_agent_runtime_host_execution(inputs, *session.inference_session.inference);
     return run_agent_runtime_host(execution, result, error);
+}
+
+bool complete_agent_runtime_host_turn(
+        common_agent_runtime_host_inputs & inputs,
+        common_agent_runtime_session & session,
+        const common_agent_result & result,
+        std::string & error) {
+    if (inputs.post_run && !inputs.post_run(result, error)) {
+        if (inputs.reset_session_on_completion) {
+            session.reset();
+        }
+        return false;
+    }
+
+    if (inputs.reset_session_on_completion) {
+        session.reset();
+    }
+
+    error.clear();
+    return true;
+}
+
+bool run_agent_runtime_host_turn(
+        common_agent_runtime_host_inputs & inputs,
+        common_agent_runtime_session & session,
+        common_agent_result & result,
+        std::string & error) {
+    if (!run_agent_runtime_host_session(inputs, session, result, error)) {
+        if (inputs.reset_session_on_completion) {
+            session.reset();
+        }
+        return false;
+    }
+
+    return complete_agent_runtime_host_turn(inputs, session, result, error);
 }
 
 bool run_agent_runtime_host(

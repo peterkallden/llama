@@ -5,12 +5,17 @@
 #include "agent-runtime-chat-driver.h"
 #include "agent-runtime-execution.h"
 
+#include <functional>
 #include <string>
 
 enum class common_agent_runtime_host_mode {
     chat,
     mini,
 };
+
+using common_agent_runtime_host_post_run = std::function<bool(
+    const common_agent_result & result,
+    std::string & error)>;
 
 struct common_agent_runtime_host_inputs {
     common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
@@ -33,6 +38,8 @@ struct common_agent_runtime_host_inputs {
     bool profile_tools_active = false;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
+    bool reset_session_on_completion = false;
+    common_agent_runtime_host_post_run post_run;
 };
 
 struct common_agent_runtime_host_execution {
@@ -62,6 +69,18 @@ common_agent_runtime_host_execution make_agent_runtime_host_execution(
     common_agent_inference & inference);
 
 bool run_agent_runtime_host_session(
+    common_agent_runtime_host_inputs & inputs,
+    common_agent_runtime_session & session,
+    common_agent_result & result,
+    std::string & error);
+
+bool complete_agent_runtime_host_turn(
+    common_agent_runtime_host_inputs & inputs,
+    common_agent_runtime_session & session,
+    const common_agent_result & result,
+    std::string & error);
+
+bool run_agent_runtime_host_turn(
     common_agent_runtime_host_inputs & inputs,
     common_agent_runtime_session & session,
     common_agent_result & result,

@@ -985,6 +985,59 @@ static void test_runtime_host_input_builders() {
     assert(mini_inputs.orchestration_config.prompt == "Check status");
 }
 
+static void test_runtime_host_turn_completion() {
+    common_memory_in_memory_store memories;
+    std::string error;
+    assert(memories.open("", error));
+
+    const std::vector<common_chat_tool> tools;
+    common_agent_request request;
+    request.messages = {{"user", "Check status"}};
+
+    common_agent_runtime_host_inputs inputs{
+        common_agent_runtime_host_mode::chat,
+        memories,
+        nullptr,
+        {},
+        {},
+        {},
+        {},
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        common_memory_scope::session,
+        false,
+        nullptr,
+        request,
+        {},
+        tools,
+        false,
+        nullptr,
+        {},
+        true,
+        {},
+    };
+
+    int post_run_calls = 0;
+    inputs.post_run = [&post_run_calls](const common_agent_result & result, std::string & hook_error) {
+        ++post_run_calls;
+        assert(result.response == "Status is green.");
+        hook_error.clear();
+        return true;
+    };
+
+    common_agent_runtime_session session;
+    session.inference_session.inference = std::make_unique<fake_agent_inference>();
+    common_agent_result result;
+    result.response = "Status is green.";
+
+    assert(complete_agent_runtime_host_turn(inputs, session, result, error));
+    assert(error.empty());
+    assert(post_run_calls == 1);
+    assert(session.inference_session.inference == nullptr);
+}
+
 static bool run_named_test(const std::string & name) {
     if (name == "generation-contract") {
         test_generation_contract_helpers();
@@ -1014,6 +1067,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_host_mini_smoke();
     } else if (name == "runtime-host-input-builders") {
         test_runtime_host_input_builders();
+    } else if (name == "runtime-host-turn-completion") {
+        test_runtime_host_turn_completion();
     } else {
         return false;
     }
@@ -1043,6 +1098,7 @@ int main(int argc, char ** argv) {
         "runtime-host-chat-smoke",
         "runtime-host-mini-smoke",
         "runtime-host-input-builders",
+        "runtime-host-turn-completion",
     };
     for (const char * name : tests) {
         if (!run_named_test(name)) {
