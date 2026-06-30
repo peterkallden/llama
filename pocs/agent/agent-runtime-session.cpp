@@ -40,7 +40,8 @@ static bool common_agent_inference_options_match(
         const common_agent_inference_options & rhs) {
     return lhs.model == rhs.model &&
         lhs.n_predict == rhs.n_predict &&
-        lhs.n_gpu_layers == rhs.n_gpu_layers;
+        lhs.n_gpu_layers == rhs.n_gpu_layers &&
+        lhs.fit_params == rhs.fit_params;
 }
 
 bool initialize_agent_runtime_session(

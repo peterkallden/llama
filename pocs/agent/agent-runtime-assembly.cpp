@@ -27,6 +27,7 @@ struct agent_resident_inference_host {
         params.model.path = options.model;
         params.n_predict = options.n_predict;
         params.n_gpu_layers = options.n_gpu_layers;
+        params.fit_params = options.fit_params;
         params.n_parallel = 1;
         params.n_sequences = 1;
         params.n_ctx = 0;
@@ -70,6 +71,7 @@ common_agent_inference_options make_agent_inference_options(const args & options
     config.model = options.model;
     config.n_predict = options.n_predict;
     config.n_gpu_layers = options.n_gpu_layers;
+    config.fit_params = true;
     return config;
 }
 

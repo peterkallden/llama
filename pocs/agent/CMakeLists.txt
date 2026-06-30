@@ -1,7 +1,4 @@
-set(TARGET llama-agent-cli)
-add_executable(${TARGET}
-    agent.cpp
-    agent-cli-command.cpp
+set(AGENT_RUNTIME_SOURCES
     agent-cli-config.cpp
     agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
@@ -17,8 +14,15 @@ add_executable(${TARGET}
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp
-    agent-cli-run.cpp
     agent-cli-selection.cpp
+)
+
+set(TARGET llama-agent-cli)
+add_executable(${TARGET}
+    agent.cpp
+    agent-cli-command.cpp
+    ${AGENT_RUNTIME_SOURCES}
+    agent-cli-run.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
 target_include_directories(${TARGET} PRIVATE
@@ -40,3 +44,24 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
+
+set(TARGET llama-agent-resident-smoke)
+add_executable(${TARGET}
+    agent-resident-smoke.cpp
+    ${AGENT_RUNTIME_SOURCES}
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-memory
+    llama-common
+    llama
+    llama-agent-poc
+    server-context
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)

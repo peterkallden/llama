@@ -211,5 +211,6 @@ The resident-inference branch has been validated with:
 - `test-tool-adapters`
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
+- resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.

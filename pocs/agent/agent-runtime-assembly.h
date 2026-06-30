@@ -32,6 +32,7 @@ struct common_agent_inference_options {
     std::string model;
     int n_predict = -1;
     int n_gpu_layers = 0;
+    bool fit_params = true;
 };
 
 common_agent_inference_options make_agent_inference_options(const args & options);
