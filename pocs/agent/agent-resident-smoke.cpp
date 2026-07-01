@@ -1,4 +1,5 @@
 #include "agent-runtime-host.h"
+#include "agent-runtime-session-host.h"
 
 #include "log.h"
 #include "memory/memory-in-memory.h"

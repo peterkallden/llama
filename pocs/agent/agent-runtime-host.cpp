@@ -1,4 +1,5 @@
 #include "agent-runtime-host.h"
+#include "agent-runtime-session-host.h"
 
 namespace {
 
@@ -445,6 +446,8 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
 common_agent_runtime_session_host::common_agent_runtime_session_host(
         common_agent_runtime_session_host_config config)
     : config(std::move(config)) {}
+
+common_agent_runtime_session_host::~common_agent_runtime_session_host() = default;
 
 common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_turn_request(
         const common_agent_runtime_session_host_turn_request & request) const {
