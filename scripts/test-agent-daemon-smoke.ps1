@@ -2,6 +2,8 @@
 param(
     [string]$BuildDir = "build-plan",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string[]]$ExtraDaemonArgs = @(),
+    [string]$PathPrefix = "",
     [switch]$Build
 )
 
@@ -40,6 +42,16 @@ function Resolve-CMake {
     }
 
     throw "Unable to locate cmake.exe"
+}
+
+function Quote-CmdArg {
+    param([string]$Value)
+
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    return '"' + $Value.Replace('"', '\"') + '"'
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -90,7 +102,18 @@ Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
 
 try {
-    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode chat -n 32 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
+    if (-not [string]::IsNullOrWhiteSpace($PathPrefix)) {
+        $env:PATH = "$PathPrefix;$env:PATH"
+    }
+
+    $daemonArgs = @(
+        "--model", $ChatModel,
+        "--default-mode", "chat",
+        "-n", "32",
+        "-ngl", "0"
+    ) + $ExtraDaemonArgs
+    $daemonArgString = ($daemonArgs | ForEach-Object { Quote-CmdArg $_ }) -join " "
+    $cmd = "type `"$requestsPath`" | `"$exePath`" $daemonArgString 1> `"$stdoutPath`" 2> `"$stderrPath`""
     cmd /d /c $cmd | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Show-Diagnostics -Path $stderrPath

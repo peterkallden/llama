@@ -244,6 +244,7 @@ The resident-inference branch has been validated with:
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
 - foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
+- Cozo-backed foreground daemon smoke, verifying the same daemon path can open persistent memory/plan stores through the existing Cozo store factories
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
 - multi-turn daemon `mini` smoke, verifying runtime reuse plus stable `plan_id` reuse across two planning turns in the same resident session
