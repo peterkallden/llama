@@ -1,8 +1,6 @@
 #include "agent-runtime-host.h"
 
 #include "log.h"
-#include "memory/memory-in-memory.h"
-#include "plan/plan-in-memory.h"
 
 #include <nlohmann/json.hpp>
 
@@ -18,6 +16,10 @@ namespace {
 struct daemon_options {
     std::string model;
     std::string embedding_model;
+    std::string backend = "auto";
+    std::string memory_db;
+    std::string plan_backend = "auto";
+    std::string plan_db;
     std::string default_mode = "chat";
     int n_predict = 64;
     int n_gpu_layers = 0;
@@ -46,6 +48,14 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.model = value;
         } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.embedding_model = value;
+        } else if (std::strcmp(argv[i], "--backend") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.backend = value;
+        } else if (std::strcmp(argv[i], "--memory-db") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.memory_db = value;
+        } else if (std::strcmp(argv[i], "--plan-backend") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.plan_backend = value;
+        } else if (std::strcmp(argv[i], "--plan-db") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.plan_db = value;
         } else if (std::strcmp(argv[i], "--default-mode") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.default_mode = value;
         } else if (std::strcmp(argv[i], "-n") == 0 || std::strcmp(argv[i], "--n-predict") == 0) {
@@ -87,6 +97,14 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--default-mode must be chat or mini\n");
         return false;
     }
+    if (options.backend != "auto" && options.backend != "in-memory" && options.backend != "cozo") {
+        std::fprintf(stderr, "--backend must be auto, in-memory, or cozo\n");
+        return false;
+    }
+    if (options.plan_backend != "auto" && options.plan_backend != "in-memory" && options.plan_backend != "cozo") {
+        std::fprintf(stderr, "--plan-backend must be auto, in-memory, or cozo\n");
+        return false;
+    }
     if (options.planning_mode != "off" && options.planning_mode != "mini") {
         std::fprintf(stderr, "--planning-mode must be off or mini\n");
         return false;
@@ -115,7 +133,8 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
 void usage(const char * argv0) {
     std::fprintf(stderr,
         "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
-        "         [--embedding-model MODEL] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
+        "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
+        "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--n-predict N] [-ngl N]\n",
         argv0);
 }
@@ -184,6 +203,10 @@ args make_runtime_args(const daemon_options & options) {
     runtime_args.prompt = "";
     runtime_args.model = options.model;
     runtime_args.embedding_model = options.embedding_model;
+    runtime_args.backend = options.backend;
+    runtime_args.memory_db = options.memory_db;
+    runtime_args.plan_backend = options.plan_backend;
+    runtime_args.plan_db = options.plan_db;
     runtime_args.n_predict = options.n_predict;
     runtime_args.n_gpu_layers = options.n_gpu_layers;
     runtime_args.planning_mode = options.planning_mode;
@@ -237,6 +260,30 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
     };
 }
 
+bool open_daemon_memory_store(
+        const daemon_options & options,
+        std::unique_ptr<common_memory_store> & store,
+        std::string & error) {
+    const auto store_args = make_runtime_args(options);
+    store = make_memory_store(store_args, error);
+    if (!store) {
+        return false;
+    }
+    return open_memory_store(*store, store_args, error);
+}
+
+bool open_daemon_plan_store(
+        const daemon_options & options,
+        std::unique_ptr<common_plan_store> & store,
+        std::string & error) {
+    const auto store_args = make_runtime_args(options);
+    store = make_plan_store(store_args, error);
+    if (!store) {
+        return false;
+    }
+    return store->open(store_args.plan_db, error);
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -247,15 +294,15 @@ int main(int argc, char ** argv) {
     }
     common_log_set_verbosity_thold(LOG_LEVEL_WARN);
 
-    common_memory_in_memory_store memory_store;
-    common_plan_in_memory_store plan_store;
+    std::unique_ptr<common_memory_store> memory_store;
+    std::unique_ptr<common_plan_store> plan_store;
     std::string error;
-    if (!memory_store.open("", error)) {
-        std::fprintf(stderr, "failed to open in-memory memory store: %s\n", error.c_str());
+    if (!open_daemon_memory_store(options, memory_store, error)) {
+        std::fprintf(stderr, "failed to open daemon memory store: %s\n", error.c_str());
         return 1;
     }
-    if (!plan_store.open("", error)) {
-        std::fprintf(stderr, "failed to open in-memory plan store: %s\n", error.c_str());
+    if (!open_daemon_plan_store(options, plan_store, error)) {
+        std::fprintf(stderr, "failed to open daemon plan store: %s\n", error.c_str());
         return 1;
     }
 
@@ -266,7 +313,7 @@ int main(int argc, char ** argv) {
     }
 
     common_agent_runtime_daemon_host daemon(make_agent_runtime_daemon_config(
-        make_session_host_build_config(memory_store, plan_store, options)));
+        make_session_host_build_config(*memory_store, *plan_store, options)));
 
     std::cout << json({
         {"ok", true},

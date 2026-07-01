@@ -1,8 +1,8 @@
 # Agent Runtime Architecture
 
-This note describes the current resident-agent runtime direction. It is intentionally focused on the runtime boundary before any daemon, socket, MCP transport, or server lifecycle work.
+This note describes the current resident-agent runtime direction. The main completed step is the inference/runtime abstraction that now sits between agent behavior and the old CLI-local generation path, with a small foreground daemon layered on top as an admin/test transport.
 
-The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
+The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process, service, or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
 
 ## Current Shape
 
@@ -34,11 +34,11 @@ runtime host
                 +--> memory learning
 ```
 
-There is still no real daemon lifecycle yet. There are no named pipes, Unix sockets, HTTP endpoints, MCP transports, async workers, or background tool queues in this slice.
-
-A small foreground daemon smoke now exists on top of the resident runtime builders. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one process, one host-owned model config, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon now suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
+What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, one active resident host contract, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
+
+The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
 
 ## Layer Responsibilities
 
@@ -48,7 +48,7 @@ The CLI remains responsible for local command-line concerns:
 
 - Parse and validate `args`.
 - Resolve profiles and defaults that are meaningful only to CLI users.
-- Open memory and plan stores from CLI paths or backend flags.
+- Translate CLI backend flags and store paths into host-owned runtime/store configuration.
 - Bootstrap, import, export, and blueprint package setup.
 - Build the native tool catalog, registry, and adapter bindings for the selected profile.
 - Retrieve memory context and render any CLI debug output.
@@ -66,7 +66,7 @@ It currently owns argument-derived wiring that is still local to CLI behavior:
 - Attach the legacy synchronous memory tool handler for old `--memory-search-tool` and `--memory-remember-tool` flows.
 - Print the final response and decoded-token summary.
 
-This adapter is allowed to know about CLI `args`. The runtime host should not need to.
+This adapter is allowed to know about CLI `args`. The runtime/session host below it should not need to. The current daemon path now follows the same rule for policy/config assembly, even though its own option parsing is still local.
 
 ### Runtime Host
 
@@ -96,6 +96,8 @@ On top of that, the CLI now has two thin child-process adapters. `daemon-chat` s
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
+Today this session host still manages one active resident runtime at a time and matches reuse implicitly from the current host-owned session/scope/inference contract. That is sufficient for the current foreground daemon and smoke coverage, but it is not yet a multi-session manager.
+
 ### Runtime Drivers
 
 The runtime drivers contain the agent behavior.
@@ -117,6 +119,14 @@ The generation request/result contract is narrower than top-level CLI state. Req
 
 Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
 
+The current reuse key is still a pragmatic first slice rather than the final shape. It is good enough for resident smoke and the foreground daemon, but the longer-term split should distinguish:
+
+- model-load options
+- context/inference-context options
+- per-turn generation options
+
+That future split should let options such as `n_predict` vary by turn without looking like a model reload concern.
+
 ### Stores and Scope
 
 Memory and plan stores are runtime dependencies, not global singletons.
@@ -132,6 +142,8 @@ Scope values are caller-provided authority:
 - global-memory opt-in
 
 The model cannot choose these values. A future server or MCP host must derive them from authenticated caller/session context before constructing runtime inputs.
+
+For the current daemon/admin path, store location and backend are still chosen by the host process at startup. Clients can provide session/scope identifiers, but they should never be able to choose arbitrary persistence paths at turn time.
 
 ### Tools
 
@@ -181,41 +193,46 @@ Resources and prompts can follow the same pattern later. They should not be adde
 
 These are intentionally deferred:
 
-- Daemon lifecycle.
+- Detached or OS-managed daemon/service lifecycle.
 - Named pipes, Unix sockets, or HTTP transport.
+- Concurrent session management.
 - Full `llama-server` integration.
 - MCP stdio or Streamable HTTP clients.
 - JSON-RPC lifecycle and capability negotiation.
 - Background tool workers or parallel tool execution.
-- Long-lived multi-turn session protocol.
+- A richer streamed event protocol.
 
-The current code should remain useful without any of these. The next steps should keep tightening the runtime contract so these pieces have somewhere clean to attach.
+The current code should remain useful without any of these. The next steps should keep tightening the runtime/session contract so these pieces have somewhere clean to attach.
 
 ## Next Steps
 
-1. Use the runtime turn request end-to-end outside CLI.
+1. Keep moving host construction away from CLI-shaped state.
 
-   The host builders now accept a CLI-free runtime turn request. The next cleanup is to move more callers onto that contract directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
+   The host builders now accept a CLI-free runtime turn request and CLI-free policy/runtime/orchestration contracts. The next cleanup is to move more callers onto those contracts directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
 
-2. Make tool provider discovery explicit.
+2. Reduce runtime/session wrapper overlap.
+
+   `agent-runtime-host.h` currently carries several layers in one place: turn contracts, resident runtime helpers, resident session host, daemon aliases, and build contexts. The next structural cleanup should split these into smaller runtime/session/daemon-facing headers and retire thin wrappers that no longer carry real policy.
+
+3. Make tool provider discovery explicit.
 
    Keep the existing catalog/registry/adapters, but introduce a provider-facing contract for listing and calling tools. The native registry should implement it first. MCP can then become another provider rather than a special runtime mode.
 
-3. Define host-owned policy boundaries.
+4. Introduce a real session manager before broader daemon transport work.
 
-   Document and enforce where scope authority, tool allowlists, write permissions, global memory opt-in, plan authority, and sensitive operations are checked.
+   The current resident session host is intentionally single-active. Before broader socket/HTTP/MCP transport work, the host side should grow explicit create/run/reset/close semantics for more than one session while keeping model lifetime separate from per-session state.
 
-4. Add cancellation and timeout policy before async tools.
+5. Add cancellation, timeout and event contracts before async tools.
 
-   Synchronous tools are acceptable for the current slice. Workers should wait until timeout, cancellation, retry, ordering and failure reporting semantics are explicit.
+   Synchronous tools are acceptable for the current slice. Workers should wait until timeout, cancellation, retry, ordering and failure reporting semantics are explicit. The same is true for daemon output: a richer internal event model should exist before transport-specific streaming grows.
 
-5. Split resident host lifecycle from inference backend.
+6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
 
-   The current `server-context` path is an in-process smoke backend. A real resident host should own model lifetime, session reuse policy, cancellation, and resource shutdown separately from CLI process lifetime.
+   The current `server-context` path is a good resident smoke backend, but a real host should be able to keep models loaded while resetting or expiring individual agent sessions.
 
-6. Create MCP client/provider support after the internal provider contract exists.
+7. Create MCP client/provider support after the internal provider contract exists.
 
-   Start with `initialize`, `tools/list`, and `tools/call` for one local stdio server. Add resources and prompts only after tool discovery and policy are stable.
+   Start with `initialize`, `tools/list`, and `tools/call` for one local stdio server. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
 
 ## Current Verification Baseline
 
