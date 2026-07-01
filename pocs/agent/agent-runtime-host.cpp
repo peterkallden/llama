@@ -6,6 +6,42 @@ const std::vector<common_blueprint_candidate> k_empty_blueprints;
 const std::vector<common_memory_hit> k_empty_memories;
 const std::string k_empty_fallback_reason;
 
+bool validate_session_host_turn_request(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::string & error) {
+    if (request.prompt.empty()) {
+        error = "session host turn request requires a prompt";
+        return false;
+    }
+    if (request.session_id.empty()) {
+        error = "session host turn request requires a session_id";
+        return false;
+    }
+    if (request.namespace_id.empty()) {
+        error = "session host turn request requires a namespace_id";
+        return false;
+    }
+
+    const bool project_scope_requested =
+        request.memory_scope == common_memory_scope::project ||
+        request.plan_scope == common_plan_scope::project;
+    if (project_scope_requested && request.project_id.empty()) {
+        error = "project-scoped session host turn request requires a project_id";
+        return false;
+    }
+
+    const bool turn_scope_requested =
+        request.memory_scope == common_memory_scope::turn ||
+        request.plan_scope == common_plan_scope::turn;
+    if (turn_scope_requested && request.turn_id.empty()) {
+        error = "turn-scoped session host turn request requires a turn_id";
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
@@ -342,6 +378,7 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
 
 void common_agent_runtime_resident_runtime::reset() {
     host.reset();
+    resident_current_plan_id.clear();
 }
 
 common_agent_runtime_resident_chat_host::common_agent_runtime_resident_chat_host(
@@ -483,28 +520,7 @@ bool common_agent_runtime_session_host::run_turn(
         std::string & error) {
     result = {};
 
-    if (request.prompt.empty()) {
-        error = "daemon turn request requires a prompt";
-        result.error = error;
-        return false;
-    }
-    if (request.session_id.empty()) {
-        error = "daemon turn request requires a session_id";
-        result.error = error;
-        return false;
-    }
-    if (request.namespace_id.empty()) {
-        error = "daemon turn request requires a namespace_id";
-        result.error = error;
-        return false;
-    }
-    if (request.memory_scope == common_memory_scope::project && request.project_id.empty()) {
-        error = "project-scoped daemon turn request requires a project_id";
-        result.error = error;
-        return false;
-    }
-    if (request.memory_scope == common_memory_scope::turn && request.turn_id.empty()) {
-        error = "turn-scoped daemon turn request requires a turn_id";
+    if (!validate_session_host_turn_request(request, error)) {
         result.error = error;
         return false;
     }
