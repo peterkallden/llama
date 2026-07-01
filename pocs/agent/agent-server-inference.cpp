@@ -11,6 +11,15 @@
 
 namespace {
 
+struct schema_stream_state {
+    std::string content;
+    std::string first_valid_json;
+    int decoded_tokens = 0;
+    int first_valid_decoded_tokens = 0;
+    server_task_result_ptr final_response;
+    common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
+};
+
 bool resident_trace_enabled() {
     const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
     return value != nullptr && value[0] != '\0' && value[0] != '0';
@@ -87,6 +96,69 @@ void apply_server_error(
     }
 }
 
+bool record_schema_partial(
+        const common_agent_generation_request & request,
+        server_task_result * response,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    std::string delta;
+    common_agent_generation_stop_reason ignored_stop_reason = common_agent_generation_stop_reason::none;
+    int partial_decoded_tokens = state.decoded_tokens;
+    if (!extract_completion_json(response, delta, partial_decoded_tokens, ignored_stop_reason)) {
+        return false;
+    }
+    state.content += delta;
+    state.decoded_tokens = partial_decoded_tokens;
+    const auto parsed = nlohmann::ordered_json::parse(state.content, nullptr, false);
+    if (!parsed.is_discarded() && state.first_valid_json.empty()) {
+        state.first_valid_json = state.content;
+        state.first_valid_decoded_tokens = state.decoded_tokens;
+        resident_trace("schema-first-valid", request);
+        apply_server_success(result, std::move(state.first_valid_json), state.first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
+        return true;
+    }
+    return false;
+}
+
+bool apply_schema_final_response(
+        const common_agent_generation_request & request,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    if (state.final_response == nullptr) {
+        return false;
+    }
+    if (!extract_completion_json(state.final_response.get(), state.content, state.decoded_tokens, state.final_stop_reason)) {
+        apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
+            "server returned a non-completion final result");
+        resident_trace("schema-invalid-final-type", request);
+        return true;
+    }
+
+    const auto parsed = nlohmann::ordered_json::parse(state.content, nullptr, false);
+    if (!parsed.is_discarded()) {
+        resident_trace("schema-final-valid", request);
+        apply_server_success(result, state.content, state.decoded_tokens, common_agent_generation_stop_reason::json_schema);
+        return true;
+    }
+
+    return false;
+}
+
+bool apply_reasoning_schema_fallback(
+        const common_agent_generation_request & request,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    if (request.purpose != common_agent_generation_purpose::reasoning) {
+        return false;
+    }
+    if (state.content.empty()) {
+        state.content = R"({"summary":"Reasoning step reached the generation limit without structured output.","format":"unstructured"})";
+    }
+    apply_server_success(result, std::move(state.content), state.decoded_tokens, state.final_stop_reason);
+    resident_trace("schema-reasoning-unstructured", request);
+    return true;
+}
+
 class server_context_agent_inference final : public common_agent_inference {
 public:
     server_context_agent_inference(
@@ -130,12 +202,7 @@ public:
             reader.post_task(std::move(task));
 
             if (prepared.stream) {
-                std::string content;
-                std::string first_valid_json;
-                int decoded_tokens = 0;
-                int first_valid_decoded_tokens = 0;
-                server_task_result_ptr final_response;
-                common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
+                schema_stream_state state;
 
                 while (auto response = reader.next([]() { return false; })) {
                     if (response->is_error()) {
@@ -144,67 +211,38 @@ public:
                         return false;
                     }
                     if (!response->is_stop()) {
-                        std::string delta;
-                        common_agent_generation_stop_reason ignored_stop_reason = common_agent_generation_stop_reason::none;
-                        int partial_decoded_tokens = decoded_tokens;
-                        if (!extract_completion_json(response.get(), delta, partial_decoded_tokens, ignored_stop_reason)) {
+                        if (!record_schema_partial(request, response.get(), state, result)) {
                             continue;
                         }
-                        content += delta;
-                        decoded_tokens = partial_decoded_tokens;
-                        const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
-                        if (!parsed.is_discarded() && first_valid_json.empty()) {
-                            first_valid_json = content;
-                            first_valid_decoded_tokens = decoded_tokens;
-                            resident_trace("schema-first-valid", request);
-                            apply_server_success(result, std::move(first_valid_json), first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
-                            reader.stop();
-                            return true;
-                        }
+                        reader.stop();
+                        return true;
                     }
                     if (response->is_stop()) {
-                        final_response = std::move(response);
+                        state.final_response = std::move(response);
                         resident_trace("stop", request);
                         break;
                     }
                 }
 
-                if (final_response != nullptr) {
-                    if (!extract_completion_json(final_response.get(), content, decoded_tokens, final_stop_reason)) {
-                        apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
-                            "server returned a non-completion final result");
-                        resident_trace("schema-invalid-final-type", request);
-                        return false;
-                    } else {
-                        const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
-                        if (!parsed.is_discarded()) {
-                            resident_trace("schema-final-valid", request);
-                            apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
-                            return true;
-                        }
-                    }
+                if (apply_schema_final_response(request, state, result)) {
+                    return common_agent_generation_succeeded(result);
                 }
-                if (!first_valid_json.empty()) {
+                if (!state.first_valid_json.empty()) {
                     resident_trace("schema-first-valid-return", request);
-                    apply_server_success(result, std::move(first_valid_json), first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                    apply_server_success(result, std::move(state.first_valid_json), state.first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
                     return true;
                 }
-                if (request.purpose == common_agent_generation_purpose::reasoning) {
-                    if (content.empty()) {
-                        content = R"({"summary":"Reasoning step reached the generation limit without structured output.","format":"unstructured"})";
-                    }
-                    apply_server_success(result, std::move(content), decoded_tokens, final_stop_reason);
-                    resident_trace("schema-reasoning-unstructured", request);
+                if (apply_reasoning_schema_fallback(request, state, result)) {
                     return true;
                 }
 
-                result.content = std::move(content);
-                result.decoded_tokens = decoded_tokens;
+                result.content = std::move(state.content);
+                result.decoded_tokens = state.decoded_tokens;
                 apply_server_error(
-                    final_response.get(),
+                    state.final_response.get(),
                     result,
                     common_agent_generation_status::errored,
-                    final_response == nullptr ? common_agent_generation_stop_reason::error : final_stop_reason,
+                    state.final_response == nullptr ? common_agent_generation_stop_reason::error : state.final_stop_reason,
                     "generation ended before producing valid JSON for the requested schema");
                 resident_trace("schema-invalid", request);
                 return false;
