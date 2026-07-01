@@ -387,6 +387,24 @@ void common_agent_runtime_resident_mini_host::reset() {
     runtime.reset();
 }
 
+common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
+        common_agent_runtime_daemon_build_config config) {
+    return {
+        config.memory_store,
+        config.plan_store,
+        std::move(config.resident_request),
+        make_agent_runtime_policy(config.runtime_args),
+        make_agent_runtime_config(config.runtime_args),
+        make_agent_orchestration_config(config.runtime_args),
+        config.memory_scope,
+        config.memory_enabled,
+        std::move(config.installed_blueprint_candidates),
+        std::move(config.tools),
+        config.profile_tools_active,
+        config.tool_registry,
+    };
+}
+
 common_agent_runtime_daemon_host::common_agent_runtime_daemon_host(
         common_agent_runtime_daemon_config config)
     : config(std::move(config)) {}

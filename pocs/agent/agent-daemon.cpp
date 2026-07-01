@@ -179,6 +179,43 @@ json make_turn_response(const common_agent_runtime_daemon_turn_result & result) 
     return response;
 }
 
+args make_runtime_args(const daemon_options & options) {
+    args runtime_args;
+    runtime_args.prompt = "";
+    runtime_args.model = options.model;
+    runtime_args.embedding_model = options.embedding_model;
+    runtime_args.n_predict = options.n_predict;
+    runtime_args.n_gpu_layers = options.n_gpu_layers;
+    runtime_args.planning_mode = options.planning_mode;
+    runtime_args.agent_plan = options.agent_plan;
+    runtime_args.agent_blueprint = "off";
+    runtime_args.reflection_mode = options.reflection_mode;
+    runtime_args.memory_learn = options.memory_learn;
+    runtime_args.memory_learn_show_candidate = options.memory_learn_show_candidate;
+    runtime_args.memory_learn_min_confidence = options.memory_learn_min_confidence;
+    runtime_args.memory_learn_min_reuse = options.memory_learn_min_reuse;
+    runtime_args.plan_show_summary = options.plan_show_summary;
+    runtime_args.agent_trace = options.agent_trace;
+    return runtime_args;
+}
+
+common_agent_runtime_resident_request_config make_resident_request_config(
+        const daemon_options & options) {
+    return {
+        "",
+        "",
+        "",
+        "",
+        options.model,
+        options.n_predict,
+        options.n_gpu_layers,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -201,22 +238,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    args runtime_args;
-    runtime_args.prompt = "";
-    runtime_args.model = options.model;
-    runtime_args.embedding_model = options.embedding_model;
-    runtime_args.n_predict = options.n_predict;
-    runtime_args.n_gpu_layers = options.n_gpu_layers;
-    runtime_args.planning_mode = options.planning_mode;
-    runtime_args.agent_plan = options.agent_plan;
-    runtime_args.agent_blueprint = "off";
-    runtime_args.reflection_mode = options.reflection_mode;
-    runtime_args.memory_learn = options.memory_learn;
-    runtime_args.memory_learn_show_candidate = options.memory_learn_show_candidate;
-    runtime_args.memory_learn_min_confidence = options.memory_learn_min_confidence;
-    runtime_args.memory_learn_min_reuse = options.memory_learn_min_reuse;
-    runtime_args.plan_show_summary = options.plan_show_summary;
-    runtime_args.agent_trace = options.agent_trace;
+    auto runtime_args = make_runtime_args(options);
 
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     if (!parse_mode(options.default_mode, default_mode)) {
@@ -224,32 +246,18 @@ int main(int argc, char ** argv) {
         return 2;
     }
 
-    common_agent_runtime_daemon_host daemon({
+    common_agent_runtime_daemon_host daemon(make_agent_runtime_daemon_config({
         memory_store,
         plan_store,
-        {
-            "",
-            "",
-            "",
-            "",
-            options.model,
-            options.n_predict,
-            options.n_gpu_layers,
-            false,
-            "server-context",
-            common_memory_scope::session,
-            common_plan_scope::turn,
-        },
-        make_agent_runtime_policy(runtime_args),
-        make_agent_runtime_config(runtime_args),
-        make_agent_orchestration_config(runtime_args),
+        make_resident_request_config(options),
+        runtime_args,
         common_memory_scope::session,
         true,
         {},
         {},
         false,
         nullptr,
-    });
+    }));
 
     std::cout << json({
         {"ok", true},

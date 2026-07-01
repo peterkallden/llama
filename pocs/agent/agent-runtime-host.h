@@ -248,6 +248,22 @@ struct common_agent_runtime_daemon_config {
     const common_tool_registry * tool_registry = nullptr;
 };
 
+struct common_agent_runtime_daemon_build_config {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_runtime_resident_request_config resident_request;
+    args runtime_args;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    std::vector<common_chat_tool> tools;
+    bool profile_tools_active = false;
+    const common_tool_registry * tool_registry = nullptr;
+};
+
+common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
+    common_agent_runtime_daemon_build_config config);
+
 class common_agent_runtime_daemon_host {
 public:
     explicit common_agent_runtime_daemon_host(common_agent_runtime_daemon_config config);
