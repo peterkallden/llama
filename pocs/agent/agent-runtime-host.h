@@ -206,7 +206,7 @@ private:
     common_agent_runtime_resident_runtime runtime;
 };
 
-struct common_agent_runtime_daemon_turn_request {
+struct common_agent_runtime_session_host_turn_request {
     common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
     std::string prompt;
     std::string session_id;
@@ -218,7 +218,7 @@ struct common_agent_runtime_daemon_turn_request {
     int n_predict = 0;
 };
 
-struct common_agent_runtime_daemon_turn_result {
+struct common_agent_runtime_session_host_turn_result {
     bool ok = false;
     bool runtime_reused = false;
     bool limit_reached = false;
@@ -233,7 +233,7 @@ struct common_agent_runtime_daemon_turn_result {
     std::string error;
 };
 
-struct common_agent_runtime_daemon_config {
+struct common_agent_runtime_session_host_config {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_runtime_resident_request_config resident_request;
@@ -248,7 +248,7 @@ struct common_agent_runtime_daemon_config {
     const common_tool_registry * tool_registry = nullptr;
 };
 
-struct common_agent_runtime_daemon_build_config {
+struct common_agent_runtime_session_host_build_config {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_runtime_resident_request_config resident_request;
@@ -261,30 +261,33 @@ struct common_agent_runtime_daemon_build_config {
     const common_tool_registry * tool_registry = nullptr;
 };
 
-common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
-    common_agent_runtime_daemon_build_config config);
+common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
+    common_agent_runtime_session_host_build_config config);
 
-class common_agent_runtime_daemon_host {
+class common_agent_runtime_session_host {
 public:
-    explicit common_agent_runtime_daemon_host(common_agent_runtime_daemon_config config);
+    explicit common_agent_runtime_session_host(common_agent_runtime_session_host_config config);
 
     bool run_turn(
-        const common_agent_runtime_daemon_turn_request & request,
-        common_agent_runtime_daemon_turn_result & result,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_session_host_turn_result & result,
         std::string & error);
 
     void reset();
 
+    const common_agent_runtime_session * session() const;
+    common_agent_runtime_session * session();
+
 private:
     bool ensure_runtime(
-        const common_agent_runtime_daemon_turn_request & request,
+        const common_agent_runtime_session_host_turn_request & request,
         bool & reused,
         std::string & error);
 
     common_agent_runtime_turn_request make_base_turn_request(
-        const common_agent_runtime_daemon_turn_request & request) const;
+        const common_agent_runtime_session_host_turn_request & request) const;
 
-    common_agent_runtime_daemon_config config;
+    common_agent_runtime_session_host_config config;
     std::string active_session_id;
     std::string active_namespace_id;
     std::string active_project_id;
@@ -294,6 +297,17 @@ private:
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
 };
+
+using common_agent_runtime_daemon_turn_request = common_agent_runtime_session_host_turn_request;
+using common_agent_runtime_daemon_turn_result = common_agent_runtime_session_host_turn_result;
+using common_agent_runtime_daemon_config = common_agent_runtime_session_host_config;
+using common_agent_runtime_daemon_build_config = common_agent_runtime_session_host_build_config;
+using common_agent_runtime_daemon_host = common_agent_runtime_session_host;
+
+inline common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
+        common_agent_runtime_daemon_build_config config) {
+    return make_agent_runtime_session_host_config(std::move(config));
+}
 
 struct common_agent_runtime_resident_mini_host_config {
     common_memory_store & memory_store;

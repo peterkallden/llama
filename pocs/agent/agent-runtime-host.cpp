@@ -387,8 +387,8 @@ void common_agent_runtime_resident_mini_host::reset() {
     runtime.reset();
 }
 
-common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
-        common_agent_runtime_daemon_build_config config) {
+common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
+        common_agent_runtime_session_host_build_config config) {
     return {
         config.memory_store,
         config.plan_store,
@@ -405,12 +405,12 @@ common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
     };
 }
 
-common_agent_runtime_daemon_host::common_agent_runtime_daemon_host(
-        common_agent_runtime_daemon_config config)
+common_agent_runtime_session_host::common_agent_runtime_session_host(
+        common_agent_runtime_session_host_config config)
     : config(std::move(config)) {}
 
-common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_turn_request(
-        const common_agent_runtime_daemon_turn_request & request) const {
+common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_turn_request(
+        const common_agent_runtime_session_host_turn_request & request) const {
     auto resident_request = config.resident_request;
     resident_request.prompt = request.prompt;
     resident_request.session_id = request.session_id;
@@ -436,8 +436,8 @@ common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_tu
     return turn_request;
 }
 
-bool common_agent_runtime_daemon_host::ensure_runtime(
-        const common_agent_runtime_daemon_turn_request & request,
+bool common_agent_runtime_session_host::ensure_runtime(
+        const common_agent_runtime_session_host_turn_request & request,
         bool & reused,
         std::string & error) {
     const int requested_n_predict = request.n_predict > 0 ? request.n_predict : config.resident_request.n_predict;
@@ -477,9 +477,9 @@ bool common_agent_runtime_daemon_host::ensure_runtime(
     return true;
 }
 
-bool common_agent_runtime_daemon_host::run_turn(
-        const common_agent_runtime_daemon_turn_request & request,
-        common_agent_runtime_daemon_turn_result & result,
+bool common_agent_runtime_session_host::run_turn(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_session_host_turn_result & result,
         std::string & error) {
     result = {};
 
@@ -545,7 +545,15 @@ bool common_agent_runtime_daemon_host::run_turn(
     return ok;
 }
 
-void common_agent_runtime_daemon_host::reset() {
+const common_agent_runtime_session * common_agent_runtime_session_host::session() const {
+    return runtime ? &runtime->runtime_host().session() : nullptr;
+}
+
+common_agent_runtime_session * common_agent_runtime_session_host::session() {
+    return runtime ? &runtime->runtime_host().session() : nullptr;
+}
+
+void common_agent_runtime_session_host::reset() {
     runtime.reset();
     active_session_id.clear();
     active_namespace_id.clear();

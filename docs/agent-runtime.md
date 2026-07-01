@@ -90,6 +90,8 @@ There is now a small resident runtime layer on top of that wrapper. It owns the 
 
 The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
 
+There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus host-owned session/scope matching rules and can execute repeated chat or mini turns from a prepared host contract. The foreground daemon uses that host through a thin compatibility alias, and direct resident smoke can exercise the same host without going through daemon protocol code.
+
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.

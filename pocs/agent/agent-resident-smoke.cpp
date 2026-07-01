@@ -1,6 +1,7 @@
 #include "agent-runtime-host.h"
 
 #include "memory/memory-in-memory.h"
+#include "plan/plan-in-memory.h"
 
 #include <cstdio>
 #include <cstring>
@@ -69,17 +70,22 @@ int main(int argc, char ** argv) {
     }
 
     common_memory_in_memory_store memory_store;
+    common_plan_in_memory_store plan_store;
     std::string error;
     if (!memory_store.open("", error)) {
         std::fprintf(stderr, "failed to open in-memory store: %s\n", error.c_str());
         return 1;
     }
+    if (!plan_store.open("", error)) {
+        std::fprintf(stderr, "failed to open in-memory plan store: %s\n", error.c_str());
+        return 1;
+    }
 
-    common_agent_runtime_resident_runtime runtime(
-        make_agent_runtime_resident_runtime_config(
+    common_agent_runtime_session_host runtime(
+        make_agent_runtime_session_host_config({
             memory_store,
-            nullptr,
-            make_agent_runtime_resident_base_turn_request({
+            plan_store,
+            {
                 options.first_prompt,
                 "resident-smoke-session",
                 "resident-smoke",
@@ -91,22 +97,65 @@ int main(int argc, char ** argv) {
                 "server-context",
                 common_memory_scope::session,
                 common_plan_scope::turn,
-            })));
+            },
+            {},
+            common_memory_scope::session,
+            false,
+            {},
+            {},
+            false,
+            nullptr,
+        }));
     common_agent_result first_result;
     common_agent_result second_result;
     void * first_keepalive = nullptr;
     void * second_keepalive = nullptr;
+    common_agent_runtime_session_host_turn_result runtime_result;
 
-    if (!runtime.run_chat_prompt(options.first_prompt, "turn-1", first_result, error)) {
+    if (!runtime.run_turn({
+            common_agent_runtime_host_mode::chat,
+            options.first_prompt,
+            "resident-smoke-session",
+            "resident-smoke",
+            {},
+            "turn-1",
+            common_memory_scope::session,
+            common_plan_scope::turn,
+            options.n_predict,
+        }, runtime_result, error)) {
         std::fprintf(stderr, "first resident turn failed: %s\n", error.c_str());
         return 1;
     }
-    first_keepalive = runtime.runtime_host().session().inference_session.keepalive.get();
-    if (!runtime.run_chat_prompt(options.second_prompt, "turn-2", second_result, error)) {
+    first_result.response = runtime_result.response;
+    first_result.total_decoded_tokens = runtime_result.total_decoded_tokens;
+    const auto * first_session = runtime.session();
+    if (first_session == nullptr) {
+        std::fprintf(stderr, "resident runtime session was not initialized after first turn\n");
+        return 1;
+    }
+    first_keepalive = first_session->inference_session.keepalive.get();
+    if (!runtime.run_turn({
+            common_agent_runtime_host_mode::chat,
+            options.second_prompt,
+            "resident-smoke-session",
+            "resident-smoke",
+            {},
+            "turn-2",
+            common_memory_scope::session,
+            common_plan_scope::turn,
+            options.n_predict,
+        }, runtime_result, error)) {
         std::fprintf(stderr, "second resident turn failed: %s\n", error.c_str());
         return 1;
     }
-    second_keepalive = runtime.runtime_host().session().inference_session.keepalive.get();
+    second_result.response = runtime_result.response;
+    second_result.total_decoded_tokens = runtime_result.total_decoded_tokens;
+    const auto * second_session = runtime.session();
+    if (second_session == nullptr) {
+        std::fprintf(stderr, "resident runtime session was not initialized after second turn\n");
+        return 1;
+    }
+    second_keepalive = second_session->inference_session.keepalive.get();
 
     if (first_keepalive == nullptr || second_keepalive == nullptr || first_keepalive != second_keepalive) {
         std::fprintf(stderr, "resident host did not reuse the same server_context keepalive across turns\n");
