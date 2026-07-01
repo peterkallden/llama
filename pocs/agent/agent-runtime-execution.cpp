@@ -86,7 +86,6 @@ bool run_agent_runtime_driver_session(
         return false;
     }
 
-    fprintf(stderr, "agent inference backend: %s\n", inputs.policy.agent_inference_backend.c_str());
     auto execution = make_agent_runtime_driver_execution(inputs, *session.inference_session.inference);
     return run_agent_runtime_driver(execution, result, error);
 }

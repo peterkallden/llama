@@ -37,7 +37,6 @@ struct common_agent_runtime_host_inputs {
     common_plan_store * plan_store = nullptr;
     common_agent_runtime_turn_request turn_request;
     std::string * current_plan_id = nullptr;
-    const common_agent_scope * scope = nullptr;
     const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
     const std::vector<common_memory_hit> * memories = nullptr;
     const std::vector<common_chat_tool> & tools;
@@ -55,7 +54,6 @@ struct common_agent_runtime_host_execution {
     common_agent_inference & inference;
     common_agent_runtime_turn_request turn_request;
     std::string * current_plan_id = nullptr;
-    const common_agent_scope * scope = nullptr;
     const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
     const std::vector<common_memory_hit> * memories = nullptr;
     const std::vector<common_chat_tool> & tools;

@@ -26,7 +26,6 @@ common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
         std::move(turn_request),
         nullptr,
         nullptr,
-        nullptr,
         &context.memories,
         context.tools,
         context.profile_tools_active,
@@ -56,7 +55,6 @@ common_agent_runtime_host_inputs make_agent_runtime_host_mini_inputs(
         context.plan_store,
         std::move(turn_request),
         context.current_plan_id,
-        nullptr,
         context.installed_blueprint_candidates,
         &context.memories,
         context.tools,
@@ -66,21 +64,19 @@ common_agent_runtime_host_inputs make_agent_runtime_host_mini_inputs(
         false,
         {},
     };
-    inputs.scope = &inputs.turn_request.scope;
     return inputs;
 }
 
 common_agent_runtime_host_execution make_agent_runtime_host_execution(
         common_agent_runtime_host_inputs & inputs,
         common_agent_inference & inference) {
-    return {
+    common_agent_runtime_host_execution execution{
         inputs.mode,
         inputs.memory_store,
         inputs.plan_store,
         inference,
-        inputs.turn_request,
+        {},
         inputs.current_plan_id,
-        inputs.scope,
         inputs.installed_blueprint_candidates,
         inputs.memories,
         inputs.tools,
@@ -88,6 +84,8 @@ common_agent_runtime_host_execution make_agent_runtime_host_execution(
         inputs.tool_registry,
         inputs.tool_handler,
     };
+    execution.turn_request = inputs.turn_request;
+    return execution;
 }
 
 bool run_agent_runtime_host_session(
@@ -165,10 +163,6 @@ bool run_agent_runtime_host(
                 error = "mini runtime host requires a current plan id";
                 return false;
             }
-            if (execution.scope == nullptr) {
-                error = "mini runtime host requires an agent scope";
-                return false;
-            }
             const auto & blueprints = execution.installed_blueprint_candidates ? *execution.installed_blueprint_candidates : k_empty_blueprints;
             const auto & memories = execution.memories ? *execution.memories : k_empty_memories;
             common_agent_runtime_driver_execution driver_execution{
@@ -179,7 +173,7 @@ bool run_agent_runtime_host(
                 execution.turn_request.runtime_config,
                 execution.turn_request.orchestration_config,
                 *execution.current_plan_id,
-                *execution.scope,
+                execution.turn_request.scope,
                 blueprints,
                 memories,
                 execution.turn_request.memory_scope,
@@ -412,6 +406,7 @@ common_agent_runtime_turn_request common_agent_runtime_daemon_host::make_base_tu
 
     auto turn_request = make_agent_runtime_resident_base_turn_request(resident_request);
     turn_request.policy = config.policy;
+    turn_request.policy.agent_inference_backend = resident_request.inference_backend;
     turn_request.runtime_config = config.runtime_config;
     turn_request.orchestration_config = config.orchestration_config;
     turn_request.orchestration_config.prompt = request.prompt;

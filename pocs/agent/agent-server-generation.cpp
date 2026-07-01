@@ -29,12 +29,14 @@ task_params make_server_task_params_from_prepared_generation(
     if (prepared.suppress_eog) {
         params.sampling.logit_bias = logit_bias_eog;
     }
-    params.chat_parser_params.format = prepared.chat_format;
-    params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
-    params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
+    if (request.json_schema.empty()) {
+        params.chat_parser_params.format = prepared.chat_format;
+        params.chat_parser_params.generation_prompt = prepared.parser_generation_prompt;
+        params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
-    if (!prepared.parser.empty()) {
-        params.chat_parser_params.parser.load(prepared.parser);
+        if (!prepared.parser.empty()) {
+            params.chat_parser_params.parser.load(prepared.parser);
+        }
     }
 
     return params;

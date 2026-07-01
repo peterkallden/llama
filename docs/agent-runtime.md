@@ -228,6 +228,6 @@ The resident-inference branch has been validated with:
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
 
-The resident `mini` path through the foreground daemon is not yet part of the passing smoke baseline. The current branch now exposes enough protocol/result metadata to debug that path cleanly, but resident `server_context` planning/reflection still needs focused stabilization before it should be treated as green.
+The foreground daemon `mini` path is now part of the smoke baseline as well. One stabilization issue in this layer was contract drift across wrappers: the daemon request builder was correctly seeded with `server-context`, but a later policy overwrite silently fell back to the default CLI backend, and a second host-execution scope duplication made resident `mini` fragile. The current shape keeps the daemon/backend wiring explicit and reuses `turn_request.scope` as the single host-execution scope source for mini turns.
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.

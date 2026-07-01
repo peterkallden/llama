@@ -80,7 +80,6 @@ public:
                 request,
                 prepared,
                 logit_bias_eog);
-
             reader.post_task(std::move(task));
 
             if (prepared.stream) {

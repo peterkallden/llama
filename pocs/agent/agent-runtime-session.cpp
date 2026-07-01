@@ -2,8 +2,6 @@
 
 #include "chat.h"
 
-#include <cstdio>
-
 common_agent_runtime_session & common_agent_runtime_session::operator=(common_agent_runtime_session && other) {
     if (this != &other) {
         reset();
@@ -51,6 +49,9 @@ bool initialize_agent_runtime_session(
     const std::string & fallback_reason,
     common_agent_runtime_session & session,
     std::string & error) {
+    (void) memory_enabled;
+    (void) fallback_reason;
+
     if (session.initialized &&
             session.inference_session.inference &&
             session.initialized_backend == backend &&
@@ -64,12 +65,6 @@ bool initialize_agent_runtime_session(
     if (backend == agent_inference_backend::cli) {
         llama_model_params model_params = llama_model_default_params();
         model_params.n_gpu_layers = options.n_gpu_layers;
-        if (!memory_enabled) {
-            fprintf(stderr,
-                "debug: chat fallback active, loading %s without memory retrieval or episode recording (%s)\n",
-                options.model.c_str(),
-                fallback_reason.c_str());
-        }
         session.model = llama_model_load_from_file(options.model.c_str(), model_params);
         if (session.model == nullptr) {
             error = "failed to load model: " + options.model;

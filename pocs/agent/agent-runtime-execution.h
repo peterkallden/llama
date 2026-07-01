@@ -58,7 +58,7 @@ struct common_agent_runtime_driver_execution {
     common_agent_runtime_config runtime_config;
     common_agent_orchestration_config orchestration_config;
     std::string & current_plan_id;
-    const common_agent_scope & scope;
+    common_agent_scope scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const std::vector<common_memory_hit> & memories;
     common_memory_scope memory_scope = common_memory_scope::session;
