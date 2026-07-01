@@ -18,12 +18,14 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
-        "  %s daemon-chat --model MODEL --prompt TEXT [--planning-mode off|mini] [--reflection-mode off|always]\n"
-        "         [--memory-learn off|post-turn] [--agent-plan off|auto] [--memory-scope turn|session|project|global]\n"
+        "  %s daemon-chat --model MODEL --prompt TEXT [--embedding-model MODEL] [--planning-mode off|mini] [--reflection-mode off|always]\n"
+        "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
+        "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n"
-        "  %s daemon-session --model MODEL [--prompt TEXT] [--planning-mode off|mini] [--reflection-mode off|always]\n"
-        "         [--memory-learn off|post-turn] [--agent-plan off|auto] [--memory-scope turn|session|project|global]\n"
+        "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--planning-mode off|mini] [--reflection-mode off|always]\n"
+        "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
+        "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n",
         argv0, command_name, argv0, argv0);

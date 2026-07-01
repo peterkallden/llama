@@ -17,6 +17,7 @@ namespace {
 
 struct daemon_options {
     std::string model;
+    std::string embedding_model;
     std::string default_mode = "chat";
     int n_predict = 64;
     int n_gpu_layers = 0;
@@ -24,6 +25,11 @@ struct daemon_options {
     std::string reflection_mode = "off";
     std::string memory_learn = "off";
     std::string agent_plan = "off";
+    bool memory_learn_show_candidate = false;
+    float memory_learn_min_confidence = 0.75f;
+    float memory_learn_min_reuse = 0.65f;
+    bool plan_show_summary = false;
+    bool agent_trace = false;
 };
 
 bool parse_args(int argc, char ** argv, daemon_options & options) {
@@ -38,6 +44,8 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
 
         if (std::strcmp(argv[i], "--model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.model = value;
+        } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.embedding_model = value;
         } else if (std::strcmp(argv[i], "--default-mode") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.default_mode = value;
         } else if (std::strcmp(argv[i], "-n") == 0 || std::strcmp(argv[i], "--n-predict") == 0) {
@@ -50,8 +58,18 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.reflection_mode = value;
         } else if (std::strcmp(argv[i], "--memory-learn") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn = value;
+        } else if (std::strcmp(argv[i], "--memory-learn-show-candidate") == 0) {
+            options.memory_learn_show_candidate = true;
+        } else if (std::strcmp(argv[i], "--memory-learn-min-confidence") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn_min_confidence = std::stof(value);
+        } else if (std::strcmp(argv[i], "--memory-learn-min-reuse") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn_min_reuse = std::stof(value);
         } else if (std::strcmp(argv[i], "--agent-plan") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.agent_plan = value;
+        } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
+            options.plan_show_summary = true;
+        } else if (std::strcmp(argv[i], "--agent-trace") == 0) {
+            options.agent_trace = true;
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             return false;
         } else {
@@ -85,6 +103,11 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--agent-plan must be off or auto\n");
         return false;
     }
+    if (options.memory_learn_min_confidence < 0.0f || options.memory_learn_min_confidence > 1.0f ||
+            options.memory_learn_min_reuse < 0.0f || options.memory_learn_min_reuse > 1.0f) {
+        std::fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
+        return false;
+    }
 
     return true;
 }
@@ -92,7 +115,8 @@ bool parse_args(int argc, char ** argv, daemon_options & options) {
 void usage(const char * argv0) {
     std::fprintf(stderr,
         "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
-        "         [--memory-learn off|post-turn] [--agent-plan off|auto] [--n-predict N] [-ngl N]\n",
+        "         [--embedding-model MODEL] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
+        "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--n-predict N] [-ngl N]\n",
         argv0);
 }
 
@@ -179,11 +203,20 @@ int main(int argc, char ** argv) {
 
     args runtime_args;
     runtime_args.prompt = "";
+    runtime_args.model = options.model;
+    runtime_args.embedding_model = options.embedding_model;
+    runtime_args.n_predict = options.n_predict;
+    runtime_args.n_gpu_layers = options.n_gpu_layers;
     runtime_args.planning_mode = options.planning_mode;
     runtime_args.agent_plan = options.agent_plan;
     runtime_args.agent_blueprint = "off";
     runtime_args.reflection_mode = options.reflection_mode;
     runtime_args.memory_learn = options.memory_learn;
+    runtime_args.memory_learn_show_candidate = options.memory_learn_show_candidate;
+    runtime_args.memory_learn_min_confidence = options.memory_learn_min_confidence;
+    runtime_args.memory_learn_min_reuse = options.memory_learn_min_reuse;
+    runtime_args.plan_show_summary = options.plan_show_summary;
+    runtime_args.agent_trace = options.agent_trace;
 
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     if (!parse_mode(options.default_mode, default_mode)) {

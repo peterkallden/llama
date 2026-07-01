@@ -137,6 +137,27 @@ public:
             "--n-predict", std::to_string(a.n_predict),
             "--n-gpu-layers", std::to_string(a.n_gpu_layers),
         };
+        if (!a.embedding_model.empty()) {
+            command_line.push_back("--embedding-model");
+            command_line.push_back(a.embedding_model);
+        }
+        if (a.memory_learn_show_candidate) {
+            command_line.push_back("--memory-learn-show-candidate");
+        }
+        if (a.memory_learn_min_confidence != 0.75f) {
+            command_line.push_back("--memory-learn-min-confidence");
+            command_line.push_back(std::to_string(a.memory_learn_min_confidence));
+        }
+        if (a.memory_learn_min_reuse != 0.65f) {
+            command_line.push_back("--memory-learn-min-reuse");
+            command_line.push_back(std::to_string(a.memory_learn_min_reuse));
+        }
+        if (a.plan_show_summary) {
+            command_line.push_back("--plan-show-summary");
+        }
+        if (a.agent_trace) {
+            command_line.push_back("--agent-trace");
+        }
         auto argv = to_cstr_vec(command_line);
         const int options =
             subprocess_option_no_window |
@@ -294,6 +315,11 @@ bool validate_daemon_command_args(const char * argv0, const args & a, bool requi
     }
     if (a.memory_learn == "post-turn" && a.planning_mode != "mini") {
         std::fprintf(stderr, "daemon daemon commands require --planning-mode mini when --memory-learn post-turn is enabled\n");
+        return false;
+    }
+    if (a.memory_learn_min_confidence < 0.0f || a.memory_learn_min_confidence > 1.0f ||
+            a.memory_learn_min_reuse < 0.0f || a.memory_learn_min_reuse > 1.0f) {
+        std::fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
         return false;
     }
     return true;

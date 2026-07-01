@@ -46,7 +46,7 @@ function Show-Diagnostics {
     param([string]$Path)
 
     if (Test-Path -LiteralPath $Path) {
-        $diag = Get-Content -LiteralPath $Path
+        $diag = @(Get-Content -LiteralPath $Path)
         if ($diag.Count -gt 0) {
             Write-Host ""
             Write-Host "Daemon diagnostics:"
@@ -81,9 +81,10 @@ $requests = @(
     '{"command":"shutdown"}'
 )
 
-$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-requests.txt"
-$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-stdout.log"
-$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-stderr.log"
+$runId = [guid]::NewGuid().ToString("N")
+$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-$runId-requests.txt"
+$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-$runId-stdout.log"
+$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-mini-smoke-$runId-stderr.log"
 Set-Content -LiteralPath $requestsPath -Value $requests -Encoding Ascii
 Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue

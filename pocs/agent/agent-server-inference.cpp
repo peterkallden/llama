@@ -6,18 +6,57 @@
 #include "server-task.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 
 namespace {
 
-common_agent_generation_stop_reason map_server_stop_reason(stop_type stop) {
-    switch (stop) {
-        case STOP_TYPE_NONE:  return common_agent_generation_stop_reason::none;
-        case STOP_TYPE_EOS:   return common_agent_generation_stop_reason::eos;
-        case STOP_TYPE_LIMIT: return common_agent_generation_stop_reason::limit;
-        case STOP_TYPE_WORD:  return common_agent_generation_stop_reason::limit;
+bool resident_trace_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void resident_trace(const char * event, const common_agent_generation_request & request, const char * detail = "") {
+    if (!resident_trace_enabled()) {
+        return;
+    }
+    std::fprintf(stderr, "agent resident trace: event=%s purpose=%s schema=%s n_predict=%d %s\n",
+        event,
+        common_agent_generation_purpose_name(request.purpose),
+        request.json_schema.empty() ? "no" : "yes",
+        request.options.n_predict,
+        detail);
+}
+
+common_agent_generation_stop_reason map_server_stop_reason_string(const std::string & stop) {
+    if (stop == "eos") {
+        return common_agent_generation_stop_reason::eos;
+    }
+    if (stop == "limit" || stop == "word") {
+        return common_agent_generation_stop_reason::limit;
+    }
+    if (stop == "none") {
+        return common_agent_generation_stop_reason::none;
     }
     return common_agent_generation_stop_reason::error;
+}
+
+bool extract_completion_json(
+        server_task_result * response,
+        std::string & content,
+        int & decoded_tokens,
+        common_agent_generation_stop_reason & stop_reason) {
+    if (response == nullptr) {
+        return false;
+    }
+    const auto payload = response->to_json();
+    if (!payload.is_object() || !payload.contains("content") || !payload["content"].is_string()) {
+        return false;
+    }
+    content = payload["content"].get<std::string>();
+    decoded_tokens = payload.value("tokens_predicted", decoded_tokens);
+    stop_reason = map_server_stop_reason_string(payload.value("stop_type", std::string{"none"}));
+    return true;
 }
 
 void apply_server_success(
@@ -33,14 +72,15 @@ void apply_server_success(
 }
 
 void apply_server_error(
-        const server_task_result * response,
+        server_task_result * response,
         common_agent_generation_result & result,
         common_agent_generation_status status = common_agent_generation_status::errored,
         common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error,
         std::string fallback_error = {}) {
     result.status = status;
     result.stop_reason = stop_reason;
-    if (auto * error = dynamic_cast<const server_task_result_error *>(response)) {
+    if (response != nullptr && response->is_error()) {
+        const auto * error = static_cast<const server_task_result_error *>(response);
         result.error_message = error->err_msg;
     } else {
         result.error_message = std::move(fallback_error);
@@ -62,6 +102,7 @@ public:
         result = {};
 
         try {
+            resident_trace("start", request);
             common_agent_prepared_generation prepared;
             common_chat_params chat_params;
             if (!common_agent_prepare_chat_generation(templates, request, prepared, &chat_params)) {
@@ -69,6 +110,12 @@ public:
                 return false;
             }
             result.chat_params = chat_params;
+            if (resident_trace_enabled()) {
+                std::fprintf(stderr, "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
+                    common_agent_generation_purpose_name(request.purpose),
+                    prepared.stream ? "yes" : "no",
+                    prepared.prompt.size());
+            }
 
             server_response_reader reader = server.get_response_reader();
             server_task task(SERVER_TASK_TYPE_COMPLETION);
@@ -84,47 +131,82 @@ public:
 
             if (prepared.stream) {
                 std::string content;
+                std::string first_valid_json;
                 int decoded_tokens = 0;
-                server_task_result_cmpl_final * final_result = nullptr;
+                int first_valid_decoded_tokens = 0;
+                server_task_result_ptr final_response;
+                common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
 
                 while (auto response = reader.next([]() { return false; })) {
                     if (response->is_error()) {
+                        resident_trace("error", request);
                         apply_server_error(response.get(), result);
                         return false;
                     }
-                    if (auto * partial = dynamic_cast<server_task_result_cmpl_partial *>(response.get())) {
-                        content += partial->content;
-                        decoded_tokens = partial->n_decoded;
+                    if (!response->is_stop()) {
+                        std::string delta;
+                        common_agent_generation_stop_reason ignored_stop_reason = common_agent_generation_stop_reason::none;
+                        int partial_decoded_tokens = decoded_tokens;
+                        if (!extract_completion_json(response.get(), delta, partial_decoded_tokens, ignored_stop_reason)) {
+                            continue;
+                        }
+                        content += delta;
+                        decoded_tokens = partial_decoded_tokens;
                         const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
-                        if (!parsed.is_discarded()) {
-                            apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                        if (!parsed.is_discarded() && first_valid_json.empty()) {
+                            first_valid_json = content;
+                            first_valid_decoded_tokens = decoded_tokens;
+                            resident_trace("schema-first-valid", request);
+                            apply_server_success(result, std::move(first_valid_json), first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
                             reader.stop();
                             return true;
                         }
                     }
-                    if ((final_result = dynamic_cast<server_task_result_cmpl_final *>(response.get())) != nullptr) {
+                    if (response->is_stop()) {
+                        final_response = std::move(response);
+                        resident_trace("stop", request);
                         break;
                     }
                 }
 
-                if (final_result != nullptr) {
-                    content = final_result->content;
-                    decoded_tokens = final_result->n_decoded;
-                    const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
-                    if (!parsed.is_discarded()) {
-                        apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
-                        return true;
+                if (final_response != nullptr) {
+                    if (!extract_completion_json(final_response.get(), content, decoded_tokens, final_stop_reason)) {
+                        apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
+                            "server returned a non-completion final result");
+                        resident_trace("schema-invalid-final-type", request);
+                        return false;
+                    } else {
+                        const auto parsed = nlohmann::ordered_json::parse(content, nullptr, false);
+                        if (!parsed.is_discarded()) {
+                            resident_trace("schema-final-valid", request);
+                            apply_server_success(result, content, decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                            return true;
+                        }
                     }
+                }
+                if (!first_valid_json.empty()) {
+                    resident_trace("schema-first-valid-return", request);
+                    apply_server_success(result, std::move(first_valid_json), first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                    return true;
+                }
+                if (request.purpose == common_agent_generation_purpose::reasoning) {
+                    if (content.empty()) {
+                        content = R"({"summary":"Reasoning step reached the generation limit without structured output.","format":"unstructured"})";
+                    }
+                    apply_server_success(result, std::move(content), decoded_tokens, final_stop_reason);
+                    resident_trace("schema-reasoning-unstructured", request);
+                    return true;
                 }
 
                 result.content = std::move(content);
                 result.decoded_tokens = decoded_tokens;
                 apply_server_error(
-                    final_result,
+                    final_response.get(),
                     result,
                     common_agent_generation_status::errored,
-                    final_result == nullptr ? common_agent_generation_stop_reason::error : map_server_stop_reason(final_result->stop),
+                    final_response == nullptr ? common_agent_generation_stop_reason::error : final_stop_reason,
                     "generation ended before producing valid JSON for the requested schema");
+                resident_trace("schema-invalid", request);
                 return false;
             }
 
@@ -140,17 +222,22 @@ public:
                         responses.is_terminated ? common_agent_generation_stop_reason::cancelled : common_agent_generation_stop_reason::error,
                         responses.is_terminated ? "server task was terminated" : "server task produced no completion result");
                 }
+                resident_trace("nonstream-error", request);
                 return false;
             }
 
-            auto * final_result = dynamic_cast<server_task_result_cmpl_final *>(responses.results.front().get());
-            if (final_result == nullptr) {
+            auto * response = responses.results.front().get();
+            std::string content;
+            int decoded_tokens = 0;
+            common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none;
+            if (!response->is_stop() || !extract_completion_json(response, content, decoded_tokens, stop_reason)) {
                 apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
                     "server returned a non-completion result");
                 return false;
             }
 
-            apply_server_success(result, final_result->content, final_result->n_decoded, map_server_stop_reason(final_result->stop));
+            apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
+            resident_trace("nonstream-success", request);
             return true;
         } catch (const std::exception & err) {
             apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error, err.what());

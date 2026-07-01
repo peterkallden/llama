@@ -2,6 +2,7 @@
 param(
     [string]$BuildDir = "build-plan",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    [string]$EmbeddingModel = "$HOME\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [switch]$Build
 )
 
@@ -50,7 +51,7 @@ function Show-Diagnostics {
         if ($diag.Count -gt 0) {
             Write-Host ""
             Write-Host "Daemon diagnostics:"
-            $diag | Select-Object -First 60 | ForEach-Object { Write-Host $_ }
+            $diag | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
         }
     }
 }
@@ -64,8 +65,10 @@ $exePath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-daemon.exe"
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
 Write-Host "Chat model: $ChatModel"
+Write-Host "Embedding model: $EmbeddingModel"
 
 Assert-PathExists -Path $ChatModel -Label "Chat model"
+Assert-PathExists -Path $EmbeddingModel -Label "Embedding model"
 
 if ($Build) {
     & $cmake --build $BuildDir --config Release --target llama-agent-daemon -j 1
@@ -77,21 +80,21 @@ if ($Build) {
 Assert-PathExists -Path $exePath -Label "Daemon executable"
 
 $requests = @(
-    '{"mode":"mini","prompt":"Say OK after making a tiny plan.","session_id":"mini-session-smoke","namespace_id":"mini-session","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
-    '{"mode":"mini","prompt":"Say DONE while continuing the same tiny plan.","session_id":"mini-session-smoke","namespace_id":"mini-session","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
+    '{"mode":"mini","prompt":"Say OK after making a tiny plan about remembering that the project codename is Maple.","session_id":"mini-learning-smoke","namespace_id":"mini-learning","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
+    '{"mode":"mini","prompt":"Say DONE after making a tiny plan about remembering that the daemon target is llama-agent-daemon.","session_id":"mini-learning-smoke","namespace_id":"mini-learning","project_id":"repo-smoke","memory_scope":"project","plan_scope":"project"}',
     '{"command":"shutdown"}'
 )
 
 $runId = [guid]::NewGuid().ToString("N")
-$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-mini-session-smoke-$runId-requests.txt"
-$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-mini-session-smoke-$runId-stdout.log"
-$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-mini-session-smoke-$runId-stderr.log"
+$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-mini-learning-smoke-$runId-requests.txt"
+$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-mini-learning-smoke-$runId-stdout.log"
+$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-mini-learning-smoke-$runId-stderr.log"
 Set-Content -LiteralPath $requestsPath -Value $requests -Encoding Ascii
 Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
 
 try {
-    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --default-mode mini --planning-mode mini --reflection-mode off --memory-learn off --agent-plan auto -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
+    $cmd = "type `"$requestsPath`" | `"$exePath`" --model `"$ChatModel`" --embedding-model `"$EmbeddingModel`" --default-mode mini --planning-mode mini --reflection-mode off --memory-learn post-turn --agent-plan auto -n 64 -ngl 0 1> `"$stdoutPath`" 2> `"$stderrPath`""
     cmd /d /c $cmd | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Show-Diagnostics -Path $stderrPath
@@ -116,43 +119,44 @@ try {
     }
     if (-not $firstTurn.ok) {
         Show-Diagnostics -Path $stderrPath
-        throw "First mini daemon turn failed: $($lines[1])"
+        throw "First mini learning turn failed: $($lines[1])"
     }
     if (-not $secondTurn.ok) {
         Show-Diagnostics -Path $stderrPath
-        throw "Second mini daemon turn failed: $($lines[2])"
-    }
-    if ($firstTurn.runtime_reused) {
-        Show-Diagnostics -Path $stderrPath
-        throw "First mini daemon turn unexpectedly reused runtime: $($lines[1])"
-    }
-    if (-not $secondTurn.runtime_reused) {
-        Show-Diagnostics -Path $stderrPath
-        throw "Second mini daemon turn did not reuse runtime: $($lines[2])"
+        throw "Second mini learning turn failed: $($lines[2])"
     }
     if ($firstTurn.response -ne "OK") {
         Show-Diagnostics -Path $stderrPath
-        throw "First mini daemon response mismatch: $($lines[1])"
+        throw "First mini learning response mismatch: $($lines[1])"
     }
     if ($secondTurn.response -ne "DONE") {
         Show-Diagnostics -Path $stderrPath
-        throw "Second mini daemon response mismatch: $($lines[2])"
+        throw "Second mini learning response mismatch: $($lines[2])"
     }
-    if (-not $firstTurn.plan_id) {
+    if ($firstTurn.runtime_reused) {
         Show-Diagnostics -Path $stderrPath
-        throw "First mini daemon response did not include plan_id: $($lines[1])"
+        throw "First mini learning turn unexpectedly reused runtime: $($lines[1])"
     }
-    if ($firstTurn.plan_id -ne $secondTurn.plan_id) {
+    if (-not $secondTurn.runtime_reused) {
         Show-Diagnostics -Path $stderrPath
-        throw "Mini daemon session did not preserve plan_id across turns: $($lines[1]) / $($lines[2])"
+        throw "Second mini learning turn did not reuse runtime: $($lines[2])"
     }
-    if ($firstTurn.event_count -lt 1) {
+    if (-not $firstTurn.plan_id -or $firstTurn.plan_id -ne $secondTurn.plan_id) {
         Show-Diagnostics -Path $stderrPath
-        throw "First mini daemon response did not report runtime events: $($lines[1])"
+        throw "Mini learning session did not preserve plan_id across turns: $($lines[1]) / $($lines[2])"
     }
-    if ($secondTurn.event_count -lt 1) {
+    if ([string]::IsNullOrWhiteSpace($firstTurn.memory_learning_summary) -or [string]::IsNullOrWhiteSpace($secondTurn.memory_learning_summary)) {
         Show-Diagnostics -Path $stderrPath
-        throw "Second mini daemon response did not report runtime events: $($lines[2])"
+        throw "Mini learning turn did not report memory learning summary"
+    }
+    if ($firstTurn.memory_learning_summary -like "*candidate embedding failed safely*" -or
+            $secondTurn.memory_learning_summary -like "*candidate embedding failed safely*") {
+        Show-Diagnostics -Path $stderrPath
+        throw "Mini learning daemon path still appears to be missing embedding support: $($lines[1]) / $($lines[2])"
+    }
+    if ($firstTurn.event_count -lt 1 -or $secondTurn.event_count -lt 1) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Mini learning daemon turn did not report runtime events"
     }
     if (-not $shutdown.ok -or $shutdown.event -ne "shutdown") {
         Show-Diagnostics -Path $stderrPath
@@ -160,7 +164,7 @@ try {
     }
 
     Write-Host ""
-    Write-Host "Agent daemon mini session smoke test complete."
+    Write-Host "Agent daemon mini learning smoke test complete."
     Write-Host $lines[0]
     Write-Host $lines[1]
     Write-Host $lines[2]
