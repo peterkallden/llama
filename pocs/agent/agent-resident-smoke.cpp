@@ -201,6 +201,13 @@ int main(int argc, char ** argv) {
             return false;
         }
 
+        common_agent_runtime_policy policy;
+        policy.agent_inference_backend = "server-context";
+        common_agent_runtime_config runtime_config;
+        runtime_config.generation_config.n_predict = options.n_predict;
+        common_agent_orchestration_config orchestration_config;
+        orchestration_config.prompt = options.first_prompt;
+
         common_agent_runtime_session_host runtime(
             make_agent_runtime_session_host_config({
                 memory_store,
@@ -218,7 +225,9 @@ int main(int argc, char ** argv) {
                     common_memory_scope::session,
                     common_plan_scope::turn,
                 },
-                {},
+                std::move(policy),
+                std::move(runtime_config),
+                std::move(orchestration_config),
                 common_memory_scope::session,
                 false,
                 {},

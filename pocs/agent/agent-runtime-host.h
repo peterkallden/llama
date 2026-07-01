@@ -252,7 +252,9 @@ struct common_agent_runtime_session_host_build_config {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
     common_agent_runtime_resident_request_config resident_request;
-    args runtime_args;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;

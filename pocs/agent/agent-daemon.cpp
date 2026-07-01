@@ -216,6 +216,27 @@ common_agent_runtime_resident_request_config make_resident_request_config(
     };
 }
 
+common_agent_runtime_session_host_build_config make_session_host_build_config(
+        common_memory_store & memory_store,
+        common_plan_store & plan_store,
+        const daemon_options & options) {
+    auto runtime_args = make_runtime_args(options);
+    return {
+        memory_store,
+        plan_store,
+        make_resident_request_config(options),
+        make_agent_runtime_policy(runtime_args),
+        make_agent_runtime_config(runtime_args),
+        make_agent_orchestration_config(runtime_args),
+        common_memory_scope::session,
+        true,
+        {},
+        {},
+        false,
+        nullptr,
+    };
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -238,26 +259,14 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    auto runtime_args = make_runtime_args(options);
-
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     if (!parse_mode(options.default_mode, default_mode)) {
         std::fprintf(stderr, "unsupported default mode: %s\n", options.default_mode.c_str());
         return 2;
     }
 
-    common_agent_runtime_daemon_host daemon(make_agent_runtime_daemon_config({
-        memory_store,
-        plan_store,
-        make_resident_request_config(options),
-        runtime_args,
-        common_memory_scope::session,
-        true,
-        {},
-        {},
-        false,
-        nullptr,
-    }));
+    common_agent_runtime_daemon_host daemon(make_agent_runtime_daemon_config(
+        make_session_host_build_config(memory_store, plan_store, options)));
 
     std::cout << json({
         {"ok", true},
