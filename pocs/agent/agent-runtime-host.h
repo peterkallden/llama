@@ -92,11 +92,6 @@ common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
     const std::string & prompt,
     const std::string & turn_id);
 
-struct common_agent_runtime_resident_chat_host_config {
-    common_memory_store & memory_store;
-    common_agent_runtime_turn_request base_turn_request;
-};
-
 struct common_agent_runtime_resident_runtime_config {
     common_memory_store & memory_store;
     common_plan_store * plan_store = nullptr;
@@ -150,56 +145,6 @@ private:
     bool profile_tools_active = false;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_runtime_resident_host host;
-};
-
-class common_agent_runtime_resident_chat_host {
-public:
-    explicit common_agent_runtime_resident_chat_host(common_agent_runtime_resident_chat_host_config config);
-
-    bool run_prompt(
-        const std::string & prompt,
-        const std::string & turn_id,
-        common_agent_result & result,
-        std::string & error);
-
-    void reset();
-
-    const common_agent_runtime_resident_host & runtime_host() const { return runtime.runtime_host(); }
-    common_agent_runtime_resident_host & runtime_host() { return runtime.runtime_host(); }
-
-private:
-    common_agent_runtime_resident_runtime runtime;
-};
-
-struct common_agent_runtime_resident_mini_host_config {
-    common_memory_store & memory_store;
-    common_plan_store & plan_store;
-    common_agent_runtime_turn_request base_turn_request;
-    std::string current_plan_id;
-    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    std::vector<common_chat_tool> tools;
-    bool profile_tools_active = false;
-    const common_tool_registry * tool_registry = nullptr;
-};
-
-class common_agent_runtime_resident_mini_host {
-public:
-    explicit common_agent_runtime_resident_mini_host(common_agent_runtime_resident_mini_host_config config);
-
-    bool run_prompt(
-        const std::string & prompt,
-        const std::string & turn_id,
-        common_agent_result & result,
-        std::string & error);
-
-    void reset();
-
-    const std::string & current_plan_id() const { return runtime.current_plan_id(); }
-    const common_agent_runtime_resident_host & runtime_host() const { return runtime.runtime_host(); }
-    common_agent_runtime_resident_host & runtime_host() { return runtime.runtime_host(); }
-
-private:
-    common_agent_runtime_resident_runtime runtime;
 };
 
 struct common_agent_runtime_host_build_context {
