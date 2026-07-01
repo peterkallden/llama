@@ -6,6 +6,7 @@
 #include "agent-cli-runtime.h"
 
 #include "common.h"
+#include "log.h"
 #include "server-context.h"
 
 #include <thread>
@@ -31,6 +32,7 @@ struct agent_resident_inference_host {
         params.n_parallel = 1;
         params.n_sequences = 1;
         params.n_ctx = 0;
+        params.verbosity = LOG_LEVEL_WARN;
         postprocess_cpu_params(params.cpuparams, nullptr);
         postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
 
