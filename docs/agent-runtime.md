@@ -38,6 +38,8 @@ There is still no real daemon lifecycle yet. There are no named pipes, Unix sock
 
 A small foreground daemon smoke now exists on top of the resident runtime builders. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one process, one host-owned model config, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon now suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
+The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -225,5 +227,7 @@ The resident-inference branch has been validated with:
 - foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
+
+The resident `mini` path through the foreground daemon is not yet part of the passing smoke baseline. The current branch now exposes enough protocol/result metadata to debug that path cleanly, but resident `server_context` planning/reflection still needs focused stabilization before it should be treated as green.
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.

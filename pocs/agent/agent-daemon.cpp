@@ -137,8 +137,14 @@ json make_turn_response(const common_agent_runtime_daemon_turn_result & result) 
     json response = {
         {"ok", result.ok},
         {"runtime_reused", result.runtime_reused},
+        {"limit_reached", result.limit_reached},
+        {"reflected", result.reflected},
+        {"revised", result.revised},
         {"response", result.response},
         {"total_decoded_tokens", result.total_decoded_tokens},
+        {"event_count", result.event_count},
+        {"memory_learning_related_count", result.memory_learning_related_count},
+        {"memory_learning_summary", result.memory_learning_summary},
     };
     if (!result.plan_id.empty()) {
         response["plan_id"] = result.plan_id;
@@ -216,6 +222,15 @@ int main(int argc, char ** argv) {
         {"ok", true},
         {"event", "ready"},
         {"default_mode", options.default_mode},
+        {"protocol_version", 1},
+        {"capabilities", json::array({
+            "chat",
+            "mini",
+            "planning",
+            "reflection",
+            "memory_learning",
+            "scoped_sessions",
+        })},
     }).dump() << std::endl;
 
     std::string line;

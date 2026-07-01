@@ -519,9 +519,15 @@ bool common_agent_runtime_daemon_host::run_turn(
 
     result.ok = ok;
     result.runtime_reused = runtime_reused;
+    result.limit_reached = agent_result.limit_reached;
+    result.reflected = agent_result.reflected;
+    result.revised = agent_result.revised;
     result.response = agent_result.response;
     result.plan_id = agent_result.plan_id ? *agent_result.plan_id : "";
     result.total_decoded_tokens = agent_result.total_decoded_tokens;
+    result.event_count = agent_result.events.size();
+    result.memory_learning_related_count = agent_result.memory_learning_related_count;
+    result.memory_learning_summary = agent_result.memory_learning_summary;
     result.error = ok ? std::string() : error;
     return ok;
 }

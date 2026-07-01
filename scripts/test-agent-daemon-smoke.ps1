@@ -113,6 +113,14 @@ try {
         Show-Diagnostics -Path $stderrPath
         throw "Daemon did not report ready"
     }
+    if ($ready.protocol_version -ne 1) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Daemon ready response missing protocol_version=1"
+    }
+    if (-not ($ready.capabilities -contains "chat") -or -not ($ready.capabilities -contains "mini")) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Daemon ready response missing expected capabilities"
+    }
     if (-not $first.ok -or $first.response -ne "OK") {
         Show-Diagnostics -Path $stderrPath
         throw "First daemon response mismatch: $($lines[1])"
@@ -128,6 +136,10 @@ try {
     if (-not $second.runtime_reused) {
         Show-Diagnostics -Path $stderrPath
         throw "Second daemon response did not report runtime reuse: $($lines[2])"
+    }
+    if ($first.event_count -lt 0 -or $second.event_count -lt 0) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Daemon response missing event_count"
     }
     if (-not $shutdown.ok -or $shutdown.event -ne "shutdown") {
         Show-Diagnostics -Path $stderrPath

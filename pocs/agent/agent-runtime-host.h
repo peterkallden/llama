@@ -223,9 +223,15 @@ struct common_agent_runtime_daemon_turn_request {
 struct common_agent_runtime_daemon_turn_result {
     bool ok = false;
     bool runtime_reused = false;
+    bool limit_reached = false;
+    bool reflected = false;
+    bool revised = false;
     std::string response;
     std::string plan_id;
     int total_decoded_tokens = 0;
+    size_t event_count = 0;
+    size_t memory_learning_related_count = 0;
+    std::string memory_learning_summary;
     std::string error;
 };
 
