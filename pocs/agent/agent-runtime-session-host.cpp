@@ -1,6 +1,6 @@
 #include "agent-runtime-session-host.h"
 
-#include "agent-runtime-host.h"
+#include "agent-runtime-resident.h"
 
 namespace {
 

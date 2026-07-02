@@ -1,3 +1,5 @@
+#include "agent-runtime-resident.h"
+
 #include "agent-runtime-host.h"
 
 bool common_agent_runtime_resident_host::run_turn(
