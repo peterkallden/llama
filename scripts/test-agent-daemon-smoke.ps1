@@ -79,7 +79,7 @@ function Show-Diagnostics {
     param([string]$Path)
 
     if (Test-Path -LiteralPath $Path) {
-        $diag = Get-Content -LiteralPath $Path
+        $diag = @(Get-Content -LiteralPath $Path)
         if ($diag.Count -gt 0) {
             Write-Host ""
             Write-Host "Daemon diagnostics:"

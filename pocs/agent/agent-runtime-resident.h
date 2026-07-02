@@ -1,11 +1,10 @@
 #pragma once
 
+#include "agent-runtime-host-contracts.h"
 #include "agent-runtime-turn.h"
 
 #include <string>
 #include <vector>
-
-struct common_agent_runtime_host_inputs;
 
 class common_agent_runtime_resident_host {
 public:
