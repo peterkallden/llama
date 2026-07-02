@@ -98,6 +98,15 @@ The daemon-facing request shape now carries host-owned scope data such as namesp
 
 Today this session host still manages one active resident runtime at a time and matches reuse implicitly from the current host-owned session/scope/inference contract. That is sufficient for the current foreground daemon and smoke coverage, but it is not yet a multi-session manager.
 
+The runtime surface is now split more explicitly in code as well:
+
+- turn contracts
+- resident runtime contracts
+- session-host contracts
+- host input/build contracts
+
+That split is still structural rather than behavioral, but it makes the next service-facing step easier because the current single-active session host is no longer buried inside the same header as every other runtime layer.
+
 ### Runtime Drivers
 
 The runtime drivers contain the agent behavior.
@@ -210,17 +219,17 @@ The current code should remain useful without any of these. The next steps shoul
 
    The host builders now accept a CLI-free runtime turn request and CLI-free policy/runtime/orchestration contracts. The next cleanup is to move more callers onto those contracts directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
 
-2. Reduce runtime/session wrapper overlap.
+2. Introduce a real session manager before broader daemon transport work.
 
-   `agent-runtime-host.h` currently carries several layers in one place: turn contracts, resident runtime helpers, resident session host, daemon aliases, and build contexts. The next structural cleanup should split these into smaller runtime/session/daemon-facing headers and retire thin wrappers that no longer carry real policy.
+   The current resident session host is intentionally single-active. The next meaningful runtime step is to add an explicit session key plus session manager so the host can handle `session A`, `session B`, `session A again` without rebuilding the entire mental model around one active slot.
 
-3. Make tool provider discovery explicit.
+3. Relax the current runtime reuse key where it is too turn-shaped.
+
+   The current reuse match still includes values such as `n_predict`. Before a multi-session manager hardens around it, the host should split model/context reuse concerns from per-turn generation options more clearly.
+
+4. Make tool provider discovery explicit.
 
    Keep the existing catalog/registry/adapters, but introduce a provider-facing contract for listing and calling tools. The native registry should implement it first. MCP can then become another provider rather than a special runtime mode.
-
-4. Introduce a real session manager before broader daemon transport work.
-
-   The current resident session host is intentionally single-active. Before broader socket/HTTP/MCP transport work, the host side should grow explicit create/run/reset/close semantics for more than one session while keeping model lifetime separate from per-session state.
 
 5. Add cancellation, timeout and event contracts before async tools.
 
