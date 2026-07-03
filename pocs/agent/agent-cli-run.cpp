@@ -1,4 +1,5 @@
 #include "agent-cli-run.h"
+#include "agent-cli-run-adapter.h"
 
 #include "../memory/memory-cli-chat.h"
 #include "../memory/memory-cli-memory.h"
@@ -36,153 +37,40 @@
 #include <cstdio>
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #endif
 #include <memory>
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-#include <nlohmann/json.hpp>
-
 using json = nlohmann::ordered_json;
-
-namespace {} // namespace
 #endif
 
 int run_agent_cli(common_memory_store & store, args a) {
     std::string error;
-    if (!resolve_agent_profile(a, error)) {
+    if (!prepare_agent_cli_args(a, error)) {
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    if (a.max_tool_rounds < 1 || a.max_tool_rounds > 4) {
-        fprintf(stderr, "--max-tool-rounds must be between 1 and 4\n");
+
+    common_agent_cli_run_setup setup;
+    bool exported = false;
+    if (!prepare_agent_cli_run_setup(store, a, setup, exported, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-#ifndef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-    if (!a.tool_profile.empty()) {
-        fprintf(stderr, "--tool-profile requires a build with LLAMA_AGENT_REFLECTION=ON\n");
-        return 1;
+    if (exported) {
+        return 0;
     }
-#endif
-    if (!a.tool_profile.empty() && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
-        fprintf(stderr, "--tool-profile cannot be combined with legacy memory tool flags\n");
-        return 1;
-    }
-    if (a.planning_mode != "off" && a.planning_mode != "mini") {
-        fprintf(stderr, "--planning-mode must be off or mini\n");
-        return 1;
-    }
-    if (a.agent_bootstrap != "none" && a.agent_bootstrap != "default") {
-        fprintf(stderr, "--agent-bootstrap must be none or default\n");
-        return 1;
-    }
-    if (a.agent_plan != "off" && a.agent_plan != "auto") {
-        fprintf(stderr, "--agent-plan must be off or auto\n");
-        return 1;
-    }
-    if (a.agent_bootstrap == "default" && !a.agent_import.empty()) {
-        fprintf(stderr, "--agent-bootstrap default cannot be combined with --agent-import\n");
-        return 1;
-    }
-    const bool bootstrap_enabled = a.agent_bootstrap == "default" || !a.agent_import.empty();
-    if (a.planning_mode == "mini" && a.plan_scope == "turn" && a.memory_turn.empty()) {
-        a.memory_turn = "implicit-" + std::to_string(std::time(nullptr));
-    }
-    if (bootstrap_enabled && a.planning_mode == "mini" && a.agent_blueprint.empty()) {
-        a.agent_blueprint = "auto";
-    }
-    if (bootstrap_enabled && a.agent_blueprint == "auto" && a.plan_id.empty()) {
-        a.plan_id = "agent-blueprint:" + a.memory_session + ":" + (a.memory_turn.empty() ? std::string("turn") : a.memory_turn);
-    }
-    if (!a.agent_export.empty() && (bootstrap_enabled || !a.agent_blueprint.empty())) {
-        fprintf(stderr, "--agent-export cannot be combined with bootstrap or blueprint selection\n");
-        return 1;
-    }
-    if (bootstrap_enabled && a.planning_mode != "mini") {
-        fprintf(stderr, "--agent-bootstrap requires --planning-mode mini\n");
-        return 1;
-    }
-    if (!a.agent_blueprint.empty() && (!bootstrap_enabled || a.plan_id.empty())) {
-        fprintf(stderr, "--agent-blueprint requires bootstrap and an explicit --plan-id\n");
-        return 1;
-    }
-    if (a.reflection_mode != "off" && a.reflection_mode != "always") {
-        fprintf(stderr, "--reflection-mode must be off or always\n");
-        return 1;
-    }
-    if (a.reflection_mode != "off" && a.planning_mode == "off") {
-        fprintf(stderr, "--reflection-mode requires --planning-mode mini\n");
-        return 1;
-    }
-    if (a.memory_learn != "off" && a.memory_learn != "post-turn") {
-        fprintf(stderr, "--memory-learn must be off or post-turn\n");
-        return 1;
-    }
-    if (a.memory_learn == "post-turn" && a.planning_mode != "mini") {
-        fprintf(stderr, "--memory-learn post-turn requires --planning-mode mini\n");
-        return 1;
-    }
-    if (a.agent_inference_backend != "cli" && a.planning_mode != "mini") {
-        fprintf(stderr, "--agent-inference-backend currently requires --planning-mode mini\n");
-        return 1;
-    }
-    if (a.memory_learn_min_confidence < 0.0f || a.memory_learn_min_confidence > 1.0f || a.memory_learn_min_reuse < 0.0f || a.memory_learn_min_reuse > 1.0f) {
-        fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
-        return 1;
-    }
-    if (a.planning_mode == "mini" && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
-        fprintf(stderr, "--planning-mode mini requires a registered --tool-profile instead of legacy memory tool flags\n");
-        return 1;
-    }
-#ifndef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-    if (a.planning_mode == "mini") {
-        fprintf(stderr, "--planning-mode mini requires a build with LLAMA_AGENT_REFLECTION=ON\n");
-        return 1;
-    }
-#endif
+
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-    std::unique_ptr<common_plan_store> plan_store;
-    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    common_plan_scope requested_plan_scope = common_plan_scope::turn;
-    common_agent_scope agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
-    std::string active_plan_id = a.plan_id;
-    const auto orchestration_config = make_agent_orchestration_config(a);
-    const auto bootstrap_runtime_config = make_agent_bootstrap_runtime_config(a);
-    if (a.planning_mode == "mini") {
-        if (!parse_plan_scope(a.plan_scope, requested_plan_scope)) {
-            fprintf(stderr, "unsupported plan scope: %s\n", a.plan_scope.c_str());
-            return 1;
-        }
-        agent_scope = common_cli_make_agent_scope(a, requested_plan_scope);
-        active_plan_id = a.plan_id;
-        plan_store = make_plan_store(a, error);
-        if (!plan_store || !plan_store->open(a.plan_db, error)) {
-            fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
-            return 1;
-        }
-        if ((bootstrap_enabled || !a.agent_export.empty()) && !common_cli_supports_bootstrap_package_scope(agent_scope)) {
-            fprintf(stderr, "bootstrap/import/export currently supports only session- or project-scoped package tenants\n");
-            return 1;
-        }
-        if (!maybe_install_agent_bootstrap(
-                store,
-                *plan_store,
-                orchestration_config,
-                bootstrap_runtime_config,
-                agent_scope,
-                active_plan_id,
-                installed_blueprint_candidates,
-                error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        bool exported = false;
-        if (!maybe_export_agent_package(store, *plan_store, orchestration_config, agent_scope, exported, error)) {
-            fprintf(stderr, "%s\n", error.c_str());
-            return 1;
-        }
-        if (exported) {
-            return 0;
-        }
+    common_plan_store * plan_store = setup.plan_store.get();
+    auto & installed_blueprint_candidates = setup.installed_blueprint_candidates;
+    auto & agent_scope = setup.agent_scope;
+    auto & active_plan_id = setup.active_plan_id;
+    const auto & orchestration_config = setup.orchestration_config;
+    if (a.planning_mode == "mini" && plan_store == nullptr) {
+        fprintf(stderr, "planning mode mini requires an initialized plan store\n");
+        return 1;
     }
 #endif
     std::string fallback_reason;
@@ -247,7 +135,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         }
         common_native_tool_bindings bindings;
         if (!a.repository_root.empty()) bindings.repository_root = std::filesystem::weakly_canonical(a.repository_root).string();
-        bindings.plan_store = plan_store.get();
+        bindings.plan_store = plan_store;
         bindings.plan_id = &active_plan_id;
         if (memory_enabled) {
             bindings.memory_store = &store;

@@ -68,6 +68,8 @@ It currently owns argument-derived wiring that is still local to CLI behavior:
 
 This adapter is allowed to know about CLI `args`. The runtime/session host below it should not need to. The current daemon path now follows the same rule for policy/config assembly, even though its own option parsing is still local.
 
+`agent-cli-run` now also has a small adapter helper beside it. That helper owns CLI-only validation, default stamping, and mini/bootstrap/export setup so the top-level run function can stay focused on retrieval, tool wiring, and dispatch into the runtime host.
+
 ### Runtime Host
 
 The runtime host owns one prepared agent turn.
