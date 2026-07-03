@@ -87,6 +87,27 @@ bool common_agent_server_context_host::start(
     return true;
 }
 
+bool common_agent_server_context_host::build_inference_session(
+        common_agent_inference_session & session,
+        std::string & error) const {
+    if (!instance || !instance->running || !instance->server) {
+        error = "server_context host is not running";
+        return false;
+    }
+
+    session = {};
+    session.backend = agent_inference_backend::server_context;
+    auto meta = instance->server->get_meta();
+    session.templates = meta.chat_params.tmpls.get();
+    session.inference = make_server_context_agent_inference(
+        *instance->server,
+        instance->params,
+        meta.logit_bias_eog,
+        session.templates);
+    error.clear();
+    return true;
+}
+
 void common_agent_server_context_host::stop() {
     if (!instance || !instance->running) {
         return;
@@ -115,15 +136,10 @@ bool make_server_context_inference_session(
         return false;
     }
 
-    session = {};
-    session.backend = agent_inference_backend::server_context;
-    auto meta = host->server().get_meta();
-    session.templates = meta.chat_params.tmpls.get();
-    session.inference = make_server_context_agent_inference(
-        host->server(),
-        host->params(),
-        meta.logit_bias_eog,
-        session.templates);
+    if (!host->build_inference_session(session, error)) {
+        host->stop();
+        return false;
+    }
     session.keepalive = std::move(host);
     error.clear();
     return true;

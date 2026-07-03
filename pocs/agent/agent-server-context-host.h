@@ -58,6 +58,7 @@ public:
     ~common_agent_server_context_host();
 
     bool start(const common_agent_server_context_host_config & config, std::string & error);
+    bool build_inference_session(common_agent_inference_session & session, std::string & error) const;
     void stop();
 
     const common_agent_server_context_load_key & load_key() const { return current_load_key; }
