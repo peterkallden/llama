@@ -8,9 +8,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 enum class common_agent_daemon_command_type {
     run_turn,
+    reset_session,
+    close_session,
+    get_status,
     shutdown,
 };
 
@@ -25,12 +29,18 @@ struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
     std::optional<common_agent_runtime_daemon_turn_request> turn;
+    std::optional<common_agent_runtime_session_key> session;
 };
 
 struct common_agent_daemon_command_result {
     bool ok = false;
     std::string request_id;
     std::string event;
+    std::string state;
+    bool live = false;
+    bool ready = false;
+    size_t session_count = 0;
+    std::vector<common_agent_runtime_session_key> sessions;
     common_agent_runtime_daemon_turn_result turn_result;
     std::string error;
 };

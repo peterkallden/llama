@@ -271,10 +271,32 @@ bool parse_agent_daemon_command(
     command = {};
     command.request_id = parsed.value("request_id", "");
 
-    if (parsed.value("command", "") == "shutdown") {
+    const std::string command_name = parsed.value("command", "");
+    if (command_name == "shutdown") {
         command.type = common_agent_daemon_command_type::shutdown;
         error.clear();
         return true;
+    }
+    if (command_name == "status") {
+        command.type = common_agent_daemon_command_type::get_status;
+        error.clear();
+        return true;
+    }
+    if (command_name == "reset_session" || command_name == "close_session") {
+        command.type = command_name == "reset_session"
+            ? common_agent_daemon_command_type::reset_session
+            : common_agent_daemon_command_type::close_session;
+        command.session = common_agent_runtime_session_key{
+            parsed.value("namespace_id", "default-namespace"),
+            parsed.value("session_id", "default-session"),
+            parsed.value("project_id", ""),
+        };
+        error.clear();
+        return true;
+    }
+    if (!command_name.empty() && command_name != "run_turn") {
+        error = "unsupported command: " + command_name;
+        return false;
     }
 
     command.type = common_agent_daemon_command_type::run_turn;
@@ -348,6 +370,27 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
     if (!result.event.empty()) {
         response["event"] = result.event;
     }
+
+    if (result.event == "status") {
+        response["state"] = result.state;
+        response["live"] = result.live;
+        response["ready"] = result.ready;
+        response["sessions"] = result.session_count;
+        json session_array = json::array();
+        for (const auto & session : result.sessions) {
+            session_array.push_back({
+                {"namespace_id", session.namespace_id},
+                {"session_id", session.session_id},
+                {"project_id", session.project_id},
+            });
+        }
+        response["session_keys"] = std::move(session_array);
+        if (!result.error.empty()) {
+            response["error"] = result.error;
+        }
+        return response;
+    }
+
     if (!result.event.empty()) {
         if (!result.error.empty()) {
             response["error"] = result.error;

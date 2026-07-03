@@ -11,6 +11,61 @@ bool common_agent_daemon_service::execute(
     result.request_id = command.request_id;
 
     switch (command.type) {
+        case common_agent_daemon_command_type::get_status:
+            result.ok = runtime.host != nullptr;
+            result.event = "status";
+            result.state = result.ok ? "ready" : "failed";
+            result.live = true;
+            result.ready = result.ok;
+            if (runtime.host) {
+                result.sessions = runtime.host->list_sessions();
+                result.session_count = result.sessions.size();
+            }
+            error.clear();
+            return result.ok;
+
+        case common_agent_daemon_command_type::reset_session:
+            if (!command.session.has_value()) {
+                error = "reset_session command missing session payload";
+                result.error = error;
+                return false;
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                result.error = error;
+                return false;
+            }
+
+            result.ok = runtime.host->reset_session(*command.session, error);
+            result.event = "session_reset";
+            if (!result.ok) {
+                result.error = error;
+                return false;
+            }
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::close_session:
+            if (!command.session.has_value()) {
+                error = "close_session command missing session payload";
+                result.error = error;
+                return false;
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                result.error = error;
+                return false;
+            }
+
+            result.ok = runtime.host->close_session(*command.session, error);
+            result.event = "session_closed";
+            if (!result.ok) {
+                result.error = error;
+                return false;
+            }
+            error.clear();
+            return true;
+
         case common_agent_daemon_command_type::shutdown:
             shutdown_requested_flag = true;
             result.ok = true;

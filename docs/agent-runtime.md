@@ -104,6 +104,16 @@ The foreground daemon entrypoint is now also split a little more cleanly. `agent
 
 The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. The current service step is still synchronous and intentionally small: it mainly distinguishes command parsing/dispatch from runtime execution, while leaving queueing, workers, cancellation and richer lifecycle states for the next daemon iteration.
 
+That service layer now understands a slightly broader host-oriented command surface:
+
+- `run_turn`
+- `status`
+- `reset_session`
+- `close_session`
+- `shutdown`
+
+`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys. `reset_session` and `close_session` now go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
+
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
