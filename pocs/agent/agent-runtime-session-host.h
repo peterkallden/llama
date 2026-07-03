@@ -102,14 +102,3 @@ private:
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
 };
-
-using common_agent_runtime_daemon_turn_request = common_agent_runtime_session_host_turn_request;
-using common_agent_runtime_daemon_turn_result = common_agent_runtime_session_host_turn_result;
-using common_agent_runtime_daemon_config = common_agent_runtime_session_host_config;
-using common_agent_runtime_daemon_build_config = common_agent_runtime_session_host_build_config;
-using common_agent_runtime_daemon_host = common_agent_runtime_session_host;
-
-inline common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
-        common_agent_runtime_daemon_build_config config) {
-    return make_agent_runtime_session_host_config(std::move(config));
-}

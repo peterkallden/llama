@@ -34,7 +34,7 @@ runtime host
                 +--> memory learning
 ```
 
-What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, one active resident host contract, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
+What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
@@ -90,13 +90,15 @@ There is now a small resident runtime layer on top of that wrapper. It owns the 
 
 The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
 
-There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus host-owned session/scope matching rules and can execute repeated chat or mini turns from a prepared host contract. The foreground daemon uses that host through a thin compatibility alias, and direct resident smoke can exercise the same host without going through daemon protocol code.
+There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus host-owned session/scope matching rules and can execute repeated chat or mini turns from a prepared host contract.
+
+On top of that sits the first explicit session manager for the daemon/admin path. It keys resident session hosts by namespace, session and project so the foreground daemon can now handle `session A`, `session B`, `session A again` and return to the prior resident state for `A` instead of pretending there is only one active slot.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
-Today this session host still manages one active resident runtime at a time and matches reuse implicitly from the current host-owned session/scope/inference contract. That is sufficient for the current foreground daemon and smoke coverage, but it is not yet a multi-session manager.
+Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope/inference contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
 
 The runtime surface is now split more explicitly in code as well:
 
@@ -219,9 +221,9 @@ The current code should remain useful without any of these. The next steps shoul
 
    The host builders now accept a CLI-free runtime turn request and CLI-free policy/runtime/orchestration contracts. The next cleanup is to move more callers onto those contracts directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
 
-2. Introduce a real session manager before broader daemon transport work.
+2. Separate session management from model/context ownership more explicitly.
 
-   The current resident session host is intentionally single-active. The next meaningful runtime step is to add an explicit session key plus session manager so the host can handle `session A`, `session B`, `session A again` without rebuilding the entire mental model around one active slot.
+   The daemon/admin path now has a keyed session manager, but each keyed entry still owns a resident session host with its own resident runtime lifetime. The next meaningful runtime step is to keep the keyed agent-session model while separating it more clearly from model-loading and inference-context ownership.
 
 3. Relax the current runtime reuse key where it is too turn-shaped.
 

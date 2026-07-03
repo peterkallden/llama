@@ -7,6 +7,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-runtime-host.cpp
     agent-runtime-resident.cpp
     agent-runtime-session-host.cpp
+    agent-runtime-session-manager.cpp
     agent-runtime-execution.cpp
     agent-runtime-session.cpp
     agent-server-generation.cpp
