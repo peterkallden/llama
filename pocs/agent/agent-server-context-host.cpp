@@ -14,20 +14,44 @@ common_agent_server_context_load_key make_agent_server_context_load_key(
     };
 }
 
-common_params make_agent_server_context_load_params(
+common_agent_server_context_context_key make_agent_server_context_context_key(
         const common_agent_inference_options & options) {
+    return {
+        make_agent_server_context_load_key(options),
+        1,
+        1,
+        0,
+    };
+}
+
+common_agent_server_context_host_config make_agent_server_context_host_config(
+        const common_agent_inference_options & options) {
+    return {
+        make_agent_server_context_context_key(options),
+        options.n_predict,
+        LOG_LEVEL_WARN,
+    };
+}
+
+common_params make_agent_server_context_params(
+        const common_agent_server_context_host_config & config) {
     common_params params = {};
-    params.model.path = options.model;
-    params.n_predict = options.n_predict;
-    params.n_gpu_layers = options.n_gpu_layers;
-    params.fit_params = options.fit_params;
-    params.n_parallel = 1;
-    params.n_sequences = 1;
-    params.n_ctx = 0;
-    params.verbosity = LOG_LEVEL_WARN;
+    params.model.path = config.context_key.load_key.model;
+    params.n_predict = config.n_predict;
+    params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
+    params.fit_params = config.context_key.load_key.fit_params;
+    params.n_parallel = config.context_key.n_parallel;
+    params.n_sequences = config.context_key.n_sequences;
+    params.n_ctx = config.context_key.n_ctx;
+    params.verbosity = config.verbosity;
     postprocess_cpu_params(params.cpuparams, nullptr);
     postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
     return params;
+}
+
+common_params make_agent_server_context_params(
+        const common_agent_inference_options & options) {
+    return make_agent_server_context_params(make_agent_server_context_host_config(options));
 }
 
 common_agent_server_context_host::common_agent_server_context_host()
@@ -38,15 +62,17 @@ common_agent_server_context_host::~common_agent_server_context_host() {
 }
 
 bool common_agent_server_context_host::start(
-        const common_agent_inference_options & options,
+        const common_agent_server_context_host_config & config,
         std::string & error) {
     stop();
 
-    current_load_key = make_agent_server_context_load_key(options);
-    params_base = make_agent_server_context_load_params(options);
+    current_config = config;
+    current_context_key = config.context_key;
+    current_load_key = config.context_key.load_key;
+    params_base = make_agent_server_context_params(config);
 
     if (!server_ptr->load_model(params_base)) {
-        error = "failed to load resident server_context model: " + options.model;
+        error = "failed to load resident server_context model: " + current_load_key.model;
         return false;
     }
 
@@ -83,7 +109,7 @@ bool make_server_context_inference_session(
         common_agent_inference_session & session,
         std::string & error) {
     auto host = std::make_shared<common_agent_server_context_host>();
-    if (!host->start(options, error)) {
+    if (!host->start(make_agent_server_context_host_config(options), error)) {
         return false;
     }
 
