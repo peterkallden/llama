@@ -164,7 +164,7 @@ static void apply_safe_tool_defaults(const common_agent_request & request, commo
     if (changed) call.arguments_json = arguments.dump();
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
     common_agent_result result;

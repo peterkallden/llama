@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-tool-provider.h"
 #include "agent/agent-inference.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
@@ -60,6 +61,7 @@ struct common_agent_runtime_assembly {
     std::unique_ptr<common_reflection_engine> reflector;
     std::unique_ptr<common_memory_candidate_extractor> candidate_extractor;
     std::unique_ptr<common_memory_post_turn_learner> memory_learner;
+    std::unique_ptr<common_agent_tool_runtime> tool_runtime;
     std::unique_ptr<common_agent_runtime> runtime;
 };
 
@@ -69,4 +71,5 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_agent_inference & inference,
     const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
+    agent_tool_view * tool_view,
     const common_tool_registry * tool_registry);

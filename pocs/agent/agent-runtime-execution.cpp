@@ -126,6 +126,7 @@ bool run_agent_runtime_driver(
         execution.inference,
         execution.runtime_config,
         execution.tools,
+        execution.tool_view,
         execution.tool_registry);
 
     const common_agent_request request = make_agent_runtime_driver_request(execution);

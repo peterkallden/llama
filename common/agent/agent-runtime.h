@@ -5,6 +5,14 @@
 #include <memory>
 
 class common_memory_post_turn_learner;
+class common_agent_tool_runtime {
+public:
+    virtual ~common_agent_tool_runtime() = default;
+    virtual bool is_read_only(const std::string & tool_name) const = 0;
+    virtual bool is_policy_gated(const std::string & tool_name) const = 0;
+    virtual bool validate(const common_registered_tool_call & call, std::string & error) const = 0;
+    virtual common_tool_execution_result execute(const common_registered_tool_call & call) const = 0;
+};
 
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };
 struct common_reflection_issue { std::string kind, description, correction; float severity = 0.5f; };
@@ -76,4 +84,4 @@ public:
         return evaluate(request, plan, draft, error);
     }
 };
-class common_agent_runtime { public: common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_tool_registry * tools = nullptr, common_memory_post_turn_learner * memory_learner = nullptr); common_agent_result run(const common_agent_request & request); private: common_plan_store & store; common_planner & planner; common_action_executor & executor; common_reflection_engine & reflector; const common_tool_registry * tools; common_memory_post_turn_learner * memory_learner; };
+class common_agent_runtime { public: common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools = nullptr, common_memory_post_turn_learner * memory_learner = nullptr); common_agent_result run(const common_agent_request & request); private: common_plan_store & store; common_planner & planner; common_action_executor & executor; common_reflection_engine & reflector; const common_agent_tool_runtime * tools; common_memory_post_turn_learner * memory_learner; };

@@ -207,7 +207,9 @@ That keeps host authority in one place:
 
 The first mini/planning migration is now also in place for blueprint binding. Auto-selected blueprint bindings no longer inspect the native registry directly; they validate against the resolved `agent_tool_view`, which means blueprint-binding now follows the same host-owned exposure and read-only policy surface as chat tool dispatch.
 
-The remaining registry-heavy path is the older common agent runtime used for planned tool-step execution after planning has already produced a tool step. That is the next meaningful cleanup before a future MCP-backed provider can sit beside the native one without parallel execution contracts.
+The older common agent runtime is now also structurally decoupled from the concrete registry type. Planned tool-step execution runs through a small `common_agent_tool_runtime` interface in `common/agent`, and the PoC runtime assembles either a view-backed adapter or a registry-backed fallback adapter underneath it during migration. That means the common planning/runtime core no longer needs to know whether tool execution ultimately comes from the native registry, a host-resolved provider view, or a future MCP-backed adapter.
+
+What still remains is behavioral convergence: the runtime path still uses a registry-backed fallback when no resolved provider view is available, and provider-backed execution still needs broader smoke coverage once more of the mini/runtime flow is exercised through resident/daemon tests.
 
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
