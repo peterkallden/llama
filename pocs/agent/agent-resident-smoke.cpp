@@ -29,6 +29,7 @@ struct resident_smoke_options {
     std::string first_prompt = "Reply with OK only.";
     std::string second_prompt = "Reply with DONE only.";
     int n_predict = 32;
+    int second_n_predict = 0;
     int n_gpu_layers = 0;
     bool verbose_logs = false;
 };
@@ -147,6 +148,8 @@ bool parse_args(int argc, char ** argv, resident_smoke_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.second_prompt = value;
         } else if (std::strcmp(argv[i], "-n") == 0 || std::strcmp(argv[i], "--n-predict") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_predict = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--second-n-predict") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.second_n_predict = std::stoi(value);
         } else if (std::strcmp(argv[i], "-ngl") == 0 || std::strcmp(argv[i], "--n-gpu-layers") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_gpu_layers = std::stoi(value);
         } else if (std::strcmp(argv[i], "--verbose-logs") == 0) {
@@ -169,7 +172,7 @@ bool parse_args(int argc, char ** argv, resident_smoke_options & options) {
 
 void usage(const char * argv0) {
     std::fprintf(stderr,
-        "usage: %s --model MODEL [--first-prompt TEXT] [--second-prompt TEXT] [--verbose-logs] [--n-predict N] [-ngl N]\n",
+        "usage: %s --model MODEL [--first-prompt TEXT] [--second-prompt TEXT] [--verbose-logs] [--n-predict N] [--second-n-predict N] [-ngl N]\n",
         argv0);
 }
 
@@ -270,7 +273,7 @@ int main(int argc, char ** argv) {
                 "turn-2",
                 common_memory_scope::session,
                 common_plan_scope::turn,
-                options.n_predict,
+                options.second_n_predict > 0 ? options.second_n_predict : options.n_predict,
             }, runtime_result, error)) {
             error = "second resident turn failed: " + error;
             return false;
@@ -310,5 +313,6 @@ int main(int argc, char ** argv) {
     std::printf("turn2_response=%s\n", second_result.response.c_str());
     std::printf("turn1_tokens=%d\n", first_result.total_decoded_tokens);
     std::printf("turn2_tokens=%d\n", second_result.total_decoded_tokens);
+    std::printf("turn2_n_predict=%d\n", options.second_n_predict > 0 ? options.second_n_predict : options.n_predict);
     return 0;
 }

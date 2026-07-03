@@ -18,7 +18,6 @@ struct common_agent_model_load_key {
 struct common_agent_inference_context_key {
     agent_inference_backend backend = agent_inference_backend::cli;
     common_agent_model_load_key model_key;
-    int n_predict = -1;
 };
 
 struct common_agent_runtime_session {

@@ -4,6 +4,8 @@ param(
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$FirstPrompt = "Reply with OK only.",
     [string]$SecondPrompt = "Reply with DONE only.",
+    [int]$FirstNPredict = 32,
+    [int]$SecondNPredict = 0,
     [string]$WorkSubdir = "work\agent-resident-host-smoke",
     [switch]$Build
 )
@@ -130,7 +132,8 @@ Invoke-LoggedCommand -Name "agent resident host smoke" -LogPath $logPath -FilePa
     "--model", $ChatModel,
     "--first-prompt", $FirstPrompt,
     "--second-prompt", $SecondPrompt,
-    "-n", "32",
+    "-n", $FirstNPredict.ToString(),
+    "--second-n-predict", $SecondNPredict.ToString(),
     "-ngl", "0"
 )
 

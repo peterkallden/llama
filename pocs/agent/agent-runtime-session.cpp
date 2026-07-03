@@ -19,7 +19,6 @@ common_agent_inference_context_key make_agent_inference_context_key(
     return {
         backend,
         make_agent_model_load_key(options),
-        options.n_predict,
     };
 }
 
@@ -35,7 +34,6 @@ bool common_agent_inference_context_key_match(
         const common_agent_inference_context_key & lhs,
         const common_agent_inference_context_key & rhs) {
     return lhs.backend == rhs.backend &&
-        lhs.n_predict == rhs.n_predict &&
         common_agent_model_load_key_match(lhs.model_key, rhs.model_key);
 }
 
