@@ -30,6 +30,13 @@ struct common_agent_server_context_host_config {
     int verbosity = LOG_LEVEL_WARN;
 };
 
+struct common_agent_server_context_running_instance {
+    std::unique_ptr<server_context> server;
+    common_params params;
+    std::unique_ptr<std::thread> loop;
+    bool running = false;
+};
+
 common_agent_server_context_load_key make_agent_server_context_load_key(
     const common_agent_inference_options & options);
 
@@ -56,18 +63,15 @@ public:
     const common_agent_server_context_load_key & load_key() const { return current_load_key; }
     const common_agent_server_context_context_key & context_key() const { return current_context_key; }
     const common_agent_server_context_host_config & config() const { return current_config; }
-    const common_params & params() const { return params_base; }
+    const common_params & params() const { return instance->params; }
     server_context & server();
     const server_context & server() const;
 
 private:
-    std::unique_ptr<server_context> server_ptr;
     common_agent_server_context_load_key current_load_key;
     common_agent_server_context_context_key current_context_key;
     common_agent_server_context_host_config current_config;
-    common_params params_base;
-    std::unique_ptr<std::thread> loop;
-    bool running = false;
+    std::unique_ptr<common_agent_server_context_running_instance> instance;
 };
 
 bool make_server_context_inference_session(

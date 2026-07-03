@@ -55,7 +55,7 @@ common_params make_agent_server_context_params(
 }
 
 common_agent_server_context_host::common_agent_server_context_host()
-    : server_ptr(std::make_unique<server_context>()) {}
+    : instance(std::make_unique<common_agent_server_context_running_instance>()) {}
 
 common_agent_server_context_host::~common_agent_server_context_host() {
     stop();
@@ -69,39 +69,41 @@ bool common_agent_server_context_host::start(
     current_config = config;
     current_context_key = config.context_key;
     current_load_key = config.context_key.load_key;
-    params_base = make_agent_server_context_params(config);
+    instance = std::make_unique<common_agent_server_context_running_instance>();
+    instance->server = std::make_unique<server_context>();
+    instance->params = make_agent_server_context_params(config);
 
-    if (!server_ptr->load_model(params_base)) {
+    if (!instance->server->load_model(instance->params)) {
         error = "failed to load resident server_context model: " + current_load_key.model;
+        instance.reset();
         return false;
     }
 
-    loop = std::make_unique<std::thread>([this]() {
-        server_ptr->start_loop();
+    instance->loop = std::make_unique<std::thread>([this]() {
+        instance->server->start_loop();
     });
-    running = true;
+    instance->running = true;
     error.clear();
     return true;
 }
 
 void common_agent_server_context_host::stop() {
-    if (!running) {
+    if (!instance || !instance->running) {
         return;
     }
-    server_ptr->terminate();
-    if (loop && loop->joinable()) {
-        loop->join();
+    instance->server->terminate();
+    if (instance->loop && instance->loop->joinable()) {
+        instance->loop->join();
     }
-    loop.reset();
-    running = false;
+    instance.reset();
 }
 
 server_context & common_agent_server_context_host::server() {
-    return *server_ptr;
+    return *instance->server;
 }
 
 const server_context & common_agent_server_context_host::server() const {
-    return *server_ptr;
+    return *instance->server;
 }
 
 bool make_server_context_inference_session(
