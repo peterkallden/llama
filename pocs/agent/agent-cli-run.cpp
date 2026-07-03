@@ -9,6 +9,7 @@
 #include "agent-plan-orchestration.h"
 #include "agent-cli-selection.h"
 #include "agent-cli-runtime.h"
+#include "agent-tool-provider.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-chat-driver.h"
 #include "agent-runtime-host.h"
@@ -123,6 +124,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     messages.push_back(std::move(user_msg));
 
     std::vector<common_chat_tool> tools;
+    std::unique_ptr<agent_tool_view> tool_view;
     bool profile_tools_active = false;
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     common_tool_catalog tool_catalog;
@@ -167,6 +169,31 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "tool profile setup failed: %s\n", error.c_str());
             return 1;
         }
+        native_agent_tool_provider provider(
+            tool_catalog,
+            [&bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) {
+                resolved = bindings;
+                binding_error.clear();
+                return true;
+            });
+        agent_tool_context tool_context;
+        tool_context.request_id = "cli-run";
+        tool_context.turn_id = a.memory_turn;
+        tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
+        tool_context.memory_scope = query.scope;
+        tool_context.plan_scope = tool_context.scope.plan_scope;
+        tool_context.profile_id = a.tool_profile;
+        tool_context.repository_root = bindings.repository_root;
+        tool_context.allow_network = a.tool_profile == "research";
+        tool_context.allow_policy_gated_writes = a.tool_profile == "memory" || a.tool_profile == "research";
+        tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
+        tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
+        tool_context.max_calls = a.max_tool_rounds > 0 ? a.max_tool_rounds : 1;
+        if (!(tool_view = provider.resolve_tools(tool_context, error))) {
+            fprintf(stderr, "tool provider resolution failed: %s\n", error.c_str());
+            return 1;
+        }
+        tools = tool_view->chat_tools();
         profile_tools_active = true;
     }
 #endif
@@ -202,6 +229,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             fallback_reason,
             tools,
             profile_tools_active,
+            tool_view.get(),
             profile_tools_active ? &tool_registry : nullptr,
             runtime_post_run);
         common_agent_result result;
@@ -223,6 +251,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         fallback_reason,
         tools,
         profile_tools_active,
+        tool_view.get(),
         profile_tools_active ? &tool_registry : nullptr,
         runtime_post_run);
 

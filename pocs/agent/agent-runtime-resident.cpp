@@ -106,6 +106,7 @@ bool common_agent_runtime_resident_runtime::run_chat_prompt(
         memories,
         tools,
         profile_tools_active,
+        nullptr,
         tool_registry,
         {},
     };
@@ -134,6 +135,7 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
         memories,
         tools,
         profile_tools_active,
+        nullptr,
         tool_registry,
         {},
     };

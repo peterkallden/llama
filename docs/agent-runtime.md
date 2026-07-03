@@ -50,7 +50,7 @@ The CLI remains responsible for local command-line concerns:
 - Resolve profiles and defaults that are meaningful only to CLI users.
 - Translate CLI backend flags and store paths into host-owned runtime/store configuration.
 - Bootstrap, import, export, and blueprint package setup.
-- Build the native tool catalog, registry, and adapter bindings for the selected profile.
+- Build the tool context for the selected profile and host-owned scope/policy.
 - Retrieve memory context and render any CLI debug output.
 
 The CLI should not own the agent loop. It should build runtime inputs and call the runtime host.
@@ -191,6 +191,22 @@ Tools currently have three layers:
 - Registry: owns executable handlers.
 - Adapter bindings: bind catalog definitions to local runtime resources such as memory store, plan id, repository root, and embedding provider.
 
+There is now also a small provider/view boundary above those native pieces:
+
+- `agent_tool_provider`: resolve tools for one host-owned runtime context.
+- `agent_tool_view`: expose model-facing `common_chat_tool` values and execute one validated tool call.
+
+The first implementation is native-only. It still uses the existing catalog, registry, and adapter bindings underneath, but the chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
+
+That keeps host authority in one place:
+
+- the model sees only `common_chat_tool`
+- the model requests tools only through parsed `tool_calls`
+- the runtime owns bindings, scope, repository root, memory authority, and policy
+- disallowed native tools are filtered before exposure instead of being shown and rejected later
+
+Mini/planning paths still carry the native registry during migration. The new provider boundary is the first boring slice before a future MCP-backed provider can sit beside the native one without changing the chat driver contract.
+
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
 ## MCP Direction
@@ -256,9 +272,9 @@ The current code should remain useful without any of these. The next steps shoul
 
    The current reuse match still includes values such as `n_predict`. Before a multi-session manager hardens around it, the host should split model/context reuse concerns from per-turn generation options more clearly.
 
-4. Make tool provider discovery explicit.
+4. Move the remaining tool-execution paths onto the provider boundary.
 
-   Keep the existing catalog/registry/adapters, but introduce a provider-facing contract for listing and calling tools. The native registry should implement it first. MCP can then become another provider rather than a special runtime mode.
+   Chat/profile-tool dispatch now goes through `agent_tool_provider` and `agent_tool_view`, but mini/planning and blueprint-binding paths still use the native registry directly. The next cleanup is to move those remaining execution paths behind the same host-owned provider contract where it is practical.
 
 5. Add cancellation, timeout and event contracts before async tools.
 

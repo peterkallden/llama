@@ -4,6 +4,8 @@
 
 #include <functional>
 
+class agent_tool_view;
+
 using common_agent_runtime_host_post_run = std::function<bool(
     const common_agent_result & result,
     std::string & error)>;
@@ -18,6 +20,7 @@ struct common_agent_runtime_host_inputs {
     const std::vector<common_memory_hit> * memories = nullptr;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
     bool reset_session_on_completion = false;
@@ -35,6 +38,7 @@ struct common_agent_runtime_host_execution {
     const std::vector<common_memory_hit> * memories = nullptr;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };
@@ -48,6 +52,7 @@ struct common_agent_runtime_host_build_context {
     const std::vector<common_memory_hit> & memories;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };

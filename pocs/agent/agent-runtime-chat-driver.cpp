@@ -1,5 +1,6 @@
 #include "agent-runtime-chat-driver.h"
 
+#include "agent-tool-provider.h"
 #include "agent/tool-chat-bridge.h"
 
 #include <cstdio>
@@ -78,12 +79,12 @@ bool append_dispatched_tool_messages(
         std::vector<common_chat_msg> & messages,
         std::string & error) {
     if (execution.profile_tools_active) {
-        if (execution.tool_registry == nullptr) {
-            error = "profile tool chat dispatch requires a registered tool registry";
+        if (execution.tool_view == nullptr) {
+            error = "profile tool chat dispatch requires a resolved tool view";
             return false;
         }
         common_tool_chat_dispatch_result dispatched;
-        if (!common_tool_dispatch_chat_calls(assistant_message, *execution.tool_registry, 1, dispatched, error)) {
+        if (!agent_dispatch_chat_tool_calls(assistant_message, *execution.tool_view, 1, dispatched, error)) {
             return false;
         }
         messages.push_back(std::move(assistant_message));

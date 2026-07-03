@@ -12,6 +12,8 @@ struct common_agent_chat_runtime_policy {
     size_t max_tool_rounds = 1;
 };
 
+class agent_tool_view;
+
 using common_agent_chat_tool_handler = std::function<std::string(const common_chat_tool_call & call)>;
 
 struct common_agent_chat_runtime_execution {
@@ -21,6 +23,7 @@ struct common_agent_chat_runtime_execution {
     common_agent_chat_runtime_policy policy;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };

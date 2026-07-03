@@ -90,6 +90,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         const std::string & fallback_reason,
         const std::vector<common_chat_tool> & tools,
         bool profile_tools_active,
+        agent_tool_view * tool_view,
         const common_tool_registry * tool_registry,
         common_agent_runtime_host_post_run post_run) {
     common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
@@ -114,6 +115,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         memories,
         tools,
         profile_tools_active,
+        tool_view,
         tool_registry,
         make_agent_cli_runtime_tool_handler(store, options),
     };
@@ -137,6 +139,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         const std::string & fallback_reason,
         const std::vector<common_chat_tool> & tools,
         bool profile_tools_active,
+        agent_tool_view * tool_view,
         const common_tool_registry * tool_registry,
         common_agent_runtime_host_post_run post_run) {
     auto turn_request = make_agent_cli_runtime_turn_request(
@@ -155,6 +158,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         memories,
         tools,
         profile_tools_active,
+        tool_view,
         tool_registry,
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, orchestration_config);
