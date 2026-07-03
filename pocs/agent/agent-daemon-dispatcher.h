@@ -25,6 +25,7 @@ public:
     bool shutdown_requested() const;
     common_agent_runtime_host_mode default_mode() const;
     size_t queued_command_count() const;
+    size_t max_queue_size_value() const { return max_queue_size; }
 
 private:
     struct queued_result {
@@ -55,6 +56,7 @@ private:
     common_agent_daemon_service service;
     std::thread worker;
     size_t max_queue_size = 0;
+    bool worker_running = false;
     bool accepting_commands = true;
     bool stop_requested = false;
     std::string active_request_id;

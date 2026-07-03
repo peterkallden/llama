@@ -386,8 +386,13 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
         response["state"] = result.state;
         response["live"] = result.live;
         response["ready"] = result.ready;
+        response["worker_running"] = result.worker_running;
+        response["accepting_commands"] = result.accepting_commands;
+        response["shutdown_requested"] = result.shutdown_requested;
         response["sessions"] = result.session_count;
         response["queued_commands"] = result.queued_command_count;
+        response["max_queue_size"] = result.max_queue_size;
+        response["queue_capacity_remaining"] = result.queue_capacity_remaining;
         if (!result.active_request_id.empty()) {
             response["active_request_id"] = result.active_request_id;
         }

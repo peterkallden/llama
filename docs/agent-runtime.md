@@ -113,7 +113,7 @@ That service layer now understands a slightly broader host-oriented command surf
 - `close_session`
 - `shutdown`
 
-`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys and queued-command count. `reset_session` and `close_session` go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
+`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys and queued-command count. It now also exposes a few small lifecycle signals from the dispatcher itself, such as whether the worker thread is running, whether the daemon is still accepting new commands, whether shutdown has been requested, and the current queue capacity. `reset_session` and `close_session` go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
 
 `cancel_turn` now exists as a first dispatcher-level contract, but the current support is deliberately narrow: it can cancel a turn that is already sitting in the daemon's internal queue, before execution begins. It does not yet interrupt an actively running turn, because the current runtime/inference/tool stack still lacks a full end-to-end cancellation token and safe active-turn abort semantics. The current foreground JSONL transport is also still request/response serial from one stdin stream, so the first meaningful cancel smoke lives one layer lower at the dispatcher boundary rather than in the top-level stdio protocol.
 

@@ -126,6 +126,11 @@ try {
         Show-Diagnostics -Path $stderrPath
         throw "Initial status mismatch: $($lines[1])"
     }
+    if (-not $initialStatus.worker_running -or -not $initialStatus.accepting_commands -or
+            $initialStatus.shutdown_requested -or $initialStatus.max_queue_size -lt 1) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Initial lifecycle status mismatch: $($lines[1])"
+    }
     if (-not $turn.ok -or $turn.response -ne "OK") {
         Show-Diagnostics -Path $stderrPath
         throw "Turn response mismatch: $($lines[2])"
@@ -151,6 +156,11 @@ try {
     if (-not $finalStatus.ok -or $finalStatus.event -ne "status" -or $finalStatus.sessions -ne 0) {
         Show-Diagnostics -Path $stderrPath
         throw "Final status mismatch: $($lines[6])"
+    }
+    if (-not $finalStatus.worker_running -or -not $finalStatus.accepting_commands -or
+            $finalStatus.shutdown_requested) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Final lifecycle status mismatch: $($lines[6])"
     }
     if (-not $shutdown.ok -or $shutdown.event -ne "shutdown") {
         Show-Diagnostics -Path $stderrPath

@@ -46,7 +46,12 @@ struct common_agent_daemon_command_result {
     std::string state;
     bool live = false;
     bool ready = false;
+    bool worker_running = false;
+    bool accepting_commands = false;
+    bool shutdown_requested = false;
     size_t queued_command_count = 0;
+    size_t max_queue_size = 0;
+    size_t queue_capacity_remaining = 0;
     size_t session_count = 0;
     std::vector<common_agent_runtime_session_key> sessions;
     common_agent_runtime_daemon_turn_result turn_result;

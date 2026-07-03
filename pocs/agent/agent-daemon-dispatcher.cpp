@@ -7,6 +7,7 @@ common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
         size_t max_queue_size)
     : service(std::move(runtime))
     , max_queue_size(max_queue_size) {
+    worker_running = true;
     worker = std::thread([this]() {
         worker_loop();
     });
@@ -21,6 +22,10 @@ common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
     condition.notify_all();
     if (worker.joinable()) {
         worker.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        worker_running = false;
     }
 }
 
@@ -156,10 +161,18 @@ bool common_agent_daemon_dispatcher::populate_status_locked(
     result.active_request_id = active_request;
     result.active_turn_id = active_turn;
     result.queued_command_count = queued_count;
-    result.state = service.shutdown_requested() ? "draining" : result.state;
+    result.worker_running = worker_running;
+    result.accepting_commands = accepting_commands;
+    result.shutdown_requested = service.shutdown_requested();
+    result.max_queue_size = max_queue_size;
+    result.queue_capacity_remaining =
+        max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
+    result.state = service.shutdown_requested()
+        ? "draining"
+        : (worker_running ? "ready" : "stopped");
     result.event = "status";
-    result.live = true;
-    result.ready = result.ready && accepting_commands;
+    result.live = worker_running;
+    result.ready = result.ready && accepting_commands && worker_running;
     return true;
 }
 
@@ -215,5 +228,10 @@ void common_agent_daemon_dispatcher::worker_loop() {
 
         item->promise.set_value(std::move(queued));
         condition.notify_all();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        worker_running = false;
     }
 }
