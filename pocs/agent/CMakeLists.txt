@@ -1,5 +1,6 @@
 set(AGENT_RUNTIME_SOURCES
     agent-cli-config.cpp
+    agent-daemon-adapter.cpp
     agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
     agent-plan-orchestration.cpp

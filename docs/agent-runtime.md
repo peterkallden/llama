@@ -96,6 +96,8 @@ The `server-context` resident backend now also has its own extracted host layer 
 
 On top of that sits the first explicit session manager for the daemon/admin path. It keys resident session hosts by namespace, session and project so the foreground daemon can now handle `session A`, `session B`, `session A again` and return to the prior resident state for `A` instead of pretending there is only one active slot.
 
+The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
+
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
