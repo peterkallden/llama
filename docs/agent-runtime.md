@@ -272,6 +272,14 @@ The current code should remain useful without any of these. The next steps shoul
 
    Start with `initialize`, `tools/list`, and `tools/call` for one local stdio server. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
 
+## Backlog Notes
+
+- Separate project ownership from session-runtime ownership in the daemon/runtime host model.
+
+  Today the resident session manager keys reuse by `namespace_id + session_id + project_id`, which is acceptable for the current foreground daemon slice but still couples project identity to session-runtime ownership. The intended direction is that `namespace` remains the tenant/authority boundary, `project` becomes the long-lived shared work container, and `session` remains the shorter-lived resident conversation/runtime lane inside that project.
+
+  In practice that means project-scoped memory and plans should continue to be shareable across multiple sessions, while resident inference/runtime reuse should stay session-local unless and until there is an explicit deeper design for shared live contexts. This is not a blocker for current daemon/host work, but it should be addressed before building richer multi-session project runtime behavior on top of the current combined session key.
+
 ## Current Verification Baseline
 
 The resident-inference branch has been validated with:
