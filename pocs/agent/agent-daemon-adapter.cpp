@@ -242,33 +242,44 @@ void print_agent_daemon_usage(const char * argv0) {
 
 bool initialize_agent_daemon_environment(
         const daemon_options & options,
-        common_agent_daemon_environment & environment,
+        common_agent_daemon_runtime & runtime,
         std::string & error) {
-    if (!open_daemon_memory_store(options, environment.memory_store, error)) {
+    if (!open_daemon_memory_store(options, runtime.memory_store, error)) {
         return false;
     }
-    if (!open_daemon_plan_store(options, environment.plan_store, error)) {
+    if (!open_daemon_plan_store(options, runtime.plan_store, error)) {
         return false;
     }
-    if (!parse_mode(options.default_mode, environment.default_mode)) {
+    if (!parse_mode(options.default_mode, runtime.default_mode)) {
         error = "unsupported default mode: " + options.default_mode;
         return false;
     }
 
-    environment.host = std::make_unique<common_agent_runtime_daemon_host>(
+    runtime.host = std::make_unique<common_agent_runtime_daemon_host>(
         make_agent_runtime_daemon_config(
-            make_session_host_build_config(*environment.memory_store, *environment.plan_store, options)));
+            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, options)));
     error.clear();
     return true;
 }
 
-bool parse_agent_daemon_turn_request(
+bool parse_agent_daemon_command(
         const json & parsed,
         const daemon_options & options,
         common_agent_runtime_host_mode default_mode,
-        common_agent_runtime_daemon_turn_request & request,
+        common_agent_daemon_command & command,
         std::string & error) {
-    request = {};
+    command = {};
+    command.request_id = parsed.value("request_id", "");
+
+    if (parsed.value("command", "") == "shutdown") {
+        command.type = common_agent_daemon_command_type::shutdown;
+        error.clear();
+        return true;
+    }
+
+    command.type = common_agent_daemon_command_type::run_turn;
+    command.turn.emplace();
+    auto & request = *command.turn;
     request.prompt = parsed.value("prompt", "");
     request.session_id = parsed.value("session_id", "default-session");
     request.namespace_id = parsed.value("namespace_id", "default-namespace");
@@ -320,13 +331,6 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
     };
 }
 
-json make_agent_daemon_shutdown_response() {
-    return {
-        {"ok", true},
-        {"event", "shutdown"},
-    };
-}
-
 json make_agent_daemon_error_response(const std::string & error) {
     return {
         {"ok", false},
@@ -334,24 +338,39 @@ json make_agent_daemon_error_response(const std::string & error) {
     };
 }
 
-json make_agent_daemon_turn_response(const common_agent_runtime_daemon_turn_result & result) {
+json make_agent_daemon_command_response(const common_agent_daemon_command_result & result) {
     json response = {
         {"ok", result.ok},
-        {"runtime_reused", result.runtime_reused},
-        {"limit_reached", result.limit_reached},
-        {"reflected", result.reflected},
-        {"revised", result.revised},
-        {"response", result.response},
-        {"total_decoded_tokens", result.total_decoded_tokens},
-        {"event_count", result.event_count},
-        {"memory_learning_related_count", result.memory_learning_related_count},
-        {"memory_learning_summary", result.memory_learning_summary},
     };
-    if (!result.plan_id.empty()) {
-        response["plan_id"] = result.plan_id;
+    if (!result.request_id.empty()) {
+        response["request_id"] = result.request_id;
+    }
+    if (!result.event.empty()) {
+        response["event"] = result.event;
+    }
+    if (!result.event.empty()) {
+        if (!result.error.empty()) {
+            response["error"] = result.error;
+        }
+        return response;
+    }
+
+    const auto & turn = result.turn_result;
+    response["runtime_reused"] = turn.runtime_reused;
+    response["limit_reached"] = turn.limit_reached;
+    response["reflected"] = turn.reflected;
+    response["revised"] = turn.revised;
+    response["response"] = turn.response;
+    response["total_decoded_tokens"] = turn.total_decoded_tokens;
+    response["event_count"] = turn.event_count;
+    response["memory_learning_related_count"] = turn.memory_learning_related_count;
+    response["memory_learning_summary"] = turn.memory_learning_summary;
+    if (!turn.plan_id.empty()) {
+        response["plan_id"] = turn.plan_id;
     }
     if (!result.error.empty()) {
         response["error"] = result.error;
     }
+
     return response;
 }

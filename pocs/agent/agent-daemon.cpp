@@ -17,12 +17,13 @@ int main(int argc, char ** argv) {
     }
     common_log_set_verbosity_thold(LOG_LEVEL_WARN);
 
-    common_agent_daemon_environment environment;
+    common_agent_daemon_runtime runtime;
     std::string error;
-    if (!initialize_agent_daemon_environment(options, environment, error)) {
+    if (!initialize_agent_daemon_environment(options, runtime, error)) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
     }
+    common_agent_daemon_service service(std::move(runtime));
     std::cout << make_agent_daemon_ready_response(options).dump() << std::endl;
 
     std::string line;
@@ -37,24 +38,22 @@ int main(int argc, char ** argv) {
             continue;
         }
 
-        if (parsed.value("command", "") == "shutdown") {
-            std::cout << make_agent_daemon_shutdown_response().dump() << std::endl;
-            break;
-        }
-
-        common_agent_runtime_daemon_turn_request request;
-        if (!parse_agent_daemon_turn_request(parsed, options, environment.default_mode, request, error)) {
+        common_agent_daemon_command command;
+        if (!parse_agent_daemon_command(parsed, options, service.default_mode(), command, error)) {
             std::cout << make_agent_daemon_error_response(error).dump() << std::endl;
             continue;
         }
 
-        common_agent_runtime_daemon_turn_result result;
+        common_agent_daemon_command_result result;
         error.clear();
-        environment.host->run_turn(request, result, error);
+        service.execute(command, result, error);
         if (!error.empty() && result.error.empty()) {
             result.error = error;
         }
-        std::cout << make_agent_daemon_turn_response(result).dump() << std::endl;
+        std::cout << make_agent_daemon_command_response(result).dump() << std::endl;
+        if (service.shutdown_requested()) {
+            break;
+        }
     }
 
     return 0;

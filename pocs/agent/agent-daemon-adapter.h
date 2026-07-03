@@ -2,9 +2,9 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-daemon-service.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-execution.h"
-#include "agent-runtime-session-manager.h"
 #include "agent-plan-orchestration.h"
 
 #include <nlohmann/json.hpp>
@@ -33,30 +33,22 @@ struct daemon_options {
     bool agent_trace = false;
 };
 
-struct common_agent_daemon_environment {
-    std::unique_ptr<common_memory_store> memory_store;
-    std::unique_ptr<common_plan_store> plan_store;
-    common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
-    std::unique_ptr<common_agent_runtime_daemon_host> host;
-};
-
 bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options);
 void print_agent_daemon_usage(const char * argv0);
 
 bool initialize_agent_daemon_environment(
     const daemon_options & options,
-    common_agent_daemon_environment & environment,
+    common_agent_daemon_runtime & runtime,
     std::string & error);
 
-bool parse_agent_daemon_turn_request(
+bool parse_agent_daemon_command(
     const nlohmann::ordered_json & parsed,
     const daemon_options & options,
     common_agent_runtime_host_mode default_mode,
-    common_agent_runtime_daemon_turn_request & request,
+    common_agent_daemon_command & command,
     std::string & error);
 
 nlohmann::ordered_json make_agent_daemon_ready_response(const daemon_options & options);
-nlohmann::ordered_json make_agent_daemon_shutdown_response();
 nlohmann::ordered_json make_agent_daemon_error_response(const std::string & error);
-nlohmann::ordered_json make_agent_daemon_turn_response(
-    const common_agent_runtime_daemon_turn_result & result);
+nlohmann::ordered_json make_agent_daemon_command_response(
+    const common_agent_daemon_command_result & result);

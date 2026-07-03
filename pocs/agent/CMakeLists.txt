@@ -3,6 +3,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
     agent-daemon-adapter.cpp
+    agent-daemon-service.cpp
     agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
     agent-plan-orchestration.cpp
