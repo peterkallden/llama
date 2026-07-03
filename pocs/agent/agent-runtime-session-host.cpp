@@ -97,15 +97,13 @@ bool common_agent_runtime_session_host::ensure_runtime(
         const common_agent_runtime_session_host_turn_request & request,
         bool & reused,
         std::string & error) {
-    const int requested_n_predict = request.n_predict > 0 ? request.n_predict : config.resident_request.n_predict;
     const bool needs_new_runtime =
         !runtime ||
         active_session_id != request.session_id ||
         active_namespace_id != request.namespace_id ||
         active_project_id != request.project_id ||
         active_memory_scope != request.memory_scope ||
-        active_plan_scope != request.plan_scope ||
-        active_n_predict != requested_n_predict;
+        active_plan_scope != request.plan_scope;
 
     if (!needs_new_runtime) {
         reused = true;
@@ -129,7 +127,6 @@ bool common_agent_runtime_session_host::ensure_runtime(
     active_project_id = request.project_id;
     active_memory_scope = request.memory_scope;
     active_plan_scope = request.plan_scope;
-    active_n_predict = requested_n_predict;
     error.clear();
     return true;
 }
@@ -159,10 +156,10 @@ bool common_agent_runtime_session_host::run_turn(
     bool ok = false;
     switch (request.mode) {
         case common_agent_runtime_host_mode::chat:
-            ok = runtime->run_chat_prompt(request.prompt, turn_id, agent_result, error);
+            ok = runtime->run_chat_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
             break;
         case common_agent_runtime_host_mode::mini:
-            ok = runtime->run_mini_prompt(request.prompt, turn_id, agent_result, error);
+            ok = runtime->run_mini_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
             break;
     }
 
@@ -196,6 +193,5 @@ void common_agent_runtime_session_host::reset() {
     active_project_id.clear();
     active_memory_scope = common_memory_scope::session;
     active_plan_scope = common_plan_scope::turn;
-    active_n_predict = 0;
     generated_turn_counter = 0;
 }

@@ -43,13 +43,18 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
 common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
         const common_agent_runtime_turn_request & base_turn_request,
         const std::string & prompt,
-        const std::string & turn_id) {
+        const std::string & turn_id,
+        int n_predict_override) {
     auto turn_request = base_turn_request;
     turn_request.request.prompt = prompt;
     turn_request.request.messages = {{"user", prompt}};
     turn_request.request.turn_id = turn_id;
     turn_request.scope.turn_id = turn_id;
     turn_request.orchestration_config.prompt = prompt;
+    if (n_predict_override > 0) {
+        turn_request.inference_options.n_predict = n_predict_override;
+        turn_request.generation_options.n_predict = n_predict_override;
+    }
     return turn_request;
 }
 
@@ -88,13 +93,14 @@ common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,
+        int n_predict,
         common_agent_result & result,
         std::string & error) {
     const std::vector<common_memory_hit> memories;
     common_agent_runtime_host_build_context build_context{
         memory_store,
         nullptr,
-        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
+        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id, n_predict),
         nullptr,
         nullptr,
         memories,
@@ -110,6 +116,7 @@ bool common_agent_runtime_resident_runtime::run_chat_prompt(
 bool common_agent_runtime_resident_runtime::run_mini_prompt(
         const std::string & prompt,
         const std::string & turn_id,
+        int n_predict,
         common_agent_result & result,
         std::string & error) {
     if (plan_store == nullptr) {
@@ -121,7 +128,7 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
     common_agent_runtime_host_build_context build_context{
         memory_store,
         plan_store,
-        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id),
+        make_agent_runtime_resident_turn_request(base_turn_request, prompt, turn_id, n_predict),
         &resident_current_plan_id,
         &installed_blueprint_candidates,
         memories,

@@ -98,7 +98,6 @@ private:
     std::string active_project_id;
     common_memory_scope active_memory_scope = common_memory_scope::session;
     common_plan_scope active_plan_scope = common_plan_scope::turn;
-    int active_n_predict = 0;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
 };

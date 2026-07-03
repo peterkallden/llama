@@ -130,13 +130,15 @@ The generation request/result contract is narrower than top-level CLI state. Req
 
 Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
 
-The current reuse key is still a pragmatic first slice rather than the final shape. It is good enough for resident smoke and the foreground daemon, but the longer-term split should distinguish:
+The reuse logic is now split a little more explicitly inside the resident session as well. There is a small model-load key for properties that really affect model loading, and a separate inference-context key for properties that still require rebuilding the active inference session. In the current CLI backend that means the same loaded model can survive a context rebuild when only turn-shaped settings such as `n_predict` change.
+
+The current split is still a pragmatic first slice rather than the final shape. It is good enough for resident smoke and the foreground daemon, but the longer-term split should distinguish:
 
 - model-load options
 - context/inference-context options
 - per-turn generation options
 
-That future split should let options such as `n_predict` vary by turn without looking like a model reload concern.
+That split now exists structurally for the CLI-backed resident session, and the daemon/admin path now treats `n_predict` as a turn-level override instead of a resident-runtime identity change. The `server-context` smoke backend is still coarser: today its host object still combines model load and inference-context lifetime, so the next cleanup there is to give it the same separation more explicitly.
 
 ### Stores and Scope
 
@@ -256,6 +258,7 @@ The resident-inference branch has been validated with:
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
 - foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
 - Cozo-backed foreground daemon smoke, verifying the same daemon path can open persistent memory/plan stores through the existing Cozo store factories
+- daemon `n_predict` reuse smoke, verifying a resident session still reports runtime reuse when only the per-turn decode limit changes
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
 - multi-turn daemon `mini` smoke, verifying runtime reuse plus stable `plan_id` reuse across two planning turns in the same resident session

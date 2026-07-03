@@ -28,7 +28,8 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
 common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
     const common_agent_runtime_turn_request & base_turn_request,
     const std::string & prompt,
-    const std::string & turn_id);
+    const std::string & turn_id,
+    int n_predict_override = 0);
 
 struct common_agent_runtime_resident_runtime_config {
     common_memory_store & memory_store;
@@ -58,12 +59,14 @@ public:
     bool run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,
+        int n_predict,
         common_agent_result & result,
         std::string & error);
 
     bool run_mini_prompt(
         const std::string & prompt,
         const std::string & turn_id,
+        int n_predict,
         common_agent_result & result,
         std::string & error);
 
