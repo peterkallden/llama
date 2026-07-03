@@ -3,6 +3,22 @@
 common_agent_daemon_service::common_agent_daemon_service(common_agent_daemon_runtime runtime)
     : runtime(std::move(runtime)) {}
 
+bool common_agent_daemon_service::populate_status(
+        common_agent_daemon_command_result & result,
+        std::string & error) const {
+    result.ok = runtime.host != nullptr;
+    result.event = "status";
+    result.state = result.ok ? "ready" : "failed";
+    result.live = true;
+    result.ready = result.ok;
+    if (runtime.host) {
+        result.sessions = runtime.host->list_sessions();
+        result.session_count = result.sessions.size();
+    }
+    error.clear();
+    return result.ok;
+}
+
 bool common_agent_daemon_service::execute(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
@@ -12,17 +28,12 @@ bool common_agent_daemon_service::execute(
 
     switch (command.type) {
         case common_agent_daemon_command_type::get_status:
-            result.ok = runtime.host != nullptr;
-            result.event = "status";
-            result.state = result.ok ? "ready" : "failed";
-            result.live = true;
-            result.ready = result.ok;
-            if (runtime.host) {
-                result.sessions = runtime.host->list_sessions();
-                result.session_count = result.sessions.size();
-            }
-            error.clear();
-            return result.ok;
+            return populate_status(result, error);
+
+        case common_agent_daemon_command_type::cancel_turn:
+            error = "cancel_turn is handled by the daemon dispatcher";
+            result.error = error;
+            return false;
 
         case common_agent_daemon_command_type::reset_session:
             if (!command.session.has_value()) {

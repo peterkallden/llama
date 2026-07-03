@@ -24,6 +24,7 @@ public:
 
     bool shutdown_requested() const;
     common_agent_runtime_host_mode default_mode() const;
+    size_t queued_command_count() const;
 
 private:
     struct queued_result {
@@ -37,6 +38,15 @@ private:
         std::promise<queued_result> promise;
     };
 
+    bool execute_cancel_turn(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error);
+
+    bool populate_status_locked(
+        common_agent_daemon_command_result & result,
+        std::string & error) const;
+
     void worker_loop();
 
     mutable std::mutex mutex;
@@ -47,4 +57,6 @@ private:
     size_t max_queue_size = 0;
     bool accepting_commands = true;
     bool stop_requested = false;
+    std::string active_request_id;
+    std::string active_turn_id;
 };

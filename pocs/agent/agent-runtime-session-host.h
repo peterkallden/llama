@@ -22,6 +22,7 @@ struct common_agent_runtime_session_host_turn_request {
 
 struct common_agent_runtime_session_host_turn_result {
     bool ok = false;
+    bool cancelled = false;
     bool runtime_reused = false;
     bool limit_reached = false;
     bool reflected = false;

@@ -107,12 +107,15 @@ The daemon now also routes requests through explicit daemon commands plus a smal
 That service layer now understands a slightly broader host-oriented command surface:
 
 - `run_turn`
+- `cancel_turn`
 - `status`
 - `reset_session`
 - `close_session`
 - `shutdown`
 
-`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys. `reset_session` and `close_session` now go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
+`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys and queued-command count. `reset_session` and `close_session` go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
+
+`cancel_turn` now exists as a first dispatcher-level contract, but the current support is deliberately narrow: it can cancel a turn that is already sitting in the daemon's internal queue, before execution begins. It does not yet interrupt an actively running turn, because the current runtime/inference/tool stack still lacks a full end-to-end cancellation token and safe active-turn abort semantics. The current foreground JSONL transport is also still request/response serial from one stdin stream, so the first meaningful cancel smoke lives one layer lower at the dispatcher boundary rather than in the top-level stdio protocol.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 

@@ -282,6 +282,17 @@ bool parse_agent_daemon_command(
         error.clear();
         return true;
     }
+    if (command_name == "cancel_turn") {
+        command.type = common_agent_daemon_command_type::cancel_turn;
+        command.target_request_id = parsed.value("target_request_id", "");
+        command.target_turn_id = parsed.value("target_turn_id", "");
+        if (command.target_request_id.empty() && command.target_turn_id.empty()) {
+            error = "cancel_turn requires target_request_id or target_turn_id";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
     if (command_name == "reset_session" || command_name == "close_session") {
         command.type = command_name == "reset_session"
             ? common_agent_daemon_command_type::reset_session
@@ -376,6 +387,13 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
         response["live"] = result.live;
         response["ready"] = result.ready;
         response["sessions"] = result.session_count;
+        response["queued_commands"] = result.queued_command_count;
+        if (!result.active_request_id.empty()) {
+            response["active_request_id"] = result.active_request_id;
+        }
+        if (!result.active_turn_id.empty()) {
+            response["active_turn_id"] = result.active_turn_id;
+        }
         json session_array = json::array();
         for (const auto & session : result.sessions) {
             session_array.push_back({
@@ -392,6 +410,12 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
     }
 
     if (!result.event.empty()) {
+        if (!result.target_request_id.empty()) {
+            response["target_request_id"] = result.target_request_id;
+        }
+        if (!result.target_turn_id.empty()) {
+            response["target_turn_id"] = result.target_turn_id;
+        }
         if (!result.error.empty()) {
             response["error"] = result.error;
         }
@@ -399,6 +423,7 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
     }
 
     const auto & turn = result.turn_result;
+    response["cancelled"] = turn.cancelled;
     response["runtime_reused"] = turn.runtime_reused;
     response["limit_reached"] = turn.limit_reached;
     response["reflected"] = turn.reflected;

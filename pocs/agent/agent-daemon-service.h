@@ -12,6 +12,7 @@
 
 enum class common_agent_daemon_command_type {
     run_turn,
+    cancel_turn,
     reset_session,
     close_session,
     get_status,
@@ -30,15 +31,22 @@ struct common_agent_daemon_command {
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
     std::optional<common_agent_runtime_daemon_turn_request> turn;
     std::optional<common_agent_runtime_session_key> session;
+    std::string target_request_id;
+    std::string target_turn_id;
 };
 
 struct common_agent_daemon_command_result {
     bool ok = false;
     std::string request_id;
     std::string event;
+    std::string target_request_id;
+    std::string target_turn_id;
+    std::string active_request_id;
+    std::string active_turn_id;
     std::string state;
     bool live = false;
     bool ready = false;
+    size_t queued_command_count = 0;
     size_t session_count = 0;
     std::vector<common_agent_runtime_session_key> sessions;
     common_agent_runtime_daemon_turn_result turn_result;
@@ -56,6 +64,10 @@ public:
 
     bool shutdown_requested() const { return shutdown_requested_flag; }
     common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
+
+    bool populate_status(
+        common_agent_daemon_command_result & result,
+        std::string & error) const;
 
 private:
     common_agent_daemon_runtime runtime;
