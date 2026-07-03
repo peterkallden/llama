@@ -1,4 +1,5 @@
 #include "agent-cli-selection.h"
+#include "agent-cli-generation-utils.h"
 #include "agent-runtime-assembly.h"
 
 #include "agent/agent-package-json.h"
@@ -119,54 +120,6 @@ bool export_agent_package(
 
 namespace {
 
-std::string make_generation_trace_id(
-        const common_agent_request & request,
-        common_agent_generation_purpose purpose) {
-    const std::string base = !request.turn_id.empty() ? request.turn_id : request.session_id;
-    return base + ":" + common_agent_generation_purpose_name(purpose);
-}
-
-std::string describe_generation_failure(
-        const char * label,
-        const common_agent_generation_result & result) {
-    std::string text = std::string(label) + " failed";
-    text += " (status=" + std::string(common_agent_generation_status_name(result.status));
-    text += ", stop=" + std::string(common_agent_generation_stop_reason_name(result.stop_reason)) + ")";
-    if (!result.error_message.empty()) {
-        text += ": " + result.error_message;
-    }
-    return text;
-}
-
-common_agent_generation_options make_generation_options(const common_agent_generation_config & generation_config, int n_predict) {
-    return common_agent_generation_options_with_n_predict(
-        common_agent_generation_options{generation_config.n_predict},
-        n_predict);
-}
-
-common_agent_scope make_generation_scope(const common_agent_request & request) {
-    return common_agent_scope_from_request(request);
-}
-
-common_agent_generation_request make_generation_request(
-        const common_agent_request & request,
-        common_agent_generation_purpose purpose,
-        std::vector<common_chat_msg> messages,
-        common_agent_generation_options options,
-        std::string json_schema = {},
-        std::vector<common_chat_tool> tools = {},
-        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE) {
-    return common_agent_make_generation_request(
-        purpose,
-        make_generation_trace_id(request, purpose),
-        make_generation_scope(request),
-        std::move(messages),
-        std::move(options),
-        std::move(json_schema),
-        std::move(tools),
-        tool_choice);
-}
-
 class llama_blueprint_selector final : public common_blueprint_selector {
 public:
     llama_blueprint_selector(common_agent_inference & inference, const common_agent_generation_config & generation_config)
@@ -202,15 +155,15 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        const auto generation_result = inference.generate_result(make_generation_request(
+        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
             request,
             common_agent_generation_purpose::blueprint_selection,
             {system, user},
-            make_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
+            make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
             schema.dump()));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_generation_failure("blueprint selector generation", generation_result);
+            error = describe_agent_cli_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
@@ -261,14 +214,14 @@ public:
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
-        const auto generation_result = inference.generate_result(make_generation_request(
+        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
             request,
             common_agent_generation_purpose::blueprint_binding,
             {system, user},
-            make_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
+            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_generation_failure("blueprint binding generation", generation_result);
+            error = describe_agent_cli_generation_failure("blueprint binding generation", generation_result);
             return result;
         }
         const auto proposal = json::parse(generation_result.content, nullptr, false);
@@ -370,15 +323,15 @@ public:
                 {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
             }},
         };
-        const auto generation_result = inference.generate_result(make_generation_request(
+        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
             request,
             common_agent_generation_purpose::plan_selection,
             {system, user},
-            make_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
+            make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 96)),
             schema.dump()));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_generation_failure("plan selector generation", generation_result);
+            error = describe_agent_cli_generation_failure("plan selector generation", generation_result);
             return result;
         }
         const auto choice = json::parse(generation_result.content, nullptr, false);

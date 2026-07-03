@@ -70,6 +70,8 @@ This adapter is allowed to know about CLI `args`. The runtime/session host below
 
 `agent-cli-run` now also has a small adapter helper beside it. That helper owns CLI-only validation, default stamping, and mini/bootstrap/export setup so the top-level run function can stay focused on retrieval, tool wiring, and dispatch into the runtime host.
 
+The CLI runtime and CLI selection paths now also share one small generation-helper utility for trace IDs, request envelopes, generation options, and failure formatting. That keeps the resident/runtime contract shaping in one place instead of duplicating it across two CLI-facing files.
+
 ### Runtime Host
 
 The runtime host owns one prepared agent turn.
