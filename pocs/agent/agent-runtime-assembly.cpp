@@ -4,63 +4,7 @@
 
 #include "agent-cli-inference.h"
 #include "agent-cli-runtime.h"
-
-#include "common.h"
-#include "log.h"
-#include "server-context.h"
-
-#include <thread>
-
-namespace {
-
-struct agent_resident_inference_host {
-    server_context server;
-    common_params params;
-    std::thread loop;
-    bool running = false;
-
-    ~agent_resident_inference_host() {
-        stop();
-    }
-
-    bool start(const common_agent_inference_options & options, std::string & error) {
-        params = {};
-        params.model.path = options.model;
-        params.n_predict = options.n_predict;
-        params.n_gpu_layers = options.n_gpu_layers;
-        params.fit_params = options.fit_params;
-        params.n_parallel = 1;
-        params.n_sequences = 1;
-        params.n_ctx = 0;
-        params.verbosity = LOG_LEVEL_WARN;
-        postprocess_cpu_params(params.cpuparams, nullptr);
-        postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
-
-        if (!server.load_model(params)) {
-            error = "failed to load resident server_context model: " + options.model;
-            return false;
-        }
-
-        loop = std::thread([this]() {
-            server.start_loop();
-        });
-        running = true;
-        return true;
-    }
-
-    void stop() {
-        if (!running) {
-            return;
-        }
-        server.terminate();
-        if (loop.joinable()) {
-            loop.join();
-        }
-        running = false;
-    }
-};
-
-} // namespace
+#include "agent-server-context-host.h"
 
 common_agent_generation_config make_agent_generation_config(const args & options) {
     common_agent_generation_config config;
@@ -113,20 +57,7 @@ bool make_agent_inference_session(
     session.model = model;
     session.templates = templates;
     if (backend == agent_inference_backend::server_context) {
-        auto host = std::make_shared<agent_resident_inference_host>();
-        if (!host->start(options, error)) {
-            return false;
-        }
-        auto meta = host->server.get_meta();
-        session.templates = meta.chat_params.tmpls.get();
-        session.inference = make_server_context_agent_inference(
-            host->server,
-            host->params,
-            meta.logit_bias_eog,
-            session.templates);
-        session.keepalive = std::move(host);
-        error.clear();
-        return true;
+        return make_server_context_inference_session(options, session, error);
     }
 
     session.inference = make_llama_cli_agent_inference(model, templates);

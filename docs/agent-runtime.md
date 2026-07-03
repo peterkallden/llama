@@ -92,6 +92,8 @@ The resident path also now has small builder contracts above the raw runtime typ
 
 There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus host-owned session/scope matching rules and can execute repeated chat or mini turns from a prepared host contract.
 
+The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, load params, loop lifetime and inference-session construction in one place. That gives the next model-versus-context lifetime split a concrete home instead of leaving it buried inside generic assembly code.
+
 On top of that sits the first explicit session manager for the daemon/admin path. It keys resident session hosts by namespace, session and project so the foreground daemon can now handle `session A`, `session B`, `session A again` and return to the prior resident state for `A` instead of pretending there is only one active slot.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.

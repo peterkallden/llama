@@ -10,6 +10,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-runtime-session-manager.cpp
     agent-runtime-execution.cpp
     agent-runtime-session.cpp
+    agent-server-context-host.cpp
     agent-server-generation.cpp
     agent-server-inference.cpp
     agent-runtime-assembly.cpp
