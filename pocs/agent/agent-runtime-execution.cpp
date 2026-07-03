@@ -40,6 +40,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memory_enabled,
         inputs.tools,
         inputs.profile_tools_active,
+        inputs.tool_view,
         inputs.tool_registry,
     };
 }
@@ -114,7 +115,7 @@ bool run_agent_runtime_driver(
             execution.plan_store,
             execution.installed_blueprint_candidates,
             execution.profile_tools_active,
-            execution.tool_registry,
+            execution.tool_view,
             error)) {
         return false;
     }

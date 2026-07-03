@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-tool-provider.h"
 #include "agent/agent-contract.h"
 #include "agent/agent-inference.h"
 #include "agent/blueprint-selector.h"
@@ -47,6 +48,7 @@ struct common_agent_runtime_driver_inputs {
     const std::string & fallback_reason;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
 };
 
@@ -65,6 +67,7 @@ struct common_agent_runtime_driver_execution {
     bool memory_enabled = false;
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
+    agent_tool_view * tool_view = nullptr;
     const common_tool_registry * tool_registry = nullptr;
 };
 

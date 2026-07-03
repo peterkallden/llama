@@ -205,7 +205,9 @@ That keeps host authority in one place:
 - the runtime owns bindings, scope, repository root, memory authority, and policy
 - disallowed native tools are filtered before exposure instead of being shown and rejected later
 
-Mini/planning paths still carry the native registry during migration. The new provider boundary is the first boring slice before a future MCP-backed provider can sit beside the native one without changing the chat driver contract.
+The first mini/planning migration is now also in place for blueprint binding. Auto-selected blueprint bindings no longer inspect the native registry directly; they validate against the resolved `agent_tool_view`, which means blueprint-binding now follows the same host-owned exposure and read-only policy surface as chat tool dispatch.
+
+The remaining registry-heavy path is the older common agent runtime used for planned tool-step execution after planning has already produced a tool step. That is the next meaningful cleanup before a future MCP-backed provider can sit beside the native one without parallel execution contracts.
 
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 

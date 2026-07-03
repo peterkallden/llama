@@ -3,7 +3,6 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"
-#include "agent/tool-registry.h"
 #include "common/cli-config.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
@@ -14,6 +13,7 @@
 #include <vector>
 
 struct common_agent_generation_config;
+class agent_tool_view;
 
 bool parse_plan_scope(const std::string & value, common_plan_scope & scope);
 
@@ -64,7 +64,7 @@ struct common_agent_blueprint_binding_result {
 common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
-    const common_tool_registry & registry,
+    agent_tool_view & tool_view,
     const common_agent_request & request,
     common_plan_store & store,
     const std::string & plan_id,
@@ -73,7 +73,7 @@ common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
 bool bind_llama_cli_blueprint_tools(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
-    const common_tool_registry & registry,
+    agent_tool_view & tool_view,
     const common_agent_request & request,
     common_plan_store & store,
     const std::string & plan_id,

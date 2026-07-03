@@ -129,6 +129,22 @@ public:
         return chat_tool_list;
     }
 
+    bool exposes_tool(const std::string & name) const override {
+        return definitions.find(name) != definitions.end();
+    }
+
+    bool is_read_only(const std::string & name) const override {
+        return exposes_tool(name) && registry.is_read_only(name);
+    }
+
+    bool validate(const agent_tool_call & call, std::string & error) const override {
+        if (!exposes_tool(call.name)) {
+            error = "tool is unavailable in this runtime view";
+            return false;
+        }
+        return registry.validate({call.name, call.arguments_json}, error);
+    }
+
     agent_tool_result call(
             const agent_tool_call & call,
             std::string & error) override {
@@ -155,7 +171,7 @@ public:
         }
 
         std::string validation_error;
-        if (!registry.validate({call.name, call.arguments_json}, validation_error)) {
+        if (!validate(call, validation_error)) {
             error = validation_error;
             return make_failure_result(
                 call,

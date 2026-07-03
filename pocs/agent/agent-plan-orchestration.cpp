@@ -3,6 +3,7 @@
 #include "../memory/memory-cli-memory.h"
 
 #include "agent-cli-selection.h"
+#include "agent-tool-provider.h"
 #include "common/cli-scope.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"
@@ -216,7 +217,7 @@ bool maybe_auto_select_blueprint(
     common_plan_store & plan_store,
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
     bool profile_tools_active,
-    const common_tool_registry * tool_registry,
+    agent_tool_view * tool_view,
     std::string & error) {
     if (config.agent_blueprint != "auto") {
         error.clear();
@@ -240,13 +241,13 @@ bool maybe_auto_select_blueprint(
 
     if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
         fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), current_plan_id.c_str());
-        if (profile_tools_active && tool_registry != nullptr) {
+        if (profile_tools_active && tool_view != nullptr) {
             common_agent_request binding_request;
             binding_request.prompt = config.prompt;
             common_agent_scope_apply(scope, binding_request);
             std::string binding_error;
             const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                inference, generation_config, *tool_registry, binding_request, plan_store, current_plan_id, binding_error);
+                inference, generation_config, *tool_view, binding_request, plan_store, current_plan_id, binding_error);
             if (!binding_result.applied) {
                 fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
             }

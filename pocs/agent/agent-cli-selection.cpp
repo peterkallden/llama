@@ -1,6 +1,7 @@
 #include "agent-cli-selection.h"
 #include "agent-cli-generation-utils.h"
 #include "agent-runtime-assembly.h"
+#include "agent-tool-provider.h"
 
 #include "agent/agent-package-json.h"
 #include "common/cli-scope.h"
@@ -188,8 +189,8 @@ private:
 
 class llama_blueprint_binder final {
 public:
-    llama_blueprint_binder(common_agent_inference & inference, const common_agent_generation_config & generation_config, const common_tool_registry & registry)
-        : inference(inference), generation_config(generation_config), registry(registry) {}
+    llama_blueprint_binder(common_agent_inference & inference, const common_agent_generation_config & generation_config, agent_tool_view & tool_view)
+        : inference(inference), generation_config(generation_config), tool_view(tool_view) {}
 
     common_agent_blueprint_binding_result bind_result(
             const common_agent_request & request,
@@ -250,7 +251,7 @@ public:
                 return step.id == id;
             });
             if (found == updated.steps.end() || common_plan_step_effective_mode(*found) != common_plan_step_mode::reasoning ||
-                    !registry.contains(tool["name"].get<std::string>()) || !registry.is_read_only(tool["name"].get<std::string>())) {
+                    !tool_view.exposes_tool(tool["name"].get<std::string>()) || !tool_view.is_read_only(tool["name"].get<std::string>())) {
                 error = "blueprint binding chose an unavailable, final, or non-read-only tool step";
                 return result;
             }
@@ -259,7 +260,7 @@ public:
             replacement.mode = common_plan_step_mode::tool;
             replacement.selected_tool = tool["name"].get<std::string>();
             replacement.tool_call = common_plan_tool_call{*replacement.selected_tool, tool["arguments"].dump()};
-            if (!registry.validate({replacement.tool_call->name, replacement.tool_call->arguments_json}, error)) {
+            if (!tool_view.validate({"", replacement.tool_call->name, replacement.tool_call->arguments_json}, error)) {
                 return result;
             }
 
@@ -292,7 +293,7 @@ public:
 private:
     common_agent_inference & inference;
     common_agent_generation_config generation_config;
-    const common_tool_registry & registry;
+    agent_tool_view & tool_view;
 };
 
 class llama_plan_selector final {
@@ -402,22 +403,22 @@ std::optional<std::string> select_llama_cli_plan(
 common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
-        const common_tool_registry & registry,
+        agent_tool_view & tool_view,
         const common_agent_request & request,
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    llama_blueprint_binder binder(inference, generation_config, registry);
+    llama_blueprint_binder binder(inference, generation_config, tool_view);
     return binder.bind_result(request, store, plan_id, error);
 }
 
 bool bind_llama_cli_blueprint_tools(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
-        const common_tool_registry & registry,
+        agent_tool_view & tool_view,
         const common_agent_request & request,
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    return bind_llama_cli_blueprint_tools_result(inference, generation_config, registry, request, store, plan_id, error).applied;
+    return bind_llama_cli_blueprint_tools_result(inference, generation_config, tool_view, request, store, plan_id, error).applied;
 }

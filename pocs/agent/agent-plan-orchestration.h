@@ -14,6 +14,7 @@
 #include <vector>
 
 struct common_agent_generation_config;
+class agent_tool_view;
 
 struct common_agent_orchestration_config {
     std::string prompt;
@@ -68,5 +69,5 @@ bool maybe_auto_select_blueprint(
     common_plan_store & plan_store,
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
     bool profile_tools_active,
-    const common_tool_registry * tool_registry,
+    agent_tool_view * tool_view,
     std::string & error);
