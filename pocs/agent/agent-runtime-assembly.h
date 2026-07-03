@@ -54,14 +54,6 @@ struct common_agent_inference_session {
     std::unique_ptr<common_agent_inference> inference;
 };
 
-bool make_agent_inference_session(
-    const common_agent_inference_options & options,
-    agent_inference_backend backend,
-    llama_model * model,
-    const common_chat_templates * templates,
-    common_agent_inference_session & session,
-    std::string & error);
-
 struct common_agent_runtime_assembly {
     std::unique_ptr<common_planner> planner;
     std::unique_ptr<common_action_executor> executor;

@@ -2,9 +2,7 @@
 
 #include "../memory/memory-cli-memory.h"
 
-#include "agent-cli-inference.h"
 #include "agent-cli-runtime.h"
-#include "agent-server-context-host.h"
 
 common_agent_generation_config make_agent_generation_config(const args & options) {
     common_agent_generation_config config;
@@ -43,26 +41,6 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
         return true;
     }
     return false;
-}
-
-bool make_agent_inference_session(
-    const common_agent_inference_options & options,
-    agent_inference_backend backend,
-    llama_model * model,
-    const common_chat_templates * templates,
-    common_agent_inference_session & session,
-    std::string & error) {
-    session = {};
-    session.backend = backend;
-    session.model = model;
-    session.templates = templates;
-    if (backend == agent_inference_backend::server_context) {
-        return make_server_context_inference_session(options, session, error);
-    }
-
-    session.inference = make_llama_cli_agent_inference(model, templates);
-    error.clear();
-    return true;
 }
 
 common_agent_runtime_assembly make_agent_runtime_assembly(

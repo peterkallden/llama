@@ -1,5 +1,8 @@
 #include "agent-runtime-session.h"
 
+#include "agent-cli-inference.h"
+#include "agent-server-context-host.h"
+
 #include "chat.h"
 
 namespace {
@@ -35,6 +38,26 @@ bool common_agent_inference_context_key_match(
         const common_agent_inference_context_key & rhs) {
     return lhs.backend == rhs.backend &&
         common_agent_model_load_key_match(lhs.model_key, rhs.model_key);
+}
+
+bool build_agent_inference_session(
+        const common_agent_inference_options & options,
+        agent_inference_backend backend,
+        llama_model * model,
+        const common_chat_templates * templates,
+        common_agent_inference_session & session,
+        std::string & error) {
+    session = {};
+    session.backend = backend;
+    session.model = model;
+    session.templates = templates;
+    if (backend == agent_inference_backend::server_context) {
+        return make_server_context_inference_session(options, session, error);
+    }
+
+    session.inference = make_llama_cli_agent_inference(model, templates);
+    error.clear();
+    return true;
 }
 
 } // namespace
@@ -133,7 +156,7 @@ bool initialize_agent_runtime_session(
         session.reset_loaded_model();
     }
 
-    if (!make_agent_inference_session(
+    if (!build_agent_inference_session(
             options,
             backend,
             session.model,

@@ -109,6 +109,8 @@ The runtime surface is now split more explicitly in code as well:
 - session-host contracts
 - host input/build contracts
 
+The backend-specific inference-session selection now also lives with runtime-session initialization rather than in the generic runtime-assembly layer. That keeps runtime assembly focused on agent behavior wiring while session initialization owns backend choice and resident inference-session reuse.
+
 That split is still structural rather than behavioral, but it makes the next service-facing step easier because the current single-active session host is no longer buried inside the same header as every other runtime layer.
 
 ### Runtime Drivers
