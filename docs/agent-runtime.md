@@ -34,7 +34,7 @@ runtime host
                 +--> memory learning
 ```
 
-What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, synchronous turn handling, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
+What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, one worker-driven execution lane behind a small in-process command queue, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
@@ -102,7 +102,7 @@ On top of that sits the first explicit session manager for the daemon/admin path
 
 The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
 
-The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. The current service step is still synchronous and intentionally small: it mainly distinguishes command parsing/dispatch from runtime execution, while leaving queueing, workers, cancellation and richer lifecycle states for the next daemon iteration.
+The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a very small dispatcher: stdin/JSON parsing still happens on the transport thread, but command execution now runs through one worker thread and a small bounded in-process queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol, streaming events, cancellation, or multiple workers.
 
 That service layer now understands a slightly broader host-oriented command surface:
 

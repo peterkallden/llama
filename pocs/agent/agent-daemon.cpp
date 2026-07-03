@@ -1,4 +1,5 @@
 #include "agent-daemon-adapter.h"
+#include "agent-daemon-dispatcher.h"
 
 #include "log.h"
 
@@ -23,7 +24,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
     }
-    common_agent_daemon_service service(std::move(runtime));
+    common_agent_daemon_dispatcher dispatcher(std::move(runtime));
     std::cout << make_agent_daemon_ready_response(options).dump() << std::endl;
 
     std::string line;
@@ -39,19 +40,19 @@ int main(int argc, char ** argv) {
         }
 
         common_agent_daemon_command command;
-        if (!parse_agent_daemon_command(parsed, options, service.default_mode(), command, error)) {
+        if (!parse_agent_daemon_command(parsed, options, dispatcher.default_mode(), command, error)) {
             std::cout << make_agent_daemon_error_response(error).dump() << std::endl;
             continue;
         }
 
         common_agent_daemon_command_result result;
         error.clear();
-        service.execute(command, result, error);
+        dispatcher.execute(command, result, error);
         if (!error.empty() && result.error.empty()) {
             result.error = error;
         }
         std::cout << make_agent_daemon_command_response(result).dump() << std::endl;
-        if (service.shutdown_requested()) {
+        if (dispatcher.shutdown_requested()) {
             break;
         }
     }
