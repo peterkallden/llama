@@ -1,7 +1,5 @@
 #include "agent-plan-orchestration.h"
 
-#include "../memory/memory-cli-memory.h"
-
 #include "agent-cli-selection.h"
 #include "agent-tool-provider.h"
 #include "common/cli-scope.h"
@@ -30,30 +28,16 @@ common_agent_request make_orchestration_selection_request(
 
 } // namespace
 
-common_agent_orchestration_config make_agent_orchestration_config(const args & options) {
-    common_agent_orchestration_config config;
-    config.prompt = options.prompt;
-    config.agent_plan = options.agent_plan;
-    config.agent_blueprint = options.agent_blueprint;
-    config.agent_bootstrap = options.agent_bootstrap;
-    config.agent_import = options.agent_import;
-    config.agent_export = options.agent_export;
-    return config;
-}
-
-common_agent_bootstrap_runtime_config make_agent_bootstrap_runtime_config(const args & options) {
-    common_agent_bootstrap_runtime_config config;
-    config.embed_procedure = [&options](const std::string & text, std::vector<float> & embedding, std::string & error) {
-        if (!ensure_memory_cli_embedding(options, text, embedding, "bootstrap procedure", error)) {
-            return false;
-        }
-        if (embedding.empty()) {
-            error = "--agent-bootstrap default requires --embedding-model";
-            return false;
-        }
-        return true;
-    };
-    return config;
+common_agent_orchestration_config make_agent_orchestration_config(
+        common_agent_orchestration_build_config config) {
+    common_agent_orchestration_config result;
+    result.prompt = std::move(config.prompt);
+    result.agent_plan = std::move(config.agent_plan);
+    result.agent_blueprint = std::move(config.agent_blueprint);
+    result.agent_bootstrap = std::move(config.agent_bootstrap);
+    result.agent_import = std::move(config.agent_import);
+    result.agent_export = std::move(config.agent_export);
+    return result;
 }
 
 bool maybe_install_agent_bootstrap(

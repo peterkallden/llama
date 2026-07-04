@@ -126,9 +126,30 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     common_agent_runtime_turn_request turn_request;
     turn_request.request = std::move(request);
     turn_request.scope = scope;
-    turn_request.inference_options = make_agent_inference_options(options);
-    turn_request.policy = make_agent_runtime_policy(options);
-    turn_request.runtime_config = make_agent_runtime_config(options);
+    turn_request.inference_options = make_agent_inference_options({
+        options.model,
+        options.n_predict,
+        options.n_gpu_layers,
+        true,
+    });
+    turn_request.policy = make_agent_runtime_policy({
+        options.agent_inference_backend,
+        options.tool_profile,
+        options.memory_learn,
+        options.memory_learn_show_candidate,
+        options.plan_show_summary,
+        options.agent_trace,
+        options.reflection_mode,
+        static_cast<size_t>(options.max_tool_rounds),
+    });
+    turn_request.runtime_config = make_agent_runtime_config({
+        {options.n_predict},
+        options.memory_learn == "post-turn",
+        {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
+        [&options](const std::string & text, std::vector<float> & embedding, std::string & error) {
+            return ensure_memory_cli_embedding(options, text, embedding, "memory candidate", error);
+        },
+    });
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;
     turn_request.memory_scope = memory_scope;
@@ -154,7 +175,14 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
         runtime_scope,
-        make_agent_orchestration_config(options),
+        make_agent_orchestration_config({
+            options.prompt,
+            options.agent_plan,
+            options.agent_blueprint,
+            options.agent_bootstrap,
+            options.agent_import,
+            options.agent_export,
+        }),
         memory_scope,
         memory_enabled,
         fallback_reason,

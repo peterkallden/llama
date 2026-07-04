@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../common/cli-config.h"
-
 #include "agent-tool-provider.h"
 #include "agent/agent-inference.h"
 #include "agent/agent-runtime.h"
@@ -27,16 +25,12 @@ struct common_agent_generation_config {
     int n_predict = 0;
 };
 
-common_agent_generation_config make_agent_generation_config(const args & options);
-
 struct common_agent_inference_options {
     std::string model;
     int n_predict = -1;
     int n_gpu_layers = 0;
     bool fit_params = true;
 };
-
-common_agent_inference_options make_agent_inference_options(const args & options);
 
 struct common_agent_runtime_config {
     common_agent_generation_config generation_config;
@@ -45,7 +39,18 @@ struct common_agent_runtime_config {
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
 };
 
-common_agent_runtime_config make_agent_runtime_config(const args & options);
+struct common_agent_runtime_build_config {
+    common_agent_generation_config generation_config;
+    bool enable_memory_learning = false;
+    common_memory_learning_config memory_learning_config;
+    std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
+};
+
+common_agent_inference_options make_agent_inference_options(
+    common_agent_inference_options config);
+
+common_agent_runtime_config make_agent_runtime_config(
+    common_agent_runtime_build_config config);
 
 struct common_agent_inference_session {
     agent_inference_backend backend = agent_inference_backend::cli;

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../common/cli-config.h"
-
 #include "agent-tool-provider.h"
 #include "agent-runtime-tooling.h"
 #include "agent/agent-contract.h"
@@ -30,7 +28,19 @@ struct common_agent_runtime_policy {
     bool allow_policy_gated_tool_proposals = false;
 };
 
-common_agent_runtime_policy make_agent_runtime_policy(const args & options);
+struct common_agent_runtime_policy_build_config {
+    std::string agent_inference_backend = "cli";
+    std::string tool_profile;
+    std::string memory_learn = "off";
+    bool memory_learn_show_candidate = false;
+    bool plan_show_summary = false;
+    bool agent_trace = false;
+    std::string reflection_mode = "off";
+    size_t max_tool_rounds = 0;
+};
+
+common_agent_runtime_policy make_agent_runtime_policy(
+    common_agent_runtime_policy_build_config config);
 
 // Driver inputs are runtime-owned contracts, stores, and prebuilt scope/tool state.
 struct common_agent_runtime_driver_inputs {

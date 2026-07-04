@@ -1,5 +1,7 @@
 #include "agent-cli-run-adapter.h"
 
+#include "../memory/memory-cli-memory.h"
+
 #include "agent-cli-selection.h"
 
 #include <ctime>
@@ -105,8 +107,25 @@ bool prepare_agent_cli_run_setup(
     setup.requested_plan_scope = common_plan_scope::turn;
     setup.agent_scope = common_cli_make_agent_scope(options, setup.requested_plan_scope);
     setup.active_plan_id = options.plan_id;
-    setup.orchestration_config = make_agent_orchestration_config(options);
-    setup.bootstrap_runtime_config = make_agent_bootstrap_runtime_config(options);
+    setup.orchestration_config = make_agent_orchestration_config({
+        options.prompt,
+        options.agent_plan,
+        options.agent_blueprint,
+        options.agent_bootstrap,
+        options.agent_import,
+        options.agent_export,
+    });
+    setup.bootstrap_runtime_config.embed_procedure =
+        [&options](const std::string & text, std::vector<float> & embedding, std::string & embed_error) {
+            if (!ensure_memory_cli_embedding(options, text, embedding, "bootstrap procedure", embed_error)) {
+                return false;
+            }
+            if (embedding.empty()) {
+                embed_error = "--agent-bootstrap default requires --embedding-model";
+                return false;
+            }
+            return true;
+        };
     exported = false;
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../common/cli-config.h"
-
 #include "agent-runtime-tooling.h"
 
 #include "agent/agent-contract.h"
@@ -25,13 +23,21 @@ struct common_agent_orchestration_config {
     std::string agent_export;
 };
 
-common_agent_orchestration_config make_agent_orchestration_config(const args & options);
+struct common_agent_orchestration_build_config {
+    std::string prompt;
+    std::string agent_plan = "off";
+    std::string agent_blueprint;
+    std::string agent_bootstrap = "none";
+    std::string agent_import;
+    std::string agent_export;
+};
+
+common_agent_orchestration_config make_agent_orchestration_config(
+    common_agent_orchestration_build_config config);
 
 struct common_agent_bootstrap_runtime_config {
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_procedure;
 };
-
-common_agent_bootstrap_runtime_config make_agent_bootstrap_runtime_config(const args & options);
 
 bool maybe_install_agent_bootstrap(
     common_memory_store & memory_store,

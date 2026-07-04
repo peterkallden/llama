@@ -5,11 +5,11 @@
 
 #include <cstdio>
 
-common_agent_runtime_policy make_agent_runtime_policy(const args & options) {
+common_agent_runtime_policy make_agent_runtime_policy(common_agent_runtime_policy_build_config options) {
     common_agent_runtime_policy policy;
-    policy.agent_inference_backend = options.agent_inference_backend;
-    policy.tool_profile = options.tool_profile;
-    policy.memory_learn = options.memory_learn;
+    policy.agent_inference_backend = std::move(options.agent_inference_backend);
+    policy.tool_profile = std::move(options.tool_profile);
+    policy.memory_learn = std::move(options.memory_learn);
     policy.memory_learn_show_candidate = options.memory_learn_show_candidate;
     policy.plan_show_summary = options.plan_show_summary;
     policy.agent_trace = options.agent_trace;
@@ -18,7 +18,7 @@ common_agent_runtime_policy make_agent_runtime_policy(const args & options) {
     policy.max_reflection_rounds = policy.enable_reflection ? 1 : 0;
     policy.max_tool_rounds = options.max_tool_rounds;
     policy.allow_policy_gated_tool_proposals =
-        options.tool_profile == "memory" || options.tool_profile == "research";
+        policy.tool_profile == "memory" || policy.tool_profile == "research";
     return policy;
 }
 
