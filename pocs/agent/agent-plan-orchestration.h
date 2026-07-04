@@ -2,10 +2,11 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-runtime-tooling.h"
+
 #include "agent/agent-contract.h"
 #include "agent/agent-inference.h"
 #include "agent/blueprint-selector.h"
-#include "agent/tool-registry.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 
@@ -14,7 +15,6 @@
 #include <vector>
 
 struct common_agent_generation_config;
-class agent_tool_view;
 
 struct common_agent_orchestration_config {
     std::string prompt;
@@ -51,23 +51,21 @@ bool maybe_export_agent_package(
     bool & exported,
     std::string & error);
 
+struct common_agent_orchestration_runtime_context {
+    common_agent_inference & inference;
+    const common_agent_generation_config & generation_config;
+    const common_agent_orchestration_config & config;
+    std::string & current_plan_id;
+    const common_agent_scope & scope;
+    common_plan_store & plan_store;
+    const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    const common_agent_runtime_tooling * tooling = nullptr;
+};
+
 bool maybe_auto_select_plan(
-    common_agent_inference & inference,
-    const common_agent_generation_config & generation_config,
-    const common_agent_orchestration_config & config,
-    std::string & current_plan_id,
-    const common_agent_scope & scope,
-    common_plan_store & plan_store,
+    const common_agent_orchestration_runtime_context & context,
     std::string & error);
 
 bool maybe_auto_select_blueprint(
-    common_agent_inference & inference,
-    const common_agent_generation_config & generation_config,
-    const common_agent_orchestration_config & config,
-    std::string & current_plan_id,
-    const common_agent_scope & scope,
-    common_plan_store & plan_store,
-    const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
-    bool profile_tools_active,
-    agent_tool_view * tool_view,
+    const common_agent_orchestration_runtime_context & context,
     std::string & error);

@@ -103,28 +103,22 @@ bool run_agent_runtime_driver(
         return false;
     }
 
-    if (!maybe_auto_select_plan(
-            execution.inference,
-            execution.runtime_config.generation_config,
-            execution.orchestration_config,
-            execution.current_plan_id,
-            execution.scope,
-            execution.plan_store,
-            error)) {
+    const common_agent_orchestration_runtime_context orchestration_context{
+        execution.inference,
+        execution.runtime_config.generation_config,
+        execution.orchestration_config,
+        execution.current_plan_id,
+        execution.scope,
+        execution.plan_store,
+        execution.installed_blueprint_candidates,
+        &execution.tooling,
+    };
+
+    if (!maybe_auto_select_plan(orchestration_context, error)) {
         return false;
     }
 
-    if (!maybe_auto_select_blueprint(
-            execution.inference,
-            execution.runtime_config.generation_config,
-            execution.orchestration_config,
-            execution.current_plan_id,
-            execution.scope,
-            execution.plan_store,
-            execution.installed_blueprint_candidates,
-            execution.tooling.profile_tools_active,
-            execution.tooling.tool_view,
-            error)) {
+    if (!maybe_auto_select_blueprint(orchestration_context, error)) {
         return false;
     }
 

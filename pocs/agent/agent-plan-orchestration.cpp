@@ -19,6 +19,15 @@ std::string make_bootstrap_prefix(const common_agent_scope & scope) {
         (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
 }
 
+common_agent_request make_orchestration_selection_request(
+        const common_agent_orchestration_config & config,
+        const common_agent_scope & scope) {
+    common_agent_request request;
+    request.prompt = config.prompt;
+    common_agent_scope_apply(scope, request);
+    return request;
+}
+
 } // namespace
 
 common_agent_orchestration_config make_agent_orchestration_config(const args & options) {
@@ -148,19 +157,14 @@ bool maybe_export_agent_package(
 }
 
 bool maybe_auto_select_plan(
-    common_agent_inference & inference,
-    const common_agent_generation_config & generation_config,
-    const common_agent_orchestration_config & config,
-    std::string & current_plan_id,
-    const common_agent_scope & scope,
-    common_plan_store & plan_store,
+    const common_agent_orchestration_runtime_context & context,
     std::string & error) {
-    if (config.agent_plan != "auto" || !current_plan_id.empty()) {
+    if (context.config.agent_plan != "auto" || !context.current_plan_id.empty()) {
         error.clear();
         return true;
     }
 
-    const auto plans = plan_store.list(error);
+    const auto plans = context.plan_store.list(error);
     if (!error.empty()) {
         error = "failed to list plan candidates: " + error;
         return false;
@@ -172,7 +176,7 @@ bool maybe_auto_select_plan(
                 (plan.status != common_plan_status::active && plan.status != common_plan_status::blocked)) {
             continue;
         }
-        if (!common_plan_scope_matches(plan, scope.plan_scope, scope.namespace_id, scope.session_id, scope.project_id, scope.turn_id)) {
+        if (!common_plan_scope_matches(plan, context.scope.plan_scope, context.scope.namespace_id, context.scope.session_id, context.scope.project_id, context.scope.turn_id)) {
             continue;
         }
         candidates.push_back(plan);
@@ -189,14 +193,13 @@ bool maybe_auto_select_plan(
     }
 
     if (!candidates.empty()) {
-        common_agent_request selection_request;
-        selection_request.prompt = config.prompt;
-        common_agent_scope_apply(scope, selection_request);
+        const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
         std::string selection_error;
-        const auto selection_result = select_llama_cli_plan_result(inference, generation_config, selection_request, candidates, selection_error);
+        const auto selection_result = select_llama_cli_plan_result(
+            context.inference, context.generation_config, selection_request, candidates, selection_error);
         if (selection_result.plan_id) {
-            current_plan_id = *selection_result.plan_id;
-            fprintf(stderr, "agent plan auto-selected: %s\n", current_plan_id.c_str());
+            context.current_plan_id = *selection_result.plan_id;
+            fprintf(stderr, "agent plan auto-selected: %s\n", context.current_plan_id.c_str());
         } else if (!selection_error.empty()) {
             fprintf(stderr, "agent plan auto-selection failed safely: %s; creating a new plan\n", selection_error.c_str());
         } else {
@@ -209,45 +212,46 @@ bool maybe_auto_select_plan(
 }
 
 bool maybe_auto_select_blueprint(
-    common_agent_inference & inference,
-    const common_agent_generation_config & generation_config,
-    const common_agent_orchestration_config & config,
-    std::string & current_plan_id,
-    const common_agent_scope & scope,
-    common_plan_store & plan_store,
-    const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
-    bool profile_tools_active,
-    agent_tool_view * tool_view,
+    const common_agent_orchestration_runtime_context & context,
     std::string & error) {
-    if (config.agent_blueprint != "auto") {
+    if (context.config.agent_blueprint != "auto") {
         error.clear();
         return true;
     }
 
-    auto selector = make_llama_cli_blueprint_selector(inference, generation_config);
+    auto selector = make_llama_cli_blueprint_selector(context.inference, context.generation_config);
     common_blueprint_selection_config selection_config;
-    selection_config.task_plan_id = current_plan_id;
-    selection_config.session_id = scope.session_id;
-    selection_config.scope = scope.plan_scope;
+    selection_config.task_plan_id = context.current_plan_id;
+    selection_config.session_id = context.scope.session_id;
+    selection_config.scope = context.scope.plan_scope;
     selection_config.now = std::time(nullptr);
     common_blueprint_selection_result selection;
-    common_agent_request selection_request;
-    selection_request.prompt = config.prompt;
-    common_agent_scope_apply(scope, selection_request);
-    if (!common_agent_select_and_instantiate_blueprint(plan_store, selection_request, *selector, installed_blueprint_candidates, selection_config, selection, error)) {
+    const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+    if (!common_agent_select_and_instantiate_blueprint(
+            context.plan_store,
+            selection_request,
+            *selector,
+            context.installed_blueprint_candidates,
+            selection_config,
+            selection,
+            error)) {
         error = "agent blueprint selection failed: " + error;
         return false;
     }
 
     if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
-        fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), current_plan_id.c_str());
-        if (profile_tools_active && tool_view != nullptr) {
-            common_agent_request binding_request;
-            binding_request.prompt = config.prompt;
-            common_agent_scope_apply(scope, binding_request);
+        fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), context.current_plan_id.c_str());
+        if (context.tooling != nullptr && context.tooling->profile_tools_active && context.tooling->tool_view != nullptr) {
+            const auto binding_request = make_orchestration_selection_request(context.config, context.scope);
             std::string binding_error;
             const auto binding_result = bind_llama_cli_blueprint_tools_result(
-                inference, generation_config, *tool_view, binding_request, plan_store, current_plan_id, binding_error);
+                context.inference,
+                context.generation_config,
+                *context.tooling->tool_view,
+                binding_request,
+                context.plan_store,
+                context.current_plan_id,
+                binding_error);
             if (!binding_result.applied) {
                 fprintf(stderr, "agent blueprint binding declined safely: %s\n", binding_error.c_str());
             }
