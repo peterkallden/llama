@@ -107,7 +107,6 @@ bool common_agent_runtime_resident_runtime::run_chat_prompt(
         tools,
         profile_tools_active,
         tool_view,
-        nullptr,
         {},
     };
     auto inputs = make_agent_runtime_host_chat_inputs(build_context);
@@ -136,7 +135,6 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
         tools,
         profile_tools_active,
         tool_view,
-        nullptr,
         {},
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, build_context.turn_request.orchestration_config);

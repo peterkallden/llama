@@ -38,7 +38,6 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     const std::vector<common_chat_tool> & tools,
     bool profile_tools_active,
     agent_tool_view * tool_view,
-    const common_tool_registry * tool_registry,
     common_agent_runtime_host_post_run post_run);
 
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
@@ -56,7 +55,6 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
     const std::vector<common_chat_tool> & tools,
     bool profile_tools_active,
     agent_tool_view * tool_view,
-    const common_tool_registry * tool_registry,
     common_agent_runtime_host_post_run post_run);
 
 int finish_agent_cli_runtime_result(const common_agent_result & result);

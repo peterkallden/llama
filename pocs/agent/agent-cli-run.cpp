@@ -222,7 +222,6 @@ int run_agent_cli(common_memory_store & store, args a) {
             tools,
             profile_tools_active,
             tool_view.get(),
-            nullptr,
             runtime_post_run);
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
@@ -244,7 +243,6 @@ int run_agent_cli(common_memory_store & store, args a) {
         tools,
         profile_tools_active,
         tool_view.get(),
-        nullptr,
         runtime_post_run);
 
     common_agent_result result;

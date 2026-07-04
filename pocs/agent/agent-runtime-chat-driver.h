@@ -2,7 +2,6 @@
 
 #include "agent/agent-contract.h"
 #include "agent/agent-inference.h"
-#include "agent/tool-registry.h"
 
 #include <functional>
 #include <string>
@@ -24,7 +23,6 @@ struct common_agent_chat_runtime_execution {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };
 

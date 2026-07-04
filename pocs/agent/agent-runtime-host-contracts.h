@@ -21,7 +21,6 @@ struct common_agent_runtime_host_inputs {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
     bool reset_session_on_completion = false;
     common_agent_runtime_host_post_run post_run;
@@ -39,7 +38,6 @@ struct common_agent_runtime_host_execution {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };
 
@@ -53,7 +51,6 @@ struct common_agent_runtime_host_build_context {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
     common_agent_chat_tool_handler tool_handler;
 };
 
