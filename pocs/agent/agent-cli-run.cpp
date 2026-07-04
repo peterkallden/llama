@@ -189,16 +189,23 @@ int run_agent_cli(common_memory_store & store, args a) {
         profile_tools_active = true;
     }
 #endif
-    if (!profile_tools_active && a.enable_memory_search_tool && memory_enabled) {
-        tools.push_back(memory_search_tool_definition());
-        fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %d)\n", 8);
+    if (!profile_tools_active && memory_enabled && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
+        tool_view = make_agent_cli_legacy_memory_tool_view(
+            store,
+            a,
+            a.enable_memory_search_tool,
+            a.enable_memory_remember_tool);
+        tools = tool_view ? tool_view->chat_tools() : std::vector<common_chat_tool>{};
+        if (a.enable_memory_search_tool) {
+            fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %d)\n", 8);
+        }
+        if (a.enable_memory_remember_tool) {
+            fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
+        }
     } else if (!profile_tools_active && a.enable_memory_search_tool) {
         fprintf(stderr, "debug: memory_search tool disabled because query embeddings are unavailable\n");
     }
-    if (!profile_tools_active && a.enable_memory_remember_tool && memory_enabled) {
-        tools.push_back(memory_remember_tool_definition());
-        fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
-    } else if (!profile_tools_active && a.enable_memory_remember_tool) {
+    if (!profile_tools_active && a.enable_memory_remember_tool && !memory_enabled) {
         fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
     }
 

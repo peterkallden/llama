@@ -3,8 +3,6 @@
 #include "agent-tool-provider.h"
 #include "agent/tool-chat-bridge.h"
 
-#include <cstdio>
-
 namespace {
 
 std::string make_generation_trace_id(
@@ -78,42 +76,18 @@ bool append_dispatched_tool_messages(
         common_chat_msg & assistant_message,
         std::vector<common_chat_msg> & messages,
         std::string & error) {
-    if (execution.profile_tools_active) {
-        if (execution.tool_view == nullptr) {
-            error = "profile tool chat dispatch requires a resolved tool view";
-            return false;
-        }
-        common_tool_chat_dispatch_result dispatched;
-        if (!agent_dispatch_chat_tool_calls(assistant_message, *execution.tool_view, 1, dispatched, error)) {
-            return false;
-        }
-        messages.push_back(std::move(assistant_message));
-        for (auto & tool_message : dispatched.tool_messages) {
-            messages.push_back(std::move(tool_message));
-        }
-        error.clear();
-        return true;
-    }
-
-    if (!execution.tool_handler) {
-        error = "legacy chat tool dispatch requires a tool handler";
+    if (execution.tool_view == nullptr) {
+        error = "chat tool dispatch requires a resolved tool view";
         return false;
     }
-
-    common_chat_msg tool_message;
-    tool_message.role = "tool";
-    if (assistant_message.tool_calls.size() != 1) {
-        tool_message.content = R"({"ok":false,"error":"only one memory tool call is allowed per chat turn"})";
-        std::fprintf(stderr, "warning: rejected unsupported memory tool call\n");
-    } else {
-        const auto & call = assistant_message.tool_calls.front();
-        tool_message.tool_name = call.name;
-        tool_message.tool_call_id = call.id.empty() ? "memory-tool-1" : call.id;
-        assistant_message.tool_calls.front().id = tool_message.tool_call_id;
-        tool_message.content = execution.tool_handler(call);
+    common_tool_chat_dispatch_result dispatched;
+    if (!agent_dispatch_chat_tool_calls(assistant_message, *execution.tool_view, 1, dispatched, error)) {
+        return false;
     }
     messages.push_back(std::move(assistant_message));
-    messages.push_back(std::move(tool_message));
+    for (auto & tool_message : dispatched.tool_messages) {
+        messages.push_back(std::move(tool_message));
+    }
     error.clear();
     return true;
 }

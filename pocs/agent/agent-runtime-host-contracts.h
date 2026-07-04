@@ -2,8 +2,6 @@
 
 #include "agent-runtime-turn.h"
 
-#include <functional>
-
 class agent_tool_view;
 
 using common_agent_runtime_host_post_run = std::function<bool(
@@ -21,7 +19,6 @@ struct common_agent_runtime_host_inputs {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    common_agent_chat_tool_handler tool_handler;
     bool reset_session_on_completion = false;
     common_agent_runtime_host_post_run post_run;
 };
@@ -38,7 +35,6 @@ struct common_agent_runtime_host_execution {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    common_agent_chat_tool_handler tool_handler;
 };
 
 struct common_agent_runtime_host_build_context {
@@ -51,7 +47,6 @@ struct common_agent_runtime_host_build_context {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    common_agent_chat_tool_handler tool_handler;
 };
 
 common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
