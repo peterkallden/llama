@@ -66,8 +66,7 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
         std::vector<common_blueprint_candidate> installed_blueprint_candidates,
         std::vector<common_chat_tool> tools,
         bool profile_tools_active,
-        agent_tool_view * tool_view,
-        const common_tool_registry * tool_registry) {
+        agent_tool_view * tool_view) {
     return {
         memory_store,
         plan_store,
@@ -77,7 +76,6 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
         std::move(tools),
         profile_tools_active,
         tool_view,
-        tool_registry,
     };
 }
 
@@ -90,8 +88,7 @@ common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
       installed_blueprint_candidates(std::move(config.installed_blueprint_candidates)),
       tools(std::move(config.tools)),
       profile_tools_active(config.profile_tools_active),
-      tool_view(config.tool_view),
-      tool_registry(config.tool_registry) {}
+      tool_view(config.tool_view) {}
 
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
@@ -110,7 +107,7 @@ bool common_agent_runtime_resident_runtime::run_chat_prompt(
         tools,
         profile_tools_active,
         tool_view,
-        tool_registry,
+        nullptr,
         {},
     };
     auto inputs = make_agent_runtime_host_chat_inputs(build_context);
@@ -139,7 +136,7 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
         tools,
         profile_tools_active,
         tool_view,
-        tool_registry,
+        nullptr,
         {},
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, build_context.turn_request.orchestration_config);

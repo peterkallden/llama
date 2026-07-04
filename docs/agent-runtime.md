@@ -215,6 +215,8 @@ What still remains is behavioral convergence: the runtime path still uses a regi
 
 There is now also a focused smoke for the planned-tool-step path itself. It runs a tiny `common_agent_runtime` scenario where the planner emits a calculator tool step and execution goes through a provider-backed tool-runtime adapter rather than a raw registry pointer. That gives the current refactor one concrete end-to-end proof point before broader resident/daemon mini smokes are added.
 
+The resident/session-host layer has also been trimmed a bit further: it now carries `agent_tool_view` for the modern profile-tool path, but no longer keeps threading a separate `tool_registry` field through its own configs just to pass it onward unused. That makes the resident host/session contracts slightly closer to the intended provider-first shape.
+
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
 ## MCP Direction

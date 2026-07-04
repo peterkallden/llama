@@ -40,7 +40,6 @@ struct common_agent_runtime_resident_runtime_config {
     std::vector<common_chat_tool> tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
 };
 
 common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime_config(
@@ -51,8 +50,7 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
     std::vector<common_blueprint_candidate> installed_blueprint_candidates = {},
     std::vector<common_chat_tool> tools = {},
     bool profile_tools_active = false,
-    agent_tool_view * tool_view = nullptr,
-    const common_tool_registry * tool_registry = nullptr);
+    agent_tool_view * tool_view = nullptr);
 
 class common_agent_runtime_resident_runtime {
 public:
@@ -87,6 +85,5 @@ private:
     std::vector<common_chat_tool> tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
     common_agent_runtime_resident_host host;
 };

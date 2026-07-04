@@ -58,7 +58,6 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         std::move(config.tools),
         config.profile_tools_active,
         config.tool_view,
-        config.tool_registry,
     };
 }
 
@@ -123,8 +122,7 @@ bool common_agent_runtime_session_host::ensure_runtime(
             config.installed_blueprint_candidates,
             config.tools,
             config.profile_tools_active,
-            config.tool_view,
-            config.tool_registry));
+            config.tool_view));
     active_session_id = request.session_id;
     active_namespace_id = request.namespace_id;
     active_project_id = request.project_id;
