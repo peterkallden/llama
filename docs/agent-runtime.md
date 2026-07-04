@@ -102,7 +102,7 @@ The resident path also now has small builder contracts above the raw runtime typ
 
 There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus one small host-owned runtime-reuse key for session/scope matching, and can execute repeated chat or mini turns from a prepared host contract without carrying several parallel `active_*` identity fields.
 
-The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, context key, host config, derived load params, loop lifetime and inference-session construction in one place. It also now distinguishes host configuration from the active running instance that owns the live `server_context`, derived params and loop thread. The active host now materializes the inference session directly from that running instance instead of rebuilding backend-specific details out in the generic assembly layer. That gives the next model-versus-context lifetime split a concrete home instead of leaving it buried inside generic assembly code.
+The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, context key, host config, derived load params, loop lifetime and inference-session construction in one place. It also now distinguishes host configuration from the active running instance that owns the live `server_context`, derived params and loop thread. The active host now materializes the inference session directly from that running instance instead of rebuilding backend-specific details out in the generic assembly layer. Runtime session ownership has also been tightened a little further: for the `server-context` backend, the long-lived resident host now sits in the session's loaded-model state, while the active inference-context state only owns the currently built inference session that uses that host. That gives the next model-versus-context lifetime split a more concrete home instead of leaving it buried inside generic assembly code.
 
 On top of that sits the first explicit session manager for the daemon/admin path. It keys resident session hosts by namespace, session and project so the foreground daemon can now handle `session A`, `session B`, `session A again` and return to the prior resident state for `A` instead of pretending there is only one active slot.
 
@@ -147,7 +147,7 @@ Inside the resident runtime session, ownership is now also expressed a little mo
 - loaded model ownership
 - active inference-context ownership
 
-In practice that means a resident session no longer presents one flat bag of `model + templates + inference session + reuse flags`. The first step toward a cleaner resident host is now visible in code: model-loading state and active inference-context state are separate sub-objects, and runtime execution asks the session for its active inference session instead of reaching straight into one merged structure.
+In practice that means a resident session no longer presents one flat bag of `model + templates + inference session + reuse flags`. The first step toward a cleaner resident host is now visible in code: model-loading state and active inference-context state are separate sub-objects, runtime execution asks the session for its active inference session instead of reaching straight into one merged structure, and the `server-context` host itself now lives with the loaded-state side of that split rather than being hidden only inside the active session object.
 
 ### Runtime Drivers
 
@@ -301,7 +301,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 2. Keep separating session ownership from model/inference-context ownership.
 
-   The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately. The next meaningful step is to carry that separation upward as well, so keyed agent sessions and resident hosts do not implicitly own more model/context lifetime than they need to.
+   The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately and the `server-context` resident host now lives with the loaded-state side of that split. The next meaningful step is to carry that separation upward as well, so keyed agent sessions and resident hosts do not implicitly own more model/context lifetime than they need to.
 
 3. Keep shrinking the remaining CLI-shaped adapters around host construction.
 

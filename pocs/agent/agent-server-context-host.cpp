@@ -125,21 +125,3 @@ server_context & common_agent_server_context_host::server() {
 const server_context & common_agent_server_context_host::server() const {
     return *instance->server;
 }
-
-bool make_server_context_inference_session(
-        const common_agent_inference_options & options,
-        common_agent_inference_session & session,
-        std::string & error) {
-    auto host = std::make_shared<common_agent_server_context_host>();
-    if (!host->start(make_agent_server_context_host_config(options), error)) {
-        return false;
-    }
-
-    if (!host->build_inference_session(session, error)) {
-        host->stop();
-        return false;
-    }
-    session.keepalive = std::move(host);
-    error.clear();
-    return true;
-}

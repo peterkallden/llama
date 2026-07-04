@@ -73,8 +73,3 @@ private:
     common_agent_server_context_host_config current_config;
     std::unique_ptr<common_agent_server_context_running_instance> instance;
 };
-
-bool make_server_context_inference_session(
-    const common_agent_inference_options & options,
-    common_agent_inference_session & session,
-    std::string & error);

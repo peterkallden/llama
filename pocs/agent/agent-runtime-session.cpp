@@ -45,6 +45,7 @@ bool build_agent_inference_session(
         agent_inference_backend backend,
         llama_model * model,
         const common_chat_templates * templates,
+        std::shared_ptr<common_agent_server_context_host> server_context_host,
         common_agent_inference_session & session,
         std::string & error) {
     session = {};
@@ -52,7 +53,16 @@ bool build_agent_inference_session(
     session.model = model;
     session.templates = templates;
     if (backend == agent_inference_backend::server_context) {
-        return make_server_context_inference_session(options, session, error);
+        if (!server_context_host) {
+            error = "server_context host is not loaded";
+            return false;
+        }
+        if (!server_context_host->build_inference_session(session, error)) {
+            return false;
+        }
+        session.keepalive = std::move(server_context_host);
+        error.clear();
+        return true;
     }
 
     session.inference = make_llama_cli_agent_inference(model, templates);
@@ -64,6 +74,7 @@ bool build_agent_inference_session(
 
 void common_agent_runtime_loaded_model_state::reset() {
     chat_templates.reset();
+    server_context_host.reset();
     if (model != nullptr) {
         llama_model_free(model);
         model = nullptr;
@@ -86,6 +97,7 @@ common_agent_runtime_session & common_agent_runtime_session::operator=(common_ag
         inference_context = std::move(other.inference_context);
         other.loaded_model.loaded = false;
         other.loaded_model.model = nullptr;
+        other.loaded_model.server_context_host.reset();
         other.inference_context.initialized = false;
     }
     return *this;
@@ -129,7 +141,6 @@ bool initialize_agent_runtime_session(
     }
 
     const bool reuse_loaded_model =
-        backend == agent_inference_backend::cli &&
         session.loaded_model.loaded &&
         session.loaded_model.backend == backend &&
         common_agent_model_load_key_match(session.loaded_model.key, requested_model_key);
@@ -154,6 +165,17 @@ bool initialize_agent_runtime_session(
             session.loaded_model.backend = backend;
             session.loaded_model.key = requested_model_key;
         }
+    } else if (backend == agent_inference_backend::server_context) {
+        if (!session.loaded_model.loaded) {
+            auto host = std::make_shared<common_agent_server_context_host>();
+            if (!host->start(make_agent_server_context_host_config(options), error)) {
+                return false;
+            }
+            session.loaded_model.server_context_host = std::move(host);
+            session.loaded_model.loaded = true;
+            session.loaded_model.backend = backend;
+            session.loaded_model.key = requested_model_key;
+        }
     } else {
         session.loaded_model.reset();
     }
@@ -163,6 +185,7 @@ bool initialize_agent_runtime_session(
             backend,
             session.loaded_model.model,
             session.loaded_model.chat_templates.get(),
+            session.loaded_model.server_context_host,
             session.inference_context.session,
             error)) {
         session.reset();

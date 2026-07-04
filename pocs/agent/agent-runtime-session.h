@@ -7,7 +7,10 @@
 #include "chat.h"
 #include "llama.h"
 
+#include <memory>
 #include <string>
+
+class common_agent_server_context_host;
 
 struct common_agent_model_load_key {
     std::string model;
@@ -23,6 +26,7 @@ struct common_agent_inference_context_key {
 struct common_agent_runtime_loaded_model_state {
     llama_model * model = nullptr;
     common_chat_templates_ptr chat_templates;
+    std::shared_ptr<common_agent_server_context_host> server_context_host;
     bool loaded = false;
     agent_inference_backend backend = agent_inference_backend::cli;
     common_agent_model_load_key key;
