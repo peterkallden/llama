@@ -262,7 +262,12 @@ int main(int argc, char ** argv) {
             error = "resident runtime session was not initialized after first turn";
             return false;
         }
-        first_keepalive = first_session->inference_session.keepalive.get();
+        const auto * inference_session = first_session->active_inference_session();
+        if (inference_session == nullptr) {
+            std::fprintf(stderr, "first resident session did not retain an active inference context\n");
+            return 1;
+        }
+        first_keepalive = inference_session->keepalive.get();
 
         if (!runtime.run_turn({
                 common_agent_runtime_host_mode::chat,
@@ -285,7 +290,12 @@ int main(int argc, char ** argv) {
             error = "resident runtime session was not initialized after second turn";
             return false;
         }
-        second_keepalive = second_session->inference_session.keepalive.get();
+        const auto * second_inference_session = second_session->active_inference_session();
+        if (second_inference_session == nullptr) {
+            std::fprintf(stderr, "second resident session did not retain an active inference context\n");
+            return 1;
+        }
+        second_keepalive = second_inference_session->keepalive.get();
 
         if (first_keepalive == nullptr || second_keepalive == nullptr || first_keepalive != second_keepalive) {
             error = "resident host did not reuse the same server_context keepalive across turns";

@@ -138,6 +138,13 @@ The backend-specific inference-session selection now also lives with runtime-ses
 
 That split is still structural rather than behavioral, but it makes the next service-facing step easier because the current single-active session host is no longer buried inside the same header as every other runtime layer.
 
+Inside the resident runtime session, ownership is now also expressed a little more explicitly. The session keeps separate state for:
+
+- loaded model ownership
+- active inference-context ownership
+
+In practice that means a resident session no longer presents one flat bag of `model + templates + inference session + reuse flags`. The first step toward a cleaner resident host is now visible in code: model-loading state and active inference-context state are separate sub-objects, and runtime execution asks the session for its active inference session instead of reaching straight into one merged structure.
+
 ### Runtime Drivers
 
 The runtime drivers contain the agent behavior.
@@ -284,17 +291,13 @@ The current code should remain useful without any of these. The next steps shoul
 
    The host builders now accept a CLI-free runtime turn request and CLI-free policy/runtime/orchestration contracts. The next cleanup is to move more callers onto those contracts directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
 
-2. Separate session management from model/context ownership more explicitly.
+2. Keep separating session ownership from model/inference-context ownership.
 
-   The daemon/admin path now has a keyed session manager, but each keyed entry still owns a resident session host with its own resident runtime lifetime. The next meaningful runtime step is to keep the keyed agent-session model while separating it more clearly from model-loading and inference-context ownership.
+   The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately. The next meaningful step is to carry that separation upward as well, so keyed agent sessions do not implicitly own more model/context lifetime than they need to.
 
-3. Relax the current runtime reuse key where it is too turn-shaped.
+3. Add a cleaner non-CLI host construction path while finishing the provider migration.
 
-   The current reuse match still includes values such as `n_predict`. Before a multi-session manager hardens around it, the host should split model/context reuse concerns from per-turn generation options more clearly.
-
-4. Move the remaining tool-execution paths onto the provider boundary.
-
-   Chat/profile-tool dispatch now goes through `agent_tool_provider` and `agent_tool_view`, but mini/planning and blueprint-binding paths still use the native registry directly. The next cleanup is to move those remaining execution paths behind the same host-owned provider contract where it is practical.
+   The next practical bundle is to do the old step 1 together with the remaining step 4: keep moving host construction onto CLI-free contracts, and in the same pass move the remaining tool-execution paths onto the provider boundary so the runtime host builds one host-owned tool surface instead of mixing provider and registry-era wiring.
 
 5. Add cancellation, timeout and event contracts before async tools.
 

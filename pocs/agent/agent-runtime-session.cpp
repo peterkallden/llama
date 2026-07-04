@@ -62,20 +62,31 @@ bool build_agent_inference_session(
 
 } // namespace
 
+void common_agent_runtime_loaded_model_state::reset() {
+    chat_templates.reset();
+    if (model != nullptr) {
+        llama_model_free(model);
+        model = nullptr;
+    }
+    loaded = false;
+    backend = agent_inference_backend::cli;
+    key = {};
+}
+
+void common_agent_runtime_inference_context_state::reset() {
+    session = {};
+    initialized = false;
+    key = {};
+}
+
 common_agent_runtime_session & common_agent_runtime_session::operator=(common_agent_runtime_session && other) {
     if (this != &other) {
         reset();
-        model = other.model;
-        other.model = nullptr;
-        chat_templates = std::move(other.chat_templates);
-        inference_session = std::move(other.inference_session);
-        model_loaded = other.model_loaded;
-        loaded_model_backend = other.loaded_model_backend;
-        loaded_model_key = std::move(other.loaded_model_key);
-        initialized = other.initialized;
-        initialized_context_key = std::move(other.initialized_context_key);
-        other.model_loaded = false;
-        other.initialized = false;
+        loaded_model = std::move(other.loaded_model);
+        inference_context = std::move(other.inference_context);
+        other.loaded_model.loaded = false;
+        other.loaded_model.model = nullptr;
+        other.inference_context.initialized = false;
     }
     return *this;
 }
@@ -84,26 +95,17 @@ common_agent_runtime_session::~common_agent_runtime_session() {
     reset();
 }
 
-void common_agent_runtime_session::reset_inference_context() {
-    inference_session = {};
-    initialized = false;
-    initialized_context_key = {};
+const common_agent_inference_session * common_agent_runtime_session::active_inference_session() const {
+    return inference_context.initialized ? &inference_context.session : nullptr;
 }
 
-void common_agent_runtime_session::reset_loaded_model() {
-    chat_templates.reset();
-    if (model != nullptr) {
-        llama_model_free(model);
-        model = nullptr;
-    }
-    model_loaded = false;
-    loaded_model_backend = agent_inference_backend::cli;
-    loaded_model_key = {};
+common_agent_inference_session * common_agent_runtime_session::active_inference_session() {
+    return inference_context.initialized ? &inference_context.session : nullptr;
 }
 
 void common_agent_runtime_session::reset() {
-    reset_inference_context();
-    reset_loaded_model();
+    inference_context.reset();
+    loaded_model.reset();
 }
 
 bool initialize_agent_runtime_session(
@@ -119,56 +121,56 @@ bool initialize_agent_runtime_session(
     const auto requested_model_key = make_agent_model_load_key(options);
     const auto requested_context_key = make_agent_inference_context_key(options, backend);
 
-    if (session.initialized &&
-            session.inference_session.inference &&
-            common_agent_inference_context_key_match(session.initialized_context_key, requested_context_key)) {
+    if (session.inference_context.initialized &&
+            session.inference_context.session.inference &&
+            common_agent_inference_context_key_match(session.inference_context.key, requested_context_key)) {
         error.clear();
         return true;
     }
 
     const bool reuse_loaded_model =
         backend == agent_inference_backend::cli &&
-        session.model_loaded &&
-        session.loaded_model_backend == backend &&
-        common_agent_model_load_key_match(session.loaded_model_key, requested_model_key);
+        session.loaded_model.loaded &&
+        session.loaded_model.backend == backend &&
+        common_agent_model_load_key_match(session.loaded_model.key, requested_model_key);
 
-    session.reset_inference_context();
+    session.inference_context.reset();
 
     if (!reuse_loaded_model) {
-        session.reset_loaded_model();
+        session.loaded_model.reset();
     }
 
     if (backend == agent_inference_backend::cli) {
-        if (!session.model_loaded) {
+        if (!session.loaded_model.loaded) {
             llama_model_params model_params = llama_model_default_params();
             model_params.n_gpu_layers = options.n_gpu_layers;
-            session.model = llama_model_load_from_file(options.model.c_str(), model_params);
-            if (session.model == nullptr) {
+            session.loaded_model.model = llama_model_load_from_file(options.model.c_str(), model_params);
+            if (session.loaded_model.model == nullptr) {
                 error = "failed to load model: " + options.model;
                 return false;
             }
-            session.chat_templates = common_chat_templates_init(session.model, "");
-            session.model_loaded = true;
-            session.loaded_model_backend = backend;
-            session.loaded_model_key = requested_model_key;
+            session.loaded_model.chat_templates = common_chat_templates_init(session.loaded_model.model, "");
+            session.loaded_model.loaded = true;
+            session.loaded_model.backend = backend;
+            session.loaded_model.key = requested_model_key;
         }
     } else {
-        session.reset_loaded_model();
+        session.loaded_model.reset();
     }
 
     if (!build_agent_inference_session(
             options,
             backend,
-            session.model,
-            session.chat_templates.get(),
-            session.inference_session,
+            session.loaded_model.model,
+            session.loaded_model.chat_templates.get(),
+            session.inference_context.session,
             error)) {
         session.reset();
         return false;
     }
 
-    session.initialized = true;
-    session.initialized_context_key = requested_context_key;
+    session.inference_context.initialized = true;
+    session.inference_context.key = requested_context_key;
     error.clear();
     return true;
 }

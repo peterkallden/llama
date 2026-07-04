@@ -107,7 +107,13 @@ bool run_agent_runtime_host_session(
         return false;
     }
 
-    auto execution = make_agent_runtime_host_execution(inputs, *session.inference_session.inference);
+    auto * inference_session = session.active_inference_session();
+    if (inference_session == nullptr || !inference_session->inference) {
+        error = "runtime host failed to initialize an inference context";
+        return false;
+    }
+
+    auto execution = make_agent_runtime_host_execution(inputs, *inference_session->inference);
     return run_agent_runtime_host(execution, result, error);
 }
 
