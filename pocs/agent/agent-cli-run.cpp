@@ -112,9 +112,8 @@ int run_agent_cli(common_memory_store & store, args a) {
         : memory_context + "\n\n[User prompt]\n" + a.prompt;
     messages.push_back(std::move(user_msg));
 
-    std::vector<common_chat_tool> tools;
+    common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
-    bool profile_tools_active = false;
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     common_agent_cli_tool_selection tool_selection;
     if (!resolve_agent_cli_tool_selection(
@@ -129,9 +128,9 @@ int run_agent_cli(common_memory_store & store, args a) {
         fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    tools = std::move(tool_selection.tools);
+    tooling = std::move(tool_selection.tooling);
     tool_view = std::move(tool_selection.tool_view);
-    profile_tools_active = tool_selection.profile_tools_active;
+    tooling.tool_view = tool_view.get();
 #endif
 
     common_agent_runtime_session runtime_session;
@@ -151,9 +150,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             hits,
             memory_enabled,
             fallback_reason,
-            tools,
-            profile_tools_active,
-            tool_view.get(),
+            tooling,
             runtime_post_run);
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
@@ -172,9 +169,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         hits,
         memory_enabled,
         fallback_reason,
-        tools,
-        profile_tools_active,
-        tool_view.get(),
+        tooling,
         runtime_post_run);
 
     common_agent_result result;

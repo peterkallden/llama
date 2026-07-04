@@ -38,9 +38,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memories,
         inputs.memory_scope,
         inputs.memory_enabled,
-        inputs.tools,
-        inputs.profile_tools_active,
-        inputs.tool_view,
+        inputs.tooling,
     };
 }
 
@@ -60,7 +58,7 @@ common_agent_request make_agent_runtime_driver_request(
     common_agent_scope_apply(execution.scope, request);
     request.max_iterations = execution.policy.max_iterations;
     request.max_reflection_rounds = execution.policy.max_reflection_rounds;
-    request.max_tool_batches = execution.profile_tools_active ? execution.policy.max_tool_rounds : 0;
+    request.max_tool_batches = execution.tooling.profile_tools_active ? execution.policy.max_tool_rounds : 0;
     request.allow_policy_gated_tool_proposals = execution.policy.allow_policy_gated_tool_proposals;
     return request;
 }
@@ -100,7 +98,7 @@ bool run_agent_runtime_driver(
     common_agent_runtime_driver_execution & execution,
     common_agent_result & result,
     std::string & error) {
-    if (execution.profile_tools_active && execution.tool_view == nullptr) {
+    if (execution.tooling.profile_tools_active && execution.tooling.tool_view == nullptr) {
         error = "profile tool execution requires a resolved tool view";
         return false;
     }
@@ -124,8 +122,8 @@ bool run_agent_runtime_driver(
             execution.scope,
             execution.plan_store,
             execution.installed_blueprint_candidates,
-            execution.profile_tools_active,
-            execution.tool_view,
+            execution.tooling.profile_tools_active,
+            execution.tooling.tool_view,
             error)) {
         return false;
     }
@@ -135,8 +133,8 @@ bool run_agent_runtime_driver(
         execution.plan_store,
         execution.inference,
         execution.runtime_config,
-        execution.tools,
-        execution.tool_view);
+        execution.tooling.tools,
+        execution.tooling.tool_view);
 
     const common_agent_request request = make_agent_runtime_driver_request(execution);
     result = assembly.runtime->run(request);

@@ -92,6 +92,8 @@ The runtime host does not parse CLI arguments. It should remain small enough tha
 
 The host inputs now carry a CLI-free runtime turn request: request payload, scope, inference options, runtime policy, runtime config, orchestration config, generation options, and memory authority. The CLI adapter translates `args` into that request at the edge.
 
+The host/runtime path now also carries one small tooling contract instead of threading separate `tools + profile_tools_active + tool_view` fields through each layer. That keeps the provider-facing shape more explicit: one host-owned tooling bundle contains the model-visible `common_chat_tool` list plus the resolved `agent_tool_view` used for execution.
+
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 
 There is now a small resident runtime layer on top of that wrapper. It owns the reusable resident host session plus the base runtime turn contract, and it can run either ordinary chat turns or mini planning turns against the same keepalive-backed model session. The thinner resident chat and mini helpers now delegate to that layer. Their job remains deliberately narrow: stamp per-turn prompt and turn identity onto the base request, run the turn, and in mini mode keep track of the active plan identity after completion.
@@ -107,6 +109,8 @@ On top of that sits the first explicit session manager for the daemon/admin path
 The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
 
 The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a very small dispatcher: stdin/JSON parsing still happens on the transport thread, but command execution now runs through one worker thread and a small bounded in-process queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol, streaming events, cancellation, or multiple workers.
+
+The daemon adapter is now also slightly less CLI-shaped in its host construction path. It still uses the existing store-opening helpers, but it no longer has to synthesize a temporary full CLI `args` object just to build runtime policy, runtime config, orchestration config, or the resident session-host contract.
 
 That service layer now understands a slightly broader host-oriented command surface:
 
@@ -295,9 +299,13 @@ The current code should remain useful without any of these. The next steps shoul
 
    The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately. The next meaningful step is to carry that separation upward as well, so keyed agent sessions do not implicitly own more model/context lifetime than they need to.
 
-3. Add a cleaner non-CLI host construction path while finishing the provider migration.
+3. Keep shrinking the remaining CLI-shaped adapters around host construction.
 
-   The next practical bundle is to do the old step 1 together with the remaining step 4: keep moving host construction onto CLI-free contracts, and in the same pass move the remaining tool-execution paths onto the provider boundary so the runtime host builds one host-owned tool surface instead of mixing provider and registry-era wiring.
+   The host/runtime contracts now carry a shared tooling bundle and the daemon host path now builds policy/runtime/orchestration without routing through a synthetic full CLI runtime-args object. The next cleanup is to keep pushing that edge outward so more callers can assemble host turns, plan identity and hooks directly from host-owned contracts.
+
+4. Finish moving the remaining tool-exposure and tool-execution decisions behind the provider-facing host surface.
+
+   The runtime host now carries one tooling bundle instead of separate `tools + profile_tools_active + tool_view` fields, and chat/runtime dispatch uses that bundle consistently. The remaining cleanup is mostly convergence work: keep trimming older helper signatures and make sure blueprint/planning-related tool decisions continue to depend on the same host-owned provider view rather than drifting back toward registry-era wiring.
 
 5. Add cancellation, timeout and event contracts before async tools.
 

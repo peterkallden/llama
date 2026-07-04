@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-runtime-turn.h"
+#include "agent-runtime-tooling.h"
 
 #include <memory>
 #include <string>
@@ -46,9 +47,7 @@ struct common_agent_runtime_session_host_config {
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    std::vector<common_chat_tool> tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    common_agent_runtime_tooling tooling;
 };
 
 struct common_agent_runtime_session_host_build_config {
@@ -61,9 +60,7 @@ struct common_agent_runtime_session_host_build_config {
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    std::vector<common_chat_tool> tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    common_agent_runtime_tooling tooling;
 };
 
 common_agent_runtime_session_host_config make_agent_runtime_session_host_config(

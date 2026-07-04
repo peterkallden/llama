@@ -103,8 +103,9 @@ bool resolve_agent_cli_tool_selection(
             error = "tool provider resolution failed: " + error;
             return false;
         }
-        selection.tools = selection.tool_view->chat_tools();
-        selection.profile_tools_active = true;
+        selection.tooling.tools = selection.tool_view->chat_tools();
+        selection.tooling.profile_tools_active = true;
+        selection.tooling.tool_view = selection.tool_view.get();
         error.clear();
         return true;
     }
@@ -119,7 +120,8 @@ bool resolve_agent_cli_tool_selection(
             error = "legacy memory tool view resolution failed";
             return false;
         }
-        selection.tools = selection.tool_view->chat_tools();
+        selection.tooling.tools = selection.tool_view->chat_tools();
+        selection.tooling.tool_view = selection.tool_view.get();
         if (options.enable_memory_search_tool) {
             std::fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %d)\n", 8);
         }
@@ -227,9 +229,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         const std::vector<common_memory_hit> & memories,
         bool memory_enabled,
         const std::string & fallback_reason,
-        const std::vector<common_chat_tool> & tools,
-        bool profile_tools_active,
-        agent_tool_view * tool_view,
+        const common_agent_runtime_tooling & tooling,
         common_agent_runtime_host_post_run post_run) {
     common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
     common_agent_request request;
@@ -251,9 +251,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         nullptr,
         nullptr,
         memories,
-        tools,
-        profile_tools_active,
-        tool_view,
+        tooling,
     };
     auto inputs = make_agent_runtime_host_chat_inputs(build_context);
     inputs.reset_session_on_completion = true;
@@ -273,9 +271,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         const std::vector<common_memory_hit> & memories,
         bool memory_enabled,
         const std::string & fallback_reason,
-        const std::vector<common_chat_tool> & tools,
-        bool profile_tools_active,
-        agent_tool_view * tool_view,
+        const common_agent_runtime_tooling & tooling,
         common_agent_runtime_host_post_run post_run) {
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
@@ -291,9 +287,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         &current_plan_id,
         &installed_blueprint_candidates,
         memories,
-        tools,
-        profile_tools_active,
-        tool_view,
+        tooling,
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, orchestration_config);
     inputs.reset_session_on_completion = true;

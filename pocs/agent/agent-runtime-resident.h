@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-runtime-host-contracts.h"
+#include "agent-runtime-tooling.h"
 #include "agent-runtime-turn.h"
 
 #include <string>
@@ -37,9 +38,7 @@ struct common_agent_runtime_resident_runtime_config {
     common_agent_runtime_turn_request base_turn_request;
     std::string current_plan_id;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    std::vector<common_chat_tool> tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    common_agent_runtime_tooling tooling;
 };
 
 common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime_config(
@@ -48,9 +47,7 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
     common_agent_runtime_turn_request base_turn_request,
     std::string current_plan_id = {},
     std::vector<common_blueprint_candidate> installed_blueprint_candidates = {},
-    std::vector<common_chat_tool> tools = {},
-    bool profile_tools_active = false,
-    agent_tool_view * tool_view = nullptr);
+    common_agent_runtime_tooling tooling = {});
 
 class common_agent_runtime_resident_runtime {
 public:
@@ -82,8 +79,6 @@ private:
     common_agent_runtime_turn_request base_turn_request;
     std::string resident_current_plan_id;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
-    std::vector<common_chat_tool> tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    common_agent_runtime_tooling tooling;
     common_agent_runtime_resident_host host;
 };

@@ -76,12 +76,12 @@ bool append_dispatched_tool_messages(
         common_chat_msg & assistant_message,
         std::vector<common_chat_msg> & messages,
         std::string & error) {
-    if (execution.tool_view == nullptr) {
+    if (execution.tooling.tool_view == nullptr) {
         error = "chat tool dispatch requires a resolved tool view";
         return false;
     }
     common_tool_chat_dispatch_result dispatched;
-    if (!agent_dispatch_chat_tool_calls(assistant_message, *execution.tool_view, 1, dispatched, error)) {
+    if (!agent_dispatch_chat_tool_calls(assistant_message, *execution.tooling.tool_view, 1, dispatched, error)) {
         return false;
     }
     messages.push_back(std::move(assistant_message));
@@ -100,7 +100,7 @@ bool run_agent_chat_runtime(
         std::string & error) {
     result = {};
     std::vector<common_chat_msg> messages = execution.request.messages;
-    auto available_tools = execution.tools;
+    auto available_tools = execution.tooling.tools;
     const auto initial_tool_choice = available_tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO;
     auto generation_result = execution.inference.generate_result(make_generation_request(
         execution.request,
@@ -119,7 +119,7 @@ bool run_agent_chat_runtime(
     }
 
     common_chat_msg assistant_message;
-    if (!parse_assistant_message(generation_result, !execution.tools.empty(), assistant_message, error)) {
+    if (!parse_assistant_message(generation_result, !execution.tooling.tools.empty(), assistant_message, error)) {
         return false;
     }
 
@@ -136,7 +136,7 @@ bool run_agent_chat_runtime(
 
         ++tool_rounds;
         const bool allow_another_tool_round = tool_rounds < execution.policy.max_tool_rounds;
-        const std::vector<common_chat_tool> next_tools = allow_another_tool_round ? execution.tools : std::vector<common_chat_tool>{};
+        const std::vector<common_chat_tool> next_tools = allow_another_tool_round ? execution.tooling.tools : std::vector<common_chat_tool>{};
         generation_result = execution.inference.generate_result(make_generation_request(
             execution.request,
             common_agent_generation_purpose::tool_followup,
@@ -152,7 +152,7 @@ bool run_agent_chat_runtime(
             error = describe_generation_failure("chat generation", generation_result);
             return false;
         }
-        if (!parse_assistant_message(generation_result, allow_another_tool_round && !execution.tools.empty(), assistant_message, error)) {
+        if (!parse_assistant_message(generation_result, allow_another_tool_round && !execution.tooling.tools.empty(), assistant_message, error)) {
             return false;
         }
     }

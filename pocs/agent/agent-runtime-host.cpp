@@ -27,9 +27,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
         nullptr,
         nullptr,
         &context.memories,
-        context.tools,
-        context.profile_tools_active,
-        context.tool_view,
+        context.tooling,
         false,
         {},
     };
@@ -56,9 +54,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_mini_inputs(
         context.current_plan_id,
         context.installed_blueprint_candidates,
         &context.memories,
-        context.tools,
-        context.profile_tools_active,
-        context.tool_view,
+        context.tooling,
         false,
         {},
     };
@@ -77,9 +73,7 @@ common_agent_runtime_host_execution make_agent_runtime_host_execution(
         inputs.current_plan_id,
         inputs.installed_blueprint_candidates,
         inputs.memories,
-        inputs.tools,
-        inputs.profile_tools_active,
-        inputs.tool_view,
+        inputs.tooling,
     };
     execution.turn_request = inputs.turn_request;
     return execution;
@@ -181,9 +175,7 @@ bool run_agent_runtime_host(
                 memories,
                 execution.turn_request.memory_scope,
                 execution.turn_request.memory_enabled,
-                execution.tools,
-                execution.profile_tools_active,
-                execution.tool_view,
+                execution.tooling,
             };
             return run_agent_runtime_driver(driver_execution, result, error);
         }
@@ -194,8 +186,7 @@ bool run_agent_runtime_host(
                 execution.turn_request.request,
                 execution.turn_request.generation_options,
                 {execution.turn_request.policy.max_tool_rounds},
-                execution.tools,
-                execution.tool_view,
+                execution.tooling,
             };
             return run_agent_chat_runtime(chat_execution, result, error);
         }

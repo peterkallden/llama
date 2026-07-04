@@ -55,9 +55,7 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         config.memory_scope,
         config.memory_enabled,
         std::move(config.installed_blueprint_candidates),
-        std::move(config.tools),
-        config.profile_tools_active,
-        config.tool_view,
+        std::move(config.tooling),
     };
 }
 
@@ -120,9 +118,7 @@ bool common_agent_runtime_session_host::ensure_runtime(
             make_base_turn_request(request),
             {},
             config.installed_blueprint_candidates,
-            config.tools,
-            config.profile_tools_active,
-            config.tool_view));
+            config.tooling));
     active_session_id = request.session_id;
     active_namespace_id = request.namespace_id;
     active_project_id = request.project_id;

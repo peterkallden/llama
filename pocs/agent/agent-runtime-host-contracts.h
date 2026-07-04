@@ -1,8 +1,7 @@
 #pragma once
 
 #include "agent-runtime-turn.h"
-
-class agent_tool_view;
+#include "agent-runtime-tooling.h"
 
 using common_agent_runtime_host_post_run = std::function<bool(
     const common_agent_result & result,
@@ -16,9 +15,7 @@ struct common_agent_runtime_host_inputs {
     std::string * current_plan_id = nullptr;
     const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
     const std::vector<common_memory_hit> * memories = nullptr;
-    const std::vector<common_chat_tool> & tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    const common_agent_runtime_tooling & tooling;
     bool reset_session_on_completion = false;
     common_agent_runtime_host_post_run post_run;
 };
@@ -32,9 +29,7 @@ struct common_agent_runtime_host_execution {
     std::string * current_plan_id = nullptr;
     const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
     const std::vector<common_memory_hit> * memories = nullptr;
-    const std::vector<common_chat_tool> & tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    const common_agent_runtime_tooling & tooling;
 };
 
 struct common_agent_runtime_host_build_context {
@@ -44,9 +39,7 @@ struct common_agent_runtime_host_build_context {
     std::string * current_plan_id = nullptr;
     const std::vector<common_blueprint_candidate> * installed_blueprint_candidates = nullptr;
     const std::vector<common_memory_hit> & memories;
-    const std::vector<common_chat_tool> & tools;
-    bool profile_tools_active = false;
-    agent_tool_view * tool_view = nullptr;
+    const common_agent_runtime_tooling & tooling;
 };
 
 common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(

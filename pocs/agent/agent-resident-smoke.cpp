@@ -236,8 +236,6 @@ int main(int argc, char ** argv) {
                 false,
                 {},
                 {},
-                false,
-                nullptr,
             }));
         common_agent_runtime_session_host_turn_result runtime_result;
 

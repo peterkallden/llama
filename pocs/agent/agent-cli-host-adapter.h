@@ -4,15 +4,15 @@
 
 #include "agent-tool-provider.h"
 #include "agent-runtime-host.h"
+#include "agent-runtime-tooling.h"
 
 #include <memory>
 #include <string>
 #include <vector>
 
 struct common_agent_cli_tool_selection {
-    std::vector<common_chat_tool> tools;
+    common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
-    bool profile_tools_active = false;
 };
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
@@ -54,9 +54,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     const std::vector<common_memory_hit> & memories,
     bool memory_enabled,
     const std::string & fallback_reason,
-    const std::vector<common_chat_tool> & tools,
-    bool profile_tools_active,
-    agent_tool_view * tool_view,
+    const common_agent_runtime_tooling & tooling,
     common_agent_runtime_host_post_run post_run);
 
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
@@ -71,9 +69,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
     const std::vector<common_memory_hit> & memories,
     bool memory_enabled,
     const std::string & fallback_reason,
-    const std::vector<common_chat_tool> & tools,
-    bool profile_tools_active,
-    agent_tool_view * tool_view,
+    const common_agent_runtime_tooling & tooling,
     common_agent_runtime_host_post_run post_run);
 
 int finish_agent_cli_runtime_result(const common_agent_result & result);

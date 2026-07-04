@@ -64,18 +64,14 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
         common_agent_runtime_turn_request base_turn_request,
         std::string current_plan_id,
         std::vector<common_blueprint_candidate> installed_blueprint_candidates,
-        std::vector<common_chat_tool> tools,
-        bool profile_tools_active,
-        agent_tool_view * tool_view) {
+        common_agent_runtime_tooling tooling) {
     return {
         memory_store,
         plan_store,
         std::move(base_turn_request),
         std::move(current_plan_id),
         std::move(installed_blueprint_candidates),
-        std::move(tools),
-        profile_tools_active,
-        tool_view,
+        std::move(tooling),
     };
 }
 
@@ -86,9 +82,7 @@ common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
       base_turn_request(std::move(config.base_turn_request)),
       resident_current_plan_id(std::move(config.current_plan_id)),
       installed_blueprint_candidates(std::move(config.installed_blueprint_candidates)),
-      tools(std::move(config.tools)),
-      profile_tools_active(config.profile_tools_active),
-      tool_view(config.tool_view) {}
+      tooling(std::move(config.tooling)) {}
 
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
@@ -104,9 +98,7 @@ bool common_agent_runtime_resident_runtime::run_chat_prompt(
         nullptr,
         nullptr,
         memories,
-        tools,
-        profile_tools_active,
-        tool_view,
+        tooling,
     };
     auto inputs = make_agent_runtime_host_chat_inputs(build_context);
     return host.run_turn(inputs, result, error);
@@ -131,9 +123,7 @@ bool common_agent_runtime_resident_runtime::run_mini_prompt(
         &resident_current_plan_id,
         &installed_blueprint_candidates,
         memories,
-        tools,
-        profile_tools_active,
-        tool_view,
+        tooling,
     };
     auto inputs = make_agent_runtime_host_mini_inputs(build_context, build_context.turn_request.orchestration_config);
     const bool ok = host.run_turn(inputs, result, error);
