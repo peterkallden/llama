@@ -9,6 +9,22 @@
 
 class common_agent_runtime_resident_runtime;
 
+struct common_agent_runtime_session_host_runtime_key {
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+
+    bool operator==(const common_agent_runtime_session_host_runtime_key & other) const {
+        return session_id == other.session_id &&
+               namespace_id == other.namespace_id &&
+               project_id == other.project_id &&
+               memory_scope == other.memory_scope &&
+               plan_scope == other.plan_scope;
+    }
+};
+
 struct common_agent_runtime_session_host_turn_request {
     common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
     std::string prompt;
@@ -87,15 +103,14 @@ private:
         bool & reused,
         std::string & error);
 
+    common_agent_runtime_session_host_runtime_key make_runtime_key(
+        const common_agent_runtime_session_host_turn_request & request) const;
+
     common_agent_runtime_turn_request make_base_turn_request(
         const common_agent_runtime_session_host_turn_request & request) const;
 
     common_agent_runtime_session_host_config config;
-    std::string active_session_id;
-    std::string active_namespace_id;
-    std::string active_project_id;
-    common_memory_scope active_memory_scope = common_memory_scope::session;
-    common_plan_scope active_plan_scope = common_plan_scope::turn;
+    common_agent_runtime_session_host_runtime_key active_runtime_key;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
 };

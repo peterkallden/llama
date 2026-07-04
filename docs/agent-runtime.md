@@ -100,7 +100,7 @@ There is now a small resident runtime layer on top of that wrapper. It owns the 
 
 The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
 
-There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus host-owned session/scope matching rules and can execute repeated chat or mini turns from a prepared host contract.
+There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus one small host-owned runtime-reuse key for session/scope matching, and can execute repeated chat or mini turns from a prepared host contract without carrying several parallel `active_*` identity fields.
 
 The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, context key, host config, derived load params, loop lifetime and inference-session construction in one place. It also now distinguishes host configuration from the active running instance that owns the live `server_context`, derived params and loop thread. The active host now materializes the inference session directly from that running instance instead of rebuilding backend-specific details out in the generic assembly layer. That gives the next model-versus-context lifetime split a concrete home instead of leaving it buried inside generic assembly code.
 
@@ -129,7 +129,7 @@ On top of that, the CLI now has two thin child-process adapters. `daemon-chat` s
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
-Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope/inference contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
+Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
 
 The runtime surface is now split more explicitly in code as well:
 
@@ -301,11 +301,11 @@ The current code should remain useful without any of these. The next steps shoul
 
 2. Keep separating session ownership from model/inference-context ownership.
 
-   The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately. The next meaningful step is to carry that separation upward as well, so keyed agent sessions do not implicitly own more model/context lifetime than they need to.
+   The first ownership split now exists inside `common_agent_runtime_session`, where loaded-model state and active inference-context state are tracked separately. The next meaningful step is to carry that separation upward as well, so keyed agent sessions and resident hosts do not implicitly own more model/context lifetime than they need to.
 
 3. Keep shrinking the remaining CLI-shaped adapters around host construction.
 
-   The host/runtime contracts now carry a shared tooling bundle and the daemon host path now builds policy/runtime/orchestration without routing through a synthetic full CLI runtime-args object. The next cleanup is to keep pushing that edge outward so more callers can assemble host turns, plan identity and hooks directly from host-owned contracts.
+   The host/runtime contracts now carry a shared tooling bundle, and the runtime/orchestration modules no longer expose `args`-shaped builders. The next cleanup is to keep pushing that edge outward so more callers can assemble host turns, plan identity and hooks directly from host-owned contracts.
 
 4. Finish moving the remaining tool-exposure and tool-execution decisions behind the provider-facing host surface.
 
@@ -330,6 +330,10 @@ The current code should remain useful without any of these. The next steps shoul
   Today the resident session manager keys reuse by `namespace_id + session_id + project_id`, which is acceptable for the current foreground daemon slice but still couples project identity to session-runtime ownership. The intended direction is that `namespace` remains the tenant/authority boundary, `project` becomes the long-lived shared work container, and `session` remains the shorter-lived resident conversation/runtime lane inside that project.
 
   In practice that means project-scoped memory and plans should continue to be shareable across multiple sessions, while resident inference/runtime reuse should stay session-local unless and until there is an explicit deeper design for shared live contexts. This is not a blocker for current daemon/host work, but it should be addressed before building richer multi-session project runtime behavior on top of the current combined session key.
+
+- Revisit activity order after the current runtime/session cleanup wave.
+
+  The branch has now completed several structural extractions in a row: provider-first tools, resident runtime/session layering, daemon service/dispatcher split, CLI-free runtime builders, and removal of older daemon/session aliases. Before taking another deep refactor in the same area, it is reasonable to pause and choose between a new activity track such as event/cancellation contracts, deeper `server-context` lifetime splitting, or MCP/provider-facing host work.
 
 ## Current Verification Baseline
 

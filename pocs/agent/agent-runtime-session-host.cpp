@@ -65,6 +65,17 @@ common_agent_runtime_session_host::common_agent_runtime_session_host(
 
 common_agent_runtime_session_host::~common_agent_runtime_session_host() = default;
 
+common_agent_runtime_session_host_runtime_key common_agent_runtime_session_host::make_runtime_key(
+        const common_agent_runtime_session_host_turn_request & request) const {
+    return {
+        request.session_id,
+        request.namespace_id,
+        request.project_id,
+        request.memory_scope,
+        request.plan_scope,
+    };
+}
+
 common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_turn_request(
         const common_agent_runtime_session_host_turn_request & request) const {
     auto resident_request = config.resident_request;
@@ -96,13 +107,10 @@ bool common_agent_runtime_session_host::ensure_runtime(
         const common_agent_runtime_session_host_turn_request & request,
         bool & reused,
         std::string & error) {
+    const auto requested_key = make_runtime_key(request);
     const bool needs_new_runtime =
         !runtime ||
-        active_session_id != request.session_id ||
-        active_namespace_id != request.namespace_id ||
-        active_project_id != request.project_id ||
-        active_memory_scope != request.memory_scope ||
-        active_plan_scope != request.plan_scope;
+        !(active_runtime_key == requested_key);
 
     if (!needs_new_runtime) {
         reused = true;
@@ -119,11 +127,7 @@ bool common_agent_runtime_session_host::ensure_runtime(
             {},
             config.installed_blueprint_candidates,
             config.tooling));
-    active_session_id = request.session_id;
-    active_namespace_id = request.namespace_id;
-    active_project_id = request.project_id;
-    active_memory_scope = request.memory_scope;
-    active_plan_scope = request.plan_scope;
+    active_runtime_key = std::move(requested_key);
     error.clear();
     return true;
 }
@@ -185,10 +189,6 @@ common_agent_runtime_session * common_agent_runtime_session_host::session() {
 
 void common_agent_runtime_session_host::reset() {
     runtime.reset();
-    active_session_id.clear();
-    active_namespace_id.clear();
-    active_project_id.clear();
-    active_memory_scope = common_memory_scope::session;
-    active_plan_scope = common_plan_scope::turn;
+    active_runtime_key = {};
     generated_turn_counter = 0;
 }
