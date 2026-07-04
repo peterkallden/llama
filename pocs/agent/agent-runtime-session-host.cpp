@@ -1,6 +1,7 @@
 #include "agent-runtime-session-host.h"
 
 #include "agent-runtime-resident.h"
+#include "agent-tool-provider.h"
 
 namespace {
 
@@ -56,6 +57,7 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         std::move(config.installed_blueprint_candidates),
         std::move(config.tools),
         config.profile_tools_active,
+        config.tool_view,
         config.tool_registry,
     };
 }
@@ -121,6 +123,7 @@ bool common_agent_runtime_session_host::ensure_runtime(
             config.installed_blueprint_candidates,
             config.tools,
             config.profile_tools_active,
+            config.tool_view,
             config.tool_registry));
     active_session_id = request.session_id;
     active_namespace_id = request.namespace_id;

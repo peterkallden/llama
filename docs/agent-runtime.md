@@ -211,6 +211,8 @@ The older common agent runtime is now also structurally decoupled from the concr
 
 What still remains is behavioral convergence: the runtime path still uses a registry-backed fallback when no resolved provider view is available, and provider-backed execution still needs broader smoke coverage once more of the mini/runtime flow is exercised through resident/daemon tests.
 
+There is now also a focused smoke for the planned-tool-step path itself. It runs a tiny `common_agent_runtime` scenario where the planner emits a calculator tool step and execution goes through a provider-backed tool-runtime adapter rather than a raw registry pointer. That gives the current refactor one concrete end-to-end proof point before broader resident/daemon mini smokes are added.
+
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
 ## MCP Direction
