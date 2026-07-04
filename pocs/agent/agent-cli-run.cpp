@@ -21,7 +21,6 @@
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
 #include "agent/tool-adapters.h"
-#include "agent/tool-chat-bridge.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
 #endif
@@ -128,7 +127,6 @@ int run_agent_cli(common_memory_store & store, args a) {
     bool profile_tools_active = false;
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     common_tool_catalog tool_catalog;
-    common_tool_registry tool_registry;
     if (!a.tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(a.tool_profile, bootstrap, error)) {
@@ -162,12 +160,6 @@ int run_agent_cli(common_memory_store & store, args a) {
                     summary,
                     result);
             };
-        }
-        common_tool_adapter_result adapters;
-        if (!common_register_native_tool_adapters(tool_catalog, a.tool_profile, bindings, tool_registry, adapters, error) ||
-                !common_tool_profile_to_chat_tools(tool_catalog, a.tool_profile, tool_registry, tools, error)) {
-            fprintf(stderr, "tool profile setup failed: %s\n", error.c_str());
-            return 1;
         }
         native_agent_tool_provider provider(
             tool_catalog,
@@ -230,7 +222,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             tools,
             profile_tools_active,
             tool_view.get(),
-            profile_tools_active ? &tool_registry : nullptr,
+            nullptr,
             runtime_post_run);
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
@@ -252,7 +244,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         tools,
         profile_tools_active,
         tool_view.get(),
-        profile_tools_active ? &tool_registry : nullptr,
+        nullptr,
         runtime_post_run);
 
     common_agent_result result;

@@ -198,6 +198,8 @@ There is now also a small provider/view boundary above those native pieces:
 
 The first implementation is native-only. It still uses the existing catalog, registry, and adapter bindings underneath, but the chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
 
+The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
+
 That keeps host authority in one place:
 
 - the model sees only `common_chat_tool`
