@@ -74,6 +74,8 @@ The remaining legacy memory-tool path is now thinner than before. `memory_search
 
 The CLI runtime and CLI selection paths now also share one small generation-helper utility for trace IDs, request envelopes, generation options, and failure formatting. That keeps the resident/runtime contract shaping in one place instead of duplicating it across two CLI-facing files.
 
+The CLI tool path is now also shaped the same way. `agent-cli-run.cpp` no longer carries separate inlined assembly blocks for profile tools and legacy memory tools. A small CLI resolver now returns one `tools + tool_view + profile_tools_active` bundle, which lets the top-level run function stay focused on retrieval and runtime dispatch while the CLI adapter owns host-specific tool wiring.
+
 ### Runtime Host
 
 The runtime host owns one prepared agent turn.

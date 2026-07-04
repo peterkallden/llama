@@ -10,7 +10,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <memory>
+
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
         common_memory_store & store,
         const args & options,
@@ -41,6 +43,99 @@ common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
         }
         return true;
     };
+}
+
+bool resolve_agent_cli_tool_selection(
+        common_memory_store & store,
+        common_plan_store * plan_store,
+        std::string * current_plan_id,
+        const args & options,
+        const common_memory_query & query,
+        bool memory_enabled,
+        common_agent_cli_tool_selection & selection,
+        std::string & error) {
+    selection = {};
+
+    if (!options.tool_profile.empty()) {
+        common_tool_catalog tool_catalog;
+        common_tool_bootstrap_result bootstrap;
+        if (!tool_catalog.bootstrap(options.tool_profile, bootstrap, error)) {
+            error = "tool bootstrap failed: " + error;
+            return false;
+        }
+
+        common_native_tool_bindings bindings;
+        if (!options.repository_root.empty()) {
+            bindings.repository_root = std::filesystem::weakly_canonical(options.repository_root).string();
+        }
+        bindings.plan_store = plan_store;
+        bindings.plan_id = current_plan_id;
+        if (memory_enabled) {
+            bindings.memory_store = &store;
+            bindings.memory_query = query;
+            bindings.embed_memory_query = [&options](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+                return ensure_memory_cli_embedding(options, text, embedding, "tool query", embedding_error);
+            };
+        }
+
+        native_agent_tool_provider provider(
+            tool_catalog,
+            [&bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) {
+                resolved = bindings;
+                binding_error.clear();
+                return true;
+            });
+
+        agent_tool_context tool_context;
+        tool_context.request_id = "cli-run";
+        tool_context.turn_id = options.memory_turn;
+        tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
+        tool_context.memory_scope = query.scope;
+        tool_context.plan_scope = tool_context.scope.plan_scope;
+        tool_context.profile_id = options.tool_profile;
+        tool_context.repository_root = bindings.repository_root;
+        tool_context.allow_network = options.tool_profile == "research";
+        tool_context.allow_policy_gated_writes = options.tool_profile == "memory" || options.tool_profile == "research";
+        tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
+        tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
+        tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+        if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
+            error = "tool provider resolution failed: " + error;
+            return false;
+        }
+        selection.tools = selection.tool_view->chat_tools();
+        selection.profile_tools_active = true;
+        error.clear();
+        return true;
+    }
+
+    if (memory_enabled && (options.enable_memory_search_tool || options.enable_memory_remember_tool)) {
+        selection.tool_view = make_agent_cli_legacy_memory_tool_view(
+            store,
+            options,
+            options.enable_memory_search_tool,
+            options.enable_memory_remember_tool);
+        if (!selection.tool_view) {
+            error = "legacy memory tool view resolution failed";
+            return false;
+        }
+        selection.tools = selection.tool_view->chat_tools();
+        if (options.enable_memory_search_tool) {
+            std::fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %d)\n", 8);
+        }
+        if (options.enable_memory_remember_tool) {
+            std::fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
+        }
+    } else if (options.enable_memory_search_tool) {
+        std::fprintf(stderr, "debug: memory_search tool disabled because query embeddings are unavailable\n");
+    }
+
+    if (!memory_enabled && options.enable_memory_remember_tool) {
+        std::fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
+    }
+
+    error.clear();
+    return true;
 }
 
 std::unique_ptr<agent_tool_view> make_agent_cli_legacy_memory_tool_view(

@@ -9,7 +9,6 @@
 #include "agent-plan-orchestration.h"
 #include "agent-cli-selection.h"
 #include "agent-cli-runtime.h"
-#include "agent-tool-provider.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-chat-driver.h"
 #include "agent-runtime-host.h"
@@ -20,7 +19,6 @@
 #include "agent/memory-learning.h"
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"
-#include "agent/tool-adapters.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
 #endif
@@ -35,15 +33,7 @@
 
 #include <algorithm>
 #include <cstdio>
-#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-#include <filesystem>
-#include <nlohmann/json.hpp>
-#endif
 #include <memory>
-
-#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-using json = nlohmann::ordered_json;
-#endif
 
 int run_agent_cli(common_memory_store & store, args a) {
     std::string error;
@@ -126,88 +116,23 @@ int run_agent_cli(common_memory_store & store, args a) {
     std::unique_ptr<agent_tool_view> tool_view;
     bool profile_tools_active = false;
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
-    common_tool_catalog tool_catalog;
-    if (!a.tool_profile.empty()) {
-        common_tool_bootstrap_result bootstrap;
-        if (!tool_catalog.bootstrap(a.tool_profile, bootstrap, error)) {
-            fprintf(stderr, "tool bootstrap failed: %s\n", error.c_str());
-            return 1;
-        }
-        common_native_tool_bindings bindings;
-        if (!a.repository_root.empty()) bindings.repository_root = std::filesystem::weakly_canonical(a.repository_root).string();
-        bindings.plan_store = plan_store;
-        bindings.plan_id = &active_plan_id;
-        if (memory_enabled) {
-            bindings.memory_store = &store;
-            bindings.memory_query = query;
-            bindings.embed_memory_query = [&a](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-                return ensure_memory_cli_embedding(a, text, embedding, "tool query", embedding_error);
-            };
-            bindings.memory_remember_proposal = [&store, &a](const std::string & arguments) {
-                const std::string result = memory_remember_tool_result(store, a, arguments);
-                const auto parsed = json::parse(result, nullptr, false);
-                if (parsed.is_object() && parsed.value("ok", false)) {
-                    return common_tool_execution_result::success(result);
-                }
-                std::string summary = "memory_remember proposal rejected";
-                if (parsed.is_object() && parsed.contains("error") && parsed["error"].is_string()) {
-                    summary = parsed["error"].get<std::string>();
-                }
-                return common_tool_execution_result::failure(
-                    "memory.remember.rejected",
-                    common_tool_failure_class::policy,
-                    false,
-                    summary,
-                    result);
-            };
-        }
-        native_agent_tool_provider provider(
-            tool_catalog,
-            [&bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) {
-                resolved = bindings;
-                binding_error.clear();
-                return true;
-            });
-        agent_tool_context tool_context;
-        tool_context.request_id = "cli-run";
-        tool_context.turn_id = a.memory_turn;
-        tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(a);
-        tool_context.memory_scope = query.scope;
-        tool_context.plan_scope = tool_context.scope.plan_scope;
-        tool_context.profile_id = a.tool_profile;
-        tool_context.repository_root = bindings.repository_root;
-        tool_context.allow_network = a.tool_profile == "research";
-        tool_context.allow_policy_gated_writes = a.tool_profile == "memory" || a.tool_profile == "research";
-        tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
-        tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
-        tool_context.max_calls = a.max_tool_rounds > 0 ? a.max_tool_rounds : 1;
-        if (!(tool_view = provider.resolve_tools(tool_context, error))) {
-            fprintf(stderr, "tool provider resolution failed: %s\n", error.c_str());
-            return 1;
-        }
-        tools = tool_view->chat_tools();
-        profile_tools_active = true;
-    }
-#endif
-    if (!profile_tools_active && memory_enabled && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
-        tool_view = make_agent_cli_legacy_memory_tool_view(
+    common_agent_cli_tool_selection tool_selection;
+    if (!resolve_agent_cli_tool_selection(
             store,
+            plan_store,
+            &active_plan_id,
             a,
-            a.enable_memory_search_tool,
-            a.enable_memory_remember_tool);
-        tools = tool_view ? tool_view->chat_tools() : std::vector<common_chat_tool>{};
-        if (a.enable_memory_search_tool) {
-            fprintf(stderr, "debug: memory_search tool enabled (read-only, limit <= %d)\n", 8);
-        }
-        if (a.enable_memory_remember_tool) {
-            fprintf(stderr, "debug: memory_remember tool enabled (policy-gated write path)\n");
-        }
-    } else if (!profile_tools_active && a.enable_memory_search_tool) {
-        fprintf(stderr, "debug: memory_search tool disabled because query embeddings are unavailable\n");
+            query,
+            memory_enabled,
+            tool_selection,
+            error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
     }
-    if (!profile_tools_active && a.enable_memory_remember_tool && !memory_enabled) {
-        fprintf(stderr, "debug: memory_remember tool disabled because query embeddings are unavailable\n");
-    }
+    tools = std::move(tool_selection.tools);
+    tool_view = std::move(tool_selection.tool_view);
+    profile_tools_active = tool_selection.profile_tools_active;
+#endif
 
     common_agent_runtime_session runtime_session;
     auto runtime_post_run = make_agent_cli_runtime_post_run(store, a, memory_enabled);

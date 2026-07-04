@@ -5,13 +5,30 @@
 #include "agent-tool-provider.h"
 #include "agent-runtime-host.h"
 
+#include <memory>
 #include <string>
 #include <vector>
+
+struct common_agent_cli_tool_selection {
+    std::vector<common_chat_tool> tools;
+    std::unique_ptr<agent_tool_view> tool_view;
+    bool profile_tools_active = false;
+};
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
     common_memory_store & store,
     const args & options,
     bool memory_enabled);
+
+bool resolve_agent_cli_tool_selection(
+    common_memory_store & store,
+    common_plan_store * plan_store,
+    std::string * current_plan_id,
+    const args & options,
+    const common_memory_query & query,
+    bool memory_enabled,
+    common_agent_cli_tool_selection & selection,
+    std::string & error);
 
 std::unique_ptr<agent_tool_view> make_agent_cli_legacy_memory_tool_view(
     common_memory_store & store,
