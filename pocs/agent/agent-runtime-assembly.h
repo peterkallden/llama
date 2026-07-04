@@ -71,5 +71,4 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_agent_inference & inference,
     const common_agent_runtime_config & runtime_config,
     const std::vector<common_chat_tool> & tools,
-    agent_tool_view * tool_view,
-    const common_tool_registry * tool_registry);
+    agent_tool_view * tool_view);

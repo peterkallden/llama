@@ -49,7 +49,6 @@ struct common_agent_runtime_driver_inputs {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
 };
 
 struct common_agent_runtime_driver_execution {
@@ -68,7 +67,6 @@ struct common_agent_runtime_driver_execution {
     const std::vector<common_chat_tool> & tools;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
-    const common_tool_registry * tool_registry = nullptr;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

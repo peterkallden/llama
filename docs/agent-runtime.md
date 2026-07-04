@@ -217,6 +217,8 @@ There is now also a focused smoke for the planned-tool-step path itself. It runs
 
 The resident/session-host layer has also been trimmed a bit further: it now carries `agent_tool_view` for the modern profile-tool path, but no longer keeps threading a separate `tool_registry` field through its own configs just to pass it onward unused. That makes the resident host/session contracts slightly closer to the intended provider-first shape.
 
+The mini/runtime assembly path has also dropped its registry-backed tool-runtime fallback. Planned tool-step execution in that path now expects the modern provider-backed `agent_tool_view` when profile tools are active, and fails explicitly if a caller tries to run profile-tool planning without that resolved view. That narrows the remaining legacy surface and keeps the planned-tool runtime aligned with the provider-first direction already covered by smoke tests.
+
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
 ## MCP Direction

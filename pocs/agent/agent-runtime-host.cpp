@@ -184,7 +184,6 @@ bool run_agent_runtime_host(
                 execution.tools,
                 execution.profile_tools_active,
                 execution.tool_view,
-                execution.tool_registry,
             };
             return run_agent_runtime_driver(driver_execution, result, error);
         }

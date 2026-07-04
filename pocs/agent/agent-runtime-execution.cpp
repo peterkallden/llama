@@ -41,7 +41,6 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.tools,
         inputs.profile_tools_active,
         inputs.tool_view,
-        inputs.tool_registry,
     };
 }
 
@@ -95,6 +94,11 @@ bool run_agent_runtime_driver(
     common_agent_runtime_driver_execution & execution,
     common_agent_result & result,
     std::string & error) {
+    if (execution.profile_tools_active && execution.tool_view == nullptr) {
+        error = "profile tool execution requires a resolved tool view";
+        return false;
+    }
+
     if (!maybe_auto_select_plan(
             execution.inference,
             execution.runtime_config.generation_config,
@@ -126,8 +130,7 @@ bool run_agent_runtime_driver(
         execution.inference,
         execution.runtime_config,
         execution.tools,
-        execution.tool_view,
-        execution.tool_registry);
+        execution.tool_view);
 
     const common_agent_request request = make_agent_runtime_driver_request(execution);
     result = assembly.runtime->run(request);
