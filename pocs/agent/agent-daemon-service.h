@@ -23,13 +23,13 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<common_memory_store> memory_store;
     std::unique_ptr<common_plan_store> plan_store;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
-    std::unique_ptr<common_agent_runtime_daemon_host> host;
+    std::unique_ptr<common_agent_runtime_session_manager> host;
 };
 
 struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
-    std::optional<common_agent_runtime_daemon_turn_request> turn;
+    std::optional<common_agent_runtime_session_manager_turn_request> turn;
     std::optional<common_agent_runtime_session_key> session;
     std::string target_request_id;
     std::string target_turn_id;
@@ -54,7 +54,7 @@ struct common_agent_daemon_command_result {
     size_t queue_capacity_remaining = 0;
     size_t session_count = 0;
     std::vector<common_agent_runtime_session_key> sessions;
-    common_agent_runtime_daemon_turn_result turn_result;
+    common_agent_runtime_session_manager_turn_result turn_result;
     std::string error;
 };
 

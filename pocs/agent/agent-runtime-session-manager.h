@@ -60,14 +60,3 @@ private:
     common_agent_runtime_session_manager_config config;
     std::map<common_agent_runtime_session_key, std::unique_ptr<common_agent_runtime_session_host>> hosts;
 };
-
-using common_agent_runtime_daemon_turn_request = common_agent_runtime_session_manager_turn_request;
-using common_agent_runtime_daemon_turn_result = common_agent_runtime_session_manager_turn_result;
-using common_agent_runtime_daemon_config = common_agent_runtime_session_manager_config;
-using common_agent_runtime_daemon_build_config = common_agent_runtime_session_manager_build_config;
-using common_agent_runtime_daemon_host = common_agent_runtime_session_manager;
-
-inline common_agent_runtime_daemon_config make_agent_runtime_daemon_config(
-        common_agent_runtime_daemon_build_config config) {
-    return make_agent_runtime_session_manager_config(std::move(config));
-}

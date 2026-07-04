@@ -126,8 +126,8 @@ bool initialize_agent_daemon_environment(
         return false;
     }
 
-    runtime.host = std::make_unique<common_agent_runtime_daemon_host>(
-        make_agent_runtime_daemon_config(
+    runtime.host = std::make_unique<common_agent_runtime_session_manager>(
+        make_agent_runtime_session_manager_config(
             make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, options)));
     error.clear();
     return true;

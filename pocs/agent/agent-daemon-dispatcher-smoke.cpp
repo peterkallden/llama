@@ -18,7 +18,7 @@ common_agent_daemon_command make_turn_command(
     common_agent_daemon_command command;
     command.request_id = std::move(request_id);
     command.type = common_agent_daemon_command_type::run_turn;
-    command.turn = common_agent_runtime_daemon_turn_request{};
+    command.turn = common_agent_runtime_session_manager_turn_request{};
     command.turn->mode = common_agent_runtime_host_mode::chat;
     command.turn->prompt = std::move(prompt);
     command.turn->session_id = "dispatcher-smoke-session";
