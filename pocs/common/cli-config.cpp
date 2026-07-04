@@ -14,9 +14,6 @@
 #endif
 
 bool resolve_agent_profile(args & a, std::string & error) {
-    if (!a.agent_profile_explicit && (a.enable_memory_search_tool || a.enable_memory_remember_tool)) {
-        a.agent_profile = "static";
-    }
     std::string tool_profile;
     std::string planning_mode;
     std::string reflection_mode;

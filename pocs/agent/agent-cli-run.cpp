@@ -96,7 +96,7 @@ int run_agent_cli(common_memory_store & store, args a) {
 
     ggml_backend_load_all();
     std::vector<common_chat_msg> messages;
-    if (!memory_context.empty() || ((a.enable_memory_search_tool || a.enable_memory_remember_tool || !a.tool_profile.empty()) && memory_enabled)) {
+    if (!memory_context.empty() || (!a.tool_profile.empty() && memory_enabled)) {
         common_chat_msg system_msg;
         system_msg.role = "system";
         system_msg.content =

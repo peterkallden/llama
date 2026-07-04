@@ -18,10 +18,6 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
         return false;
     }
 #endif
-    if (!options.tool_profile.empty() && (options.enable_memory_search_tool || options.enable_memory_remember_tool)) {
-        error = "--tool-profile cannot be combined with legacy memory tool flags";
-        return false;
-    }
     if (options.planning_mode != "off" && options.planning_mode != "mini") {
         error = "--planning-mode must be off or mini";
         return false;
@@ -85,10 +81,6 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     if (options.memory_learn_min_confidence < 0.0f || options.memory_learn_min_confidence > 1.0f ||
             options.memory_learn_min_reuse < 0.0f || options.memory_learn_min_reuse > 1.0f) {
         error = "memory learning thresholds must be between 0 and 1";
-        return false;
-    }
-    if (options.planning_mode == "mini" && (options.enable_memory_search_tool || options.enable_memory_remember_tool)) {
-        error = "--planning-mode mini requires a registered --tool-profile instead of legacy memory tool flags";
         return false;
     }
 #ifndef LLAMA_MEMORY_POC_USE_AGENT_TOOLS

@@ -30,12 +30,6 @@ bool resolve_agent_cli_tool_selection(
     common_agent_cli_tool_selection & selection,
     std::string & error);
 
-std::unique_ptr<agent_tool_view> make_agent_cli_legacy_memory_tool_view(
-    common_memory_store & store,
-    const args & options,
-    bool enable_memory_search_tool,
-    bool enable_memory_remember_tool);
-
 common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     const args & options,
     const common_agent_scope & scope,
