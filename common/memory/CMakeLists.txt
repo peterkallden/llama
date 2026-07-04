@@ -11,6 +11,8 @@ add_library(${TARGET}
     memory-policy.h
     memory-retrieval.cpp
     memory-retrieval.h
+    memory-tool-service.cpp
+    memory-tool-service.h
     memory-store.h
     memory-types.h
 )

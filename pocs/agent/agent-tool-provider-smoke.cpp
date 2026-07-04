@@ -1,6 +1,7 @@
 #include "agent-tool-provider.h"
 
 #include "agent/tool-catalog.h"
+#include "memory/memory-in-memory.h"
 
 #include <cstdio>
 #include <memory>
@@ -101,8 +102,53 @@ int main() {
         return 1;
     }
 
+    common_memory_in_memory_store memory_store;
+    if (!memory_store.open("", error)) {
+        std::fprintf(stderr, "memory store open failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    native_agent_tool_provider memory_provider(
+        catalog,
+        [&memory_store](const agent_tool_context &, common_native_tool_bindings & bindings, std::string &) {
+            bindings.memory_store = &memory_store;
+            bindings.memory_query.namespace_id = "provider-smoke";
+            bindings.memory_query.session_id = "session-1";
+            bindings.memory_query.project_id = "project-1";
+            bindings.memory_query.scope = common_memory_scope::session;
+            return true;
+        });
+
+    agent_tool_context memory_context;
+    memory_context.request_id = "provider-smoke";
+    memory_context.turn_id = "turn-3";
+    memory_context.profile_id = "memory";
+    memory_context.allow_policy_gated_writes = true;
+    memory_context.allow_memory_proposals = true;
+
+    std::unique_ptr<agent_tool_view> memory_view = memory_provider.resolve_tools(memory_context, error);
+    if (!memory_view) {
+        std::fprintf(stderr, "memory provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (!has_tool(memory_view->chat_tools(), "memory_remember")) {
+        std::fprintf(stderr, "memory_remember was not exposed through memory tool view\n");
+        return 1;
+    }
+
+    const auto memory_result = memory_view->call({
+        "call-3",
+        "memory_remember",
+        R"({"kind":"fact","content":"The provider smoke stores native memory proposals."})",
+    }, error);
+    if (!memory_result.ok || memory_result.content_json.find("\"decision\":\"accept\"") == std::string::npos) {
+        std::fprintf(stderr, "memory_remember call did not succeed: %s\n", memory_result.content_json.c_str());
+        return 1;
+    }
+
     std::printf("provider_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("calculator_result=%s\n", first_result.content_json.c_str());
     std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web_search") ? "yes" : "no");
+    std::printf("memory_remember_result=%s\n", memory_result.content_json.c_str());
     return 0;
 }

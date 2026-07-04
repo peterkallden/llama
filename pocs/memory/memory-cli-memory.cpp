@@ -7,6 +7,7 @@
 #include "memory/memory-context.h"
 #include "memory/memory-policy.h"
 #include "memory/memory-retrieval.h"
+#include "memory/memory-tool-service.h"
 
 #include <algorithm>
 #include <cmath>
@@ -260,52 +261,33 @@ std::string memory_search_tool_result(
             return result.dump();
         }
 
-        const std::string query_text = request.at("query").get<std::string>();
-        if (query_text.empty() || query_text.size() > k_memory_search_max_query_chars) {
-            result["error"] = "query must contain between 1 and 1024 characters";
-            return result.dump();
-        }
-
-        size_t limit = std::clamp(a.limit, size_t(1), k_memory_search_max_limit);
-        if (request.contains("limit")) {
-            if (!request.at("limit").is_number_unsigned() && !request.at("limit").is_number_integer()) {
-                result["error"] = "limit must be an integer";
-                return result.dump();
+        common_memory_tool_context context;
+        context.max_search_limit = k_memory_search_max_limit;
+        context.max_query_chars = k_memory_search_max_query_chars;
+        context.query_defaults.limit = std::clamp(a.limit, size_t(1), k_memory_search_max_limit);
+        context.query_defaults.token_budget = a.memory_token_budget;
+        apply_memory_scope(a, context.query_defaults);
+        context.embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & tool_error) {
+            if (!ensure_memory_cli_embedding(a, text, embedding, "tool query", tool_error)) {
+                tool_error = "unable to generate a memory query embedding: " + tool_error;
+                return false;
             }
-            const int requested_limit = request.at("limit").get<int>();
-            if (requested_limit < 1 || requested_limit > (int) k_memory_search_max_limit) {
-                result["error"] = "limit must be between 1 and 8";
-                return result.dump();
-            }
-            limit = (size_t) requested_limit;
-        }
+            return true;
+        };
 
-        common_memory_query query;
-        query.text = query_text;
-        query.limit = limit;
-        query.token_budget = a.memory_token_budget;
-        apply_memory_scope(a, query);
-
+        common_memory_tool_search_result search_result;
+        common_memory_tool_service service(store);
         std::string error;
-        if (!ensure_memory_cli_embedding(a, query.text, query.embedding, "tool query", error)) {
-            result["error"] = "unable to generate a memory query embedding: " + error;
-            return result.dump();
-        }
-
-        common_memory_retrieval retrieval(store);
-        const auto hits = retrieval.retrieve(query, error);
-        if (!error.empty()) {
+        if (!service.search(context, arguments, search_result, error)) {
             result["error"] = "memory search failed: " + error;
             return result.dump();
         }
 
-        common_memory_context_config context_config;
-        context_config.char_budget = a.memory_token_budget * 4;
         result["ok"] = true;
-        result["query"] = query_text;
-        result["count"] = hits.size();
-        result["context"] = common_memory_render_context(hits, context_config);
-        fprintf(stderr, "debug: memory_search returned %zu result(s)\n", hits.size());
+        result["query"] = search_result.query;
+        result["count"] = search_result.hits.size();
+        result["context"] = search_result.context;
+        fprintf(stderr, "debug: memory_search returned %zu result(s)\n", search_result.hits.size());
     } catch (const std::exception & e) {
         result["error"] = std::string("invalid tool arguments: ") + e.what();
     }
@@ -342,64 +324,30 @@ std::string memory_remember_tool_result(
             return result.dump();
         }
 
-        common_memory_remember_request proposal;
-        const auto scope = make_memory_cli_scope(a);
-        if (!common_memory_kind_parse(request.at("kind").get<std::string>(), proposal.kind)) {
-            result["error"] = "unsupported memory kind";
-            return result.dump();
-        }
-        proposal.content = request.at("content").get<std::string>();
-        proposal.scope = scope.memory_scope;
-        proposal.namespace_id = scope.namespace_id;
-        proposal.session_id = scope.session_id;
-        proposal.project_id = scope.project_id;
-        proposal.turn_id = scope.turn_id;
-        proposal.global_opt_in = scope.memory_global_opt_in;
-        if (proposal.content.empty() || proposal.content.size() > k_memory_remember_max_content_chars) {
-            result["error"] = "content must contain between 1 and 512 characters";
-            return result.dump();
-        }
+        common_memory_tool_context context;
+        context.max_content_chars = k_memory_remember_max_content_chars;
+        context.max_rationale_chars = k_memory_remember_max_rationale_chars;
+        context.allow_write_proposals = true;
+        apply_memory_scope(a, context.query_defaults);
+        context.now = std::time(nullptr);
+        context.embed = [&a](const std::string & text, std::vector<float> & embedding, std::string & tool_error) {
+            if (!ensure_memory_cli_embedding(a, text, embedding, "tool memory", tool_error)) {
+                tool_error = "unable to generate a memory embedding: " + tool_error;
+                return false;
+            }
+            return true;
+        };
 
-        if (request.contains("importance")) {
-            if (!request.at("importance").is_number()) {
-                result["error"] = "importance must be a number";
-                return result.dump();
-            }
-            proposal.importance = request.at("importance").get<float>();
-        }
-        if (request.contains("confidence")) {
-            if (!request.at("confidence").is_number()) {
-                result["error"] = "confidence must be a number";
-                return result.dump();
-            }
-            proposal.confidence = request.at("confidence").get<float>();
-        }
-        if (request.contains("rationale")) {
-            if (!request.at("rationale").is_string()) {
-                result["error"] = "rationale must be a string";
-                return result.dump();
-            }
-            proposal.rationale = request.at("rationale").get<std::string>();
-            if (proposal.rationale.size() > k_memory_remember_max_rationale_chars) {
-                result["error"] = "rationale must contain at most 240 characters";
-                return result.dump();
-            }
-        }
-
-        std::vector<float> embedding;
+        common_memory_tool_remember_result remember_result;
+        common_memory_tool_service service(store);
         std::string error;
-        if (!ensure_memory_cli_embedding(a, proposal.content, embedding, "tool memory", error)) {
-            result["error"] = "unable to generate a memory embedding: " + error;
-            return result.dump();
-        }
-
-        const auto decision = common_memory_evaluate_remember_request(
-            store, proposal, embedding, std::time(nullptr), error);
-        if (!error.empty()) {
+        if (!service.remember_proposal(context, arguments, remember_result, error)) {
             result["error"] = "memory policy evaluation failed: " + error;
             return result.dump();
         }
 
+        const auto & proposal = remember_result.proposal;
+        const auto & decision = remember_result.decision;
         result["ok"] = true;
         result["decision"] = common_memory_remember_decision_name(decision.decision);
         result["reason"] = decision.reason;

@@ -68,6 +68,8 @@ It currently owns argument-derived wiring that is still local to CLI behavior:
 
 This adapter is allowed to know about CLI `args`. The runtime/session host below it should not need to. The current daemon path now follows the same rule for policy/config assembly, even though its own option parsing is still local.
 
+The remaining legacy memory-tool handler path is now thinner than before. `memory_search` and `memory_remember` still have old CLI-facing wrappers for the opt-in `--memory-*-tool` flags, but the shared search/proposal logic underneath them has been moved into a small CLI-free `common_memory_tool_service`. That same service is now also used by the native provider-backed memory adapters, so the current duplication is mostly at the outer wrapper layer rather than in the memory-policy and retrieval core.
+
 `agent-cli-run` now also has a small adapter helper beside it. That helper owns CLI-only validation, default stamping, and mini/bootstrap/export setup so the top-level run function can stay focused on retrieval, tool wiring, and dispatch into the runtime host.
 
 The CLI runtime and CLI selection paths now also share one small generation-helper utility for trace IDs, request envelopes, generation options, and failure formatting. That keeps the resident/runtime contract shaping in one place instead of duplicating it across two CLI-facing files.
@@ -220,6 +222,8 @@ The resident/session-host layer has also been trimmed a bit further: it now carr
 The mini/runtime assembly path has also dropped its registry-backed tool-runtime fallback. Planned tool-step execution in that path now expects the modern provider-backed `agent_tool_view` when profile tools are active, and fails explicitly if a caller tries to run profile-tool planning without that resolved view. That narrows the remaining legacy surface and keeps the planned-tool runtime aligned with the provider-first direction already covered by smoke tests.
 
 The host/chat contracts have now been trimmed in the same direction. The runtime host, chat driver, CLI host adapter and resident host path no longer carry a parallel `tool_registry` field through their modern provider-backed contracts. For profile-driven tool exposure and execution they now thread `agent_tool_view` only; the remaining legacy tool handling in chat is the older memory-tool handler path, which is separate from profile tools.
+
+The first shared memory-tool migration now sits underneath that provider path as well. Native `memory_search` and `memory_remember` execution both go through `common_memory_tool_service`, which keeps host-owned scope, embedding, store and policy bindings in one place while preserving the current synchronous behavior and result shapes. The older CLI memory-tool wrappers still exist for the explicit legacy flags, but they now delegate into the same core service instead of carrying a separate implementation.
 
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
