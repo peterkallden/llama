@@ -2,8 +2,11 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-config.cpp
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
+    agent-daemon-client.cpp
     agent-tool-provider.cpp
     agent-daemon-adapter.cpp
+    agent-daemon-protocol.cpp
+    agent-daemon-runtime.cpp
     agent-daemon-dispatcher.cpp
     agent-daemon-service.cpp
     agent-cli-host-adapter.cpp

@@ -33,6 +33,10 @@ struct daemon_options {
     bool agent_trace = false;
 };
 
+bool parse_mode(
+    const std::string & value,
+    common_agent_runtime_host_mode & mode);
+
 bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options);
 void print_agent_daemon_usage(const char * argv0);
 
