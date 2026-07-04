@@ -180,6 +180,8 @@ The current split is still a pragmatic first slice rather than the final shape. 
 
 That split now exists structurally for both the CLI-backed and `server-context` resident sessions, and the daemon/admin path now treats `n_predict` as a turn-level override instead of a resident-runtime identity change. The `server-context` path is still coarser in a deeper sense: its current host object still combines model load and inference-context lifetime, so the next cleanup there is to separate those lifetimes more explicitly rather than just removing turn-shaped fields from the reuse key.
 
+The resident `server-context` host no longer bakes `n_predict` into its own resident host config either. The decode limit is now only stamped onto per-turn server tasks, while the long-lived host keeps only load/context identity plus baseline runtime settings. That makes the reuse boundary line up better with the actual runtime behavior exercised by the resident and daemon `n_predict` reuse smokes.
+
 ### Stores and Scope
 
 Memory and plan stores are runtime dependencies, not global singletons.

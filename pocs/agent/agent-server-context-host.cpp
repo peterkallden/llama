@@ -28,7 +28,6 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
         const common_agent_inference_options & options) {
     return {
         make_agent_server_context_context_key(options),
-        options.n_predict,
         LOG_LEVEL_WARN,
     };
 }
@@ -37,7 +36,7 @@ common_params make_agent_server_context_params(
         const common_agent_server_context_host_config & config) {
     common_params params = {};
     params.model.path = config.context_key.load_key.model;
-    params.n_predict = config.n_predict;
+    params.n_predict = -1;
     params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
     params.fit_params = config.context_key.load_key.fit_params;
     params.n_parallel = config.context_key.n_parallel;

@@ -26,7 +26,6 @@ struct common_agent_server_context_context_key {
 
 struct common_agent_server_context_host_config {
     common_agent_server_context_context_key context_key;
-    int n_predict = -1;
     int verbosity = LOG_LEVEL_WARN;
 };
 
