@@ -38,6 +38,8 @@ What exists today is a narrow foreground daemon, not a production service lifecy
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
+Daemon command results now also carry a small internal daemon event list plus `daemon_event_count`. The current JSONL path is still request/response rather than streamed, but admin/test callers can now distinguish queueing, dispatch start, status reporting, session lifecycle actions, shutdown requests, queued-turn cancellation, and active-turn cancellation rejection without scraping diagnostics.
+
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
 
 ## Layer Responsibilities
@@ -123,7 +125,7 @@ That service layer now understands a slightly broader host-oriented command surf
 
 `status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys and queued-command count. It now also exposes a few small lifecycle signals from the dispatcher itself, such as whether the worker thread is running, whether the daemon is still accepting new commands, whether shutdown has been requested, and the current queue capacity. `reset_session` and `close_session` go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
 
-`cancel_turn` now exists as a first dispatcher-level contract, but the current support is deliberately narrow: it can cancel a turn that is already sitting in the daemon's internal queue, before execution begins. It does not yet interrupt an actively running turn, because the current runtime/inference/tool stack still lacks a full end-to-end cancellation token and safe active-turn abort semantics. The current foreground JSONL transport is also still request/response serial from one stdin stream, so the first meaningful cancel smoke lives one layer lower at the dispatcher boundary rather than in the top-level stdio protocol.
+`cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while attempts to cancel the currently active turn are rejected with a `turn.cancel_rejected` daemon event plus the active request/turn identity. That is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end cancellation token or safe active-turn abort semantics, and the current foreground JSONL transport is still request/response serial from one stdin stream.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
@@ -311,9 +313,9 @@ The current code should remain useful without any of these. The next steps shoul
 
    The runtime host now carries one tooling bundle instead of separate `tools + profile_tools_active + tool_view` fields, and chat/runtime dispatch uses that bundle consistently. The remaining cleanup is mostly convergence work: keep trimming older helper signatures and make sure blueprint/planning-related tool decisions continue to depend on the same host-owned provider view rather than drifting back toward registry-era wiring.
 
-5. Add cancellation, timeout and event contracts before async tools.
+5. Extend cancellation, timeout and event contracts before async tools.
 
-   Synchronous tools are acceptable for the current slice. Workers should wait until timeout, cancellation, retry, ordering and failure reporting semantics are explicit. The same is true for daemon output: a richer internal event model should exist before transport-specific streaming grows.
+   Synchronous tools are acceptable for the current slice. The daemon now has a small internal event list and queued-turn cancellation contract, but workers should still wait until active-turn cancellation, timeout, retry, ordering and richer failure reporting semantics are explicit.
 
 6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
 

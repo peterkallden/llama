@@ -137,6 +137,24 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
     if (!result.event.empty()) {
         response["event"] = result.event;
     }
+    response["daemon_event_count"] = result.daemon_event_count;
+    json daemon_events = json::array();
+    for (const auto & event : result.events) {
+        json event_json = {
+            {"type", event.type},
+        };
+        if (!event.request_id.empty()) {
+            event_json["request_id"] = event.request_id;
+        }
+        if (!event.turn_id.empty()) {
+            event_json["turn_id"] = event.turn_id;
+        }
+        if (!event.detail.empty()) {
+            event_json["detail"] = event.detail;
+        }
+        daemon_events.push_back(std::move(event_json));
+    }
+    response["events"] = std::move(daemon_events);
 
     if (result.event == "status") {
         response["state"] = result.state;
@@ -176,6 +194,12 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
         }
         if (!result.target_turn_id.empty()) {
             response["target_turn_id"] = result.target_turn_id;
+        }
+        if (!result.active_request_id.empty()) {
+            response["active_request_id"] = result.active_request_id;
+        }
+        if (!result.active_turn_id.empty()) {
+            response["active_turn_id"] = result.active_turn_id;
         }
         if (!result.error.empty()) {
             response["error"] = result.error;

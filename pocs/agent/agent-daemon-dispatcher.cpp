@@ -2,6 +2,32 @@
 
 #include <utility>
 
+namespace {
+
+void append_daemon_event(
+        common_agent_daemon_command_result & result,
+        std::string type,
+        std::string request_id,
+        std::string turn_id,
+        std::string detail = {}) {
+    result.events.push_back(common_agent_daemon_event{
+        std::move(type),
+        std::move(request_id),
+        std::move(turn_id),
+        std::move(detail),
+    });
+    result.daemon_event_count = result.events.size();
+}
+
+std::string command_turn_id(const common_agent_daemon_command & command) {
+    if (!command.turn.has_value()) {
+        return {};
+    }
+    return command.turn->turn_id;
+}
+
+} // namespace
+
 common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
         common_agent_daemon_runtime runtime,
         size_t max_queue_size)
@@ -46,17 +72,39 @@ bool common_agent_daemon_dispatcher::execute(
         if (!accepting_commands) {
             error = "daemon dispatcher is not accepting new commands";
             result = {};
+            result.ok = false;
             result.request_id = command.request_id;
+            result.event = "command_rejected";
             result.error = error;
+            append_daemon_event(
+                result,
+                "command.rejected",
+                command.request_id,
+                command_turn_id(command),
+                error);
             return false;
         }
         if (queue.size() >= max_queue_size) {
             error = "daemon command queue is full";
             result = {};
+            result.ok = false;
             result.request_id = command.request_id;
+            result.event = "command_rejected";
             result.error = error;
+            append_daemon_event(
+                result,
+                "command.rejected",
+                command.request_id,
+                command_turn_id(command),
+                error);
             return false;
         }
+        item->events.push_back(common_agent_daemon_event{
+            "command.queued",
+            command.request_id,
+            command_turn_id(command),
+            {},
+        });
         queue.push_back(item);
     }
 
@@ -121,7 +169,17 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             if ((!command.target_request_id.empty() && command.target_request_id == active_request_id) ||
                     (!command.target_turn_id.empty() && command.target_turn_id == active_turn_id)) {
                 error = "active turn cancellation is not supported yet";
+                result.ok = false;
+                result.event = "turn_cancel_rejected";
+                result.active_request_id = active_request_id;
+                result.active_turn_id = active_turn_id;
                 result.error = error;
+                append_daemon_event(
+                    result,
+                    "turn.cancel_rejected",
+                    command.request_id,
+                    command.target_turn_id.empty() ? active_turn_id : command.target_turn_id,
+                    error);
                 return false;
             }
         }
@@ -129,7 +187,15 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
 
     if (!cancelled_item) {
         error = "target turn is not queued";
+        result.ok = false;
+        result.event = "turn_cancel_rejected";
         result.error = error;
+        append_daemon_event(
+            result,
+            "turn.cancel_rejected",
+            command.request_id,
+            command.target_turn_id,
+            error);
         return false;
     }
 
@@ -139,10 +205,25 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
     queued.result.turn_result.cancelled = true;
     queued.result.turn_result.error = "turn cancelled before execution";
     queued.result.error = queued.result.turn_result.error;
+    queued.result.event = "turn_cancelled";
+    append_daemon_event(
+        queued.result,
+        "turn.cancelled",
+        cancelled_item->command.request_id,
+        command_turn_id(cancelled_item->command),
+        queued.result.turn_result.error);
     cancelled_item->promise.set_value(std::move(queued));
 
     result.ok = true;
     result.event = "turn_cancelled";
+    append_daemon_event(
+        result,
+        "turn.cancelled",
+        command.request_id,
+        command.target_turn_id.empty()
+            ? command_turn_id(cancelled_item->command)
+            : command.target_turn_id,
+        "queued turn cancelled");
     error.clear();
     return true;
 }
@@ -206,6 +287,14 @@ void common_agent_daemon_dispatcher::worker_loop() {
         }
 
         queued_result queued;
+        queued.result.request_id = item->command.request_id;
+        queued.result.events = item->events;
+        queued.result.daemon_event_count = queued.result.events.size();
+        append_daemon_event(
+            queued.result,
+            "command.started",
+            item->command.request_id,
+            command_turn_id(item->command));
         if (item->command.type == common_agent_daemon_command_type::get_status) {
             std::lock_guard<std::mutex> lock(mutex);
             queued.ok = populate_status_locked(queued.result, queued.error);

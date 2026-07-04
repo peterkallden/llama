@@ -112,8 +112,18 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "unexpected cancel result\n");
         return 1;
     }
+    if (cancel_result.daemon_event_count < 1 ||
+            cancel_result.events.empty() ||
+            cancel_result.events.back().type != "turn.cancelled") {
+        std::fprintf(stderr, "cancel result missing daemon cancellation event\n");
+        return 1;
+    }
     if (!first_ok || first_result.turn_result.response.empty()) {
         std::fprintf(stderr, "first turn failed: %s\n", first_error.c_str());
+        return 1;
+    }
+    if (first_result.daemon_event_count < 2) {
+        std::fprintf(stderr, "first turn missing daemon lifecycle events\n");
         return 1;
     }
     if (second_ok) {
@@ -123,6 +133,12 @@ int main(int argc, char ** argv) {
     if (!second_result.turn_result.cancelled ||
             second_result.turn_result.error != "turn cancelled before execution") {
         std::fprintf(stderr, "second queued turn was not marked cancelled correctly\n");
+        return 1;
+    }
+    if (second_result.daemon_event_count < 1 ||
+            second_result.events.empty() ||
+            second_result.events.back().type != "turn.cancelled") {
+        std::fprintf(stderr, "second queued turn missing daemon cancellation event\n");
         return 1;
     }
 

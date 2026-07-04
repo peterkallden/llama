@@ -36,6 +36,7 @@ private:
 
     struct queued_command {
         common_agent_daemon_command command;
+        std::vector<common_agent_daemon_event> events;
         std::promise<queued_result> promise;
     };
 
