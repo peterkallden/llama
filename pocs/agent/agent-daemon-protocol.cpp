@@ -16,6 +16,16 @@ std::string default_plan_scope_for_memory_scope(common_memory_scope memory_scope
     return "session";
 }
 
+const char * daemon_plan_scope_name(common_plan_scope scope) {
+    switch (scope) {
+        case common_plan_scope::turn:    return "turn";
+        case common_plan_scope::session: return "session";
+        case common_plan_scope::project: return "project";
+        case common_plan_scope::global:  return "global";
+    }
+    return "turn";
+}
+
 } // namespace
 
 bool parse_agent_daemon_command(
@@ -56,7 +66,6 @@ bool parse_agent_daemon_command(
         command.session = common_agent_runtime_session_key{
             parsed.value("namespace_id", "default-namespace"),
             parsed.value("session_id", "default-session"),
-            parsed.value("project_id", ""),
         };
         error.clear();
         return true;
@@ -176,9 +185,11 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
         json session_array = json::array();
         for (const auto & session : result.sessions) {
             session_array.push_back({
-                {"namespace_id", session.namespace_id},
-                {"session_id", session.session_id},
+                {"namespace_id", session.key.namespace_id},
+                {"session_id", session.key.session_id},
                 {"project_id", session.project_id},
+                {"memory_scope", common_memory_scope_name(session.memory_scope)},
+                {"plan_scope", daemon_plan_scope_name(session.plan_scope)},
             });
         }
         response["session_keys"] = std::move(session_array);

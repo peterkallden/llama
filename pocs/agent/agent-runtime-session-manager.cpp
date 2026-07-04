@@ -9,7 +9,6 @@ common_agent_runtime_session_key common_agent_runtime_session_manager::make_sess
     return {
         request.namespace_id,
         request.session_id,
-        request.project_id,
     };
 }
 
@@ -60,11 +59,17 @@ bool common_agent_runtime_session_manager::close_session(
     return true;
 }
 
-std::vector<common_agent_runtime_session_key> common_agent_runtime_session_manager::list_sessions() const {
-    std::vector<common_agent_runtime_session_key> sessions;
+std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_session_manager::list_sessions() const {
+    std::vector<common_agent_runtime_session_descriptor> sessions;
     sessions.reserve(hosts.size());
     for (const auto & entry : hosts) {
-        sessions.push_back(entry.first);
+        const auto descriptor = entry.second->describe_session();
+        sessions.push_back({
+            entry.first,
+            descriptor.project_id,
+            descriptor.memory_scope,
+            descriptor.plan_scope,
+        });
     }
     return sessions;
 }

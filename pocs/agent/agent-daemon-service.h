@@ -61,7 +61,7 @@ struct common_agent_daemon_command_result {
     size_t queue_capacity_remaining = 0;
     size_t session_count = 0;
     size_t daemon_event_count = 0;
-    std::vector<common_agent_runtime_session_key> sessions;
+    std::vector<common_agent_runtime_session_descriptor> sessions;
     std::vector<common_agent_daemon_event> events;
     common_agent_runtime_session_manager_turn_result turn_result;
     std::string error;

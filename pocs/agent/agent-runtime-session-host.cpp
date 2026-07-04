@@ -187,6 +187,16 @@ common_agent_runtime_session * common_agent_runtime_session_host::session() {
     return runtime ? &runtime->runtime_host().session() : nullptr;
 }
 
+common_agent_runtime_session_host_descriptor common_agent_runtime_session_host::describe_session() const {
+    return {
+        active_runtime_key.namespace_id,
+        active_runtime_key.session_id,
+        active_runtime_key.project_id,
+        active_runtime_key.memory_scope,
+        active_runtime_key.plan_scope,
+    };
+}
+
 void common_agent_runtime_session_host::reset() {
     runtime.reset();
     active_runtime_key = {};

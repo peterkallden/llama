@@ -53,6 +53,14 @@ struct common_agent_runtime_session_host_turn_result {
     std::string error;
 };
 
+struct common_agent_runtime_session_host_descriptor {
+    std::string namespace_id;
+    std::string session_id;
+    std::string project_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+};
+
 struct common_agent_runtime_session_host_config {
     common_memory_store & memory_store;
     common_plan_store & plan_store;
@@ -96,6 +104,7 @@ public:
 
     const common_agent_runtime_session * session() const;
     common_agent_runtime_session * session();
+    common_agent_runtime_session_host_descriptor describe_session() const;
 
 private:
     bool ensure_runtime(

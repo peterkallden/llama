@@ -106,7 +106,7 @@ There is now also a small generic resident session host above that builder layer
 
 The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, context key, host config, derived load params, loop lifetime and inference-session construction in one place. It also now distinguishes host configuration from the active running instance that owns the live `server_context`, derived params and loop thread. The active host now materializes the inference session directly from that running instance instead of rebuilding backend-specific details out in the generic assembly layer. Runtime session ownership has also been tightened a little further: for the `server-context` backend, the long-lived resident host now sits in the session's loaded-model state, while the active inference-context state only owns the currently built inference session that uses that host. That gives the next model-versus-context lifetime split a more concrete home instead of leaving it buried inside generic assembly code.
 
-On top of that sits the first explicit session manager for the daemon/admin path. It keys resident session hosts by namespace, session and project so the foreground daemon can now handle `session A`, `session B`, `session A again` and return to the prior resident state for `A` instead of pretending there is only one active slot.
+On top of that sits the first explicit session manager for the daemon/admin path. It now keys resident session hosts by namespace and session, while the currently bound project and scope remain part of the runtime state inside that session host. That means the foreground daemon can now treat the resident lane as `session A`, `session B`, `session A again` without baking project ownership directly into the manager key, while still rebuilding the resident runtime if a session changes project or scope.
 
 The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
 
@@ -129,7 +129,7 @@ That service layer now understands a slightly broader host-oriented command surf
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
-The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
+The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. The current session manager treats namespace plus session as the live resident lane, while status responses still report the currently bound project/scope for that lane. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
 Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
 
@@ -327,11 +327,11 @@ The current code should remain useful without any of these. The next steps shoul
 
 ## Backlog Notes
 
-- Separate project ownership from session-runtime ownership in the daemon/runtime host model.
+- Keep tightening the session-versus-project split above the current manager key.
 
-  Today the resident session manager keys reuse by `namespace_id + session_id + project_id`, which is acceptable for the current foreground daemon slice but still couples project identity to session-runtime ownership. The intended direction is that `namespace` remains the tenant/authority boundary, `project` becomes the long-lived shared work container, and `session` remains the shorter-lived resident conversation/runtime lane inside that project.
+  The current daemon/session layer now treats `namespace + session` as the resident lane key, while `project` remains part of the host-owned runtime scope bound within that lane. That is closer to the intended model, but it is still only a first cut: project-scoped memory and plans are still assembled through the same session-host contract, and there is not yet a richer host-owned project object above the resident runtime.
 
-  In practice that means project-scoped memory and plans should continue to be shareable across multiple sessions, while resident inference/runtime reuse should stay session-local unless and until there is an explicit deeper design for shared live contexts. This is not a blocker for current daemon/host work, but it should be addressed before building richer multi-session project runtime behavior on top of the current combined session key.
+  In practice the intended direction is still the same: `namespace` stays the tenant/authority boundary, `project` is the longer-lived shared work container, and `session` is the shorter-lived live runtime/conversation lane inside that project. That becomes more important once MCP-facing host state, external tool providers, and richer multi-session project workflows sit above the current daemon/admin path.
 
 - Revisit activity order after the current runtime/session cleanup wave.
 

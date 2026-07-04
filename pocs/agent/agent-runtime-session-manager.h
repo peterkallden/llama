@@ -10,13 +10,18 @@
 struct common_agent_runtime_session_key {
     std::string namespace_id;
     std::string session_id;
-    std::string project_id;
 
     bool operator<(const common_agent_runtime_session_key & other) const {
         if (namespace_id != other.namespace_id) return namespace_id < other.namespace_id;
-        if (session_id != other.session_id) return session_id < other.session_id;
-        return project_id < other.project_id;
+        return session_id < other.session_id;
     }
+};
+
+struct common_agent_runtime_session_descriptor {
+    common_agent_runtime_session_key key;
+    std::string project_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
 };
 
 using common_agent_runtime_session_manager_turn_request = common_agent_runtime_session_host_turn_request;
@@ -46,7 +51,7 @@ public:
         const common_agent_runtime_session_key & key,
         std::string & error);
 
-    std::vector<common_agent_runtime_session_key> list_sessions() const;
+    std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
 
     void reset_all();
 
