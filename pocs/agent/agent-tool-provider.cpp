@@ -20,6 +20,10 @@ bool is_definition_allowed(
         const common_tool_definition & definition,
         const common_tool_registry & registry,
         const agent_tool_context & context) {
+    if (!context.allowed_tool_names.empty() &&
+            std::find(context.allowed_tool_names.begin(), context.allowed_tool_names.end(), definition.name) == context.allowed_tool_names.end()) {
+        return false;
+    }
     if (!registry.matches_binding(definition.name, definition.version, definition.executor_id)) {
         return false;
     }

@@ -7,180 +7,10 @@
 #include "agent-runtime-execution.h"
 #include "common/cli-scope.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <memory>
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::ordered_json;
-
-namespace {
-
-agent_tool_result make_legacy_memory_failure(
-        const agent_tool_call & call,
-        std::string code,
-        common_tool_failure_class failure_class,
-        std::string summary,
-        std::string raw = {}) {
-    agent_tool_result result;
-    result.ok = false;
-    result.tool_call_id = call.id;
-    result.tool_name = call.name;
-    result.failure_code = std::move(code);
-    result.failure_class = failure_class;
-    result.safe_summary = std::move(summary);
-    result.raw_diagnostic = std::move(raw);
-    result.content_json = json({
-        {"ok", false},
-        {"error", {
-            {"code", result.failure_code},
-            {"message", result.safe_summary},
-            {"retryable", false},
-            {"class", common_tool_failure_class_name(result.failure_class)},
-        }},
-    }).dump();
-    return result;
-}
-
-agent_tool_result normalize_legacy_memory_result(
-        const agent_tool_call & call,
-        const std::string & raw_result) {
-    const auto parsed = json::parse(raw_result, nullptr, false);
-    if (parsed.is_discarded()) {
-        agent_tool_result result;
-        result.ok = true;
-        result.tool_call_id = call.id;
-        result.tool_name = call.name;
-        result.content_json = json({{"ok", true}, {"result_text", raw_result}}).dump();
-        return result;
-    }
-
-    if (parsed.is_object() && parsed.value("ok", false)) {
-        agent_tool_result result;
-        result.ok = true;
-        result.tool_call_id = call.id;
-        result.tool_name = call.name;
-        result.content_json = json({{"ok", true}, {"result", parsed}}).dump();
-        return result;
-    }
-
-    std::string summary = "The tool call was rejected by its legacy memory contract.";
-    if (parsed.is_object() && parsed.contains("error") && parsed["error"].is_string()) {
-        summary = parsed["error"].get<std::string>();
-    }
-    return make_legacy_memory_failure(
-        call,
-        "tool_call_rejected",
-        common_tool_failure_class::execution,
-        std::move(summary),
-        raw_result);
-}
-
-class legacy_memory_agent_tool_view final : public agent_tool_view {
-public:
-    legacy_memory_agent_tool_view(
-            common_memory_store & store,
-            const args & options,
-            bool enable_memory_search_tool,
-            bool enable_memory_remember_tool)
-        : store(store)
-        , options(options)
-        , max_calls(options.max_tool_rounds > 0 ? options.max_tool_rounds : 1) {
-        if (enable_memory_search_tool) {
-            tool_defs.push_back(memory_search_tool_definition());
-        }
-        if (enable_memory_remember_tool) {
-            tool_defs.push_back(memory_remember_tool_definition());
-        }
-    }
-
-    const std::vector<common_chat_tool> & chat_tools() const override {
-        return tool_defs;
-    }
-
-    bool exposes_tool(const std::string & name) const override {
-        for (const auto & tool : tool_defs) {
-            if (tool.name == name) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    bool is_read_only(const std::string & name) const override {
-        return name == "memory_search" && exposes_tool(name);
-    }
-
-    bool validate(const agent_tool_call & call, std::string & error) const override {
-        if (!exposes_tool(call.name)) {
-            error = "tool is unavailable in this runtime view";
-            return false;
-        }
-        const auto parsed = json::parse(call.arguments_json, nullptr, false);
-        if (!parsed.is_object()) {
-            error = "tool arguments must be a JSON object";
-            return false;
-        }
-        error.clear();
-        return true;
-    }
-
-    agent_tool_result call(
-            const agent_tool_call & call,
-            std::string & error) override {
-        if (call_count >= max_calls) {
-            error = "tool call limit reached";
-            return make_legacy_memory_failure(
-                call,
-                "tool_call_limit_reached",
-                common_tool_failure_class::limit,
-                "The runtime tool call limit has been reached.");
-        }
-        if (!exposes_tool(call.name)) {
-            error = "tool is unavailable in this runtime view";
-            return make_legacy_memory_failure(
-                call,
-                "tool_unavailable",
-                common_tool_failure_class::not_found,
-                "The requested tool is not available in this runtime view.",
-                error);
-        }
-        if (!validate(call, error)) {
-            return make_legacy_memory_failure(
-                call,
-                "tool.invalid_arguments",
-                common_tool_failure_class::validation,
-                "Tool arguments do not satisfy the registered contract.",
-                error);
-        }
-
-        ++call_count;
-        if (call.name == "memory_search") {
-            error.clear();
-            return normalize_legacy_memory_result(call, memory_search_tool_result(store, options, call.arguments_json));
-        }
-        if (call.name == "memory_remember") {
-            error.clear();
-            return normalize_legacy_memory_result(call, memory_remember_tool_result(store, options, call.arguments_json));
-        }
-        error.clear();
-        return make_legacy_memory_failure(
-            call,
-            "tool.execution_failed",
-            common_tool_failure_class::execution,
-            "The legacy memory tool dispatch did not recognize the requested tool name.");
-    }
-
-private:
-    common_memory_store & store;
-    const args & options;
-    std::vector<common_chat_tool> tool_defs;
-    size_t max_calls = 1;
-    size_t call_count = 0;
-};
-
-} // namespace
-
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
         common_memory_store & store,
         const args & options,
@@ -221,11 +51,54 @@ std::unique_ptr<agent_tool_view> make_agent_cli_legacy_memory_tool_view(
     if (!enable_memory_search_tool && !enable_memory_remember_tool) {
         return nullptr;
     }
-    return std::make_unique<legacy_memory_agent_tool_view>(
-        store,
-        options,
-        enable_memory_search_tool,
-        enable_memory_remember_tool);
+
+    std::string error;
+    common_tool_catalog tool_catalog;
+    common_tool_bootstrap_result bootstrap;
+    if (!tool_catalog.bootstrap("memory", bootstrap, error)) {
+        std::fprintf(stderr, "warning: failed to bootstrap legacy memory tool catalog: %s\n", error.c_str());
+        return nullptr;
+    }
+
+    native_agent_tool_provider provider(
+        tool_catalog,
+        [&store, &options](const agent_tool_context &, common_native_tool_bindings & bindings, std::string & binding_error) {
+            common_memory_query query_defaults;
+            apply_memory_scope(options, query_defaults);
+            query_defaults.limit = std::clamp(options.limit, size_t(1), size_t(8));
+            query_defaults.token_budget = options.memory_token_budget;
+
+            bindings.memory_store = &store;
+            bindings.memory_query = std::move(query_defaults);
+            bindings.embed_memory_query = [&options](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+                return ensure_memory_cli_embedding(options, text, embedding, "tool query", embedding_error);
+            };
+            binding_error.clear();
+            return true;
+        });
+
+    agent_tool_context tool_context;
+    tool_context.request_id = "cli-legacy-memory";
+    tool_context.turn_id = options.memory_turn;
+    tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
+    tool_context.memory_scope = tool_context.scope.memory_scope;
+    tool_context.plan_scope = tool_context.scope.plan_scope;
+    tool_context.profile_id = "memory";
+    if (enable_memory_search_tool) {
+        tool_context.allowed_tool_names.push_back("memory_search");
+    }
+    if (enable_memory_remember_tool) {
+        tool_context.allowed_tool_names.push_back("memory_remember");
+    }
+    tool_context.allow_policy_gated_writes = enable_memory_remember_tool;
+    tool_context.allow_memory_proposals = enable_memory_remember_tool;
+    tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+
+    auto tool_view = provider.resolve_tools(tool_context, error);
+    if (!tool_view) {
+        std::fprintf(stderr, "warning: failed to resolve legacy memory tool view: %s\n", error.c_str());
+    }
+    return tool_view;
 }
 
 common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(

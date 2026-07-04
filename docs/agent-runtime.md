@@ -68,7 +68,7 @@ It currently owns argument-derived wiring that is still local to CLI behavior:
 
 This adapter is allowed to know about CLI `args`. The runtime/session host below it should not need to. The current daemon path now follows the same rule for policy/config assembly, even though its own option parsing is still local.
 
-The remaining legacy memory-tool path is now thinner than before. `memory_search` and `memory_remember` still have old CLI-facing wrappers for the opt-in `--memory-*-tool` flags, but the shared search/proposal logic underneath them has been moved into a small CLI-free `common_memory_tool_service`. That same service is now also used by the native provider-backed memory adapters, so the current duplication is mostly at the outer wrapper layer rather than in the memory-policy and retrieval core.
+The remaining legacy memory-tool path is now thinner than before. `memory_search` and `memory_remember` still have old CLI-facing flags, but the shared search/proposal logic underneath them has been moved into a small CLI-free `common_memory_tool_service`. That same service is also used by the native provider-backed memory adapters, and the legacy CLI path now resolves its small two-tool view through the same native provider boundary with a host-owned tool-name filter instead of carrying a completely separate tool-view implementation.
 
 `agent-cli-run` now also has a small adapter helper beside it. That helper owns CLI-only validation, default stamping, and mini/bootstrap/export setup so the top-level run function can stay focused on retrieval, tool wiring, and dispatch into the runtime host.
 

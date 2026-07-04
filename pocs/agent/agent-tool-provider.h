@@ -22,6 +22,7 @@ struct agent_tool_context {
 
     std::string profile_id = "minimal";
     std::string repository_root;
+    std::vector<std::string> allowed_tool_names;
 
     bool allow_network = false;
     bool allow_policy_gated_writes = false;
