@@ -7,7 +7,10 @@
 #include "chat.h"
 #include "plan/plan-types.h"
 
+#include <nlohmann/json.hpp>
+
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -152,6 +155,40 @@ private:
     std::string provider_id;
     agent_mcp_tool_client & client;
     std::string exposed_name_prefix;
+};
+
+struct agent_mcp_stdio_client_config {
+    std::string server_name;
+    std::vector<std::string> command_line;
+    std::map<std::string, std::string> environment;
+};
+
+class agent_mcp_stdio_client : public agent_mcp_tool_client {
+public:
+    explicit agent_mcp_stdio_client(agent_mcp_stdio_client_config config);
+    ~agent_mcp_stdio_client() override;
+
+    bool list_tools(
+        const agent_tool_context & context,
+        std::vector<mcp_agent_tool_definition> & tools,
+        std::string & error) override;
+
+    bool call_tool(
+        const agent_tool_context & context,
+        const mcp_agent_tool_definition & tool,
+        const std::string & arguments_json,
+        mcp_agent_tool_call_result & result,
+        std::string & error) override;
+
+private:
+    bool ensure_started(std::string & error);
+    bool send_notification(const std::string & method, const nlohmann::ordered_json & params, std::string & error);
+    bool send_request(const std::string & method, const nlohmann::ordered_json & params, nlohmann::ordered_json & response, std::string & error);
+    void shutdown_process();
+
+    agent_mcp_stdio_client_config config;
+    struct impl;
+    std::unique_ptr<impl> state;
 };
 
 bool agent_dispatch_chat_tool_calls(
