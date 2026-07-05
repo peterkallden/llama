@@ -83,6 +83,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "github_search_issues did not return the expected result: %s\n", search_result.content_json.c_str());
         return 1;
     }
+    if (search_result.resource_refs.empty() ||
+            search_result.resource_refs[0].uri != "mcp-resource://github/search_issues/stub-1" ||
+            search_result.content_json.find("\"resources\"") == std::string::npos) {
+        std::fprintf(stderr, "github_search_issues did not preserve MCP resource links: %s\n", search_result.content_json.c_str());
+        return 1;
+    }
 
     const auto failure_result = read_view->call({
         "call-err",
@@ -144,6 +150,7 @@ int main(int argc, char ** argv) {
 
     std::printf("stdio_mcp_tools=%zu\n", write_view->chat_tools().size());
     std::printf("stdio_mcp_search_result=%s\n", search_result.content_json.c_str());
+    std::printf("stdio_mcp_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
     std::printf("stdio_mcp_failure_code=%s\n", failure_result.failure_code.c_str());
     std::printf("stdio_mcp_create_result=%s\n", create_result.content_json.c_str());
     std::printf("stdio_mcp_error_context=%s\n", error.c_str());

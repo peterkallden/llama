@@ -6,6 +6,7 @@
 #include "agent/tool-chat-bridge.h"
 #include "chat.h"
 #include "plan/plan-types.h"
+#include "runtime-resource.h"
 
 #include <nlohmann/json.hpp>
 
@@ -63,6 +64,8 @@ struct agent_tool_result {
     std::string tool_call_id;
     std::string tool_name;
     std::string content_json;
+    std::string content_summary;
+    std::vector<common_runtime_resource_ref> resource_refs;
 
     std::string failure_code;
     common_tool_failure_class failure_class = common_tool_failure_class::execution;
@@ -130,6 +133,7 @@ struct mcp_agent_tool_call_result {
     bool ok = false;
     std::string structured_content_json;
     std::string text_content;
+    std::vector<common_runtime_resource_ref> resource_refs;
     std::string failure_code;
     common_tool_failure_class failure_class = common_tool_failure_class::execution;
     bool retryable = false;

@@ -10,6 +10,38 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+json render_resource_ref(const common_runtime_resource_ref & resource) {
+    json result = {
+        {"uri", resource.uri},
+        {"scope", common_runtime_resource_scope_name(resource.scope)},
+    };
+    if (!resource.name.empty()) {
+        result["name"] = resource.name;
+    }
+    if (!resource.description.empty()) {
+        result["description"] = resource.description;
+    }
+    if (!resource.mime_type.empty()) {
+        result["mime_type"] = resource.mime_type;
+    }
+    if (resource.size_bytes > 0) {
+        result["size_bytes"] = resource.size_bytes;
+    }
+    return result;
+}
+
+void attach_resources_json(agent_tool_result & result, json & payload) {
+    if (result.resource_refs.empty()) {
+        return;
+    }
+
+    json resources = json::array();
+    for (const auto & resource : result.resource_refs) {
+        resources.push_back(render_resource_ref(resource));
+    }
+    payload["resources"] = std::move(resources);
+}
+
 size_t effective_result_limit(
         const agent_tool_context & context,
         const common_tool_definition & definition) {
@@ -67,7 +99,7 @@ agent_tool_result make_failure_result(
     result.retryable = retryable;
     result.safe_summary = std::move(safe_summary);
     result.raw_diagnostic = std::move(raw_diagnostic);
-    result.content_json = json({
+    auto payload = json({
         {"ok", false},
         {"error", {
             {"code", result.failure_code.empty() ? "tool_call_rejected" : result.failure_code},
@@ -75,7 +107,10 @@ agent_tool_result make_failure_result(
             {"retryable", result.retryable},
             {"class", common_tool_failure_class_name(result.failure_class)},
         }}
-    }).dump();
+    });
+    result.content_summary = result.safe_summary;
+    attach_resources_json(result, payload);
+    result.content_json = payload.dump();
     return result;
 }
 
@@ -109,11 +144,14 @@ agent_tool_result normalize_execution_result(
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
+    result.content_summary = definition.description;
 
     const auto value = json::parse(execution.output, nullptr, false);
-    result.content_json = value.is_discarded()
-        ? json({{"ok", true}, {"result_text", execution.output}}).dump()
-        : json({{"ok", true}, {"result", value}}).dump();
+    auto payload = value.is_discarded()
+        ? json({{"ok", true}, {"result_text", execution.output}})
+        : json({{"ok", true}, {"result", value}});
+    attach_resources_json(result, payload);
+    result.content_json = payload.dump();
     return result;
 }
 
@@ -171,16 +209,25 @@ agent_tool_result normalize_mcp_execution_result(
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
+    result.resource_refs = execution.resource_refs;
+    result.content_summary = execution.text_content;
 
     if (!execution.structured_content_json.empty()) {
         const auto value = json::parse(execution.structured_content_json, nullptr, false);
-        result.content_json = value.is_discarded()
-            ? json({{"ok", true}, {"result_text", execution.structured_content_json}}).dump()
-            : json({{"ok", true}, {"result", value}}).dump();
+        auto payload = value.is_discarded()
+            ? json({{"ok", true}, {"result_text", execution.structured_content_json}})
+            : json({{"ok", true}, {"result", value}});
+        if (!result.content_summary.empty()) {
+            payload["summary"] = result.content_summary;
+        }
+        attach_resources_json(result, payload);
+        result.content_json = payload.dump();
         return result;
     }
 
-    result.content_json = json({{"ok", true}, {"result_text", execution.text_content}}).dump();
+    auto payload = json({{"ok", true}, {"result_text", execution.text_content}});
+    attach_resources_json(result, payload);
+    result.content_json = payload.dump();
     return result;
 }
 

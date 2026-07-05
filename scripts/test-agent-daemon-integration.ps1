@@ -480,6 +480,42 @@ function Invoke-ProjectSwitchScenario {
     }
 }
 
+function Invoke-TraceScenario {
+    param(
+        [string]$ExePath,
+        [string[]]$BaseArgs
+    )
+
+    $client = $null
+    try {
+        $client = Start-AgentDaemon -ExePath $ExePath -ArgumentList $BaseArgs
+
+        $turn = Send-DaemonCommand -Client $client -Command @{
+            request_id = "trace-turn-1"
+            mode = "mini"
+            prompt = "Reply with OK only after making a tiny plan."
+            session_id = "integration-trace"
+            namespace_id = "integration"
+            project_id = "repo-trace"
+            memory_scope = "project"
+            plan_scope = "project"
+        } -TimeoutSeconds 240
+
+        Assert-True ($turn.ok -and $turn.response -eq "OK") "Trace scenario turn should succeed"
+        Assert-True ($turn.trace_count -gt 0) "Trace scenario should expose trace entries"
+        Assert-True ($turn.trace.Count -gt 0) "Trace scenario should include a non-empty trace array"
+
+        $stages = @($turn.trace | ForEach-Object { $_.stage })
+        Assert-True ($stages -contains "plan") "Trace scenario should include a plan trace stage"
+        Assert-True ($stages -contains "response") "Trace scenario should include a response trace stage"
+
+        Write-Host "trace_visible=ok"
+    }
+    finally {
+        Stop-AgentDaemon $client
+    }
+}
+
 function Invoke-MiniLearningScenario {
     param(
         [string]$ExePath,
@@ -565,6 +601,18 @@ Invoke-ChatLifecycleScenario -ExePath $daemonPath -BaseArgs $chatArgs
 Invoke-ProjectSwitchScenario -ExePath $daemonPath -BaseArgs $chatArgs
 Invoke-ToolingConfiguredScenario -ExePath $daemonPath -FakeServerPath $fakeServerPath -BaseArgs $chatArgs
 Invoke-ToolingProbeScenario -ProbeExePath $toolingProbePath
+
+$traceArgs = @(
+    "--model", $ChatModel,
+    "--default-mode", "mini",
+    "--planning-mode", "mini",
+    "--reflection-mode", "off",
+    "--agent-plan", "auto",
+    "-n", "64",
+    "-ngl", "0"
+)
+
+Invoke-TraceScenario -ExePath $daemonPath -BaseArgs $traceArgs
 
 if ($haveEmbeddingModel) {
     $miniArgs = @(

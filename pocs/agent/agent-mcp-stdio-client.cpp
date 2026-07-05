@@ -132,6 +132,37 @@ std::string join_text_content(const json & content) {
     return joined;
 }
 
+std::vector<common_runtime_resource_ref> extract_resource_links(const json & content) {
+    std::vector<common_runtime_resource_ref> resources;
+    if (!content.is_array()) {
+        return resources;
+    }
+
+    for (const auto & item : content) {
+        if (!item.is_object()) {
+            continue;
+        }
+        if (item.value("type", "") != "resource_link") {
+            continue;
+        }
+        const std::string uri = item.value("uri", "");
+        if (uri.empty()) {
+            continue;
+        }
+
+        common_runtime_resource_ref resource;
+        resource.uri = uri;
+        resource.name = item.value("name", "");
+        resource.description = item.value("description", "");
+        resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
+        resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
+        resource.scope = common_runtime_resource_scope::turn;
+        resources.push_back(std::move(resource));
+    }
+
+    return resources;
+}
+
 common_tool_failure_class parse_mcp_failure_class(const std::string & value) {
     if (value == "validation") return common_tool_failure_class::validation;
     if (value == "policy")     return common_tool_failure_class::policy;
@@ -481,7 +512,9 @@ bool agent_mcp_stdio_client::call_tool(
     }
 
     result.ok = !rpc_result.value("isError", false);
-    result.text_content = join_text_content(rpc_result.value("content", json::array()));
+    const auto content = rpc_result.value("content", json::array());
+    result.text_content = join_text_content(content);
+    result.resource_refs = extract_resource_links(content);
     if (rpc_result.contains("structuredContent")) {
         result.structured_content_json = rpc_result["structuredContent"].dump();
     }

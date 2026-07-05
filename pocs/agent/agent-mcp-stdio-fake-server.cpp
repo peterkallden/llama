@@ -138,6 +138,14 @@ json make_tools_call_result(const json & params) {
         return {
             {"content", json::array({
                 {{"type", "text"}, {"text", "stub issue"}},
+                {
+                    {"type", "resource_link"},
+                    {"uri", "mcp-resource://github/search_issues/stub-1"},
+                    {"name", "search-results.json"},
+                    {"description", "Full GitHub issue search result set"},
+                    {"mimeType", "application/json"},
+                    {"sizeBytes", 128},
+                },
             })},
             {"structuredContent", {
                 {"items", json::array({
