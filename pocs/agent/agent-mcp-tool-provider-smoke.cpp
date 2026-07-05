@@ -111,6 +111,26 @@ int main() {
         return 1;
     }
 
+    agent_tool_context filtered_context;
+    filtered_context.request_id = "mcp-provider-smoke";
+    filtered_context.turn_id = "turn-filtered";
+    filtered_context.allow_network = true;
+    filtered_context.allowed_exposed_tool_names = {"github_search_issues"};
+
+    std::unique_ptr<agent_tool_view> filtered_view = provider.resolve_tools(filtered_context, error);
+    if (!filtered_view) {
+        std::fprintf(stderr, "filtered MCP provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (!has_tool(filtered_view->chat_tools(), "github_search_issues")) {
+        std::fprintf(stderr, "filtered MCP provider dropped the allowed exposed tool\n");
+        return 1;
+    }
+    if (has_tool(filtered_view->chat_tools(), "github_create_issue")) {
+        std::fprintf(stderr, "filtered MCP provider did not enforce exposed-name filtering\n");
+        return 1;
+    }
+
     agent_tool_context write_context;
     write_context.request_id = "mcp-provider-smoke";
     write_context.turn_id = "turn-2";

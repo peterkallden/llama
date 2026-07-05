@@ -132,6 +132,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     tooling = std::move(tool_selection.tooling);
     tool_view = std::move(tool_selection.tool_view);
     mcp_tool_client = std::move(tool_selection.mcp_client);
+    auto embedding_provider = std::move(tool_selection.embedding_provider);
     tooling.tool_view = tool_view.get();
 #endif
 
@@ -153,6 +154,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             memory_enabled,
             fallback_reason,
             tooling,
+            embedding_provider.get(),
             runtime_post_run);
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
@@ -172,6 +174,7 @@ int run_agent_cli(common_memory_store & store, args a) {
         memory_enabled,
         fallback_reason,
         tooling,
+        embedding_provider.get(),
         runtime_post_run);
 
     common_agent_result result;

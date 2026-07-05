@@ -265,6 +265,8 @@ The host/chat contracts have now been trimmed in the same direction. The runtime
 
 The first shared memory-tool migration now sits underneath that provider path as well. Native `memory_search` and `memory_remember` execution both go through `common_memory_tool_service`, which keeps host-owned scope, embedding, store and policy bindings in one place while preserving the current synchronous behavior and result shapes.
 
+The remaining CLI coupling around embeddings has also been narrowed further. The CLI path still supplies one concrete embedding implementation, but profile-tool bindings and runtime memory-learning hooks now reach it through a small `agent_embedding_provider` seam rather than capturing CLI options directly inside the native tool bindings.
+
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
 ## MCP Direction
@@ -298,6 +300,10 @@ A useful provider shape is:
 - Return structured success/failure results.
 
 The native tool registry is the first concrete provider. There is now also a first MCP-shaped provider seam built on top of an abstract MCP client contract, plus a first stdio-based MCP client adapter that already exercises `initialize`, `tools/list` and `tools/call` against a subprocess. A later fuller MCP-client implementation can extend that path without changing the runtime loop.
+
+That MCP-facing tool surface has now also been tightened slightly around naming and policy. Runtime filters treat the resolved model-visible name as the authority surface for exposed MCP tools, so prefixed MCP names are filtered the same way the model actually sees them rather than by an internal pre-prefix identifier.
+
+One intentional gap remains in the current MCP tool path: validation currently enforces that tool arguments parse as a JSON object, but it does not yet validate those arguments against the advertised `inputSchema`. Native tools already get stronger contract validation through the registry path; fuller MCP schema validation is still an explicit follow-up item rather than something hidden behind the current PoC surface.
 
 Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
 
@@ -364,6 +370,8 @@ The resident-inference branch has been validated with:
 
 - `test-agent-inference`
 - `test-tool-adapters`
+- `llama-agent-tool-provider-smoke`
+- `llama-agent-mcp-tool-provider-smoke`
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns

@@ -20,8 +20,8 @@ bool is_definition_allowed(
         const common_tool_definition & definition,
         const common_tool_registry & registry,
         const agent_tool_context & context) {
-    if (!context.allowed_tool_names.empty() &&
-            std::find(context.allowed_tool_names.begin(), context.allowed_tool_names.end(), definition.name) == context.allowed_tool_names.end()) {
+    if (!context.allowed_exposed_tool_names.empty() &&
+            std::find(context.allowed_exposed_tool_names.begin(), context.allowed_exposed_tool_names.end(), definition.name) == context.allowed_exposed_tool_names.end()) {
         return false;
     }
     if (!registry.matches_binding(definition.name, definition.version, definition.executor_id)) {
@@ -119,9 +119,10 @@ agent_tool_result normalize_execution_result(
 
 bool is_mcp_definition_allowed(
         const mcp_agent_tool_definition & definition,
+        const std::string & exposed_name,
         const agent_tool_context & context) {
-    if (!context.allowed_tool_names.empty() &&
-            std::find(context.allowed_tool_names.begin(), context.allowed_tool_names.end(), definition.name) == context.allowed_tool_names.end()) {
+    if (!context.allowed_exposed_tool_names.empty() &&
+            std::find(context.allowed_exposed_tool_names.begin(), context.allowed_exposed_tool_names.end(), exposed_name) == context.allowed_exposed_tool_names.end()) {
         return false;
     }
     if (definition.uses_network && !context.allow_network) {
@@ -299,6 +300,10 @@ public:
             return false;
         }
 
+        // PoC note: MCP validation currently enforces the basic JSON-object
+        // contract only. Full JSON-schema validation against inputSchema is a
+        // follow-up item so the MCP path reaches parity with native registry
+        // validation without baking transport-specific logic into the runtime.
         const auto arguments = json::parse(call.arguments_json, nullptr, false);
         if (arguments.is_discarded() || !arguments.is_object()) {
             error = "tool arguments must be a JSON object";
@@ -519,13 +524,12 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         if (definition.provider_id.empty()) {
             definition.provider_id = provider_id;
         }
-        if (!is_mcp_definition_allowed(definition, context)) {
-            continue;
-        }
-
         const std::string exposed_name = make_mcp_exposed_name(
             exposed_name_prefix.empty() ? definition.provider_id : exposed_name_prefix,
             definition.name);
+        if (!is_mcp_definition_allowed(definition, exposed_name, context)) {
+            continue;
+        }
         chat_tools.push_back({
             exposed_name,
             definition.description,

@@ -15,6 +15,23 @@
 
 namespace {
 
+class cli_agent_embedding_provider final : public agent_embedding_provider {
+public:
+    explicit cli_agent_embedding_provider(const args & options)
+        : options(options) {}
+
+    bool embed(
+            const std::string & purpose,
+            const std::string & text,
+            std::vector<float> & embedding,
+            std::string & error) override {
+        return ensure_memory_cli_embedding(options, text, embedding, purpose.c_str(), error);
+    }
+
+private:
+    const args & options;
+};
+
 agent_tool_context make_agent_cli_tool_context(
         const args & options,
         const common_memory_query & query,
@@ -82,6 +99,9 @@ bool resolve_agent_cli_tool_selection(
 
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
+    if (memory_enabled) {
+        selection.embedding_provider = std::make_unique<cli_agent_embedding_provider>(options);
+    }
     if (!options.tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(options.tool_profile, bootstrap, error)) {
@@ -98,8 +118,9 @@ bool resolve_agent_cli_tool_selection(
         if (memory_enabled) {
             bindings.memory_store = &store;
             bindings.memory_query = query;
-            bindings.embed_memory_query = [&options](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
-                return ensure_memory_cli_embedding(options, text, embedding, "tool query", embedding_error);
+            bindings.embed_memory_query = [provider = selection.embedding_provider.get()](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+                return provider != nullptr &&
+                    provider->embed("tool query", text, embedding, embedding_error);
             };
         }
 
@@ -165,6 +186,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         common_memory_scope memory_scope,
         bool memory_enabled,
         const std::string & fallback_reason,
+        agent_embedding_provider * embedding_provider,
         common_agent_request request,
         common_agent_generation_options generation_options) {
     common_agent_runtime_turn_request turn_request;
@@ -190,8 +212,9 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         {options.n_predict},
         options.memory_learn == "post-turn",
         {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
-        [&options](const std::string & text, std::vector<float> & embedding, std::string & error) {
-            return ensure_memory_cli_embedding(options, text, embedding, "memory candidate", error);
+        [embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & error) {
+            return embedding_provider != nullptr &&
+                embedding_provider->embed("memory candidate", text, embedding, error);
         },
     });
     turn_request.orchestration_config = orchestration_config;
@@ -211,6 +234,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         bool memory_enabled,
         const std::string & fallback_reason,
         const common_agent_runtime_tooling & tooling,
+        agent_embedding_provider * embedding_provider,
         common_agent_runtime_host_post_run post_run) {
     common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
     common_agent_request request;
@@ -230,6 +254,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         memory_scope,
         memory_enabled,
         fallback_reason,
+        embedding_provider,
         std::move(request),
         generation_options);
     common_agent_runtime_host_build_context build_context{
@@ -260,6 +285,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         bool memory_enabled,
         const std::string & fallback_reason,
         const common_agent_runtime_tooling & tooling,
+        agent_embedding_provider * embedding_provider,
         common_agent_runtime_host_post_run post_run) {
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
@@ -267,7 +293,8 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
         orchestration_config,
         memory_scope,
         memory_enabled,
-        fallback_reason);
+        fallback_reason,
+        embedding_provider);
     common_agent_runtime_host_build_context build_context{
         store,
         &plan_store,

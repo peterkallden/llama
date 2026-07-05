@@ -25,7 +25,10 @@ struct agent_tool_context {
 
     std::string profile_id = "minimal";
     std::string repository_root;
-    std::vector<std::string> allowed_tool_names;
+    // Model-visible tool names allowed for this resolved runtime view. Native
+    // tools use their definition name directly; MCP tools use their exposed
+    // name after any provider prefixing.
+    std::vector<std::string> allowed_exposed_tool_names;
 
     bool allow_network = false;
     bool allow_policy_gated_writes = false;
@@ -35,6 +38,17 @@ struct agent_tool_context {
     size_t max_calls = 4;
     uint32_t default_timeout_ms = 1000;
     size_t default_max_result_bytes = 16 * 1024;
+};
+
+class agent_embedding_provider {
+public:
+    virtual ~agent_embedding_provider() = default;
+
+    virtual bool embed(
+        const std::string & purpose,
+        const std::string & text,
+        std::vector<float> & embedding,
+        std::string & error) = 0;
 };
 
 struct agent_tool_call {

@@ -14,6 +14,7 @@ struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
     std::unique_ptr<agent_mcp_tool_client> mcp_client;
+    std::unique_ptr<agent_embedding_provider> embedding_provider;
 };
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
@@ -38,6 +39,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     common_memory_scope memory_scope,
     bool memory_enabled,
     const std::string & fallback_reason,
+    agent_embedding_provider * embedding_provider = nullptr,
     common_agent_request request = {},
     common_agent_generation_options generation_options = {});
 
@@ -50,6 +52,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     bool memory_enabled,
     const std::string & fallback_reason,
     const common_agent_runtime_tooling & tooling,
+    agent_embedding_provider * embedding_provider,
     common_agent_runtime_host_post_run post_run);
 
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
@@ -65,6 +68,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_mini_inputs(
     bool memory_enabled,
     const std::string & fallback_reason,
     const common_agent_runtime_tooling & tooling,
+    agent_embedding_provider * embedding_provider,
     common_agent_runtime_host_post_run post_run);
 
 int finish_agent_cli_runtime_result(const common_agent_result & result);
