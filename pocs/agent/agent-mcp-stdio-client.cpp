@@ -129,6 +129,16 @@ std::string join_text_content(const json & content) {
     return joined;
 }
 
+common_tool_failure_class parse_mcp_failure_class(const std::string & value) {
+    if (value == "validation") return common_tool_failure_class::validation;
+    if (value == "policy")     return common_tool_failure_class::policy;
+    if (value == "not_found")  return common_tool_failure_class::not_found;
+    if (value == "timeout")    return common_tool_failure_class::timeout;
+    if (value == "network")    return common_tool_failure_class::network;
+    if (value == "limit")      return common_tool_failure_class::limit;
+    return common_tool_failure_class::execution;
+}
+
 } // namespace
 
 struct agent_mcp_stdio_client::impl {
@@ -268,6 +278,12 @@ void agent_mcp_stdio_client::shutdown_process() {
     }
 
     if (state->running) {
+        std::string ignored_error;
+        json ignored_response;
+        if (state->initialized) {
+            send_request("shutdown", json::object(), ignored_response, ignored_error);
+            send_notification("exit", json::object(), ignored_error);
+        }
         if (state->in != nullptr) {
             std::fclose(state->in);
             state->in = nullptr;
@@ -382,6 +398,15 @@ bool agent_mcp_stdio_client::call_tool(
         result.safe_summary = result.text_content.empty()
             ? "The MCP server reported a tool error."
             : result.text_content;
+
+        if (rpc_result.contains("errorInfo") && rpc_result["errorInfo"].is_object()) {
+            const auto & error_info = rpc_result["errorInfo"];
+            result.failure_code = error_info.value("code", result.failure_code);
+            result.failure_class = parse_mcp_failure_class(
+                error_info.value("class", std::string()));
+            result.retryable = error_info.value("retryable", result.retryable);
+            result.safe_summary = error_info.value("safeSummary", result.safe_summary);
+        }
         result.raw_diagnostic = result.safe_summary;
     }
 

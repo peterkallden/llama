@@ -98,6 +98,20 @@ json make_tools_list_result() {
                 }},
             },
             {
+                {"name", "search_recent_failures"},
+                {"description", "Simulate a retryable upstream failure."},
+                {"inputSchema", {
+                    {"type", "object"},
+                    {"required", json::array({"query"})},
+                }},
+                {"annotations", {
+                    {"readOnlyHint", true},
+                }},
+                {"hostPolicy", {
+                    {"usesNetwork", true},
+                }},
+            },
+            {
                 {"name", "create_issue"},
                 {"description", "Create a GitHub issue."},
                 {"inputSchema", {
@@ -141,6 +155,21 @@ json make_tools_call_result(const json & params) {
         };
     }
 
+    if (name == "search_recent_failures") {
+        return {
+            {"isError", true},
+            {"content", json::array({
+                {{"type", "text"}, {"text", "upstream search provider is rate limited"}},
+            })},
+            {"errorInfo", {
+                {"code", "github.rate_limited"},
+                {"class", "network"},
+                {"retryable", true},
+                {"safeSummary", "The upstream GitHub search provider is temporarily rate limited."},
+            }},
+        };
+    }
+
     return {
         {"isError", true},
         {"content", json::array({
@@ -156,6 +185,7 @@ int main() {
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    bool shutdown_requested = false;
     for (;;) {
         json message;
         if (!read_json_rpc_message(message)) {
@@ -163,6 +193,9 @@ int main() {
         }
 
         const std::string method = message.value("method", "");
+        if (method == "exit") {
+            return shutdown_requested ? 0 : 1;
+        }
         if (!message.contains("id")) {
             continue;
         }
@@ -183,6 +216,9 @@ int main() {
                     {"version", "0.1"},
                 }},
             };
+        } else if (method == "shutdown") {
+            shutdown_requested = true;
+            response["result"] = json::object();
         } else if (method == "tools/list") {
             response["result"] = make_tools_list_result();
         } else if (method == "tools/call") {

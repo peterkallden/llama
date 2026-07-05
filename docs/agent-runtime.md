@@ -226,6 +226,8 @@ That seam now has two concrete test paths:
 
 The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list` and `tools/call`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
 
+Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
+
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 
 That keeps host authority in one place:
@@ -332,7 +334,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 7. Extend the first stdio MCP client into a fuller MCP host/client path.
 
-   The first provider slice now exists behind an abstract MCP client contract and already has a small stdio transport adapter. The next step is to harden that path: better shutdown/lifecycle behavior, clearer diagnostics, richer error mapping, and then broader MCP capability support. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
+   The first provider slice now exists behind an abstract MCP client contract and already has a small stdio transport adapter with basic shutdown and structured tool-error mapping. The next step is to harden that path further: clearer diagnostics, less forceful teardown, better request/response correlation under notifications, and then broader MCP capability support. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
 
 ## Backlog Notes
 

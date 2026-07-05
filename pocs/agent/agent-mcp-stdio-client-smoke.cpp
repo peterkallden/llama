@@ -61,6 +61,10 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "github_search_issues was not exposed through the MCP stdio tool view\n");
         return 1;
     }
+    if (!has_tool(read_view->chat_tools(), "github_search_recent_failures")) {
+        std::fprintf(stderr, "github_search_recent_failures was not exposed through the MCP stdio tool view\n");
+        return 1;
+    }
     if (has_tool(read_view->chat_tools(), "github_create_issue")) {
         std::fprintf(stderr, "github_create_issue was exposed despite writes being disabled\n");
         return 1;
@@ -73,6 +77,19 @@ int main(int argc, char ** argv) {
     }, error);
     if (!search_result.ok || search_result.content_json.find("stub issue") == std::string::npos) {
         std::fprintf(stderr, "github_search_issues did not return the expected result: %s\n", search_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto failure_result = read_view->call({
+        "call-err",
+        "github_search_recent_failures",
+        R"({"query":"timeout"})",
+    }, error);
+    if (failure_result.ok ||
+            failure_result.failure_code != "github.rate_limited" ||
+            failure_result.failure_class != common_tool_failure_class::network ||
+            !failure_result.retryable) {
+        std::fprintf(stderr, "github_search_recent_failures did not return the expected structured MCP failure\n");
         return 1;
     }
 
@@ -104,6 +121,7 @@ int main(int argc, char ** argv) {
 
     std::printf("stdio_mcp_tools=%zu\n", write_view->chat_tools().size());
     std::printf("stdio_mcp_search_result=%s\n", search_result.content_json.c_str());
+    std::printf("stdio_mcp_failure_code=%s\n", failure_result.failure_code.c_str());
     std::printf("stdio_mcp_create_result=%s\n", create_result.content_json.c_str());
     return 0;
 }
