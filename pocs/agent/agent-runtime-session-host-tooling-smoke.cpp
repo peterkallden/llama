@@ -36,6 +36,7 @@ int main() {
         {},
         {},
         [call_count](
+                const common_agent_runtime_resident_runtime *,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
                 std::string & error) {

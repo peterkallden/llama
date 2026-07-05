@@ -67,6 +67,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn_min_reuse = std::stof(value);
         } else if (std::strcmp(argv[i], "--agent-plan") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.agent_plan = value;
+        } else if (std::strcmp(argv[i], "--tool-profile") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.tool_profile = value;
+        } else if (std::strcmp(argv[i], "--repository-root") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.repository_root = value;
         } else if (std::strcmp(argv[i], "--mcp-tool-command") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_command = value;
         } else if (std::strcmp(argv[i], "--mcp-tool-arg") == 0) {
@@ -149,6 +153,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
-        "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--n-predict N] [-ngl N]\n",
+        "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--n-predict N] [-ngl N]\n",
         argv0);
 }

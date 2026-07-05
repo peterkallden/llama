@@ -3,6 +3,7 @@
 #include "../common/cli-config.h"
 
 #include "agent-daemon-service.h"
+#include "agent-runtime-resident.h"
 #include "agent-runtime-assembly.h"
 #include "agent-runtime-execution.h"
 #include "agent-plan-orchestration.h"
@@ -27,6 +28,8 @@ struct daemon_options {
     std::string reflection_mode = "off";
     std::string memory_learn = "off";
     std::string agent_plan = "off";
+    std::string tool_profile;
+    std::string repository_root;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";
@@ -49,6 +52,15 @@ void print_agent_daemon_usage(const char * argv0);
 bool initialize_agent_daemon_environment(
     const daemon_options & options,
     common_agent_daemon_runtime & runtime,
+    std::string & error);
+
+bool resolve_agent_daemon_tooling(
+    const daemon_options & options,
+    const common_agent_runtime_resident_runtime * runtime,
+    const common_agent_runtime_session_host_turn_request & request,
+    common_memory_store & memory_store,
+    common_plan_store & plan_store,
+    common_agent_runtime_tooling & tooling,
     std::string & error);
 
 bool parse_agent_daemon_command(

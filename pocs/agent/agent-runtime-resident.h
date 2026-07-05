@@ -72,6 +72,7 @@ public:
     void reset();
 
     const std::string & current_plan_id() const { return resident_current_plan_id; }
+    std::string & current_plan_id() { return resident_current_plan_id; }
     const common_agent_runtime_resident_host & runtime_host() const { return host; }
     common_agent_runtime_resident_host & runtime_host() { return host; }
 

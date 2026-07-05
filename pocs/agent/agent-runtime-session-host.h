@@ -74,6 +74,7 @@ struct common_agent_runtime_session_host_config {
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
     std::function<bool(
+        const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
@@ -91,6 +92,7 @@ struct common_agent_runtime_session_host_build_config {
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
     std::function<bool(
+        const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
@@ -128,6 +130,7 @@ private:
         const common_agent_runtime_session_host_turn_request & request) const;
 
     bool resolve_tooling(
+        const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error) const;

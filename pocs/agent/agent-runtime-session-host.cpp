@@ -105,12 +105,13 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
 }
 
 bool common_agent_runtime_session_host::resolve_tooling(
+        const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error) const {
     tooling = {};
     if (config.tooling_resolver) {
-        return config.tooling_resolver(request, tooling, error);
+        return config.tooling_resolver(runtime, request, tooling, error);
     }
 
     tooling = config.tooling;
@@ -159,12 +160,12 @@ bool common_agent_runtime_session_host::run_turn(
     }
 
     bool runtime_reused = false;
-    common_agent_runtime_tooling resolved_tooling;
-    if (!resolve_tooling(request, resolved_tooling, error)) {
+    if (!ensure_runtime(request, runtime_reused, error)) {
         result.error = error;
         return false;
     }
-    if (!ensure_runtime(request, runtime_reused, error)) {
+    common_agent_runtime_tooling resolved_tooling;
+    if (!resolve_tooling(runtime.get(), request, resolved_tooling, error)) {
         result.error = error;
         return false;
     }

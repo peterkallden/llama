@@ -129,6 +129,8 @@ That service layer now understands a slightly broader host-oriented command surf
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
+Those child-process adapters now also pass through the same daemon-owned tool configuration surface as the direct JSONL admin/test path: `--tool-profile`, `--repository-root`, and `--mcp-tool-command` all reach the foreground daemon when present. The chat-oriented daemon client path also now defaults its plan scope more conservatively when planning is off, so a simple session- or project-scoped admin/test chat turn does not accidentally force a synthetic turn-scoped contract.
+
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. The current session manager treats namespace plus session as the live resident lane, while status responses still report the currently bound project/scope for that lane. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
 Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
@@ -234,7 +236,7 @@ There is now also a first thin integration into the ordinary CLI host-adapter pa
 
 That CLI path can now also compose native and MCP-backed tools in the same resolved view. If both `--tool-profile` and `--mcp-tool-command` are present, the host resolves them through one small composite provider surface and keeps model-visible tool names unique at the merge boundary.
 
-The foreground daemon can now also start with a small MCP-backed tool surface of its own when given `--mcp-tool-command`. That daemon path no longer resolves tools only once at startup. Session-host execution now has a per-turn tooling resolver hook, and the daemon uses it to resolve MCP-backed tooling from the current host-owned session/scope turn contract before each turn. This is the first step toward fuller per-turn parity with native bindings.
+The foreground daemon can now also resolve the same native and MCP-backed tool surface that the CLI host adapter already uses. Session-host execution now has a per-turn tooling resolver hook, and the daemon uses it to rebuild tooling from the current host-owned session/scope turn contract before each turn. In practice that means `--tool-profile`, `--repository-root`, and `--mcp-tool-command` can now participate in the same resolved daemon tool view instead of the daemon having a narrower MCP-only wiring path.
 
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 
@@ -371,6 +373,7 @@ The resident-inference branch has been validated with:
 - daemon `n_predict` reuse smoke, verifying a resident session still reports runtime reuse when only the per-turn decode limit changes
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
+- multi-turn CLI-to-daemon tooling smoke with `daemon-session`, verifying the child-process adapter can carry `--tool-profile`, `--repository-root`, and MCP stdio tool wiring through to the same resident daemon session
 - multi-turn daemon `mini` smoke, verifying runtime reuse plus stable `plan_id` reuse across two planning turns in the same resident session
 - daemon `mini` learning smoke, verifying resident planning plus post-turn memory-learning summary over the same daemon session when an embedding model is supplied
 

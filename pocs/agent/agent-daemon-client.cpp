@@ -97,6 +97,24 @@ struct daemon_client_request {
     std::string mode = "chat";
 };
 
+std::string default_plan_scope_for_memory_scope(const std::string & memory_scope) {
+    if (memory_scope == "turn" || memory_scope == "session" ||
+            memory_scope == "project" || memory_scope == "global") {
+        return memory_scope;
+    }
+    return "session";
+}
+
+std::string effective_plan_scope_for_daemon_request(const args & a) {
+    if (a.plan_scope != "turn") {
+        return a.plan_scope;
+    }
+    if (a.planning_mode == "off") {
+        return default_plan_scope_for_memory_scope(a.memory_scope);
+    }
+    return a.plan_scope;
+}
+
 void forward_daemon_diagnostics(FILE * stream) {
     if (stream == nullptr) {
         return;
@@ -128,6 +146,8 @@ public:
             daemon_path.string(),
             "--model", a.model,
             "--default-mode", a.planning_mode == "mini" ? "mini" : "chat",
+            "--backend", a.backend,
+            "--plan-backend", a.plan_backend,
             "--planning-mode", a.planning_mode,
             "--reflection-mode", a.reflection_mode,
             "--memory-learn", a.memory_learn,
@@ -135,9 +155,25 @@ public:
             "--n-predict", std::to_string(a.n_predict),
             "--n-gpu-layers", std::to_string(a.n_gpu_layers),
         };
+        if (!a.memory_db.empty()) {
+            command_line.push_back("--memory-db");
+            command_line.push_back(a.memory_db);
+        }
+        if (!a.plan_db.empty()) {
+            command_line.push_back("--plan-db");
+            command_line.push_back(a.plan_db);
+        }
         if (!a.embedding_model.empty()) {
             command_line.push_back("--embedding-model");
             command_line.push_back(a.embedding_model);
+        }
+        if (!a.tool_profile.empty()) {
+            command_line.push_back("--tool-profile");
+            command_line.push_back(a.tool_profile);
+        }
+        if (!a.repository_root.empty()) {
+            command_line.push_back("--repository-root");
+            command_line.push_back(a.repository_root);
         }
         if (a.memory_learn_show_candidate) {
             command_line.push_back("--memory-learn-show-candidate");
@@ -328,11 +364,11 @@ bool validate_daemon_command_args(const char * argv0, const args & a, bool requi
         return false;
     }
     if (a.planning_mode == "off" && a.agent_plan != "off") {
-        std::fprintf(stderr, "daemon daemon commands require --planning-mode mini when --agent-plan is enabled\n");
+        std::fprintf(stderr, "daemon commands require --planning-mode mini when --agent-plan is enabled\n");
         return false;
     }
     if (a.memory_learn == "post-turn" && a.planning_mode != "mini") {
-        std::fprintf(stderr, "daemon daemon commands require --planning-mode mini when --memory-learn post-turn is enabled\n");
+        std::fprintf(stderr, "daemon commands require --planning-mode mini when --memory-learn post-turn is enabled\n");
         return false;
     }
     if (a.memory_learn_min_confidence < 0.0f || a.memory_learn_min_confidence > 1.0f ||
@@ -354,7 +390,7 @@ daemon_client_request make_daemon_client_request(
         a.memory_project,
         turn_id.empty() ? a.memory_turn : turn_id,
         a.memory_scope,
-        a.plan_scope,
+        effective_plan_scope_for_daemon_request(a),
         a.n_predict,
         a.planning_mode == "mini" ? "mini" : "chat",
     };

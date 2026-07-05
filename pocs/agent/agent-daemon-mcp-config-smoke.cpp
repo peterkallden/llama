@@ -7,6 +7,15 @@
 
 namespace {
 
+bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & name) {
+    for (const auto & tool : tools) {
+        if (tool.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path get_fake_server_path(const char * argv0) {
     std::filesystem::path argv_path = argv0 != nullptr ? std::filesystem::path(argv0) : std::filesystem::path();
     if (argv_path.has_parent_path()) {
@@ -33,10 +42,11 @@ int main(int argc, char ** argv) {
     daemon_options options;
     options.model = "fake.gguf";
     options.default_mode = "chat";
+    options.tool_profile = "minimal";
     options.mcp_tool_command = server_path.string();
     options.mcp_tool_server_name = "github";
     options.mcp_tool_prefix = "github";
-    options.max_tool_rounds = 1;
+    options.max_tool_rounds = 2;
 
     common_agent_daemon_runtime runtime;
     std::string error;
@@ -48,6 +58,62 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon MCP environment did not create a session manager\n");
         return 1;
     }
+
+    common_agent_runtime_tooling tooling;
+    if (!resolve_agent_daemon_tooling(
+            options,
+            nullptr,
+            {
+                common_agent_runtime_host_mode::chat,
+                "find tooling",
+                "session-a",
+                "namespace-a",
+                "",
+                "turn-a",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+            },
+            *runtime.memory_store,
+            *runtime.plan_store,
+            tooling,
+            error)) {
+        std::fprintf(stderr, "daemon tooling resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (!tooling.tool_view) {
+        std::fprintf(stderr, "daemon tooling resolve did not return a tool view\n");
+        return 1;
+    }
+    if (!has_tool(tooling.tools, "calculator") || !has_tool(tooling.tools, "github_search_issues")) {
+        std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
+        return 1;
+    }
+
+    auto calculator_result = tooling.tool_view->call({
+        "call-1",
+        "calculator",
+        R"({"expression":"6 * 7"})",
+    }, error);
+    if (!calculator_result.ok || calculator_result.content_json.find("42") == std::string::npos) {
+        std::fprintf(stderr, "daemon native tool call failed: %s\n", calculator_result.content_json.c_str());
+        return 1;
+    }
+
+    auto github_result = tooling.tool_view->call({
+        "call-2",
+        "github_search_issues",
+        R"({"query":"runtime host"})",
+    }, error);
+    if (!github_result.ok || github_result.content_json.find("stub issue") == std::string::npos) {
+        std::fprintf(stderr, "daemon MCP tool call failed: %s\n", github_result.content_json.c_str());
+        return 1;
+    }
+    const auto resolved_tool_count = tooling.tools.size();
+    tooling.tool_view = nullptr;
+    tooling.owned_resources.clear();
+    tooling.tools.clear();
+    tooling.profile_tools_active = false;
 
     common_agent_daemon_service service(std::move(runtime));
     common_agent_daemon_command_result status;
@@ -93,5 +159,6 @@ int main(int argc, char ** argv) {
 
     std::printf("daemon_mcp_ready=%s\n", status.ready ? "true" : "false");
     std::printf("daemon_mcp_status=%s\n", status.state.c_str());
+    std::printf("daemon_tooling_tools=%zu\n", resolved_tool_count);
     return 0;
 }

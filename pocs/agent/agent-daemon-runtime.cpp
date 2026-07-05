@@ -1,7 +1,8 @@
 #include "agent-daemon-adapter.h"
 
+#include "agent-cli-host-adapter.h"
 #include "agent-cli-selection.h"
-#include "agent-tool-provider.h"
+#include "agent/agent-scope.h"
 
 #include <cstdio>
 
@@ -16,12 +17,21 @@ args make_store_args(const daemon_options & options) {
     store_args.memory_db = options.memory_db;
     store_args.plan_backend = options.plan_backend;
     store_args.plan_db = options.plan_db;
+    store_args.n_gpu_layers = options.n_gpu_layers;
+    store_args.tool_profile = options.tool_profile;
+    store_args.repository_root = options.repository_root;
+    store_args.max_tool_rounds = options.max_tool_rounds;
+    store_args.mcp_tool_command = options.mcp_tool_command;
+    store_args.mcp_tool_args = options.mcp_tool_args;
+    store_args.mcp_tool_server_name = options.mcp_tool_server_name;
+    store_args.mcp_tool_prefix = options.mcp_tool_prefix;
     return store_args;
 }
 
 common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & options) {
     common_agent_runtime_policy policy;
     policy.agent_inference_backend = "server-context";
+    policy.tool_profile = options.tool_profile;
     policy.memory_learn = options.memory_learn;
     policy.memory_learn_show_candidate = options.memory_learn_show_candidate;
     policy.plan_show_summary = options.plan_show_summary;
@@ -68,68 +78,89 @@ common_agent_runtime_resident_request_config make_resident_request_config(
     };
 }
 
-agent_tool_context make_daemon_tool_context(
-        const daemon_options & options,
+common_memory_query make_daemon_memory_query(
         const common_agent_runtime_session_host_turn_request & request) {
-    agent_tool_context tool_context;
-    tool_context.request_id = "daemon-turn";
-    tool_context.turn_id = request.turn_id;
-    tool_context.scope.namespace_id = request.namespace_id;
-    tool_context.scope.session_id = request.session_id;
-    tool_context.scope.project_id = request.project_id;
-    tool_context.scope.turn_id = request.turn_id;
-    tool_context.scope.memory_scope = request.memory_scope;
-    tool_context.scope.plan_scope = request.plan_scope;
-    tool_context.memory_scope = request.memory_scope;
-    tool_context.plan_scope = request.plan_scope;
-    tool_context.allow_network = !options.mcp_tool_command.empty();
-    tool_context.allow_policy_gated_writes = false;
-    tool_context.allow_memory_proposals = false;
-    tool_context.allow_plan_proposals = false;
-    tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
-    return tool_context;
+    common_memory_query query;
+    query.text = request.prompt;
+    query.limit = 8;
+    query.token_budget = 768;
+
+    common_agent_scope scope;
+    scope.namespace_id = request.namespace_id;
+    scope.session_id = request.session_id;
+    scope.project_id = request.project_id;
+    scope.turn_id = request.turn_id;
+    scope.memory_scope = request.memory_scope;
+    scope.plan_scope = request.plan_scope;
+    common_agent_scope_apply(scope, query);
+    return query;
 }
 
-bool resolve_daemon_runtime_tooling(
+args make_daemon_tool_args(
         const daemon_options & options,
+        const common_agent_runtime_session_host_turn_request & request) {
+    args tool_args = make_store_args(options);
+    tool_args.prompt = request.prompt;
+    tool_args.memory_scope = common_memory_scope_name(request.memory_scope);
+    tool_args.memory_namespace = request.namespace_id;
+    tool_args.memory_session = request.session_id;
+    tool_args.memory_project = request.project_id;
+    tool_args.memory_turn = request.turn_id;
+    switch (request.plan_scope) {
+        case common_plan_scope::turn: tool_args.plan_scope = "turn"; break;
+        case common_plan_scope::session: tool_args.plan_scope = "session"; break;
+        case common_plan_scope::project: tool_args.plan_scope = "project"; break;
+        case common_plan_scope::global: tool_args.plan_scope = "global"; break;
+    }
+    return tool_args;
+}
+
+} // namespace
+
+bool resolve_agent_daemon_tooling(
+        const daemon_options & options,
+        const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
+        common_memory_store & memory_store,
+        common_plan_store & plan_store,
         common_agent_runtime_tooling & tooling,
         std::string & error) {
     tooling = {};
-    if (options.mcp_tool_command.empty()) {
-        error.clear();
-        return true;
-    }
+    args tool_args = make_daemon_tool_args(options, request);
+    common_memory_query query = make_daemon_memory_query(request);
+    std::string * current_plan_id = runtime != nullptr
+        ? const_cast<std::string *>(&runtime->current_plan_id())
+        : nullptr;
 
-    std::vector<std::string> command_line;
-    command_line.push_back(options.mcp_tool_command);
-    command_line.insert(command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
-
-    auto client = std::make_shared<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
-        options.mcp_tool_server_name,
-        std::move(command_line),
-        {},
-    });
-    mcp_agent_tool_provider provider(
-        options.mcp_tool_server_name,
-        *client,
-        options.mcp_tool_prefix);
-
-    auto tool_view = provider.resolve_tools(make_daemon_tool_context(options, request), error);
-    if (!tool_view) {
-        error = "daemon MCP tool provider resolution failed: " + error;
+    common_agent_cli_tool_selection selection;
+    if (!resolve_agent_cli_tool_selection(
+            memory_store,
+            &plan_store,
+            current_plan_id,
+            tool_args,
+            query,
+            true,
+            selection,
+            error)) {
+        error = "daemon tool provider resolution failed: " + error;
         return false;
     }
 
-    auto shared_view = std::shared_ptr<agent_tool_view>(std::move(tool_view));
-    tooling.tools = shared_view->chat_tools();
-    tooling.profile_tools_active = !tooling.tools.empty();
-    tooling.tool_view = shared_view.get();
-    tooling.owned_resources.push_back(std::static_pointer_cast<void>(client));
-    tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
+    tooling = std::move(selection.tooling);
+    if (selection.mcp_client) {
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(
+            std::shared_ptr<agent_mcp_tool_client>(std::move(selection.mcp_client))));
+    }
+    if (selection.tool_view) {
+        auto shared_view = std::shared_ptr<agent_tool_view>(std::move(selection.tool_view));
+        tooling.tool_view = shared_view.get();
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
+    }
     error.clear();
     return true;
 }
+
+namespace {
 
 common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
@@ -146,11 +177,19 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         true,
         {},
         {},
-        [&options](
+        [&options, &memory_store, &plan_store](
+                const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
                 std::string & error) {
-            return resolve_daemon_runtime_tooling(options, request, tooling, error);
+            return resolve_agent_daemon_tooling(
+                options,
+                runtime,
+                request,
+                memory_store,
+                plan_store,
+                tooling,
+                error);
         },
     };
 }

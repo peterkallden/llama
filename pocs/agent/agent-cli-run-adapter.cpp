@@ -24,11 +24,6 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
         return false;
     }
 #endif
-    if (!options.mcp_tool_command.empty() &&
-            (options.command == "daemon-chat" || options.command == "daemon-session")) {
-        error = "--mcp-tool-command is not wired through daemon-chat or daemon-session yet";
-        return false;
-    }
     if (options.mcp_tool_command.empty() && !options.mcp_tool_args.empty()) {
         error = "--mcp-tool-arg requires --mcp-tool-command";
         return false;

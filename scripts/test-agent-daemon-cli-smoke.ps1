@@ -77,17 +77,9 @@ function Invoke-LoggedCommand {
         if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
         $argumentString = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
 
-        $process = Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $argumentString `
-            -WorkingDirectory $repoRoot `
-            -NoNewWindow `
-            -PassThru `
-            -Wait `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath
-
-        $exitCode = $process.ExitCode
+        $cmd = "`"$FilePath`" $argumentString 1> `"$stdoutPath`" 2> `"$stderrPath`""
+        cmd /d /c $cmd | Out-Null
+        $exitCode = $LASTEXITCODE
     } finally {
         $lines = @()
         if (Test-Path -LiteralPath $stdoutPath) { $lines += Get-Content -LiteralPath $stdoutPath }
