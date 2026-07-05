@@ -97,6 +97,63 @@ private:
     binding_factory make_bindings;
 };
 
+struct mcp_agent_tool_definition {
+    std::string provider_id;
+    std::string name;
+    std::string description;
+    std::string input_schema_json = R"({"type":"object"})";
+    bool read_only = true;
+    bool requires_confirmation = false;
+    bool uses_network = false;
+    bool writes_memory = false;
+    bool writes_plan = false;
+};
+
+struct mcp_agent_tool_call_result {
+    bool ok = false;
+    std::string structured_content_json;
+    std::string text_content;
+    std::string failure_code;
+    common_tool_failure_class failure_class = common_tool_failure_class::execution;
+    bool retryable = false;
+    std::string safe_summary;
+    std::string raw_diagnostic;
+};
+
+class agent_mcp_tool_client {
+public:
+    virtual ~agent_mcp_tool_client() = default;
+
+    virtual bool list_tools(
+        const agent_tool_context & context,
+        std::vector<mcp_agent_tool_definition> & tools,
+        std::string & error) = 0;
+
+    virtual bool call_tool(
+        const agent_tool_context & context,
+        const mcp_agent_tool_definition & tool,
+        const std::string & arguments_json,
+        mcp_agent_tool_call_result & result,
+        std::string & error) = 0;
+};
+
+class mcp_agent_tool_provider : public agent_tool_provider {
+public:
+    mcp_agent_tool_provider(
+        std::string provider_id,
+        agent_mcp_tool_client & client,
+        std::string exposed_name_prefix = {});
+
+    std::unique_ptr<agent_tool_view> resolve_tools(
+        const agent_tool_context & context,
+        std::string & error) override;
+
+private:
+    std::string provider_id;
+    agent_mcp_tool_client & client;
+    std::string exposed_name_prefix;
+};
+
 bool agent_dispatch_chat_tool_calls(
     common_chat_msg & assistant_message,
     agent_tool_view & tool_view,

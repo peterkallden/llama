@@ -215,7 +215,9 @@ There is now also a small provider/view boundary above those native pieces:
 - `agent_tool_provider`: resolve tools for one host-owned runtime context.
 - `agent_tool_view`: expose model-facing `common_chat_tool` values and execute one validated tool call.
 
-The first implementation is native-only. It still uses the existing catalog, registry, and adapter bindings underneath, but the chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
+The first implementation started native-only, and it still uses the existing catalog, registry, and adapter bindings underneath. The chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
+
+There is now also a first MCP-shaped provider slice beside the native one. It is intentionally small: `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape. This is still an in-process fake-client seam rather than real stdio/JSON-RPC transport, but it gives the runtime a concrete second provider family before MCP lifecycle and transport work begins.
 
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 
@@ -276,7 +278,7 @@ A useful provider shape is:
 - Call one tool with validated JSON arguments.
 - Return structured success/failure results.
 
-The native tool registry can be the first provider. A later MCP-client provider can translate MCP `tools/list` and `tools/call` into the same internal shape.
+The native tool registry is the first concrete provider. There is now also a first MCP-shaped provider seam built on top of an abstract MCP client contract, but transport is still deferred. A later real MCP-client implementation can translate MCP `tools/list` and `tools/call` into the same internal shape without changing the runtime loop.
 
 Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
 
@@ -321,9 +323,9 @@ The current code should remain useful without any of these. The next steps shoul
 
    The current `server-context` path is a good resident smoke backend, but a real host should be able to keep models loaded while resetting or expiring individual agent sessions.
 
-7. Create MCP client/provider support after the internal provider contract exists.
+7. Extend the first MCP provider seam into a real MCP client/provider path.
 
-   Start with `initialize`, `tools/list`, and `tools/call` for one local stdio server. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
+   The first provider slice now exists behind an abstract MCP client contract, so the next step is to back it with a real client transport and lifecycle. Start with `initialize`, `tools/list`, and `tools/call` for one local stdio server. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
 
 ## Backlog Notes
 
