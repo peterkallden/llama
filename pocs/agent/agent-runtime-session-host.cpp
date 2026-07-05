@@ -56,6 +56,7 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         config.memory_enabled,
         std::move(config.installed_blueprint_candidates),
         std::move(config.tooling),
+        std::move(config.tooling_resolver),
     };
 }
 
@@ -103,6 +104,20 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
     return turn_request;
 }
 
+bool common_agent_runtime_session_host::resolve_tooling(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error) const {
+    tooling = {};
+    if (config.tooling_resolver) {
+        return config.tooling_resolver(request, tooling, error);
+    }
+
+    tooling = config.tooling;
+    error.clear();
+    return true;
+}
+
 bool common_agent_runtime_session_host::ensure_runtime(
         const common_agent_runtime_session_host_turn_request & request,
         bool & reused,
@@ -144,10 +159,16 @@ bool common_agent_runtime_session_host::run_turn(
     }
 
     bool runtime_reused = false;
+    common_agent_runtime_tooling resolved_tooling;
+    if (!resolve_tooling(request, resolved_tooling, error)) {
+        result.error = error;
+        return false;
+    }
     if (!ensure_runtime(request, runtime_reused, error)) {
         result.error = error;
         return false;
     }
+    runtime->set_tooling(std::move(resolved_tooling));
 
     const std::string turn_id = request.turn_id.empty()
         ? "daemon-turn-" + std::to_string(++generated_turn_counter)

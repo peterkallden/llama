@@ -84,6 +84,10 @@ common_agent_runtime_resident_runtime::common_agent_runtime_resident_runtime(
       installed_blueprint_candidates(std::move(config.installed_blueprint_candidates)),
       tooling(std::move(config.tooling)) {}
 
+void common_agent_runtime_resident_runtime::set_tooling(common_agent_runtime_tooling next_tooling) {
+    tooling = std::move(next_tooling);
+}
+
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,

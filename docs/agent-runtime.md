@@ -234,7 +234,7 @@ There is now also a first thin integration into the ordinary CLI host-adapter pa
 
 That CLI path can now also compose native and MCP-backed tools in the same resolved view. If both `--tool-profile` and `--mcp-tool-command` are present, the host resolves them through one small composite provider surface and keeps model-visible tool names unique at the merge boundary.
 
-The foreground daemon can now also start with a small MCP-backed tool surface of its own when given `--mcp-tool-command`. This first daemon slice is intentionally narrower than the CLI path: it resolves a static daemon-owned MCP tool view at startup so the daemon/session/admin path can exercise a real MCP subprocess, but it does not yet have full per-turn tool re-resolution for prompt- or scope-shaped native bindings.
+The foreground daemon can now also start with a small MCP-backed tool surface of its own when given `--mcp-tool-command`. That daemon path no longer resolves tools only once at startup. Session-host execution now has a per-turn tooling resolver hook, and the daemon uses it to resolve MCP-backed tooling from the current host-owned session/scope turn contract before each turn. This is the first step toward fuller per-turn parity with native bindings.
 
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 

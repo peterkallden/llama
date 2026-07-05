@@ -68,16 +68,20 @@ common_agent_runtime_resident_request_config make_resident_request_config(
     };
 }
 
-agent_tool_context make_daemon_tool_context(const daemon_options & options) {
+agent_tool_context make_daemon_tool_context(
+        const daemon_options & options,
+        const common_agent_runtime_session_host_turn_request & request) {
     agent_tool_context tool_context;
-    tool_context.request_id = "daemon-startup";
-    tool_context.turn_id = "daemon-startup";
-    tool_context.scope.namespace_id = "daemon";
-    tool_context.scope.session_id = "daemon";
-    tool_context.scope.memory_scope = common_memory_scope::session;
-    tool_context.scope.plan_scope = common_plan_scope::turn;
-    tool_context.memory_scope = common_memory_scope::session;
-    tool_context.plan_scope = common_plan_scope::turn;
+    tool_context.request_id = "daemon-turn";
+    tool_context.turn_id = request.turn_id;
+    tool_context.scope.namespace_id = request.namespace_id;
+    tool_context.scope.session_id = request.session_id;
+    tool_context.scope.project_id = request.project_id;
+    tool_context.scope.turn_id = request.turn_id;
+    tool_context.scope.memory_scope = request.memory_scope;
+    tool_context.scope.plan_scope = request.plan_scope;
+    tool_context.memory_scope = request.memory_scope;
+    tool_context.plan_scope = request.plan_scope;
     tool_context.allow_network = !options.mcp_tool_command.empty();
     tool_context.allow_policy_gated_writes = false;
     tool_context.allow_memory_proposals = false;
@@ -86,8 +90,9 @@ agent_tool_context make_daemon_tool_context(const daemon_options & options) {
     return tool_context;
 }
 
-bool build_daemon_runtime_tooling(
+bool resolve_daemon_runtime_tooling(
         const daemon_options & options,
+        const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error) {
     tooling = {};
@@ -110,7 +115,7 @@ bool build_daemon_runtime_tooling(
         *client,
         options.mcp_tool_prefix);
 
-    auto tool_view = provider.resolve_tools(make_daemon_tool_context(options), error);
+    auto tool_view = provider.resolve_tools(make_daemon_tool_context(options, request), error);
     if (!tool_view) {
         error = "daemon MCP tool provider resolution failed: " + error;
         return false;
@@ -129,8 +134,7 @@ bool build_daemon_runtime_tooling(
 common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
-        const daemon_options & options,
-        common_agent_runtime_tooling tooling) {
+        const daemon_options & options) {
     return {
         memory_store,
         plan_store,
@@ -141,7 +145,13 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_scope::session,
         true,
         {},
-        std::move(tooling),
+        {},
+        [&options](
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            return resolve_daemon_runtime_tooling(options, request, tooling, error);
+        },
     };
 }
 
@@ -186,14 +196,9 @@ bool initialize_agent_daemon_environment(
         return false;
     }
 
-    common_agent_runtime_tooling tooling;
-    if (!build_daemon_runtime_tooling(options, tooling, error)) {
-        return false;
-    }
-
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(
         make_agent_runtime_session_manager_config(
-            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, options, std::move(tooling))));
+            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, options)));
     error.clear();
     return true;
 }

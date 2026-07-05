@@ -3,6 +3,7 @@
 #include "agent-runtime-turn.h"
 #include "agent-runtime-tooling.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,6 +73,10 @@ struct common_agent_runtime_session_host_config {
     bool memory_enabled = false;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error)> tooling_resolver;
 };
 
 struct common_agent_runtime_session_host_build_config {
@@ -85,6 +90,10 @@ struct common_agent_runtime_session_host_build_config {
     bool memory_enabled = false;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error)> tooling_resolver;
 };
 
 common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
@@ -117,6 +126,11 @@ private:
 
     common_agent_runtime_turn_request make_base_turn_request(
         const common_agent_runtime_session_host_turn_request & request) const;
+
+    bool resolve_tooling(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error) const;
 
     common_agent_runtime_session_host_config config;
     common_agent_runtime_session_host_runtime_key active_runtime_key;

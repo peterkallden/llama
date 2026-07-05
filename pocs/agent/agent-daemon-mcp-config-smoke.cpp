@@ -59,12 +59,35 @@ int main(int argc, char ** argv) {
     daemon_options bad_options = options;
     bad_options.mcp_tool_args = {"--mode", "bad-tools-list"};
     common_agent_daemon_runtime bad_runtime;
-    if (initialize_agent_daemon_environment(bad_options, bad_runtime, error)) {
-        std::fprintf(stderr, "daemon MCP environment unexpectedly accepted malformed MCP startup\n");
+    if (!initialize_agent_daemon_environment(bad_options, bad_runtime, error)) {
+        std::fprintf(stderr, "daemon MCP bad environment failed too early: %s\n", error.c_str());
         return 1;
     }
-    if (error.find("invalid JSON-RPC payload") == std::string::npos) {
-        std::fprintf(stderr, "daemon MCP bad startup did not preserve expected diagnostics: %s\n", error.c_str());
+    common_agent_daemon_service bad_service(std::move(bad_runtime));
+    common_agent_daemon_command_result bad_result;
+    if (bad_service.execute({
+            "bad-request",
+            common_agent_daemon_command_type::run_turn,
+            common_agent_runtime_session_manager_turn_request{
+                common_agent_runtime_host_mode::chat,
+                "hello",
+                "session-a",
+                "namespace-a",
+                "",
+                "turn-a",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+            },
+            std::nullopt,
+            {},
+            {},
+        }, bad_result, error)) {
+        std::fprintf(stderr, "daemon MCP bad turn unexpectedly succeeded\n");
+        return 1;
+    }
+    if (bad_result.error.find("invalid JSON-RPC payload") == std::string::npos) {
+        std::fprintf(stderr, "daemon MCP bad turn did not preserve expected diagnostics: %s\n", bad_result.error.c_str());
         return 1;
     }
 
