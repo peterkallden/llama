@@ -42,6 +42,18 @@ Daemon command results now also carry a small internal daemon event list plus `d
 
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
 
+## Design Constraints
+
+The runtime direction depends on keeping the layer boundaries boring and explicit.
+
+- `common/memory` should not depend on agent/runtime host code.
+- `common/plan` may depend on memory contracts and stores, but not on agent PoC host flow.
+- `common/agent` may depend on plan and memory, but should still prefer neutral runtime-facing contracts when a type does not need full agent semantics.
+- `pocs/agent` may depend on all lower layers and is where host adapters, daemon experiments, MCP-shaped seams, and resident runtime assembly can live.
+- `pocs/memory` should not become the owner of agent orchestration or resident host flow.
+
+In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -363,6 +375,22 @@ The current code should remain useful without any of these. The next steps shoul
 - Revisit activity order after the current runtime/session cleanup wave.
 
   The branch has now completed several structural extractions in a row: provider-first tools, resident runtime/session layering, daemon service/dispatcher split, CLI-free runtime builders, and removal of older daemon/session aliases. Before taking another deep refactor in the same area, it is reasonable to pause and choose between a new activity track such as event/cancellation contracts, deeper `server-context` lifetime splitting, or MCP/provider-facing host work.
+
+- Add host-owned resource references with turn/session/project lifetime.
+
+  Large tool outputs do not need to stay inline forever. A later resource-store slice can let the host keep bulky results behind host-created references while the model sees a compact summary plus a scoped link. The intended lifetime split is `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+
+- Add structured execution history that explains "why this answer" without debug logs.
+
+  A later trace/event slice should make one turn inspectable through structured execution facts rather than C++ diagnostics. The useful shape is along the lines of `plan -> step -> observation -> tool result -> reflection decision -> final answer`, with enough host-owned metadata that an operator can understand what happened without exposing chain-of-thought.
+
+- Add a file-backed host configuration model above CLI flags.
+
+  CLI flags remain useful for PoC and admin overrides, but a near-production daemon should be constructible from a host config file that describes server settings, model load settings, profiles, storage backends, and safety/runtime limits. The runtime and daemon service layers should consume that host-owned configuration directly rather than depending on CLI `args`.
+
+- Keep the daemon target shape centered on a resident runtime service, not a bigger CLI.
+
+  The intended direction is still a host/service process that owns the loaded-model manager, session manager, store manager, tool execution surface, policy decisions, and trace sink, with the CLI eventually acting as a client/admin tool against that daemon rather than a parallel owner of the agent loop.
 
 ## Current Verification Baseline
 
