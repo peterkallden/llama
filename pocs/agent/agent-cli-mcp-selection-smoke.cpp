@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
     common_memory_in_memory_store store;
     args options;
     options.command = "run";
-    options.tool_profile = "research";
+    options.tool_profile = "minimal";
     options.tool_profile_explicit = true;
     options.mcp_tool_command = server_path.string();
     options.mcp_tool_server_name = "github";
@@ -85,8 +85,22 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP selection did not expose github_search_issues\n");
         return 1;
     }
-    if (!has_tool(selection.tooling.tools, "github_create_issue")) {
-        std::fprintf(stderr, "CLI MCP selection did not expose github_create_issue\n");
+    if (!has_tool(selection.tooling.tools, "calculator")) {
+        std::fprintf(stderr, "CLI MCP selection did not expose native calculator from the minimal tool profile\n");
+        return 1;
+    }
+    if (has_tool(selection.tooling.tools, "github_create_issue")) {
+        std::fprintf(stderr, "CLI MCP selection exposed github_create_issue despite writes being disabled\n");
+        return 1;
+    }
+
+    const auto native_result = selection.tool_view->call({
+        "call-native",
+        "calculator",
+        R"({"expression":"2 + 3"})",
+    }, error);
+    if (!native_result.ok || native_result.content_json.find("5") == std::string::npos) {
+        std::fprintf(stderr, "CLI MCP selection native tool call did not return the expected result: %s\n", native_result.content_json.c_str());
         return 1;
     }
 
@@ -101,6 +115,7 @@ int main(int argc, char ** argv) {
     }
 
     std::printf("cli_mcp_tools=%zu\n", selection.tooling.tools.size());
+    std::printf("cli_native_result=%s\n", native_result.content_json.c_str());
     std::printf("cli_mcp_search_result=%s\n", result.content_json.c_str());
     return 0;
 }

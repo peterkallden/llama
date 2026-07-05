@@ -371,6 +371,77 @@ private:
     size_t call_count = 0;
 };
 
+class composite_agent_tool_view : public agent_tool_view {
+public:
+    composite_agent_tool_view(
+            std::vector<std::unique_ptr<agent_tool_view>> views,
+            std::vector<common_chat_tool> chat_tools,
+            std::map<std::string, size_t> tool_owners)
+        : views(std::move(views))
+        , chat_tool_list(std::move(chat_tools))
+        , tool_owners(std::move(tool_owners)) {}
+
+    const std::vector<common_chat_tool> & chat_tools() const override {
+        return chat_tool_list;
+    }
+
+    bool exposes_tool(const std::string & name) const override {
+        return tool_owners.find(name) != tool_owners.end();
+    }
+
+    bool is_read_only(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->is_read_only(name);
+    }
+
+    bool validate(const agent_tool_call & call, std::string & error) const override {
+        const auto * view = find_owner(call.name);
+        if (view == nullptr) {
+            error = "tool is unavailable in this composite runtime view";
+            return false;
+        }
+        return view->validate(call, error);
+    }
+
+    agent_tool_result call(
+            const agent_tool_call & call,
+            std::string & error) override {
+        auto * view = find_owner(call.name);
+        if (view == nullptr) {
+            error = "tool is unavailable in this composite runtime view";
+            return make_failure_result(
+                call,
+                "tool_unavailable",
+                common_tool_failure_class::not_found,
+                false,
+                "The requested tool is not available in this runtime view.",
+                error);
+        }
+        return view->call(call, error);
+    }
+
+private:
+    const agent_tool_view * find_owner(const std::string & name) const {
+        const auto it = tool_owners.find(name);
+        if (it == tool_owners.end() || it->second >= views.size()) {
+            return nullptr;
+        }
+        return views[it->second].get();
+    }
+
+    agent_tool_view * find_owner(const std::string & name) {
+        const auto it = tool_owners.find(name);
+        if (it == tool_owners.end() || it->second >= views.size()) {
+            return nullptr;
+        }
+        return views[it->second].get();
+    }
+
+    std::vector<std::unique_ptr<agent_tool_view>> views;
+    std::vector<common_chat_tool> chat_tool_list;
+    std::map<std::string, size_t> tool_owners;
+};
+
 } // namespace
 
 native_agent_tool_provider::native_agent_tool_provider(
@@ -469,6 +540,46 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         client,
         std::move(chat_tools),
         std::move(resolved_definitions));
+}
+
+void composite_agent_tool_provider::add_provider(agent_tool_provider & provider) {
+    providers.push_back(&provider);
+}
+
+std::unique_ptr<agent_tool_view> composite_agent_tool_provider::resolve_tools(
+        const agent_tool_context & context,
+        std::string & error) {
+    std::vector<std::unique_ptr<agent_tool_view>> resolved_views;
+    std::vector<common_chat_tool> merged_chat_tools;
+    std::map<std::string, size_t> tool_owners;
+
+    for (auto * provider : providers) {
+        if (provider == nullptr) {
+            continue;
+        }
+
+        std::unique_ptr<agent_tool_view> view = provider->resolve_tools(context, error);
+        if (!view) {
+            return nullptr;
+        }
+
+        const size_t owner_index = resolved_views.size();
+        for (const auto & tool : view->chat_tools()) {
+            if (tool_owners.find(tool.name) != tool_owners.end()) {
+                error = "duplicate tool exposed in composite provider: " + tool.name;
+                return nullptr;
+            }
+            tool_owners.emplace(tool.name, owner_index);
+            merged_chat_tools.push_back(tool);
+        }
+        resolved_views.push_back(std::move(view));
+    }
+
+    error.clear();
+    return std::make_unique<composite_agent_tool_view>(
+        std::move(resolved_views),
+        std::move(merged_chat_tools),
+        std::move(tool_owners));
 }
 
 bool agent_dispatch_chat_tool_calls(

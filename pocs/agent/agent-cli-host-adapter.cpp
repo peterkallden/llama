@@ -80,36 +80,9 @@ bool resolve_agent_cli_tool_selection(
         std::string & error) {
     selection = {};
 
-    if (!options.mcp_tool_command.empty()) {
-        std::vector<std::string> command_line;
-        command_line.push_back(options.mcp_tool_command);
-        command_line.insert(command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
-
-        selection.mcp_client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
-            options.mcp_tool_server_name,
-            std::move(command_line),
-            {},
-        });
-
-        mcp_agent_tool_provider provider(
-            options.mcp_tool_server_name,
-            *selection.mcp_client,
-            options.mcp_tool_prefix);
-
-        const auto tool_context = make_agent_cli_tool_context(options, query, {});
-        if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
-            error = "MCP tool provider resolution failed: " + error;
-            return false;
-        }
-        selection.tooling.tools = selection.tool_view->chat_tools();
-        selection.tooling.profile_tools_active = true;
-        selection.tooling.tool_view = selection.tool_view.get();
-        error.clear();
-        return true;
-    }
-
+    common_tool_catalog tool_catalog;
+    std::unique_ptr<native_agent_tool_provider> native_provider;
     if (!options.tool_profile.empty()) {
-        common_tool_catalog tool_catalog;
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(options.tool_profile, bootstrap, error)) {
             error = "tool bootstrap failed: " + error;
@@ -130,15 +103,46 @@ bool resolve_agent_cli_tool_selection(
             };
         }
 
-        native_agent_tool_provider provider(
+        native_provider = std::make_unique<native_agent_tool_provider>(
             tool_catalog,
-            [&bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) {
+            [bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
                 resolved = bindings;
                 binding_error.clear();
                 return true;
             });
+    }
 
-        const auto tool_context = make_agent_cli_tool_context(options, query, bindings.repository_root);
+    std::unique_ptr<mcp_agent_tool_provider> mcp_provider;
+    if (!options.mcp_tool_command.empty()) {
+        std::vector<std::string> command_line;
+        command_line.push_back(options.mcp_tool_command);
+        command_line.insert(command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
+
+        selection.mcp_client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
+            options.mcp_tool_server_name,
+            std::move(command_line),
+            {},
+        });
+        mcp_provider = std::make_unique<mcp_agent_tool_provider>(
+            options.mcp_tool_server_name,
+            *selection.mcp_client,
+            options.mcp_tool_prefix);
+    }
+
+    if (native_provider || mcp_provider) {
+        const auto repository_root = !options.repository_root.empty()
+            ? std::filesystem::weakly_canonical(options.repository_root).string()
+            : std::string();
+        const auto tool_context = make_agent_cli_tool_context(options, query, repository_root);
+
+        composite_agent_tool_provider provider;
+        if (native_provider) {
+            provider.add_provider(*native_provider);
+        }
+        if (mcp_provider) {
+            provider.add_provider(*mcp_provider);
+        }
+
         if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
             error = "tool provider resolution failed: " + error;
             return false;

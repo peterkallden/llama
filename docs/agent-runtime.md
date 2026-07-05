@@ -232,6 +232,8 @@ The stdio client now also keeps a small stderr tail from the MCP child and appen
 
 There is now also a first thin integration into the ordinary CLI host-adapter path. When `llama-agent run` is given `--mcp-tool-command`, the CLI tool-selection layer resolves an MCP-backed `agent_tool_view` through the same host/runtime tooling contract used by native tools. This first slice is intentionally narrow: it covers the direct CLI host/runtime path, not the daemon adapters yet.
 
+That CLI path can now also compose native and MCP-backed tools in the same resolved view. If both `--tool-profile` and `--mcp-tool-command` are present, the host resolves them through one small composite provider surface and keeps model-visible tool names unique at the merge boundary.
+
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 
 That keeps host authority in one place:

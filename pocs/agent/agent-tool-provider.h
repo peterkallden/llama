@@ -157,6 +157,20 @@ private:
     std::string exposed_name_prefix;
 };
 
+class composite_agent_tool_provider : public agent_tool_provider {
+public:
+    composite_agent_tool_provider() = default;
+
+    void add_provider(agent_tool_provider & provider);
+
+    std::unique_ptr<agent_tool_view> resolve_tools(
+        const agent_tool_context & context,
+        std::string & error) override;
+
+private:
+    std::vector<agent_tool_provider *> providers;
+};
+
 struct agent_mcp_stdio_client_config {
     std::string server_name;
     std::vector<std::string> command_line;
