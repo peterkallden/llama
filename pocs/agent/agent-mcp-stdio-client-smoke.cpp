@@ -30,6 +30,10 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
     return false;
 }
 
+bool contains(const std::string & haystack, const std::string & needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -119,9 +123,29 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_mcp_stdio_client broken_client({
+        "github",
+        {server_path.string(), "--mode", "bad-tools-list"},
+        {},
+    });
+    mcp_agent_tool_provider broken_provider("github", broken_client);
+    error.clear();
+    std::unique_ptr<agent_tool_view> broken_view = broken_provider.resolve_tools(read_context, error);
+    if (broken_view != nullptr) {
+        std::fprintf(stderr, "bad-tools-list MCP server unexpectedly resolved successfully\n");
+        return 1;
+    }
+    if (!contains(error, "invalid JSON-RPC payload") ||
+            !contains(error, "fake-mcp: emitting malformed tools/list payload") ||
+            !contains(error, "exit_code=11")) {
+        std::fprintf(stderr, "broken MCP diagnostic was missing expected context: %s\n", error.c_str());
+        return 1;
+    }
+
     std::printf("stdio_mcp_tools=%zu\n", write_view->chat_tools().size());
     std::printf("stdio_mcp_search_result=%s\n", search_result.content_json.c_str());
     std::printf("stdio_mcp_failure_code=%s\n", failure_result.failure_code.c_str());
     std::printf("stdio_mcp_create_result=%s\n", create_result.content_json.c_str());
+    std::printf("stdio_mcp_error_context=%s\n", error.c_str());
     return 0;
 }

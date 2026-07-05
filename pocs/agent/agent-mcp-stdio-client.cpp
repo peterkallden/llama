@@ -4,6 +4,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <chrono>
+#include <sstream>
+#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -139,6 +142,17 @@ common_tool_failure_class parse_mcp_failure_class(const std::string & value) {
     return common_tool_failure_class::execution;
 }
 
+void append_tail(std::string & tail, const char * data, size_t size, size_t max_size) {
+    if (data == nullptr || size == 0 || max_size == 0) {
+        return;
+    }
+
+    tail.append(data, size);
+    if (tail.size() > max_size) {
+        tail.erase(0, tail.size() - max_size);
+    }
+}
+
 } // namespace
 
 struct agent_mcp_stdio_client::impl {
@@ -150,6 +164,9 @@ struct agent_mcp_stdio_client::impl {
     int exit_code = 1;
     bool running = false;
     bool initialized = false;
+    bool joined = false;
+    std::string stderr_tail;
+    static constexpr size_t max_stderr_tail_bytes = 4096;
 };
 
 agent_mcp_stdio_client::agent_mcp_stdio_client(agent_mcp_stdio_client_config config)
@@ -196,6 +213,8 @@ bool agent_mcp_stdio_client::ensure_started(std::string & error) {
         _setmode(_fileno(state->out), _O_BINARY);
 #endif
         state->running = true;
+        state->joined = false;
+        state->stderr_tail.clear();
     }
 
     json response;
@@ -258,12 +277,18 @@ bool agent_mcp_stdio_client::send_request(
     for (;;) {
         json message;
         if (!read_json_rpc_message(state->out, message, error)) {
+            collect_stderr_tail();
+            capture_exit_if_needed();
+            error = with_transport_context(error);
             return false;
         }
 
         if (message.contains("id") && message["id"] == request_id) {
             if (message.contains("error")) {
-                error = "MCP server returned JSON-RPC error: " + message["error"].dump();
+                collect_stderr_tail();
+                capture_exit_if_needed();
+                error = with_transport_context(
+                    "MCP server returned JSON-RPC error: " + message["error"].dump());
                 return false;
             }
             response = std::move(message);
@@ -284,11 +309,16 @@ void agent_mcp_stdio_client::shutdown_process() {
             send_request("shutdown", json::object(), ignored_response, ignored_error);
             send_notification("exit", json::object(), ignored_error);
         }
+        collect_stderr_tail();
         if (state->in != nullptr) {
             std::fclose(state->in);
             state->in = nullptr;
         }
-        subprocess_terminate(&state->proc);
+        if (subprocess_alive(&state->proc)) {
+            subprocess_terminate(&state->proc);
+        }
+        capture_exit_if_needed();
+        collect_stderr_tail();
         subprocess_destroy(&state->proc);
     }
 
@@ -296,6 +326,66 @@ void agent_mcp_stdio_client::shutdown_process() {
     state->initialized = false;
     state->out = nullptr;
     state->err = nullptr;
+}
+
+void agent_mcp_stdio_client::collect_stderr_tail() {
+    if (!state || !state->running) {
+        return;
+    }
+
+    char buffer[512];
+    for (;;) {
+        const unsigned count = subprocess_read_stderr(&state->proc, buffer, sizeof(buffer));
+        if (count == 0) {
+            break;
+        }
+        append_tail(state->stderr_tail, buffer, count, impl::max_stderr_tail_bytes);
+        if (count < sizeof(buffer)) {
+            break;
+        }
+    }
+}
+
+void agent_mcp_stdio_client::capture_exit_if_needed() {
+    if (!state || !state->running || state->joined) {
+        return;
+    }
+
+    if (subprocess_alive(&state->proc)) {
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            collect_stderr_tail();
+            if (!subprocess_alive(&state->proc)) {
+                break;
+            }
+        }
+        if (subprocess_alive(&state->proc)) {
+            return;
+        }
+    }
+
+    collect_stderr_tail();
+    subprocess_join(&state->proc, &state->exit_code);
+    state->joined = true;
+}
+
+std::string agent_mcp_stdio_client::with_transport_context(const std::string & base_error) const {
+    std::ostringstream oss;
+    oss << base_error;
+
+    if (state) {
+        if (state->joined) {
+            oss << " (exit_code=" << state->exit_code << ")";
+        } else if (state->running && !subprocess_alive(&state->proc)) {
+            oss << " (server exited)";
+        }
+
+        if (!state->stderr_tail.empty()) {
+            oss << " stderr_tail=" << json(state->stderr_tail).dump();
+        }
+    }
+
+    return oss.str();
 }
 
 bool agent_mcp_stdio_client::list_tools(
@@ -314,7 +404,9 @@ bool agent_mcp_stdio_client::list_tools(
 
     const auto & result = response["result"];
     if (!result.is_object() || !result.contains("tools") || !result["tools"].is_array()) {
-        error = "MCP tools/list response did not contain a tools array";
+        collect_stderr_tail();
+        capture_exit_if_needed();
+        error = with_transport_context("MCP tools/list response did not contain a tools array");
         return false;
     }
 
@@ -382,7 +474,9 @@ bool agent_mcp_stdio_client::call_tool(
 
     const auto & rpc_result = response["result"];
     if (!rpc_result.is_object()) {
-        error = "MCP tools/call response did not contain a result object";
+        collect_stderr_tail();
+        capture_exit_if_needed();
+        error = with_transport_context("MCP tools/call response did not contain a result object");
         return false;
     }
 

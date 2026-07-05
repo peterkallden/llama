@@ -228,6 +228,8 @@ The stdio client is still deliberately small. It is enough to prove the provider
 
 Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
 
+The stdio client now also keeps a small stderr tail from the MCP child and appends it to transport-level failures when the subprocess exits early or emits malformed JSON-RPC data. That keeps the first real subprocess smoke debuggable without pulling in a larger async lifecycle or logging subsystem yet.
+
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
 
 That keeps host authority in one place:

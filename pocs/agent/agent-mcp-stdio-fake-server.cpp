@@ -180,11 +180,23 @@ json make_tools_call_result(const json & params) {
 
 } // namespace
 
-int main() {
+int main(int argc, char ** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    std::string mode;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
+            mode = argv[++i];
+        }
+    }
+
+    if (mode == "crash-before-initialize") {
+        std::fprintf(stderr, "fake-mcp: crash-before-initialize\n");
+        return 7;
+    }
+
     bool shutdown_requested = false;
     for (;;) {
         json message;
@@ -216,10 +228,26 @@ int main() {
                     {"version", "0.1"},
                 }},
             };
+            if (mode == "exit-after-initialize") {
+                std::fprintf(stderr, "fake-mcp: exiting after initialize\n");
+                if (!write_json_rpc_message(response)) {
+                    return 1;
+                }
+                return 9;
+            }
         } else if (method == "shutdown") {
             shutdown_requested = true;
             response["result"] = json::object();
         } else if (method == "tools/list") {
+            if (mode == "bad-tools-list") {
+                std::fprintf(stderr, "fake-mcp: emitting malformed tools/list payload\n");
+                const std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":";
+                const std::string framed =
+                    "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+                std::fwrite(framed.data(), 1, framed.size(), stdout);
+                std::fflush(stdout);
+                return 11;
+            }
             response["result"] = make_tools_list_result();
         } else if (method == "tools/call") {
             response["result"] = make_tools_call_result(message.value("params", json::object()));

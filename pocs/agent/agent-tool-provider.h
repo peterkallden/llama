@@ -184,6 +184,9 @@ private:
     bool ensure_started(std::string & error);
     bool send_notification(const std::string & method, const nlohmann::ordered_json & params, std::string & error);
     bool send_request(const std::string & method, const nlohmann::ordered_json & params, nlohmann::ordered_json & response, std::string & error);
+    void collect_stderr_tail();
+    void capture_exit_if_needed();
+    std::string with_transport_context(const std::string & base_error) const;
     void shutdown_process();
 
     agent_mcp_stdio_client_config config;
