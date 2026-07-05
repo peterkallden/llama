@@ -156,6 +156,26 @@ public:
         if (a.agent_trace) {
             command_line.push_back("--agent-trace");
         }
+        if (a.max_tool_rounds > 0) {
+            command_line.push_back("--max-tool-rounds");
+            command_line.push_back(std::to_string(a.max_tool_rounds));
+        }
+        if (!a.mcp_tool_command.empty()) {
+            command_line.push_back("--mcp-tool-command");
+            command_line.push_back(a.mcp_tool_command);
+        }
+        for (const auto & mcp_arg : a.mcp_tool_args) {
+            command_line.push_back("--mcp-tool-arg");
+            command_line.push_back(mcp_arg);
+        }
+        if (!a.mcp_tool_server_name.empty() && a.mcp_tool_server_name != "mcp") {
+            command_line.push_back("--mcp-tool-server-name");
+            command_line.push_back(a.mcp_tool_server_name);
+        }
+        if (!a.mcp_tool_prefix.empty()) {
+            command_line.push_back("--mcp-tool-prefix");
+            command_line.push_back(a.mcp_tool_prefix);
+        }
         auto argv = to_cstr_vec(command_line);
         const int options =
             subprocess_option_no_window |

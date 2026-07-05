@@ -11,6 +11,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 struct daemon_options {
     std::string model;
@@ -26,11 +27,16 @@ struct daemon_options {
     std::string reflection_mode = "off";
     std::string memory_learn = "off";
     std::string agent_plan = "off";
+    std::string mcp_tool_command;
+    std::vector<std::string> mcp_tool_args;
+    std::string mcp_tool_server_name = "mcp";
+    std::string mcp_tool_prefix;
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;
     bool plan_show_summary = false;
     bool agent_trace = false;
+    size_t max_tool_rounds = 0;
 };
 
 bool parse_mode(

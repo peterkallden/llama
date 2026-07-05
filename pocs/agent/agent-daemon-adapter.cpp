@@ -67,6 +67,16 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn_min_reuse = std::stof(value);
         } else if (std::strcmp(argv[i], "--agent-plan") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.agent_plan = value;
+        } else if (std::strcmp(argv[i], "--mcp-tool-command") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_command = value;
+        } else if (std::strcmp(argv[i], "--mcp-tool-arg") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_args.push_back(value);
+        } else if (std::strcmp(argv[i], "--mcp-tool-server-name") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_server_name = value;
+        } else if (std::strcmp(argv[i], "--mcp-tool-prefix") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_prefix = value;
+        } else if (std::strcmp(argv[i], "--max-tool-rounds") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.max_tool_rounds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
             options.plan_show_summary = true;
         } else if (std::strcmp(argv[i], "--agent-trace") == 0) {
@@ -112,6 +122,18 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--agent-plan must be off or auto\n");
         return false;
     }
+    if (options.max_tool_rounds > 4) {
+        std::fprintf(stderr, "--max-tool-rounds must be between 0 and 4\n");
+        return false;
+    }
+    if (options.mcp_tool_command.empty() && !options.mcp_tool_args.empty()) {
+        std::fprintf(stderr, "--mcp-tool-arg requires --mcp-tool-command\n");
+        return false;
+    }
+    if (options.mcp_tool_server_name.empty()) {
+        std::fprintf(stderr, "--mcp-tool-server-name must not be empty\n");
+        return false;
+    }
     if (options.memory_learn_min_confidence < 0.0f || options.memory_learn_min_confidence > 1.0f ||
             options.memory_learn_min_reuse < 0.0f || options.memory_learn_min_reuse > 1.0f) {
         std::fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
@@ -126,6 +148,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
-        "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--n-predict N] [-ngl N]\n",
+        "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
+        "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--n-predict N] [-ngl N]\n",
         argv0);
 }
