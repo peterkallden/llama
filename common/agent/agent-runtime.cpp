@@ -12,6 +12,28 @@
 
 using json = nlohmann::ordered_json;
 
+static void append_trace(
+        common_agent_result & result,
+        common_runtime_trace_stage stage,
+        common_runtime_trace_kind kind,
+        std::string detail,
+        std::string plan_id = {},
+        std::string step_id = {},
+        std::string tool_name = {},
+        std::string observation_id = {},
+        std::string related_id = {}) {
+    result.trace.push_back({
+        stage,
+        kind,
+        std::move(detail),
+        std::move(plan_id),
+        std::move(step_id),
+        std::move(tool_name),
+        std::move(observation_id),
+        std::move(related_id),
+    });
+}
+
 static bool infer_calculator_expression(const std::string & text, std::string & expression) {
     static const std::regex arithmetic(R"((\(?\s*\d+(?:\.\d+)?(?:\s*[-+*/]\s*\d+(?:\.\d+)?)+\s*\)?))");
     std::smatch match;
@@ -169,6 +191,8 @@ common_agent_runtime::common_agent_runtime(common_plan_store & store, common_pla
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
     common_agent_result result;
     std::string error;
+    append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::started,
+        "agent runtime turn started", {}, {}, {}, {}, request.turn_id);
     if (!request.enable_planning) { result.error = "planning is disabled"; return result; }
     const auto normalize_planned_tool_step = [&](common_plan_step & step, bool degrade_on_any_invalid, std::string & detail) {
         detail.clear();
@@ -204,6 +228,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     for (const auto & hit : request.memories) {
         result.memory_ids.push_back(hit.memory.id);
         result.events.push_back({common_agent_event_type::memory_retrieved, "memory supplied to agent runtime", hit.memory.id, std::nullopt});
+        append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+            "memory supplied to runtime", {}, {}, {}, hit.memory.id);
     }
     common_plan_state plan;
     if (request.plan_id && !request.plan_id->empty()) {
@@ -216,6 +242,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             }
             plan = *existing;
             result.events.push_back({common_agent_event_type::plan_updated, "existing plan resumed", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
+                "existing plan resumed", plan.id);
         }
     }
     if (plan.id.empty()) {
@@ -258,8 +286,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::started,
+            "plan created", plan.id);
         for (const auto & detail : initial_guardrail_events) {
             result.events.push_back({common_agent_event_type::tool_rejected, detail, {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
+                detail, plan.id);
         }
         for (auto op : proposal.operations) {
             common_plan_bind_memory_provenance(op, request.memories);
@@ -267,6 +299,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { result.error = error; return result; }
             result.events.push_back({common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
+                "initial plan operation applied", plan.id,
+                op.step_id.value_or(op.step ? op.step->id : std::string()));
         }
     }
     result.plan_id = plan.id;
@@ -289,6 +324,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.learning_signals.push_back({common_learning_signal_type::user_correction, plan.id, {}, {}, observation_id,
             "explicit user correction supplied by the caller"});
         result.events.push_back({common_agent_event_type::plan_updated, "explicit user correction recorded", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+            "explicit user correction recorded", plan.id, {}, {}, observation_id);
     }
 
     const auto activate_next_ready_step = [&]() -> bool {
@@ -325,6 +362,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         activate.reason_summary = "scheduler selected dependency-ready step";
         if (!store.apply(activate, plan, error)) return false;
         result.events.push_back({common_agent_event_type::plan_updated, "scheduler activated plan step", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::started,
+            "scheduler activated plan step", plan.id, *activate.step_id);
         return true;
     };
 
@@ -346,6 +385,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         }
         if (!store.apply(complete, plan, error)) return false;
         result.events.push_back({common_agent_event_type::plan_updated, "final synthesis step completed", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
+            "final synthesis step completed", plan.id, active->id);
         activate_next_ready_step();
         return error.empty();
     };
@@ -397,6 +438,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
                 executed_step_ids.insert(step.id);
                 result.events.push_back({common_agent_event_type::plan_updated, "reasoning observation recorded", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+                    "reasoning observation recorded", plan.id, step.id, {}, "reasoning:" + step.id);
+                append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
+                    "reasoning step completed", plan.id, step.id);
                 if (!activate_next_ready_step()) break;
                 continue;
             }
@@ -439,6 +484,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     tool_call->name, failure_observation_id, "registered tool validation failed"});
                 result.events.push_back({common_agent_event_type::tool_rejected, validation_error, {}, plan.id});
                 result.events.push_back({common_agent_event_type::plan_updated, "tool validation failure recorded for repair", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
+                    validation_error, plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
             const auto execution = tools->execute(*tool_call);
@@ -465,6 +512,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     tool_call->name, failure_observation_id, "registered tool failed"});
                 result.events.push_back({common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id});
                 result.events.push_back({common_agent_event_type::plan_updated, "tool failure recorded for repair", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
+                    execution.safe_summary, plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
             std::string tool_result = execution.output;
@@ -486,12 +535,18 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 complete.reason_summary = "registered tool completed";
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
                 result.events.push_back({common_agent_event_type::plan_updated, "tool step completed", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
+                    "tool step completed", plan.id, tool_step_id, tool_call->name);
                 activate_next_ready_step();
                 if (!error.empty()) { result.error = error; return result; }
             }
             ++tool_batches;
             result.events.push_back({common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
             result.events.push_back({common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::succeeded,
+                "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
+            append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+                "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
         }
 
         const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
@@ -504,10 +559,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         result.total_decoded_tokens += draft_result.decoded_tokens;
         result.response_generation_status = draft_result.status;
         result.response_stop_reason = draft_result.stop_reason;
+        append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
+            "draft generated", plan.id);
         if (!request.enable_reflection || iteration >= request.max_reflection_rounds) {
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
             result.limit_reached = request.enable_reflection;
+            append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
+                "response accepted without reflection revision", plan.id);
             break;
         }
         auto reflection = reflector.evaluate_result(request, plan, draft, error);
@@ -519,6 +578,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         }
         result.reflected = true;
         result.events.push_back({common_agent_event_type::reflection_completed, "reflection completed", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::completed,
+            "reflection completed", plan.id);
         if (reflection.learning_hint) {
             const auto & hint = *reflection.learning_hint;
             common_plan_operation observed;
@@ -533,6 +594,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (store.apply(observed, plan, error)) {
                 result.learning_signals.push_back({common_learning_signal_type::reflection_hint, plan.id, {}, {}, observation_id,
                     "reflection supplied a bounded reusable learning hint"});
+                append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
+                    "reflection learning hint recorded", plan.id, {}, {}, observation_id);
             } else {
                 error.clear();
             }
@@ -550,18 +613,36 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { error.clear(); continue; }
             result.events.push_back({common_agent_event_type::plan_updated, "reflection plan operation applied", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
+                "reflection plan operation applied", plan.id,
+                op.step_id.value_or(op.step ? op.step->id : std::string()));
         }
         if (reflection.ready_to_answer || reflection.decision == common_reflection_decision::accept) {
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
+            append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,
+                "reflection accepted response", plan.id);
+            append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
+                "response accepted after reflection", plan.id);
             break;
         }
-        if (reflection.decision == common_reflection_decision::abort) { result.error = "reflection aborted answer"; break; }
+        if (reflection.decision == common_reflection_decision::abort) {
+            result.error = "reflection aborted answer";
+            append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::failed,
+                "reflection aborted answer", plan.id);
+            break;
+        }
         guidance = reflection.revision_guidance;
         result.revised = true;
         result.events.push_back({common_agent_event_type::response_revised, "reflection requested revision", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,
+            "reflection requested response revision", plan.id);
     }
-    if (result.response.empty() && result.error.empty()) result.error = "agent loop reached its iteration limit";
+    if (result.response.empty() && result.error.empty()) {
+        result.error = "agent loop reached its iteration limit";
+        append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::failed,
+            result.error, plan.id);
+    }
     if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::active) {
         for (size_t pass = 0; pass < 3 && plan.status == common_plan_status::active; ++pass) {
             const auto before_version = plan.version;
@@ -597,8 +678,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 result.events.push_back({common_agent_event_type::blueprint_promoted,
                     "procedure promoted after " + std::to_string(promotion.verified_uses) + " verified uses",
                     *learning.stored_memory_id, *promotion.blueprint_id});
+                append_trace(result, common_runtime_trace_stage::memory_learning, common_runtime_trace_kind::updated,
+                    "procedure promoted after verified uses", plan.id, {}, {}, *learning.stored_memory_id, *promotion.blueprint_id);
             }
         }
+        append_trace(result, common_runtime_trace_stage::memory_learning, common_runtime_trace_kind::summary,
+            std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason, plan.id);
         if (learning.decision == common_memory_learning_decision::accepted) {
             result.events.push_back({common_agent_event_type::memory_remembered, "post-turn candidate stored", learning.stored_memory_id.value_or(""), plan.id});
         } else if (learning.decision == common_memory_learning_decision::no_candidate) {
@@ -609,6 +694,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     } else if (memory_learner && result.error.empty() && !result.response.empty()) {
         result.memory_learning_summary = "skipped: plan did not complete";
         result.events.push_back({common_agent_event_type::memory_candidate_not_stored, "post-turn learning skipped because the plan did not complete", {}, plan.id});
+        append_trace(result, common_runtime_trace_stage::memory_learning, common_runtime_trace_kind::skipped,
+            "post-turn learning skipped because the plan did not complete", plan.id);
+    }
+    if (!result.response.empty()) {
+        append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::completed,
+            "agent runtime turn completed", plan.id);
+    } else if (!result.error.empty()) {
+        append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::failed,
+            result.error, plan.id);
     }
     return result;
 }

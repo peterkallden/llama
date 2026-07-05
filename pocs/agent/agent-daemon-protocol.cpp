@@ -227,8 +227,36 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
     response["response"] = turn.response;
     response["total_decoded_tokens"] = turn.total_decoded_tokens;
     response["event_count"] = turn.event_count;
+    response["trace_count"] = turn.trace_count;
     response["memory_learning_related_count"] = turn.memory_learning_related_count;
     response["memory_learning_summary"] = turn.memory_learning_summary;
+    json trace_entries = json::array();
+    for (const auto & entry : turn.trace) {
+        json entry_json = {
+            {"stage", common_runtime_trace_stage_name(entry.stage)},
+            {"kind", common_runtime_trace_kind_name(entry.kind)},
+        };
+        if (!entry.detail.empty()) {
+            entry_json["detail"] = entry.detail;
+        }
+        if (!entry.plan_id.empty()) {
+            entry_json["plan_id"] = entry.plan_id;
+        }
+        if (!entry.step_id.empty()) {
+            entry_json["step_id"] = entry.step_id;
+        }
+        if (!entry.tool_name.empty()) {
+            entry_json["tool_name"] = entry.tool_name;
+        }
+        if (!entry.observation_id.empty()) {
+            entry_json["observation_id"] = entry.observation_id;
+        }
+        if (!entry.related_id.empty()) {
+            entry_json["related_id"] = entry.related_id;
+        }
+        trace_entries.push_back(std::move(entry_json));
+    }
+    response["trace"] = std::move(trace_entries);
     if (!turn.plan_id.empty()) {
         response["plan_id"] = turn.plan_id;
     }

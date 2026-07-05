@@ -160,6 +160,16 @@ bool run_agent_runtime_driver(
     }
 
     if (execution.policy.agent_trace) {
+        for (const auto & entry : result.trace) {
+            fprintf(stderr, "agent: trace stage=%s kind=%s plan=%s step=%s tool=%s observation=%s detail=%s\n",
+                common_runtime_trace_stage_name(entry.stage),
+                common_runtime_trace_kind_name(entry.kind),
+                entry.plan_id.c_str(),
+                entry.step_id.c_str(),
+                entry.tool_name.c_str(),
+                entry.observation_id.c_str(),
+                entry.detail.c_str());
+        }
         for (const auto & event : result.events) {
             fprintf(stderr, "agent: event=%d plan=%s detail=%s\n", (int) event.type,
                 event.plan_id ? event.plan_id->c_str() : "", event.detail.c_str());

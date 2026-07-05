@@ -195,8 +195,10 @@ bool common_agent_runtime_session_host::run_turn(
     result.plan_id = agent_result.plan_id ? *agent_result.plan_id : "";
     result.total_decoded_tokens = agent_result.total_decoded_tokens;
     result.event_count = agent_result.events.size();
+    result.trace_count = agent_result.trace.size();
     result.memory_learning_related_count = agent_result.memory_learning_related_count;
     result.memory_learning_summary = agent_result.memory_learning_summary;
+    result.trace = std::move(agent_result.trace);
     result.error = ok ? std::string() : error;
     return ok;
 }

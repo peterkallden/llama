@@ -187,9 +187,33 @@ int main() {
         std::fprintf(stderr, "runtime did not retain expected plan id\n");
         return 1;
     }
+    bool saw_plan_create = false;
+    bool saw_tool_success = false;
+    bool saw_response_complete = false;
+    for (const auto & entry : result.trace) {
+        if (entry.stage == common_runtime_trace_stage::plan &&
+                entry.kind == common_runtime_trace_kind::started &&
+                entry.plan_id == "runtime-smoke-plan") {
+            saw_plan_create = true;
+        }
+        if (entry.stage == common_runtime_trace_stage::tool &&
+                entry.kind == common_runtime_trace_kind::succeeded &&
+                entry.tool_name == "calculator") {
+            saw_tool_success = true;
+        }
+        if (entry.stage == common_runtime_trace_stage::response &&
+                entry.kind == common_runtime_trace_kind::completed) {
+            saw_response_complete = true;
+        }
+    }
+    if (!saw_plan_create || !saw_tool_success || !saw_response_complete) {
+        std::fprintf(stderr, "runtime trace did not include expected plan/tool/response history\n");
+        return 1;
+    }
 
     std::printf("runtime_response=%s\n", result.response.c_str());
     std::printf("tool_events=%zu\n", result.events.size());
+    std::printf("trace_entries=%zu\n", result.trace.size());
     std::printf("plan_id=%s\n", result.plan_id ? result.plan_id->c_str() : "");
     return 0;
 }

@@ -8,6 +8,7 @@
 #include "memory/memory-types.h"
 #include "memory/memory-candidate.h"
 #include "plan/plan-types.h"
+#include "runtime-trace.h"
 
 #include <cstdint>
 #include <optional>
@@ -202,4 +203,5 @@ struct common_agent_result {
 
     // Events contain structured outcomes only, never raw chain-of-thought.
     std::vector<common_agent_event> events;
+    std::vector<common_runtime_trace_entry> trace;
 };

@@ -38,6 +38,8 @@ What exists today is a narrow foreground daemon, not a production service lifecy
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
+Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
+
 Daemon command results now also carry a small internal daemon event list plus `daemon_event_count`. The current JSONL path is still request/response rather than streamed, but admin/test callers can now distinguish queueing, dispatch start, status reporting, session lifecycle actions, shutdown requests, queued-turn cancellation, and active-turn cancellation rejection without scraping diagnostics.
 
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
@@ -53,6 +55,8 @@ The runtime direction depends on keeping the layer boundaries boring and explici
 - `pocs/memory` should not become the owner of agent orchestration or resident host flow.
 
 In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
+
+The first concrete example of that constraint is now in place for tracing: the structured trace envelope lives in a neutral `common/runtime-trace.h` header, while `common/agent` populates it and `pocs/agent` only adapts or serializes it for CLI/daemon surfaces.
 
 ## Layer Responsibilities
 
@@ -400,6 +404,7 @@ The resident-inference branch has been validated with:
 - `test-tool-adapters`
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
+- `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
