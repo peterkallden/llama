@@ -14,6 +14,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--planning-mode off|mini] [--reflection-mode off|always] [--memory-learn off|post-turn]\n"
         "         [--agent-inference-backend cli|server-context]\n"
+        "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
@@ -109,6 +110,14 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_inference_backend = v;
         } else if (strcmp(argv[i], "--tool-profile") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v; out.tool_profile_explicit = true;
+        } else if (strcmp(argv[i], "--mcp-tool-command") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_command = v;
+        } else if (strcmp(argv[i], "--mcp-tool-arg") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_args.push_back(v);
+        } else if (strcmp(argv[i], "--mcp-tool-server-name") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_server_name = v;
+        } else if (strcmp(argv[i], "--mcp-tool-prefix") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_prefix = v;
         } else if (strcmp(argv[i], "--planning-mode") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.planning_mode = v; out.planning_mode_explicit = true;
         } else if (strcmp(argv[i], "--reflection-mode") == 0) {

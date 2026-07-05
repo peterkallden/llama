@@ -13,6 +13,7 @@
 struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
+    std::unique_ptr<agent_mcp_tool_client> mcp_client;
 };
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(

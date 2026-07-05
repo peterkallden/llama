@@ -42,6 +42,10 @@ struct args {
     bool enable_memory_search_tool = false;
     bool enable_memory_remember_tool = false;
     std::string tool_profile;
+    std::string mcp_tool_command;
+    std::vector<std::string> mcp_tool_args;
+    std::string mcp_tool_server_name = "mcp";
+    std::string mcp_tool_prefix;
     std::string planning_mode = "off";
     std::string reflection_mode = "off";
     std::string agent_profile = "default";

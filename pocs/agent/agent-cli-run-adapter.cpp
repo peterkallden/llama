@@ -19,7 +19,24 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
         error = "--tool-profile requires a build with LLAMA_AGENT_REFLECTION=ON";
         return false;
     }
+    if (!options.mcp_tool_command.empty()) {
+        error = "--mcp-tool-command requires a build with LLAMA_AGENT_REFLECTION=ON";
+        return false;
+    }
 #endif
+    if (!options.mcp_tool_command.empty() &&
+            (options.command == "daemon-chat" || options.command == "daemon-session")) {
+        error = "--mcp-tool-command is not wired through daemon-chat or daemon-session yet";
+        return false;
+    }
+    if (options.mcp_tool_command.empty() && !options.mcp_tool_args.empty()) {
+        error = "--mcp-tool-arg requires --mcp-tool-command";
+        return false;
+    }
+    if (options.mcp_tool_server_name.empty()) {
+        error = "--mcp-tool-server-name must not be empty";
+        return false;
+    }
     if (options.planning_mode != "off" && options.planning_mode != "mini") {
         error = "--planning-mode must be off or mini";
         return false;

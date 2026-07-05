@@ -13,6 +13,30 @@
 #include <filesystem>
 #include <memory>
 
+namespace {
+
+agent_tool_context make_agent_cli_tool_context(
+        const args & options,
+        const common_memory_query & query,
+        const std::string & repository_root) {
+    agent_tool_context tool_context;
+    tool_context.request_id = "cli-run";
+    tool_context.turn_id = options.memory_turn;
+    tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
+    tool_context.memory_scope = query.scope;
+    tool_context.plan_scope = tool_context.scope.plan_scope;
+    tool_context.profile_id = options.tool_profile;
+    tool_context.repository_root = repository_root;
+    tool_context.allow_network = options.tool_profile == "research" || !options.mcp_tool_command.empty();
+    tool_context.allow_policy_gated_writes = options.tool_profile == "memory" || options.tool_profile == "research";
+    tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
+    tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
+    tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    return tool_context;
+}
+
+} // namespace
+
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
         common_memory_store & store,
         const args & options,
@@ -56,6 +80,34 @@ bool resolve_agent_cli_tool_selection(
         std::string & error) {
     selection = {};
 
+    if (!options.mcp_tool_command.empty()) {
+        std::vector<std::string> command_line;
+        command_line.push_back(options.mcp_tool_command);
+        command_line.insert(command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
+
+        selection.mcp_client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
+            options.mcp_tool_server_name,
+            std::move(command_line),
+            {},
+        });
+
+        mcp_agent_tool_provider provider(
+            options.mcp_tool_server_name,
+            *selection.mcp_client,
+            options.mcp_tool_prefix);
+
+        const auto tool_context = make_agent_cli_tool_context(options, query, {});
+        if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
+            error = "MCP tool provider resolution failed: " + error;
+            return false;
+        }
+        selection.tooling.tools = selection.tool_view->chat_tools();
+        selection.tooling.profile_tools_active = true;
+        selection.tooling.tool_view = selection.tool_view.get();
+        error.clear();
+        return true;
+    }
+
     if (!options.tool_profile.empty()) {
         common_tool_catalog tool_catalog;
         common_tool_bootstrap_result bootstrap;
@@ -86,19 +138,7 @@ bool resolve_agent_cli_tool_selection(
                 return true;
             });
 
-        agent_tool_context tool_context;
-        tool_context.request_id = "cli-run";
-        tool_context.turn_id = options.memory_turn;
-        tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
-        tool_context.memory_scope = query.scope;
-        tool_context.plan_scope = tool_context.scope.plan_scope;
-        tool_context.profile_id = options.tool_profile;
-        tool_context.repository_root = bindings.repository_root;
-        tool_context.allow_network = options.tool_profile == "research";
-        tool_context.allow_policy_gated_writes = options.tool_profile == "memory" || options.tool_profile == "research";
-        tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
-        tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
-        tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+        const auto tool_context = make_agent_cli_tool_context(options, query, bindings.repository_root);
         if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
             error = "tool provider resolution failed: " + error;
             return false;
