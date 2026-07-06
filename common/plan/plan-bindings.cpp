@@ -15,7 +15,7 @@ const common_plan_observation * find_step_observation(const common_plan_state & 
     const std::string prefix = "tool:" + step_id + ":";
     const std::string reasoning = "reasoning:" + step_id;
     for (auto it = plan.observations.rbegin(); it != plan.observations.rend(); ++it) {
-        if (it->source.rfind(prefix, 0) == 0 || it->source == reasoning) return &*it;
+        if (it->id.rfind(prefix, 0) == 0 || it->id == reasoning || it->source.rfind(prefix, 0) == 0 || it->source == reasoning) return &*it;
     }
     return nullptr;
 }

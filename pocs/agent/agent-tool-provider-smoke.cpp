@@ -10,6 +10,8 @@
 
 namespace {
 
+agent_in_memory_resource_store g_resource_store;
+
 bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & name) {
     for (const auto & tool : tools) {
         if (tool.name == name) {
@@ -81,25 +83,52 @@ int main() {
     native_agent_tool_provider research_provider(
         catalog,
         [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
-            static agent_in_memory_resource_store resource_store;
-            bindings.resource_store = &resource_store;
+            bindings.resource_store = &g_resource_store;
             bindings.resource_namespace_id = context.scope.namespace_id;
             bindings.resource_session_id = context.scope.session_id;
             bindings.resource_project_id = context.scope.project_id;
             bindings.resource_turn_id = context.scope.turn_id;
-            bindings.web_search = [&bindings](const std::string &) {
-                common_runtime_resource_ref resource;
-                resource.uri = "agent-resource://resource/search-stub";
-                resource.name = "web-search-results.json";
-                resource.description = "Full web search result set for the current turn.";
-                resource.mime_type = "application/json";
-                resource.size_bytes = 2048;
-                resource.scope = common_runtime_resource_scope::turn;
-                resource.metadata.purpose = "Preserve the full bounded web search candidate set outside the inline model context.";
-                resource.metadata.content_summary = "Stubbed search candidates for resident inference.";
-                resource.metadata.usage_hint = "Use this resource when a later step needs the complete candidate list.";
-                resource.metadata.limitations = "Provider smoke uses stubbed results.";
-                resource.metadata.keywords = {"resident inference", "llama.cpp"};
+            const std::string namespace_id = bindings.resource_namespace_id;
+            const std::string session_id = bindings.resource_session_id;
+            const std::string project_id = bindings.resource_project_id;
+            const std::string turn_id = bindings.resource_turn_id;
+            agent_resource_store * resource_store = bindings.resource_store;
+            bindings.web_search = [resource_store, namespace_id, session_id, project_id, turn_id](const std::string &) {
+                agent_resource_descriptor descriptor;
+                std::string error;
+                if (!resource_store->put_text({
+                        "web-search-results.json",
+                        "Full web search result set for the current turn.",
+                        "application/json",
+                        R"({"results":[{"title":"stub issue","url":"https://example.com/stub"}],"provider":"stub"})",
+                        common_runtime_resource_scope::turn,
+                        namespace_id,
+                        session_id,
+                        project_id,
+                        turn_id,
+                        "",
+                        "native",
+                        "web_search",
+                        0,
+                        0,
+                        {
+                            "Preserve the full bounded web search candidate set outside the inline model context.",
+                            "Stubbed search candidates for resident inference.",
+                            "Use this resource when a later step needs the complete candidate list.",
+                            "Provider smoke uses stubbed results.",
+                            {"resident inference", "llama.cpp"},
+                            {},
+                        },
+                    }, descriptor, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.web_search.resource_store_failed",
+                        common_tool_failure_class::execution,
+                        false,
+                        "Provider smoke failed to write a resource.",
+                        error);
+                }
+
+                common_runtime_resource_ref resource = descriptor;
                 return common_tool_execution_result::success(
                     R"({"results":[{"title":"stub issue"}],"provider":"stub"})",
                     "Web search returned one stub candidate; the full result set was stored as a turn resource.",
@@ -147,6 +176,16 @@ int main() {
     }
     if (search_result.content_json.find("\"resources\"") == std::string::npos) {
         std::fprintf(stderr, "web_search result payload did not include rendered resources: %s\n", search_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto resource_read_result = research_view->call({
+        "call-2c",
+        "resource_read",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","max_bytes":4096})",
+    }, error);
+    if (!resource_read_result.ok || resource_read_result.content_json.find("stub issue") == std::string::npos) {
+        std::fprintf(stderr, "resource_read did not return the expected stored payload: %s\n", resource_read_result.content_json.c_str());
         return 1;
     }
 

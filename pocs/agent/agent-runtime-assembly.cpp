@@ -25,7 +25,10 @@ public:
         std::string error;
         const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
         if (result.ok) {
-            return common_tool_execution_result::success(result.content_json);
+            return common_tool_execution_result::success(
+                result.content_json,
+                result.content_summary,
+                result.resource_refs);
         }
         return common_tool_execution_result::failure(
             result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,

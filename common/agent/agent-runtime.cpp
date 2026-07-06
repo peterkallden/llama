@@ -179,6 +179,8 @@ static void apply_safe_tool_defaults(const common_agent_request & request, commo
     } else if (call.name == "repository_read") {
         if (!arguments.contains("start_line")) { arguments["start_line"] = 1; changed = true; }
         if (!arguments.contains("end_line")) { arguments["end_line"] = 200; changed = true; }
+    } else if (call.name == "resource_read") {
+        if (!arguments.contains("max_bytes")) { arguments["max_bytes"] = 8192; changed = true; }
     } else if (call.name == "repository_list") {
         if (!arguments.contains("path")) { arguments["path"] = ""; changed = true; }
         if (!arguments.contains("depth")) { arguments["depth"] = 1; changed = true; }
@@ -319,7 +321,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         observed.expected_version = plan.version;
         observed.reason_summary = "explicit user correction";
         observed.observation = common_plan_observation{observation_id, "user_correction",
-            json({{"source_turn_id", correction.source_turn_id}, {"statement", correction.statement}}).dump(), 1.0f, {}, 0};
+            json({{"source_turn_id", correction.source_turn_id}, {"statement", correction.statement}}).dump(), 1.0f, {}, {}, 0};
         if (!store.apply(observed, plan, error)) { result.error = error; return result; }
         result.learning_signals.push_back({common_learning_signal_type::user_correction, plan.id, {}, {}, observation_id,
             "explicit user correction supplied by the caller"});
@@ -427,7 +429,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "reasoning step result";
-                observed.observation = common_plan_observation{"reasoning:" + step.id, "reasoning", reasoning, 1.0f, {}, 0};
+                observed.observation = common_plan_observation{"reasoning:" + step.id, "reasoning", reasoning, 1.0f, {}, {}, 0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation complete;
                 complete.kind = common_plan_operation_kind::complete_step;
@@ -471,7 +473,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool validation failure";
-                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, 0};
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, {}, 0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;
@@ -499,7 +501,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool failure";
-                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, 0};
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, execution.resource_refs, 0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;
@@ -523,7 +525,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             observed.plan_id = plan.id;
             observed.expected_version = plan.version;
             observed.reason_summary = "registered tool result";
-            observed.observation = common_plan_observation{next_tool_observation_id(plan, tool_step_id, tool_call->name), tool_call->name, tool_result, 1.0f, {}, 0};
+            observed.observation = common_plan_observation{next_tool_observation_id(plan, tool_step_id, tool_call->name), tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             if (tool_step_id == "request") executed_request_tool = true; else {
                 executed_step_ids.insert(tool_step_id);
@@ -590,7 +592,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             const std::string observation_id = "reflection:learning:" + std::to_string(plan.version) + ":" + std::to_string(iteration);
             observed.observation = common_plan_observation{observation_id, "reflection_hint",
                 json({{"category", hint.category}, {"statement", hint.statement}, {"expected_reuse", hint.expected_reuse}}).dump(),
-                reflection.confidence, {}, 0};
+                reflection.confidence, {}, {}, 0};
             if (store.apply(observed, plan, error)) {
                 result.learning_signals.push_back({common_learning_signal_type::reflection_hint, plan.id, {}, {}, observation_id,
                     "reflection supplied a bounded reusable learning hint"});

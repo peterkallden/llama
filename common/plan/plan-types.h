@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include "runtime-resource.h"
 #include <string>
 #include <vector>
 
@@ -15,7 +16,15 @@ enum class common_plan_step_mode { tool, reasoning, final_response };
 
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
 struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
-struct common_plan_observation { std::string id; std::string source; std::string summary; float confidence = 0.5f; std::vector<std::string> evidence_ids; int64_t created_at = 0; };
+struct common_plan_observation {
+    std::string id;
+    std::string source;
+    std::string summary;
+    float confidence = 0.5f;
+    std::vector<std::string> evidence_ids;
+    std::vector<common_runtime_resource_ref> resource_refs;
+    int64_t created_at = 0;
+};
 // Data proposed by a plan; execution is owned by the agent tool registry.
 struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
 struct common_plan_step {

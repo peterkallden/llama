@@ -158,6 +158,17 @@ bool persist_tool_resource(
     return true;
 }
 
+agent_resource_read_authority make_resource_read_authority(
+        const common_native_tool_bindings & bindings) {
+    agent_resource_read_authority authority;
+    authority.namespace_id = bindings.resource_namespace_id;
+    authority.session_id = bindings.resource_session_id;
+    authority.project_id = bindings.resource_project_id;
+    authority.turn_id = bindings.resource_turn_id;
+    authority.now = std::time(nullptr);
+    return authority;
+}
+
 common_tool_execution_result tool_failure(std::string code, common_tool_failure_class failure_class, bool retryable,
         std::string safe_summary, std::string raw_diagnostic) {
     return common_tool_execution_result::failure(std::move(code), failure_class, retryable, std::move(safe_summary), std::move(raw_diagnostic));
@@ -685,6 +696,56 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     return tool_execution_failure("tool.repository_log.git_failed", std::move(err), "Git log could not be read.");
                 }
                 return tool_success_json({{"commits", log}});
+            }, error);
+        } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_store != nullptr) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("uri") || !arguments["uri"].is_string()) {
+                    if (err.empty()) err = "resource_read requires a uri";
+                    return tool_validation_failure("tool.resource_read.invalid_uri", std::move(err), "Resource read requires a valid resource URI.");
+                }
+                const auto uri = trim_copy(arguments["uri"].get<std::string>());
+                const int max_bytes = arguments.value("max_bytes", 8192);
+                if (uri.empty() || uri.size() > 512 || max_bytes < 1 || max_bytes > 32768) {
+                    return tool_validation_failure("tool.resource_read.out_of_bounds", "resource_read arguments are out of bounds", "Resource read arguments are out of bounds.");
+                }
+
+                agent_resource_descriptor descriptor;
+                const auto authority = make_resource_read_authority(bindings);
+                if (!bindings.resource_store->stat(uri, authority, descriptor, err)) {
+                    return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
+                }
+
+                std::string text;
+                if (!bindings.resource_store->read_text(uri, authority, static_cast<size_t>(max_bytes), text, err)) {
+                    return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
+                }
+
+                json resource = {
+                    {"uri", descriptor.uri},
+                    {"name", descriptor.name},
+                    {"description", descriptor.description},
+                    {"mime_type", descriptor.mime_type},
+                    {"size_bytes", descriptor.size_bytes},
+                    {"scope", common_runtime_resource_scope_name(descriptor.scope)},
+                    {"metadata", {
+                        {"purpose", descriptor.metadata.purpose},
+                        {"content_summary", descriptor.metadata.content_summary},
+                        {"usage_hint", descriptor.metadata.usage_hint},
+                        {"limitations", descriptor.metadata.limitations},
+                        {"keywords", descriptor.metadata.keywords},
+                        {"entities", descriptor.metadata.entities},
+                    }},
+                };
+                return common_tool_execution_result::success(
+                    json({
+                        {"resource", std::move(resource)},
+                        {"content", text},
+                    }).dump(),
+                    descriptor.metadata.content_summary.empty()
+                        ? "Resource content loaded from the host-owned resource store."
+                        : descriptor.metadata.content_summary);
             }, error);
         } else if (definition.executor_id == "builtin.web_search") {
             if (bindings.web_search) {

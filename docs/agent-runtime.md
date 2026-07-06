@@ -250,6 +250,8 @@ The first implementation started native-only, and it still uses the existing cat
 
 That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web_search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
 
+That evidence path now continues one step further into planning state. Tool observations can now retain resolved `resource_refs` alongside their bounded inline summary, and the read-only `resource_read` native tool gives later steps a host-owned way to load the deferred payload back by opaque URI instead of forcing the earlier tool to keep everything inline.
+
 There is now also a first MCP-shaped provider slice beside the native one. `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape.
 
 That seam now has two concrete test paths:

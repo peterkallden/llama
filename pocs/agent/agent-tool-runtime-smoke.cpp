@@ -1,4 +1,5 @@
 #include "agent-tool-provider.h"
+#include "agent-resource-store.h"
 
 #include "agent/agent-runtime.h"
 #include "agent/tool-catalog.h"
@@ -10,6 +11,8 @@
 #include <vector>
 
 namespace {
+
+agent_in_memory_resource_store g_runtime_resource_store;
 
 class provider_agent_tool_runtime final : public common_agent_tool_runtime {
 public:
@@ -32,7 +35,10 @@ public:
         std::string error;
         const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
         if (result.ok) {
-            return common_tool_execution_result::success(result.content_json);
+            return common_tool_execution_result::success(
+                result.content_json,
+                result.content_summary,
+                result.resource_refs);
         }
         return common_tool_execution_result::failure(
             result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
@@ -58,18 +64,18 @@ public:
         proposal.plan.scope = request.plan_scope;
         proposal.plan.status = common_plan_status::active;
         proposal.plan.purpose = request.prompt;
-        proposal.plan.goal = "Run calculator and answer with the result.";
-        proposal.plan.success_criteria = "Return the calculator result.";
+        proposal.plan.goal = "Run web search and answer using the recorded resource evidence.";
+        proposal.plan.success_criteria = "Return the web search result summary.";
 
         common_plan_step tool_step;
         tool_step.id = "step-tool";
-        tool_step.title = "Run calculator";
-        tool_step.objective = "Evaluate a simple arithmetic expression.";
+        tool_step.title = "Run web search";
+        tool_step.objective = "Collect a bounded search result and host-owned resource reference.";
         tool_step.intended_contribution = tool_step.objective;
         tool_step.status = common_plan_step_status::active;
         tool_step.mode = common_plan_step_mode::tool;
-        tool_step.selected_tool = "calculator";
-        tool_step.tool_call = common_plan_tool_call{"calculator", R"({"expression":"17 * 23"})"};
+        tool_step.selected_tool = "web_search";
+        tool_step.tool_call = common_plan_tool_call{"web_search", R"({"query":"resident runtime resource evidence","limit":5})"};
 
         common_plan_step final_step;
         final_step.id = "step-final";
@@ -96,12 +102,14 @@ public:
             const std::vector<std::string> &,
             std::string & error) override {
         for (const auto & observation : plan.observations) {
-            if (observation.source == "calculator" && observation.summary.find("391") != std::string::npos) {
+            if (observation.source == "web_search" &&
+                    !observation.resource_refs.empty() &&
+                    observation.resource_refs[0].metadata.content_summary.find("Stubbed") != std::string::npos) {
                 error.clear();
-                return "The result is 391.";
+                return "The search evidence was recorded with a resource reference.";
             }
         }
-        error = "calculator observation missing expected value";
+        error = "web_search observation missing expected resource evidence";
         return {};
     }
 };
@@ -128,22 +136,76 @@ int main() {
     std::string error;
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
-    if (!catalog.bootstrap("minimal", bootstrap, error)) {
+    if (!catalog.bootstrap("research", bootstrap, error)) {
         std::fprintf(stderr, "tool bootstrap failed: %s\n", error.c_str());
         return 1;
     }
 
     native_agent_tool_provider provider(
         catalog,
-        [](const agent_tool_context &, common_native_tool_bindings &, std::string &) {
+        [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
+            bindings.resource_store = &g_runtime_resource_store;
+            bindings.resource_namespace_id = context.scope.namespace_id;
+            bindings.resource_session_id = context.scope.session_id;
+            bindings.resource_project_id = context.scope.project_id;
+            bindings.resource_turn_id = context.scope.turn_id;
+            const std::string namespace_id = bindings.resource_namespace_id;
+            const std::string session_id = bindings.resource_session_id;
+            const std::string project_id = bindings.resource_project_id;
+            const std::string turn_id = bindings.resource_turn_id;
+            agent_resource_store * resource_store = bindings.resource_store;
+            bindings.web_search = [resource_store, namespace_id, session_id, project_id, turn_id](const std::string &) {
+                agent_resource_descriptor descriptor;
+                std::string error;
+                if (!resource_store->put_text({
+                        "runtime-search-results.json",
+                        "Runtime smoke full search payload",
+                        "application/json",
+                        R"({"results":[{"title":"stub runtime result","url":"https://example.com/runtime"}],"provider":"stub"})",
+                        common_runtime_resource_scope::turn,
+                        namespace_id,
+                        session_id,
+                        project_id,
+                        turn_id,
+                        "",
+                        "native",
+                        "web_search",
+                        0,
+                        0,
+                        {
+                            "Preserve the full search payload for later runtime evidence.",
+                            "Stubbed runtime search result payload.",
+                            "Use the resource URI when a later step needs the full search payload.",
+                            "Runtime smoke uses stubbed search data.",
+                            {"runtime", "search"},
+                            {},
+                        },
+                    }, descriptor, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.web_search.resource_store_failed",
+                        common_tool_failure_class::execution,
+                        false,
+                        "Runtime smoke failed to write a resource.",
+                        error);
+                }
+                common_runtime_resource_ref resource = descriptor;
+                return common_tool_execution_result::success(
+                    R"({"results":[{"title":"stub runtime result"}],"provider":"stub"})",
+                    "Web search returned one stub candidate; the full result set was stored as a turn resource.",
+                    {resource});
+            };
             return true;
         });
 
     agent_tool_context tool_context;
     tool_context.request_id = "runtime-smoke";
     tool_context.turn_id = "turn-1";
-    tool_context.profile_id = "minimal";
+    tool_context.profile_id = "research";
     tool_context.max_calls = 2;
+    tool_context.allow_network = true;
+    tool_context.scope.namespace_id = "runtime-smoke";
+    tool_context.scope.session_id = "runtime-smoke-session";
+    tool_context.scope.turn_id = "runtime-smoke-turn";
 
     std::unique_ptr<agent_tool_view> tool_view = provider.resolve_tools(tool_context, error);
     if (!tool_view) {
@@ -164,7 +226,7 @@ int main() {
     common_agent_runtime runtime(plan_store, planner, executor, reflector, &tool_runtime, nullptr);
 
     common_agent_request request;
-    request.prompt = "What is 17 * 23?";
+    request.prompt = "Find runtime resource evidence.";
     request.namespace_id = "runtime-smoke";
     request.session_id = "runtime-smoke-session";
     request.turn_id = "runtime-smoke-turn";
@@ -179,7 +241,7 @@ int main() {
         std::fprintf(stderr, "runtime run failed: %s\n", result.error.c_str());
         return 1;
     }
-    if (result.response.find("391") == std::string::npos) {
+    if (result.response.find("resource reference") == std::string::npos) {
         std::fprintf(stderr, "runtime response missing expected value: %s\n", result.response.c_str());
         return 1;
     }
@@ -190,6 +252,7 @@ int main() {
     bool saw_plan_create = false;
     bool saw_tool_success = false;
     bool saw_response_complete = false;
+    bool saw_observation_resource = false;
     for (const auto & entry : result.trace) {
         if (entry.stage == common_runtime_trace_stage::plan &&
                 entry.kind == common_runtime_trace_kind::started &&
@@ -198,7 +261,7 @@ int main() {
         }
         if (entry.stage == common_runtime_trace_stage::tool &&
                 entry.kind == common_runtime_trace_kind::succeeded &&
-                entry.tool_name == "calculator") {
+                entry.tool_name == "web_search") {
             saw_tool_success = true;
         }
         if (entry.stage == common_runtime_trace_stage::response &&
@@ -206,7 +269,18 @@ int main() {
             saw_response_complete = true;
         }
     }
-    if (!saw_plan_create || !saw_tool_success || !saw_response_complete) {
+    auto stored_plan = plan_store.get("runtime-smoke-plan", error);
+    if (!stored_plan || !error.empty()) {
+        std::fprintf(stderr, "runtime smoke could not reload stored plan: %s\n", error.c_str());
+        return 1;
+    }
+    for (const auto & observation : stored_plan->observations) {
+        if (observation.source == "web_search" && !observation.resource_refs.empty()) {
+            saw_observation_resource = true;
+            break;
+        }
+    }
+    if (!saw_plan_create || !saw_tool_success || !saw_response_complete || !saw_observation_resource) {
         std::fprintf(stderr, "runtime trace did not include expected plan/tool/response history\n");
         return 1;
     }

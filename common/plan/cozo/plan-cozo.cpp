@@ -15,7 +15,50 @@ static std::string step_status_name(common_plan_step_status v) { switch(v) { cas
 static common_plan_step_status parse_step_status(const std::string & v) { if(v=="active")return common_plan_step_status::active; if(v=="completed")return common_plan_step_status::completed; if(v=="blocked")return common_plan_step_status::blocked; if(v=="skipped")return common_plan_step_status::skipped; if(v=="failed")return common_plan_step_status::failed; return common_plan_step_status::pending; }
 static std::string step_mode_name(common_plan_step_mode v) { return v == common_plan_step_mode::tool ? "tool" : v == common_plan_step_mode::reasoning ? "reasoning" : "final_response"; }
 static common_plan_step_mode parse_step_mode(const std::string & v) { return v == "tool" ? common_plan_step_mode::tool : v == "reasoning" ? common_plan_step_mode::reasoning : common_plan_step_mode::final_response; }
-static json serialize(const common_plan_state & p) { json steps=json::array(), observations=json::array(), constraints=json::array(), assumptions=json::array(); for(const auto & s:p.steps) { json step={{"id",s.id},{"title",s.title},{"objective",s.objective},{"intended_contribution",s.intended_contribution},{"mode",step_mode_name(common_plan_step_effective_mode(s))},{"status",step_status_name(s.status)},{"depends_on",s.depends_on},{"blocked_by",s.blocked_by},{"required_evidence",s.required_evidence},{"source_memory_ids",s.source_memory_ids},{"optional",s.optional},{"generated_from_memory",s.generated_from_memory},{"created_at",s.created_at},{"updated_at",s.updated_at}}; if(s.selected_tool)step["selected_tool"]=*s.selected_tool; if(s.result_summary)step["result_summary"]=*s.result_summary; if(s.tool_call)step["tool_call"]={{"name",s.tool_call->name},{"arguments_json",s.tool_call->arguments_json}}; steps.push_back(std::move(step)); } for(const auto & observation:p.observations) observations.push_back({{"id",observation.id},{"source",observation.source},{"summary",observation.summary},{"confidence",observation.confidence},{"evidence_ids",observation.evidence_ids},{"created_at",observation.created_at}}); for(const auto & constraint:p.constraints) constraints.push_back({{"id",constraint.id},{"description",constraint.description},{"hard",constraint.hard}}); for(const auto & assumption:p.assumptions) assumptions.push_back({{"id",assumption.id},{"statement",assumption.statement},{"confidence",assumption.confidence},{"valid",assumption.valid},{"evidence_ids",assumption.evidence_ids}}); return {{"id",p.id},{"namespace_id",p.namespace_id},{"session_id",p.session_id},{"project_id",p.project_id},{"turn_id",p.turn_id},{"kind",kind_name(p.kind)},{"derived_from_plan_id",p.derived_from_plan_id},{"scope",scope_name(p.scope)},{"status",status_name(p.status)},{"purpose",p.purpose},{"goal",p.goal},{"success_criteria",p.success_criteria},{"steps",steps},{"observations",observations},{"constraints",constraints},{"assumptions",assumptions},{"active_step_id",p.active_step_id},{"next_action",p.next_action},{"version",p.version},{"created_at",p.created_at},{"updated_at",p.updated_at}}; }
+static json serialize_resource_ref(const common_runtime_resource_ref & resource) {
+    json value = {
+        {"uri", resource.uri},
+        {"name", resource.name},
+        {"description", resource.description},
+        {"mime_type", resource.mime_type},
+        {"size_bytes", resource.size_bytes},
+        {"scope", common_runtime_resource_scope_name(resource.scope)},
+        {"metadata", {
+            {"purpose", resource.metadata.purpose},
+            {"content_summary", resource.metadata.content_summary},
+            {"usage_hint", resource.metadata.usage_hint},
+            {"limitations", resource.metadata.limitations},
+            {"keywords", resource.metadata.keywords},
+            {"entities", resource.metadata.entities},
+        }},
+    };
+    return value;
+}
+
+static common_runtime_resource_ref parse_resource_ref(const json & value) {
+    common_runtime_resource_ref resource;
+    resource.uri = value.value("uri", std::string{});
+    resource.name = value.value("name", std::string{});
+    resource.description = value.value("description", std::string{});
+    resource.mime_type = value.value("mime_type", std::string{});
+    resource.size_bytes = value.value("size_bytes", size_t(0));
+    const auto scope_name = value.value("scope", std::string("turn"));
+    resource.scope = scope_name == "session" ? common_runtime_resource_scope::session :
+        scope_name == "project" ? common_runtime_resource_scope::project :
+        common_runtime_resource_scope::turn;
+    if (value.contains("metadata") && value["metadata"].is_object()) {
+        const auto & metadata = value["metadata"];
+        resource.metadata.purpose = metadata.value("purpose", std::string{});
+        resource.metadata.content_summary = metadata.value("content_summary", std::string{});
+        resource.metadata.usage_hint = metadata.value("usage_hint", std::string{});
+        resource.metadata.limitations = metadata.value("limitations", std::string{});
+        resource.metadata.keywords = metadata.value("keywords", std::vector<std::string>{});
+        resource.metadata.entities = metadata.value("entities", std::vector<std::string>{});
+    }
+    return resource;
+}
+
+static json serialize(const common_plan_state & p) { json steps=json::array(), observations=json::array(), constraints=json::array(), assumptions=json::array(); for(const auto & s:p.steps) { json step={{"id",s.id},{"title",s.title},{"objective",s.objective},{"intended_contribution",s.intended_contribution},{"mode",step_mode_name(common_plan_step_effective_mode(s))},{"status",step_status_name(s.status)},{"depends_on",s.depends_on},{"blocked_by",s.blocked_by},{"required_evidence",s.required_evidence},{"source_memory_ids",s.source_memory_ids},{"optional",s.optional},{"generated_from_memory",s.generated_from_memory},{"created_at",s.created_at},{"updated_at",s.updated_at}}; if(s.selected_tool)step["selected_tool"]=*s.selected_tool; if(s.result_summary)step["result_summary"]=*s.result_summary; if(s.tool_call)step["tool_call"]={{"name",s.tool_call->name},{"arguments_json",s.tool_call->arguments_json}}; steps.push_back(std::move(step)); } for(const auto & observation:p.observations) { json resources = json::array(); for (const auto & resource : observation.resource_refs) resources.push_back(serialize_resource_ref(resource)); observations.push_back({{"id",observation.id},{"source",observation.source},{"summary",observation.summary},{"confidence",observation.confidence},{"evidence_ids",observation.evidence_ids},{"resource_refs",resources},{"created_at",observation.created_at}}); } for(const auto & constraint:p.constraints) constraints.push_back({{"id",constraint.id},{"description",constraint.description},{"hard",constraint.hard}}); for(const auto & assumption:p.assumptions) assumptions.push_back({{"id",assumption.id},{"statement",assumption.statement},{"confidence",assumption.confidence},{"valid",assumption.valid},{"evidence_ids",assumption.evidence_ids}}); return {{"id",p.id},{"namespace_id",p.namespace_id},{"session_id",p.session_id},{"project_id",p.project_id},{"turn_id",p.turn_id},{"kind",kind_name(p.kind)},{"derived_from_plan_id",p.derived_from_plan_id},{"scope",scope_name(p.scope)},{"status",status_name(p.status)},{"purpose",p.purpose},{"goal",p.goal},{"success_criteria",p.success_criteria},{"steps",steps},{"observations",observations},{"constraints",constraints},{"assumptions",assumptions},{"active_step_id",p.active_step_id},{"next_action",p.next_action},{"version",p.version},{"created_at",p.created_at},{"updated_at",p.updated_at}}; }
 static bool deserialize(const std::string & text, common_plan_state & p) {
     auto j = json::parse(text, nullptr, false);
     if (!j.is_object()) return false;
@@ -76,6 +119,11 @@ static bool deserialize(const std::string & text, common_plan_state & p) {
             value.summary = observation.value("summary", std::string{});
             value.confidence = observation.value("confidence", 0.5f);
             value.evidence_ids = observation.value("evidence_ids", std::vector<std::string>{});
+            if (observation.contains("resource_refs") && observation["resource_refs"].is_array()) {
+                for (const auto & resource : observation["resource_refs"]) {
+                    if (resource.is_object()) value.resource_refs.push_back(parse_resource_ref(resource));
+                }
+            }
             value.created_at = observation.value("created_at", int64_t(0));
             p.observations.push_back(std::move(value));
         }
