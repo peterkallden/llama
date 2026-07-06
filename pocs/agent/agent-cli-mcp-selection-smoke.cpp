@@ -64,6 +64,7 @@ int main(int argc, char ** argv) {
             store,
             nullptr,
             nullptr,
+            nullptr,
             options,
             query,
             false,

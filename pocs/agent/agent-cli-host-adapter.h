@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-resource-store.h"
 #include "agent-tool-provider.h"
 #include "agent-runtime-host.h"
 #include "agent-runtime-tooling.h"
@@ -15,6 +16,7 @@ struct common_agent_cli_tool_selection {
     std::unique_ptr<agent_tool_view> tool_view;
     std::unique_ptr<agent_mcp_tool_client> mcp_client;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
+    std::unique_ptr<agent_resource_store> owned_resource_store;
 };
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
@@ -25,6 +27,7 @@ common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
 bool resolve_agent_cli_tool_selection(
     common_memory_store & store,
     common_plan_store * plan_store,
+    agent_resource_store * resource_store,
     std::string * current_plan_id,
     const args & options,
     const common_memory_query & query,

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 enum class common_runtime_resource_scope {
     turn,
@@ -99,6 +100,15 @@ struct agent_resource_store_config {
     std::string metadata_db;
 };
 
+struct common_runtime_resource_metadata {
+    std::string purpose;
+    std::string content_summary;
+    std::string usage_hint;
+    std::string limitations;
+    std::vector<std::string> keywords;
+    std::vector<std::string> entities;
+};
+
 struct common_runtime_resource_ref {
     std::string uri;
     std::string name;
@@ -106,6 +116,7 @@ struct common_runtime_resource_ref {
     std::string mime_type;
     size_t size_bytes = 0;
     common_runtime_resource_scope scope = common_runtime_resource_scope::turn;
+    common_runtime_resource_metadata metadata;
 };
 
 struct agent_blob_descriptor {
@@ -132,6 +143,7 @@ struct agent_resource_put_request {
 
     int64_t created_at = 0;
     int64_t expires_at = 0;
+    common_runtime_resource_metadata metadata;
 };
 
 struct agent_resource_descriptor : common_runtime_resource_ref {

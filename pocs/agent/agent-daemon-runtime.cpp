@@ -127,6 +127,7 @@ bool resolve_agent_daemon_tooling(
         const common_agent_runtime_session_host_turn_request & request,
         common_memory_store & memory_store,
         common_plan_store & plan_store,
+        agent_resource_store * resource_store,
         common_agent_runtime_tooling & tooling,
         std::string & error) {
     tooling = {};
@@ -140,6 +141,7 @@ bool resolve_agent_daemon_tooling(
     if (!resolve_agent_cli_tool_selection(
             memory_store,
             &plan_store,
+            resource_store,
             current_plan_id,
             tool_args,
             query,
@@ -169,6 +171,7 @@ namespace {
 common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
+        agent_resource_store & resource_store,
         const daemon_options & options) {
     return {
         memory_store,
@@ -181,7 +184,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         true,
         {},
         {},
-        [&options, &memory_store, &plan_store](
+        [&options, &memory_store, &plan_store, &resource_store](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
@@ -192,6 +195,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 request,
                 memory_store,
                 plan_store,
+                &resource_store,
                 tooling,
                 error);
         },
@@ -222,6 +226,19 @@ bool open_daemon_plan_store(
     return store->open(store_args.plan_db, error);
 }
 
+bool open_daemon_resource_store(
+        const daemon_options & options,
+        std::unique_ptr<agent_resource_store> & store,
+        std::string & error) {
+    store = make_agent_resource_store({
+        options.resource_blob_backend,
+        options.resource_blob_root,
+        options.resource_metadata_backend,
+        options.resource_metadata_db,
+    }, error);
+    return store != nullptr;
+}
+
 } // namespace
 
 bool initialize_agent_daemon_environment(
@@ -234,6 +251,9 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_plan_store(options, runtime.plan_store, error)) {
         return false;
     }
+    if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
+        return false;
+    }
     if (!parse_mode(options.default_mode, runtime.default_mode)) {
         error = "unsupported default mode: " + options.default_mode;
         return false;
@@ -241,7 +261,7 @@ bool initialize_agent_daemon_environment(
 
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(
         make_agent_runtime_session_manager_config(
-            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, options)));
+            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, *runtime.resource_store, options)));
     error.clear();
     return true;
 }

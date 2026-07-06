@@ -35,7 +35,13 @@ std::string agent_resource_cozo_schema_script() {
                 source_provider,
                 source_tool,
                 created_at,
-                expires_at
+                expires_at,
+                purpose,
+                content_summary,
+                usage_hint,
+                limitations,
+                keywords_json,
+                entities_json
             ] <- [[
                 'agent-resource://schema/probe',
                 'resource-probe',
@@ -53,7 +59,13 @@ std::string agent_resource_cozo_schema_script() {
                 '',
                 '',
                 0,
-                0
+                0,
+                '',
+                '',
+                '',
+                '',
+                '[]',
+                '[]'
             ]]
             :create agent_resource {
                 uri: String =>
@@ -72,7 +84,13 @@ std::string agent_resource_cozo_schema_script() {
                 source_provider: String,
                 source_tool: String,
                 created_at: Int,
-                expires_at: Int
+                expires_at: Int,
+                purpose: String,
+                content_summary: String,
+                usage_hint: String,
+                limitations: String,
+                keywords_json: String,
+                entities_json: String
             }
         }
         {
@@ -107,6 +125,22 @@ agent_resource_descriptor descriptor_from_row(const json & row) {
     descriptor.source_tool = row.at(14).get<std::string>();
     descriptor.created_at = row.at(15).get<int64_t>();
     descriptor.expires_at = row.at(16).get<int64_t>();
+    descriptor.metadata.purpose = row.at(17).get<std::string>();
+    descriptor.metadata.content_summary = row.at(18).get<std::string>();
+    descriptor.metadata.usage_hint = row.at(19).get<std::string>();
+    descriptor.metadata.limitations = row.at(20).get<std::string>();
+    const auto keywords = json::parse(row.at(21).get<std::string>(), nullptr, false);
+    if (keywords.is_array()) {
+        for (const auto & item : keywords) {
+            if (item.is_string()) descriptor.metadata.keywords.push_back(item.get<std::string>());
+        }
+    }
+    const auto entities = json::parse(row.at(22).get<std::string>(), nullptr, false);
+    if (entities.is_array()) {
+        for (const auto & item : entities) {
+            if (item.is_string()) descriptor.metadata.entities.push_back(item.get<std::string>());
+        }
+    }
     return descriptor;
 }
 
@@ -229,7 +263,7 @@ bool agent_cozo_resource_store::open(const std::string & path, std::string & err
 
     const json next_id_params = {{"prefix", "resource-"}};
     if (!run(
-            "?[resource_id] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at], starts_with(resource_id, $prefix)",
+            "?[resource_id] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json], starts_with(resource_id, $prefix)",
             next_id_params.dump(),
             result,
             error)) {
@@ -272,7 +306,7 @@ bool agent_cozo_resource_store::get_descriptor(
     const json params = {{"uri", uri}};
     std::string result;
     if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at], uri == $uri",
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json], uri == $uri",
             params.dump(),
             result,
             error)) {
@@ -316,6 +350,7 @@ bool agent_cozo_resource_store::put_text(
     descriptor.source_tool = request.source_tool;
     descriptor.created_at = request.created_at > 0 ? request.created_at : static_cast<int64_t>(std::time(nullptr));
     descriptor.expires_at = request.expires_at;
+    descriptor.metadata = request.metadata;
 
     const json params = {
         {"rows", json::array({json::array({
@@ -336,11 +371,17 @@ bool agent_cozo_resource_store::put_text(
             descriptor.source_tool,
             descriptor.created_at,
             descriptor.expires_at,
+            descriptor.metadata.purpose,
+            descriptor.metadata.content_summary,
+            descriptor.metadata.usage_hint,
+            descriptor.metadata.limitations,
+            json(descriptor.metadata.keywords).dump(),
+            json(descriptor.metadata.entities).dump(),
         })})},
     };
     std::string result;
     if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at }",
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json }",
             params.dump(),
             result,
             error)) {

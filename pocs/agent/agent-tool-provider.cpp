@@ -27,6 +27,28 @@ json render_resource_ref(const common_runtime_resource_ref & resource) {
     if (resource.size_bytes > 0) {
         result["size_bytes"] = resource.size_bytes;
     }
+    json metadata = json::object();
+    if (!resource.metadata.purpose.empty()) {
+        metadata["purpose"] = resource.metadata.purpose;
+    }
+    if (!resource.metadata.content_summary.empty()) {
+        metadata["content_summary"] = resource.metadata.content_summary;
+    }
+    if (!resource.metadata.usage_hint.empty()) {
+        metadata["usage_hint"] = resource.metadata.usage_hint;
+    }
+    if (!resource.metadata.limitations.empty()) {
+        metadata["limitations"] = resource.metadata.limitations;
+    }
+    if (!resource.metadata.keywords.empty()) {
+        metadata["keywords"] = resource.metadata.keywords;
+    }
+    if (!resource.metadata.entities.empty()) {
+        metadata["entities"] = resource.metadata.entities;
+    }
+    if (!metadata.empty()) {
+        result["metadata"] = std::move(metadata);
+    }
     return result;
 }
 
@@ -144,12 +166,18 @@ agent_tool_result normalize_execution_result(
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
-    result.content_summary = definition.description;
+    result.content_summary = execution.content_summary.empty()
+        ? definition.description
+        : execution.content_summary;
+    result.resource_refs = execution.resource_refs;
 
     const auto value = json::parse(execution.output, nullptr, false);
     auto payload = value.is_discarded()
         ? json({{"ok", true}, {"result_text", execution.output}})
         : json({{"ok", true}, {"result", value}});
+    if (!result.content_summary.empty()) {
+        payload["summary"] = result.content_summary;
+    }
     attach_resources_json(result, payload);
     result.content_json = payload.dump();
     return result;

@@ -1,9 +1,12 @@
 #pragma once
 
+#include "runtime-resource.h"
+
 #include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 enum class common_tool_failure_class { validation, policy, not_found, timeout, network, execution, limit };
 
@@ -28,8 +31,19 @@ struct common_tool_execution_result {
     bool retryable = false;
     std::string safe_summary;
     std::string raw_diagnostic;
+    std::string content_summary;
+    std::vector<common_runtime_resource_ref> resource_refs;
 
     static common_tool_execution_result success(std::string output) { return {true, std::move(output)}; }
+    static common_tool_execution_result success(
+            std::string output,
+            std::string content_summary,
+            std::vector<common_runtime_resource_ref> resource_refs = {}) {
+        common_tool_execution_result result{true, std::move(output)};
+        result.content_summary = std::move(content_summary);
+        result.resource_refs = std::move(resource_refs);
+        return result;
+    }
     static common_tool_execution_result failure(std::string code, common_tool_failure_class failure_class, bool retryable,
             std::string safe_summary, std::string raw_diagnostic = {}) {
         return {false, {}, std::move(code), failure_class, retryable, std::move(safe_summary), std::move(raw_diagnostic)};

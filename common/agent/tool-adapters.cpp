@@ -100,6 +100,64 @@ common_tool_execution_result tool_success_text(std::string value) {
     return common_tool_execution_result::success(std::move(value));
 }
 
+common_runtime_resource_metadata make_tool_resource_metadata(
+        std::string purpose,
+        std::string content_summary,
+        std::string usage_hint,
+        std::string limitations,
+        std::vector<std::string> keywords = {},
+        std::vector<std::string> entities = {}) {
+    common_runtime_resource_metadata metadata;
+    metadata.purpose = std::move(purpose);
+    metadata.content_summary = std::move(content_summary);
+    metadata.usage_hint = std::move(usage_hint);
+    metadata.limitations = std::move(limitations);
+    metadata.keywords = std::move(keywords);
+    metadata.entities = std::move(entities);
+    return metadata;
+}
+
+bool persist_tool_resource(
+        const common_native_tool_bindings & bindings,
+        const std::string & name,
+        const std::string & description,
+        const std::string & mime_type,
+        const std::string & text,
+        const std::string & source_tool,
+        const common_runtime_resource_metadata & metadata,
+        common_runtime_resource_ref & resource,
+        std::string & error) {
+    if (bindings.resource_store == nullptr) {
+        error = "resource store is unavailable";
+        return false;
+    }
+
+    agent_resource_descriptor descriptor;
+    if (!bindings.resource_store->put_text({
+            name,
+            description,
+            mime_type,
+            text,
+            common_runtime_resource_scope::turn,
+            bindings.resource_namespace_id,
+            bindings.resource_session_id,
+            bindings.resource_project_id,
+            bindings.resource_turn_id,
+            "",
+            "native",
+            source_tool,
+            0,
+            0,
+            metadata,
+        }, descriptor, error)) {
+        return false;
+    }
+
+    resource = descriptor;
+    error.clear();
+    return true;
+}
+
 common_tool_execution_result tool_failure(std::string code, common_tool_failure_class failure_class, bool retryable,
         std::string safe_summary, std::string raw_diagnostic) {
     return common_tool_execution_result::failure(std::move(code), failure_class, retryable, std::move(safe_summary), std::move(raw_diagnostic));
@@ -253,6 +311,20 @@ std::string html_title(const std::string & html) {
     std::smatch match;
     if (!std::regex_search(html, match, std::regex(R"(<title[^>]*>([\s\S]*?)</title>)", std::regex::icase))) return {};
     return collapse_ws(html_to_text(match[1].str()));
+}
+
+json trim_search_results_for_inline(
+        const json & results,
+        size_t inline_limit) {
+    if (!results.is_array() || results.size() <= inline_limit) {
+        return results;
+    }
+
+    json trimmed = json::array();
+    for (size_t i = 0; i < inline_limit; ++i) {
+        trimmed.push_back(results.at(i));
+    }
+    return trimmed;
 }
 
 std::string url_encode(const std::string & value) {
@@ -618,7 +690,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             if (bindings.web_search) {
                 installed = register_definition(definition, registry, bindings.web_search, error);
             } else {
-                installed = register_definition(definition, registry, [](const std::string & input) {
+                installed = register_definition(definition, registry, [bindings](const std::string & input) {
                     std::string err;
                     json arguments;
                     if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) {
@@ -641,7 +713,55 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     if (!parse_search_results(raw_html, limit, results)) {
                         return tool_success_json({{"results", json::array()}, {"provider", "duckduckgo-lite"}});
                     }
-                    return tool_success_json({{"results", results}, {"provider", "duckduckgo-lite"}});
+
+                    json payload = {
+                        {"results", results},
+                        {"provider", "duckduckgo-lite"},
+                    };
+
+                    const std::string full_payload = payload.dump();
+                    const bool should_externalize =
+                        bindings.resource_store != nullptr &&
+                        (full_payload.size() > 2048 || results.size() > 3);
+                    if (!should_externalize) {
+                        return common_tool_execution_result::success(
+                            std::move(payload).dump(),
+                            "Web search returned " + std::to_string(results.size()) + " candidate(s).");
+                    }
+
+                    std::vector<std::string> keywords;
+                    keywords.push_back(query);
+                    if (!site.empty()) {
+                        keywords.push_back(site);
+                    }
+
+                    common_runtime_resource_ref resource_ref;
+                    if (!persist_tool_resource(
+                            bindings,
+                            "web-search-results.json",
+                            "Full web search result set for the current turn.",
+                            "application/json",
+                            full_payload,
+                            "web_search",
+                            make_tool_resource_metadata(
+                                "Preserve the full bounded web search candidate set outside the inline model context.",
+                                "DuckDuckGo Lite search candidates for query \"" + query + "\".",
+                                "Use this resource when the planner or a later tool step needs the full candidate set rather than the inline top hits.",
+                                "Search results are unverified provider candidates with short snippets; they are not fetched page contents.",
+                                std::move(keywords)),
+                            resource_ref,
+                            err)) {
+                        return tool_execution_failure("tool.web_search.resource_store_failed", std::move(err), "Web search results could not be materialized as a host resource.");
+                    }
+
+                    payload["results"] = trim_search_results_for_inline(results, 3);
+                    payload["truncated"] = results.size() > 3;
+                    payload["total_results"] = results.size();
+
+                    return common_tool_execution_result::success(
+                        std::move(payload).dump(),
+                        "Web search returned " + std::to_string(results.size()) + " candidate(s); the full result set was stored as a turn resource.",
+                        {std::move(resource_ref)});
                 }, error);
             }
         } else if (definition.executor_id == "builtin.web_fetch") {

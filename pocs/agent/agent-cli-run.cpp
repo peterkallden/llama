@@ -115,11 +115,13 @@ int run_agent_cli(common_memory_store & store, args a) {
     common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
     std::unique_ptr<agent_mcp_tool_client> mcp_tool_client;
+    std::unique_ptr<agent_resource_store> resource_store;
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
     common_agent_cli_tool_selection tool_selection;
     if (!resolve_agent_cli_tool_selection(
             store,
             plan_store,
+            nullptr,
             &active_plan_id,
             a,
             query,
@@ -132,6 +134,7 @@ int run_agent_cli(common_memory_store & store, args a) {
     tooling = std::move(tool_selection.tooling);
     tool_view = std::move(tool_selection.tool_view);
     mcp_tool_client = std::move(tool_selection.mcp_client);
+    resource_store = std::move(tool_selection.owned_resource_store);
     auto embedding_provider = std::move(tool_selection.embedding_provider);
     tooling.tool_view = tool_view.get();
 #endif

@@ -89,6 +89,7 @@ common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
 bool resolve_agent_cli_tool_selection(
         common_memory_store & store,
         common_plan_store * plan_store,
+        agent_resource_store * resource_store,
         std::string * current_plan_id,
         const args & options,
         const common_memory_query & query,
@@ -115,6 +116,20 @@ bool resolve_agent_cli_tool_selection(
         }
         bindings.plan_store = plan_store;
         bindings.plan_id = current_plan_id;
+        if (resource_store == nullptr) {
+            selection.owned_resource_store = make_agent_resource_store({
+                options.resource_blob_backend,
+                options.resource_blob_root,
+                options.resource_metadata_backend,
+                options.resource_metadata_db,
+            }, error);
+            if (!selection.owned_resource_store) {
+                error = "resource store setup failed: " + error;
+                return false;
+            }
+            resource_store = selection.owned_resource_store.get();
+        }
+        bindings.resource_store = resource_store;
         if (memory_enabled) {
             bindings.memory_store = &store;
             bindings.memory_query = query;
@@ -126,8 +141,12 @@ bool resolve_agent_cli_tool_selection(
 
         native_provider = std::make_unique<native_agent_tool_provider>(
             tool_catalog,
-            [bindings](const agent_tool_context &, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
+            [bindings](const agent_tool_context & context, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
                 resolved = bindings;
+                resolved.resource_namespace_id = context.scope.namespace_id;
+                resolved.resource_session_id = context.scope.session_id;
+                resolved.resource_project_id = context.scope.project_id;
+                resolved.resource_turn_id = context.scope.turn_id;
                 binding_error.clear();
                 return true;
             });

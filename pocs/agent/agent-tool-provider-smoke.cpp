@@ -1,4 +1,5 @@
 #include "agent-tool-provider.h"
+#include "agent-resource-store.h"
 
 #include "agent/tool-catalog.h"
 #include "memory/memory-in-memory.h"
@@ -79,9 +80,30 @@ int main() {
 
     native_agent_tool_provider research_provider(
         catalog,
-        [](const agent_tool_context &, common_native_tool_bindings & bindings, std::string &) {
-            bindings.web_search = [](const std::string &) {
-                return common_tool_execution_result::success(R"({"items":[{"title":"stub"}]})");
+        [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
+            static agent_in_memory_resource_store resource_store;
+            bindings.resource_store = &resource_store;
+            bindings.resource_namespace_id = context.scope.namespace_id;
+            bindings.resource_session_id = context.scope.session_id;
+            bindings.resource_project_id = context.scope.project_id;
+            bindings.resource_turn_id = context.scope.turn_id;
+            bindings.web_search = [&bindings](const std::string &) {
+                common_runtime_resource_ref resource;
+                resource.uri = "agent-resource://resource/search-stub";
+                resource.name = "web-search-results.json";
+                resource.description = "Full web search result set for the current turn.";
+                resource.mime_type = "application/json";
+                resource.size_bytes = 2048;
+                resource.scope = common_runtime_resource_scope::turn;
+                resource.metadata.purpose = "Preserve the full bounded web search candidate set outside the inline model context.";
+                resource.metadata.content_summary = "Stubbed search candidates for resident inference.";
+                resource.metadata.usage_hint = "Use this resource when a later step needs the complete candidate list.";
+                resource.metadata.limitations = "Provider smoke uses stubbed results.";
+                resource.metadata.keywords = {"resident inference", "llama.cpp"};
+                return common_tool_execution_result::success(
+                    R"({"results":[{"title":"stub issue"}],"provider":"stub"})",
+                    "Web search returned one stub candidate; the full result set was stored as a turn resource.",
+                    {resource});
             };
             return true;
         });
@@ -90,15 +112,41 @@ int main() {
     research_context.request_id = "provider-smoke";
     research_context.turn_id = "turn-2";
     research_context.profile_id = "research";
-    research_context.allow_network = false;
+    research_context.allow_network = true;
+    research_context.scope.namespace_id = "provider-smoke";
+    research_context.scope.session_id = "session-1";
+    research_context.scope.project_id = "project-1";
+    research_context.scope.turn_id = "turn-2";
 
     std::unique_ptr<agent_tool_view> research_view = research_provider.resolve_tools(research_context, error);
     if (!research_view) {
         std::fprintf(stderr, "research provider resolve failed: %s\n", error.c_str());
         return 1;
     }
-    if (has_tool(research_view->chat_tools(), "web_search")) {
-        std::fprintf(stderr, "web_search was exposed despite network access being disabled\n");
+    if (!has_tool(research_view->chat_tools(), "web_search")) {
+        std::fprintf(stderr, "web_search was not exposed in the research tool view\n");
+        return 1;
+    }
+
+    const auto search_result = research_view->call({
+        "call-2b",
+        "web_search",
+        R"({"query":"resident inference architecture in llama.cpp","limit":5})",
+    }, error);
+    if (!search_result.ok) {
+        std::fprintf(stderr, "web_search call failed: %s\n", search_result.content_json.c_str());
+        return 1;
+    }
+    if (search_result.resource_refs.empty()) {
+        std::fprintf(stderr, "web_search did not materialize a resource reference for the full result set\n");
+        return 1;
+    }
+    if (search_result.resource_refs[0].metadata.content_summary.empty()) {
+        std::fprintf(stderr, "web_search resource metadata content summary was empty\n");
+        return 1;
+    }
+    if (search_result.content_json.find("\"resources\"") == std::string::npos) {
+        std::fprintf(stderr, "web_search result payload did not include rendered resources: %s\n", search_result.content_json.c_str());
         return 1;
     }
 
@@ -149,6 +197,7 @@ int main() {
     std::printf("provider_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("calculator_result=%s\n", first_result.content_json.c_str());
     std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web_search") ? "yes" : "no");
+    std::printf("web_search_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
     std::printf("memory_remember_result=%s\n", memory_result.content_json.c_str());
     return 0;
 }

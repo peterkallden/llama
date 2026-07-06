@@ -69,6 +69,8 @@ The first concrete example of that constraint is now in place for tracing: the s
 
 The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation remains intentionally local to `pocs/agent`, but it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
+That resource metadata is also starting to become more than a storage note. The current descriptor shape now has room for host-authored purpose, short content summary, usage hint, limitations, and lightweight semantic tags such as keywords or entity names. The intended meaning is practical rather than decorative: a resource row should answer what it is, why it was created, what it contains in short, how a later step can use it, and what its limits are.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -246,6 +248,8 @@ There is now also a small provider/view boundary above those native pieces:
 
 The first implementation started native-only, and it still uses the existing catalog, registry, and adapter bindings underneath. The chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
 
+That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web_search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
+
 There is now also a first MCP-shaped provider slice beside the native one. `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape.
 
 That seam now has two concrete test paths:
@@ -393,7 +397,11 @@ The current code should remain useful without any of these. The next steps shoul
 
 - Add host-owned resource references with turn/session/project lifetime.
 
-  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option. The next real step is to use that store from runtime/tool flows rather than only from smoke coverage, and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option, and `web_search` is now the first native tool that can materialize a full result payload there while returning a shorter inline answer plus `resources`. The next real step is to use that same path more broadly from runtime/tool flows and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+
+- Let planning and tool binding treat resource metadata as first-class evidence shape.
+
+  The next planning-facing slice should not be "blob store first, meaning later". Resource metadata should become one of the ways observations explain what a deferred payload is for: purpose, short content summary, usage hint, limitations, and lightweight semantic tags such as keywords or entity names. That gives later planner/tool-binding steps a host-owned bridge between a compact inline observation and a richer off-context payload, and it sets up later cross-references such as `observation -> resource`, `resource -> derived observation`, or project-scoped semantic lookup without forcing the model to carry the full content inline.
 
 - Add structured execution history that explains "why this answer" without debug logs.
 

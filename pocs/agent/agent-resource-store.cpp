@@ -372,6 +372,7 @@ bool agent_in_memory_resource_store::put_text(
     descriptor.source_tool = request.source_tool;
     descriptor.created_at = request.created_at > 0 ? request.created_at : current_time_seconds();
     descriptor.expires_at = request.expires_at;
+    descriptor.metadata = request.metadata;
 
     std::lock_guard<std::mutex> lock(mutex_);
     resources_[descriptor.uri] = descriptor;

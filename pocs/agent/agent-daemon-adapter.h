@@ -64,6 +64,7 @@ bool resolve_agent_daemon_tooling(
     const common_agent_runtime_session_host_turn_request & request,
     common_memory_store & memory_store,
     common_plan_store & plan_store,
+    agent_resource_store * resource_store,
     common_agent_runtime_tooling & tooling,
     std::string & error);
 

@@ -157,6 +157,23 @@ std::vector<common_runtime_resource_ref> extract_resource_links(const json & con
         resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
         resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
         resource.scope = common_runtime_resource_scope::turn;
+        if (item.contains("metadata") && item["metadata"].is_object()) {
+            const auto & metadata = item["metadata"];
+            resource.metadata.purpose = metadata.value("purpose", "");
+            resource.metadata.content_summary = metadata.value("content_summary", "");
+            resource.metadata.usage_hint = metadata.value("usage_hint", "");
+            resource.metadata.limitations = metadata.value("limitations", "");
+            if (metadata.contains("keywords") && metadata["keywords"].is_array()) {
+                for (const auto & keyword : metadata["keywords"]) {
+                    if (keyword.is_string()) resource.metadata.keywords.push_back(keyword.get<std::string>());
+                }
+            }
+            if (metadata.contains("entities") && metadata["entities"].is_array()) {
+                for (const auto & entity : metadata["entities"]) {
+                    if (entity.is_string()) resource.metadata.entities.push_back(entity.get<std::string>());
+                }
+            }
+        }
         resources.push_back(std::move(resource));
     }
 

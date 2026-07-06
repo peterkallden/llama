@@ -24,6 +24,16 @@ int main() {
             "tool-1",
             "native",
             "repository_search",
+            0,
+            0,
+            {
+                "Preserve the full repository search output for later plan/tool reuse.",
+                "Three repository search matches in JSON form.",
+                "Read the resource when a later step needs the full match list instead of an inline summary.",
+                "Search previews are partial lines only.",
+                {"repository_search", "matches"},
+                {"tool-adapters.cpp"},
+            },
         }, first, error)) {
         std::fprintf(stderr, "put_text failed: %s\n", error.c_str());
         return 1;
@@ -84,6 +94,10 @@ int main() {
         std::fprintf(stderr, "stat returned unexpected source tool: %s\n", statted.source_tool.c_str());
         return 1;
     }
+    if (statted.metadata.content_summary != "Three repository search matches in JSON form.") {
+        std::fprintf(stderr, "stat returned unexpected metadata content summary: %s\n", statted.metadata.content_summary.c_str());
+        return 1;
+    }
 
     agent_resource_read_authority wrong_turn_authority = turn_authority;
     wrong_turn_authority.turn_id = "turn-9";
@@ -131,6 +145,7 @@ int main() {
 #ifdef LLAMA_MEMORY_USE_COZO
     const std::filesystem::path cozo_root =
         std::filesystem::temp_directory_path() / "llama-agent-resource-store-cozo-smoke";
+    std::filesystem::remove_all(cozo_root);
     std::filesystem::create_directories(cozo_root);
     const std::filesystem::path cozo_db = cozo_root / "resource-meta.cozo";
     agent_resource_store_config cozo_config;

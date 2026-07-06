@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-runtime-session-manager.h"
+#include "agent-resource-store.h"
 
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
@@ -22,6 +23,7 @@ enum class common_agent_daemon_command_type {
 struct common_agent_daemon_runtime {
     std::unique_ptr<common_memory_store> memory_store;
     std::unique_ptr<common_plan_store> plan_store;
+    std::unique_ptr<agent_resource_store> resource_store;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
 };

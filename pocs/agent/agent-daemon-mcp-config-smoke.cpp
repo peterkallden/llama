@@ -76,6 +76,7 @@ int main(int argc, char ** argv) {
             },
             *runtime.memory_store,
             *runtime.plan_store,
+            runtime.resource_store.get(),
             tooling,
             error)) {
         std::fprintf(stderr, "daemon tooling resolve failed: %s\n", error.c_str());
