@@ -15,16 +15,22 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--tool-profile NAME] [--planning-mode off|mini] [--reflection-mode off|always] [--memory-learn off|post-turn]\n"
         "         [--agent-inference-backend cli|server-context]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
+        "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
+        "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
         "  %s daemon-chat --model MODEL --prompt TEXT [--embedding-model MODEL] [--planning-mode off|mini] [--reflection-mode off|always]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
+        "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
+        "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n"
         "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--planning-mode off|mini] [--reflection-mode off|always]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
+        "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
+        "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
         "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n",
@@ -118,6 +124,14 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_server_name = v;
         } else if (strcmp(argv[i], "--mcp-tool-prefix") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.mcp_tool_prefix = v;
+        } else if (strcmp(argv[i], "--resource-blob-backend") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.resource_blob_backend = v;
+        } else if (strcmp(argv[i], "--resource-blob-root") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.resource_blob_root = v;
+        } else if (strcmp(argv[i], "--resource-metadata-backend") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.resource_metadata_backend = v;
+        } else if (strcmp(argv[i], "--resource-metadata-db") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.resource_metadata_db = v;
         } else if (strcmp(argv[i], "--planning-mode") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.planning_mode = v; out.planning_mode_explicit = true;
         } else if (strcmp(argv[i], "--reflection-mode") == 0) {

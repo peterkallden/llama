@@ -2,11 +2,20 @@
 
 #include "../memory/memory-cli-memory.h"
 
+#include "agent-resource-store.h"
 #include "agent-cli-selection.h"
 
 #include <ctime>
 
 bool prepare_agent_cli_args(args & options, std::string & error) {
+    if (!validate_agent_resource_store_config({
+            options.resource_blob_backend,
+            options.resource_blob_root,
+            options.resource_metadata_backend,
+            options.resource_metadata_db,
+        }, error)) {
+        return false;
+    }
     if (!resolve_agent_profile(options, error)) {
         return false;
     }

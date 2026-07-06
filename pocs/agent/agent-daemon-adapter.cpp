@@ -1,6 +1,7 @@
 #include "agent-daemon-adapter.h"
 
 #include "agent-cli-selection.h"
+#include "agent-resource-store.h"
 
 #include <cstdio>
 #include <cstring>
@@ -79,6 +80,14 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_server_name = value;
         } else if (std::strcmp(argv[i], "--mcp-tool-prefix") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.mcp_tool_prefix = value;
+        } else if (std::strcmp(argv[i], "--resource-blob-backend") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.resource_blob_backend = value;
+        } else if (std::strcmp(argv[i], "--resource-blob-root") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.resource_blob_root = value;
+        } else if (std::strcmp(argv[i], "--resource-metadata-backend") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.resource_metadata_backend = value;
+        } else if (std::strcmp(argv[i], "--resource-metadata-db") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.resource_metadata_db = value;
         } else if (std::strcmp(argv[i], "--max-tool-rounds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_tool_rounds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -130,6 +139,16 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--max-tool-rounds must be between 0 and 4\n");
         return false;
     }
+    std::string resource_error;
+    if (!validate_agent_resource_store_config({
+            options.resource_blob_backend,
+            options.resource_blob_root,
+            options.resource_metadata_backend,
+            options.resource_metadata_db,
+        }, resource_error)) {
+        std::fprintf(stderr, "%s\n", resource_error.c_str());
+        return false;
+    }
     if (options.mcp_tool_command.empty() && !options.mcp_tool_args.empty()) {
         std::fprintf(stderr, "--mcp-tool-arg requires --mcp-tool-command\n");
         return false;
@@ -152,6 +171,8 @@ void print_agent_daemon_usage(const char * argv0) {
         "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
+        "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
+        "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--n-predict N] [-ngl N]\n",

@@ -5,6 +5,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-daemon-client.cpp
     agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
+    agent-resource-store.cpp
     agent-daemon-adapter.cpp
     agent-daemon-protocol.cpp
     agent-daemon-runtime.cpp
@@ -30,6 +31,12 @@ set(AGENT_RUNTIME_SOURCES
     ../memory/memory-cli-memory.cpp
     agent-cli-selection.cpp
 )
+
+if (LLAMA_MEMORY_COZO)
+    list(APPEND AGENT_RUNTIME_SOURCES
+        agent-resource-store-cozo.cpp
+    )
+endif()
 
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
@@ -281,6 +288,27 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
+set(TARGET llama-agent-resource-store-smoke)
+add_executable(${TARGET}
+    agent-resource-store-smoke.cpp
+    ${AGENT_RUNTIME_SOURCES}
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-memory
+    llama-common
+    llama
+    llama-agent-poc
+    server-context
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     agent-daemon.cpp
@@ -301,3 +329,29 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
+set(AGENT_RUNTIME_TARGETS
+    llama-agent-cli
+    llama-agent-resident-smoke
+    llama-agent-tool-provider-smoke
+    llama-agent-tool-runtime-smoke
+    llama-agent-mcp-tool-provider-smoke
+    llama-agent-mcp-stdio-client-smoke
+    llama-agent-cli-mcp-selection-smoke
+    llama-agent-cli-run-mcp-smoke
+    llama-agent-daemon-dispatcher-smoke
+    llama-agent-daemon-mcp-config-smoke
+    llama-agent-runtime-session-host-tooling-smoke
+    llama-agent-resource-store-smoke
+    llama-agent-daemon
+)
+
+if (LLAMA_MEMORY_COZO)
+    foreach(TARGET ${AGENT_RUNTIME_TARGETS})
+        target_include_directories(${TARGET} PRIVATE ${COZO_INCLUDE_DIR})
+        target_link_libraries(${TARGET} PRIVATE ${COZO_LIBRARY})
+        if (WIN32)
+            target_link_libraries(${TARGET} PRIVATE ws2_32 bcrypt ntdll rpcrt4 shlwapi crypt32)
+        endif()
+    endforeach()
+endif()

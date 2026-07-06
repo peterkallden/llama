@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
 
 enum class common_runtime_resource_scope {
@@ -18,6 +20,85 @@ inline const char * common_runtime_resource_scope_name(common_runtime_resource_s
     return "turn";
 }
 
+enum class agent_resource_blob_backend {
+    auto_,
+    in_memory,
+    fs,
+    s3,
+};
+
+inline const char * agent_resource_blob_backend_name(agent_resource_blob_backend backend) {
+    switch (backend) {
+        case agent_resource_blob_backend::auto_:     return "auto";
+        case agent_resource_blob_backend::in_memory: return "in-memory";
+        case agent_resource_blob_backend::fs:        return "fs";
+        case agent_resource_blob_backend::s3:        return "s3";
+    }
+    return "auto";
+}
+
+inline bool parse_agent_resource_blob_backend(
+        const std::string & value,
+        agent_resource_blob_backend & backend) {
+    if (value == "auto") {
+        backend = agent_resource_blob_backend::auto_;
+        return true;
+    }
+    if (value == "in-memory") {
+        backend = agent_resource_blob_backend::in_memory;
+        return true;
+    }
+    if (value == "fs") {
+        backend = agent_resource_blob_backend::fs;
+        return true;
+    }
+    if (value == "s3") {
+        backend = agent_resource_blob_backend::s3;
+        return true;
+    }
+    return false;
+}
+
+enum class agent_resource_metadata_backend {
+    auto_,
+    in_memory,
+    cozo,
+};
+
+inline const char * agent_resource_metadata_backend_name(agent_resource_metadata_backend backend) {
+    switch (backend) {
+        case agent_resource_metadata_backend::auto_:     return "auto";
+        case agent_resource_metadata_backend::in_memory: return "in-memory";
+        case agent_resource_metadata_backend::cozo:      return "cozo";
+    }
+    return "auto";
+}
+
+inline bool parse_agent_resource_metadata_backend(
+        const std::string & value,
+        agent_resource_metadata_backend & backend) {
+    if (value == "auto") {
+        backend = agent_resource_metadata_backend::auto_;
+        return true;
+    }
+    if (value == "in-memory") {
+        backend = agent_resource_metadata_backend::in_memory;
+        return true;
+    }
+    if (value == "cozo") {
+        backend = agent_resource_metadata_backend::cozo;
+        return true;
+    }
+    return false;
+}
+
+struct agent_resource_store_config {
+    std::string blob_backend = "auto";
+    std::string blob_root;
+    std::string metadata_backend = "auto";
+    std::string metadata_db;
+};
+
 struct common_runtime_resource_ref {
     std::string uri;
     std::string name;
@@ -25,4 +106,96 @@ struct common_runtime_resource_ref {
     std::string mime_type;
     size_t size_bytes = 0;
     common_runtime_resource_scope scope = common_runtime_resource_scope::turn;
+};
+
+struct agent_blob_descriptor {
+    std::string sha256;
+    size_t size_bytes = 0;
+};
+
+struct agent_resource_put_request {
+    std::string name;
+    std::string description;
+    std::string mime_type = "text/plain";
+    std::string text;
+
+    common_runtime_resource_scope scope = common_runtime_resource_scope::turn;
+
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    std::string tool_call_id;
+
+    std::string source_provider;
+    std::string source_tool;
+
+    int64_t created_at = 0;
+    int64_t expires_at = 0;
+};
+
+struct agent_resource_descriptor : common_runtime_resource_ref {
+    std::string resource_id;
+    std::string sha256;
+
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    std::string tool_call_id;
+
+    std::string source_provider;
+    std::string source_tool;
+
+    int64_t created_at = 0;
+    int64_t expires_at = 0;
+};
+
+struct agent_resource_read_authority {
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+    int64_t now = 0;
+};
+
+class agent_blob_store {
+public:
+    virtual ~agent_blob_store() = default;
+
+    virtual bool put_bytes(
+        const std::string & bytes,
+        agent_blob_descriptor & out,
+        std::string & error) = 0;
+
+    virtual bool get_bytes(
+        const std::string & sha256,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const = 0;
+
+    virtual bool exists_sha256(const std::string & sha256) const = 0;
+};
+
+class agent_resource_store {
+public:
+    virtual ~agent_resource_store() = default;
+
+    virtual bool put_text(
+        const agent_resource_put_request & request,
+        agent_resource_descriptor & out,
+        std::string & error) = 0;
+
+    virtual bool read_text(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const = 0;
+
+    virtual bool stat(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        agent_resource_descriptor & out,
+        std::string & error) const = 0;
 };

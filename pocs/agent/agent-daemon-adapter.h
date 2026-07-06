@@ -34,6 +34,10 @@ struct daemon_options {
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";
     std::string mcp_tool_prefix;
+    std::string resource_blob_backend = "auto";
+    std::string resource_blob_root;
+    std::string resource_metadata_backend = "auto";
+    std::string resource_metadata_db;
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;

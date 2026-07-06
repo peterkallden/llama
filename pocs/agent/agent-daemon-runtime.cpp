@@ -25,6 +25,10 @@ args make_store_args(const daemon_options & options) {
     store_args.mcp_tool_args = options.mcp_tool_args;
     store_args.mcp_tool_server_name = options.mcp_tool_server_name;
     store_args.mcp_tool_prefix = options.mcp_tool_prefix;
+    store_args.resource_blob_backend = options.resource_blob_backend;
+    store_args.resource_blob_root = options.resource_blob_root;
+    store_args.resource_metadata_backend = options.resource_metadata_backend;
+    store_args.resource_metadata_db = options.resource_metadata_db;
     return store_args;
 }
 

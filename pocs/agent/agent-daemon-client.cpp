@@ -1,6 +1,7 @@
 #include "agent-daemon-client.h"
 
 #include "agent-cli-config.h"
+#include "agent-resource-store.h"
 #include "agent-cli-selection.h"
 
 #include <nlohmann/json.hpp>
@@ -174,6 +175,22 @@ public:
         if (!a.repository_root.empty()) {
             command_line.push_back("--repository-root");
             command_line.push_back(a.repository_root);
+        }
+        if (a.resource_blob_backend != "auto") {
+            command_line.push_back("--resource-blob-backend");
+            command_line.push_back(a.resource_blob_backend);
+        }
+        if (!a.resource_blob_root.empty()) {
+            command_line.push_back("--resource-blob-root");
+            command_line.push_back(a.resource_blob_root);
+        }
+        if (a.resource_metadata_backend != "auto") {
+            command_line.push_back("--resource-metadata-backend");
+            command_line.push_back(a.resource_metadata_backend);
+        }
+        if (!a.resource_metadata_db.empty()) {
+            command_line.push_back("--resource-metadata-db");
+            command_line.push_back(a.resource_metadata_db);
         }
         if (a.memory_learn_show_candidate) {
             command_line.push_back("--memory-learn-show-candidate");
@@ -374,6 +391,15 @@ bool validate_daemon_command_args(const char * argv0, const args & a, bool requi
     if (a.memory_learn_min_confidence < 0.0f || a.memory_learn_min_confidence > 1.0f ||
             a.memory_learn_min_reuse < 0.0f || a.memory_learn_min_reuse > 1.0f) {
         std::fprintf(stderr, "memory learning thresholds must be between 0 and 1\n");
+        return false;
+    }
+    if (!validate_agent_resource_store_config({
+            a.resource_blob_backend,
+            a.resource_blob_root,
+            a.resource_metadata_backend,
+            a.resource_metadata_db,
+        }, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
         return false;
     }
     return true;

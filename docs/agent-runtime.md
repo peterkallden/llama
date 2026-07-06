@@ -44,6 +44,15 @@ Daemon command results now also carry a small internal daemon event list plus `d
 
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
 
+The resource-store slice now follows the same host-owned backend pattern. The CLI and daemon argument surfaces accept:
+
+- `--resource-blob-backend auto|in-memory|fs|s3`
+- `--resource-blob-root PATH`
+- `--resource-metadata-backend auto|in-memory|cozo`
+- `--resource-metadata-db PATH`
+
+The current implementation supports `fs` and `in-memory` for blob storage, and `in-memory` and `cozo` for metadata. `s3` remains deferred. In the current default shape, blob storage resolves to `fs` and derives a default root if one is not supplied, while metadata resolves to `cozo` when a metadata DB path is present and otherwise stays `in-memory`.
+
 ## Design Constraints
 
 The runtime direction depends on keeping the layer boundaries boring and explicit.
@@ -57,6 +66,8 @@ The runtime direction depends on keeping the layer boundaries boring and explici
 In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
 
 The first concrete example of that constraint is now in place for tracing: the structured trace envelope lives in a neutral `common/runtime-trace.h` header, while `common/agent` populates it and `pocs/agent` only adapts or serializes it for CLI/daemon surfaces.
+
+The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation remains intentionally local to `pocs/agent`, but it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
 ## Layer Responsibilities
 
@@ -382,7 +393,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 - Add host-owned resource references with turn/session/project lifetime.
 
-  Large tool outputs do not need to stay inline forever. A later resource-store slice can let the host keep bulky results behind host-created references while the model sees a compact summary plus a scoped link. The intended lifetime split is `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option. The next real step is to use that store from runtime/tool flows rather than only from smoke coverage, and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
 
 - Add structured execution history that explains "why this answer" without debug logs.
 
@@ -405,6 +416,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
+- `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
