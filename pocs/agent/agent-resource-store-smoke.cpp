@@ -8,7 +8,9 @@
 int main() {
     std::string error;
     auto blob_store = std::make_shared<agent_in_memory_blob_store>();
-    agent_in_memory_resource_store store(blob_store);
+    agent_catalogued_resource_store store(
+        blob_store,
+        std::make_unique<agent_in_memory_resource_catalog>());
 
     agent_resource_descriptor first;
     if (!store.put_text({

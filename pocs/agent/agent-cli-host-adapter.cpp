@@ -129,7 +129,7 @@ bool resolve_agent_cli_tool_selection(
             }
             resource_store = selection.owned_resource_store.get();
         }
-        bindings.resource_store = resource_store;
+        bindings.resource_runtime.store = resource_store;
         if (memory_enabled) {
             bindings.memory_store = &store;
             bindings.memory_query = query;
@@ -143,10 +143,10 @@ bool resolve_agent_cli_tool_selection(
             tool_catalog,
             [bindings](const agent_tool_context & context, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
                 resolved = bindings;
-                resolved.resource_namespace_id = context.scope.namespace_id;
-                resolved.resource_session_id = context.scope.session_id;
-                resolved.resource_project_id = context.scope.project_id;
-                resolved.resource_turn_id = context.scope.turn_id;
+                resolved.resource_runtime.namespace_id = context.scope.namespace_id;
+                resolved.resource_runtime.session_id = context.scope.session_id;
+                resolved.resource_runtime.project_id = context.scope.project_id;
+                resolved.resource_runtime.turn_id = context.scope.turn_id;
                 binding_error.clear();
                 return true;
             });

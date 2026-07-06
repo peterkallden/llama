@@ -12,7 +12,9 @@
 
 namespace {
 
-agent_in_memory_resource_store g_runtime_resource_store;
+agent_catalogued_resource_store g_runtime_resource_store(
+    std::make_shared<agent_in_memory_blob_store>(),
+    std::make_unique<agent_in_memory_resource_catalog>());
 
 class provider_agent_tool_runtime final : public common_agent_tool_runtime {
 public:
@@ -144,43 +146,34 @@ int main() {
     native_agent_tool_provider provider(
         catalog,
         [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
-            bindings.resource_store = &g_runtime_resource_store;
-            bindings.resource_namespace_id = context.scope.namespace_id;
-            bindings.resource_session_id = context.scope.session_id;
-            bindings.resource_project_id = context.scope.project_id;
-            bindings.resource_turn_id = context.scope.turn_id;
-            const std::string namespace_id = bindings.resource_namespace_id;
-            const std::string session_id = bindings.resource_session_id;
-            const std::string project_id = bindings.resource_project_id;
-            const std::string turn_id = bindings.resource_turn_id;
-            agent_resource_store * resource_store = bindings.resource_store;
-            bindings.web_search = [resource_store, namespace_id, session_id, project_id, turn_id](const std::string &) {
+            bindings.resource_runtime.store = &g_runtime_resource_store;
+            bindings.resource_runtime.namespace_id = context.scope.namespace_id;
+            bindings.resource_runtime.session_id = context.scope.session_id;
+            bindings.resource_runtime.project_id = context.scope.project_id;
+            bindings.resource_runtime.turn_id = context.scope.turn_id;
+            const agent_resource_runtime runtime = bindings.resource_runtime;
+            bindings.web_search = [runtime](const std::string &) {
+                agent_resource_put_request request;
+                request.name = "runtime-search-results.json";
+                request.description = "Runtime smoke full search payload";
+                request.mime_type = "application/json";
+                request.text = R"({"results":[{"title":"stub runtime result","url":"https://example.com/runtime"}],"provider":"stub"})";
+                request.scope = common_runtime_resource_scope::turn;
+                request.source_provider = "native";
+                request.source_tool = "web_search";
+                request.metadata = {
+                    "Preserve the full search payload for later runtime evidence.",
+                    "Stubbed runtime search result payload.",
+                    "Use the resource URI when a later step needs the full search payload.",
+                    "Runtime smoke uses stubbed search data.",
+                    {"runtime", "search"},
+                    {},
+                };
+                apply_agent_resource_runtime(runtime, request);
+
                 agent_resource_descriptor descriptor;
                 std::string error;
-                if (!resource_store->put_text({
-                        "runtime-search-results.json",
-                        "Runtime smoke full search payload",
-                        "application/json",
-                        R"({"results":[{"title":"stub runtime result","url":"https://example.com/runtime"}],"provider":"stub"})",
-                        common_runtime_resource_scope::turn,
-                        namespace_id,
-                        session_id,
-                        project_id,
-                        turn_id,
-                        "",
-                        "native",
-                        "web_search",
-                        0,
-                        0,
-                        {
-                            "Preserve the full search payload for later runtime evidence.",
-                            "Stubbed runtime search result payload.",
-                            "Use the resource URI when a later step needs the full search payload.",
-                            "Runtime smoke uses stubbed search data.",
-                            {"runtime", "search"},
-                            {},
-                        },
-                    }, descriptor, error)) {
+                if (!runtime.store->put_text(request, descriptor, error)) {
                     return common_tool_execution_result::failure(
                         "tool.web_search.resource_store_failed",
                         common_tool_failure_class::execution,

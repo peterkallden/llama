@@ -338,14 +338,20 @@ bool agent_filesystem_blob_store::exists_sha256(const std::string & sha256) cons
     return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
 }
 
-agent_in_memory_resource_store::agent_in_memory_resource_store(std::shared_ptr<agent_blob_store> blob_store) :
-    blob_store_(std::move(blob_store)) {
+agent_catalogued_resource_store::agent_catalogued_resource_store(
+    std::shared_ptr<agent_blob_store> blob_store,
+    std::unique_ptr<agent_resource_catalog> catalog) :
+    blob_store_(std::move(blob_store)),
+    catalog_(std::move(catalog)) {
     if (!blob_store_) {
         blob_store_ = std::make_shared<agent_in_memory_blob_store>();
     }
+    if (!catalog_) {
+        catalog_ = std::make_unique<agent_in_memory_resource_catalog>();
+    }
 }
 
-bool agent_in_memory_resource_store::put_text(
+bool agent_catalogued_resource_store::put_text(
     const agent_resource_put_request & request,
     agent_resource_descriptor & out,
     std::string & error) {
@@ -355,7 +361,9 @@ bool agent_in_memory_resource_store::put_text(
     }
 
     agent_resource_descriptor descriptor;
-    descriptor.resource_id = "resource-" + std::to_string(next_id_++);
+    if (!catalog_->next_resource_id(descriptor.resource_id, error)) {
+        return false;
+    }
     descriptor.uri = "agent-resource://resource/" + descriptor.resource_id;
     descriptor.name = request.name;
     descriptor.description = request.description;
@@ -374,49 +382,39 @@ bool agent_in_memory_resource_store::put_text(
     descriptor.expires_at = request.expires_at;
     descriptor.metadata = request.metadata;
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    resources_[descriptor.uri] = descriptor;
+    if (!catalog_->put_descriptor(descriptor, error)) {
+        return false;
+    }
     out = descriptor;
+    error.clear();
     return true;
 }
 
-bool agent_in_memory_resource_store::read_text(
+bool agent_catalogued_resource_store::read_text(
     const std::string & uri,
     const agent_resource_read_authority & authority,
     size_t max_bytes,
     std::string & out,
     std::string & error) const {
     agent_resource_descriptor descriptor;
-    if (!resolve_descriptor(uri, authority, descriptor, error)) {
+    if (!catalog_->find_descriptor(uri, descriptor, error)) {
+        return false;
+    }
+    if (!authority_allows(descriptor, authority, error)) {
         return false;
     }
     return blob_store_->get_bytes(descriptor.sha256, max_bytes, out, error);
 }
 
-bool agent_in_memory_resource_store::stat(
+bool agent_catalogued_resource_store::stat(
     const std::string & uri,
     const agent_resource_read_authority & authority,
     agent_resource_descriptor & out,
     std::string & error) const {
-    return resolve_descriptor(uri, authority, out, error);
-}
-
-bool agent_in_memory_resource_store::resolve_descriptor(
-    const std::string & uri,
-    const agent_resource_read_authority & authority,
-    agent_resource_descriptor & out,
-    std::string & error) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = resources_.find(uri);
-    if (it == resources_.end()) {
-        error = "resource was not found";
+    if (!catalog_->find_descriptor(uri, out, error)) {
         return false;
     }
-    if (!authority_allows(it->second, authority, error)) {
-        return false;
-    }
-    out = it->second;
-    return true;
+    return authority_allows(out, authority, error);
 }
 
 std::shared_ptr<agent_blob_store> make_agent_blob_store(
@@ -478,17 +476,21 @@ std::unique_ptr<agent_resource_store> make_agent_resource_store(
 
     if (metadata_backend == "in-memory") {
         error.clear();
-        return std::make_unique<agent_in_memory_resource_store>(std::move(blob_store));
+        return std::make_unique<agent_catalogued_resource_store>(
+            std::move(blob_store),
+            std::make_unique<agent_in_memory_resource_catalog>());
     }
     if (metadata_backend == "cozo") {
 #ifdef LLAMA_MEMORY_USE_COZO
-        auto store = std::make_unique<agent_cozo_resource_store>(std::move(blob_store));
+        auto catalog = std::make_unique<agent_cozo_resource_catalog>();
         const std::string metadata_db = config.metadata_db.empty() ? "resource-metadata.cozo" : config.metadata_db;
-        if (!store->open(metadata_db, error)) {
+        if (!catalog->open(metadata_db, error)) {
             return nullptr;
         }
         error.clear();
-        return store;
+        return std::make_unique<agent_catalogued_resource_store>(
+            std::move(blob_store),
+            std::move(catalog));
 #else
         error = "this binary was built without LLAMA_MEMORY_COZO";
         return nullptr;

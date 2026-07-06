@@ -5,6 +5,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-daemon-client.cpp
     agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
+    agent-resource-catalog.cpp
     agent-resource-store.cpp
     agent-daemon-adapter.cpp
     agent-daemon-protocol.cpp
@@ -34,7 +35,7 @@ set(AGENT_RUNTIME_SOURCES
 
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
-        agent-resource-store-cozo.cpp
+        agent-resource-catalog-cozo.cpp
     )
 endif()
 

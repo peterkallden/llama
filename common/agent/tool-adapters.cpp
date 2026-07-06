@@ -127,29 +127,24 @@ bool persist_tool_resource(
         const common_runtime_resource_metadata & metadata,
         common_runtime_resource_ref & resource,
         std::string & error) {
-    if (bindings.resource_store == nullptr) {
+    if (bindings.resource_runtime.store == nullptr) {
         error = "resource store is unavailable";
         return false;
     }
 
+    agent_resource_put_request request;
+    request.name = name;
+    request.description = description;
+    request.mime_type = mime_type;
+    request.text = text;
+    request.scope = common_runtime_resource_scope::turn;
+    request.source_provider = "native";
+    request.source_tool = source_tool;
+    request.metadata = metadata;
+    apply_agent_resource_runtime(bindings.resource_runtime, request);
+
     agent_resource_descriptor descriptor;
-    if (!bindings.resource_store->put_text({
-            name,
-            description,
-            mime_type,
-            text,
-            common_runtime_resource_scope::turn,
-            bindings.resource_namespace_id,
-            bindings.resource_session_id,
-            bindings.resource_project_id,
-            bindings.resource_turn_id,
-            "",
-            "native",
-            source_tool,
-            0,
-            0,
-            metadata,
-        }, descriptor, error)) {
+    if (!bindings.resource_runtime.store->put_text(request, descriptor, error)) {
         return false;
     }
 
@@ -160,13 +155,7 @@ bool persist_tool_resource(
 
 agent_resource_read_authority make_resource_read_authority(
         const common_native_tool_bindings & bindings) {
-    agent_resource_read_authority authority;
-    authority.namespace_id = bindings.resource_namespace_id;
-    authority.session_id = bindings.resource_session_id;
-    authority.project_id = bindings.resource_project_id;
-    authority.turn_id = bindings.resource_turn_id;
-    authority.now = std::time(nullptr);
-    return authority;
+    return make_agent_resource_read_authority(bindings.resource_runtime, std::time(nullptr));
 }
 
 common_tool_execution_result tool_failure(std::string code, common_tool_failure_class failure_class, bool retryable,
@@ -697,7 +686,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"commits", log}});
             }, error);
-        } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_store != nullptr) {
+        } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
@@ -713,12 +702,12 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
 
                 agent_resource_descriptor descriptor;
                 const auto authority = make_resource_read_authority(bindings);
-                if (!bindings.resource_store->stat(uri, authority, descriptor, err)) {
+                if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
                     return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
                 }
 
                 std::string text;
-                if (!bindings.resource_store->read_text(uri, authority, static_cast<size_t>(max_bytes), text, err)) {
+                if (!bindings.resource_runtime.store->read_text(uri, authority, static_cast<size_t>(max_bytes), text, err)) {
                     return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
                 }
 
@@ -782,7 +771,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
 
                     const std::string full_payload = payload.dump();
                     const bool should_externalize =
-                        bindings.resource_store != nullptr &&
+                        bindings.resource_runtime.store != nullptr &&
                         (full_payload.size() > 2048 || results.size() > 3);
                     if (!should_externalize) {
                         return common_tool_execution_result::success(

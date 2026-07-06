@@ -24,13 +24,9 @@ struct common_native_tool_bindings {
     // alternative providers. Native defaults are used when absent.
     std::function<common_tool_execution_result(const std::string &)> web_search;
     std::function<common_tool_execution_result(const std::string &)> web_fetch;
-    // Optional host-owned resource store for large tool payloads that should
+    // Optional host-owned resource runtime for large tool payloads that should
     // be referenced without forcing the full content inline into model context.
-    agent_resource_store * resource_store = nullptr;
-    std::string resource_namespace_id = "local";
-    std::string resource_session_id = "default";
-    std::string resource_project_id;
-    std::string resource_turn_id;
+    agent_resource_runtime resource_runtime;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;

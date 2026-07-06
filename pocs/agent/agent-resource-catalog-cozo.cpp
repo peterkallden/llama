@@ -1,11 +1,10 @@
-#include "agent-resource-store.h"
+#include "agent-resource-catalog.h"
 
 #ifdef LLAMA_MEMORY_USE_COZO
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <ctime>
 
 extern "C" {
 #include <cozo_c.h>
@@ -144,66 +143,19 @@ agent_resource_descriptor descriptor_from_row(const json & row) {
     return descriptor;
 }
 
-bool resource_expired(const agent_resource_descriptor & descriptor, int64_t now) {
-    return descriptor.expires_at > 0 && now > 0 && now >= descriptor.expires_at;
-}
-
-bool authority_allows(
-    const agent_resource_descriptor & descriptor,
-    const agent_resource_read_authority & authority,
-    std::string & error) {
-    if (descriptor.namespace_id != authority.namespace_id) {
-        error = "resource authority namespace mismatch";
-        return false;
-    }
-    if (resource_expired(descriptor, authority.now)) {
-        error = "resource has expired";
-        return false;
-    }
-    switch (descriptor.scope) {
-        case common_runtime_resource_scope::turn:
-            if (descriptor.session_id != authority.session_id || descriptor.turn_id != authority.turn_id) {
-                error = "resource authority turn mismatch";
-                return false;
-            }
-            return true;
-        case common_runtime_resource_scope::session:
-            if (descriptor.session_id != authority.session_id) {
-                error = "resource authority session mismatch";
-                return false;
-            }
-            return true;
-        case common_runtime_resource_scope::project:
-            if (descriptor.project_id != authority.project_id) {
-                error = "resource authority project mismatch";
-                return false;
-            }
-            return true;
-    }
-    error = "resource scope is invalid";
-    return false;
-}
-
 } // namespace
 
-agent_cozo_resource_store::agent_cozo_resource_store(std::shared_ptr<agent_blob_store> blob_store) :
-    blob_store_(std::move(blob_store)) {
-    if (!blob_store_) {
-        blob_store_ = std::make_shared<agent_in_memory_blob_store>();
-    }
-}
-
-agent_cozo_resource_store::~agent_cozo_resource_store() {
+agent_cozo_resource_catalog::~agent_cozo_resource_catalog() {
     close();
 }
 
-bool agent_cozo_resource_store::run(
+bool agent_cozo_resource_catalog::run(
     const std::string & script,
     const std::string & params_json,
     std::string & result_json,
     std::string & error) const {
     if (db_id_ < 0) {
-        error = "Cozo resource store is not open";
+        error = "Cozo resource catalog is not open";
         return false;
     }
     char * result = cozo_run_query(db_id_, script.c_str(), params_json.empty() ? "{}" : params_json.c_str(), false);
@@ -223,7 +175,7 @@ bool agent_cozo_resource_store::run(
     return true;
 }
 
-bool agent_cozo_resource_store::open(const std::string & path, std::string & error) {
+bool agent_cozo_resource_catalog::open(const std::string & path, std::string & error) {
     close();
     const std::string db_path = path.empty() ? "resource-metadata.cozo" : path;
     int32_t opened_db_id = -1;
@@ -292,66 +244,24 @@ bool agent_cozo_resource_store::open(const std::string & path, std::string & err
     return true;
 }
 
-void agent_cozo_resource_store::close() {
+void agent_cozo_resource_catalog::close() {
     if (db_id_ >= 0) {
         cozo_close_db(db_id_);
         db_id_ = -1;
     }
 }
 
-bool agent_cozo_resource_store::get_descriptor(
-    const std::string & uri,
-    agent_resource_descriptor & out,
-    std::string & error) const {
-    const json params = {{"uri", uri}};
-    std::string result;
-    if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json], uri == $uri",
-            params.dump(),
-            result,
-            error)) {
-        return false;
-    }
-
-    const auto parsed = json::parse(result, nullptr, false);
-    if (!parsed.is_object() || !parsed.contains("rows") || parsed["rows"].empty()) {
-        error = "resource was not found";
-        return false;
-    }
-    out = descriptor_from_row(parsed["rows"][0]);
+bool agent_cozo_resource_catalog::next_resource_id(
+    std::string & out,
+    std::string & error) {
+    out = "resource-" + std::to_string(next_id_++);
     error.clear();
     return true;
 }
 
-bool agent_cozo_resource_store::put_text(
-    const agent_resource_put_request & request,
-    agent_resource_descriptor & out,
+bool agent_cozo_resource_catalog::put_descriptor(
+    const agent_resource_descriptor & descriptor,
     std::string & error) {
-    agent_blob_descriptor blob;
-    if (!blob_store_->put_bytes(request.text, blob, error)) {
-        return false;
-    }
-
-    agent_resource_descriptor descriptor;
-    descriptor.resource_id = "resource-" + std::to_string(next_id_++);
-    descriptor.uri = "agent-resource://resource/" + descriptor.resource_id;
-    descriptor.name = request.name;
-    descriptor.description = request.description;
-    descriptor.mime_type = request.mime_type;
-    descriptor.size_bytes = request.text.size();
-    descriptor.scope = request.scope;
-    descriptor.sha256 = blob.sha256;
-    descriptor.namespace_id = request.namespace_id;
-    descriptor.session_id = request.session_id;
-    descriptor.project_id = request.project_id;
-    descriptor.turn_id = request.turn_id;
-    descriptor.tool_call_id = request.tool_call_id;
-    descriptor.source_provider = request.source_provider;
-    descriptor.source_tool = request.source_tool;
-    descriptor.created_at = request.created_at > 0 ? request.created_at : static_cast<int64_t>(std::time(nullptr));
-    descriptor.expires_at = request.expires_at;
-    descriptor.metadata = request.metadata;
-
     const json params = {
         {"rows", json::array({json::array({
             descriptor.uri,
@@ -380,46 +290,33 @@ bool agent_cozo_resource_store::put_text(
         })})},
     };
     std::string result;
+    return run(
+        "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json }",
+        params.dump(),
+        result,
+        error);
+}
+
+bool agent_cozo_resource_catalog::find_descriptor(
+    const std::string & uri,
+    agent_resource_descriptor & out,
+    std::string & error) const {
+    const json params = {{"uri", uri}};
+    std::string result;
     if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json }",
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json], uri == $uri",
             params.dump(),
             result,
             error)) {
         return false;
     }
 
-    out = descriptor;
-    error.clear();
-    return true;
-}
-
-bool agent_cozo_resource_store::read_text(
-    const std::string & uri,
-    const agent_resource_read_authority & authority,
-    size_t max_bytes,
-    std::string & out,
-    std::string & error) const {
-    agent_resource_descriptor descriptor;
-    if (!get_descriptor(uri, descriptor, error)) {
+    const auto parsed = json::parse(result, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || parsed["rows"].empty()) {
+        error = "resource was not found";
         return false;
     }
-    if (!authority_allows(descriptor, authority, error)) {
-        return false;
-    }
-    return blob_store_->get_bytes(descriptor.sha256, max_bytes, out, error);
-}
-
-bool agent_cozo_resource_store::stat(
-    const std::string & uri,
-    const agent_resource_read_authority & authority,
-    agent_resource_descriptor & out,
-    std::string & error) const {
-    if (!get_descriptor(uri, out, error)) {
-        return false;
-    }
-    if (!authority_allows(out, authority, error)) {
-        return false;
-    }
+    out = descriptor_from_row(parsed["rows"][0]);
     error.clear();
     return true;
 }

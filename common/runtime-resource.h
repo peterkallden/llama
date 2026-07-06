@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+class agent_resource_store;
+
 enum class common_runtime_resource_scope {
     turn,
     session,
@@ -170,6 +172,38 @@ struct agent_resource_read_authority {
     std::string turn_id;
     int64_t now = 0;
 };
+
+// Host-owned resource contract exposed to tools/runtime assembly. Tools receive
+// an already scoped runtime view instead of a raw store plus separate identity
+// fields.
+struct agent_resource_runtime {
+    agent_resource_store * store = nullptr;
+    std::string namespace_id = "local";
+    std::string session_id = "default";
+    std::string project_id;
+    std::string turn_id;
+};
+
+inline agent_resource_read_authority make_agent_resource_read_authority(
+        const agent_resource_runtime & runtime,
+        int64_t now = 0) {
+    agent_resource_read_authority authority;
+    authority.namespace_id = runtime.namespace_id;
+    authority.session_id = runtime.session_id;
+    authority.project_id = runtime.project_id;
+    authority.turn_id = runtime.turn_id;
+    authority.now = now;
+    return authority;
+}
+
+inline void apply_agent_resource_runtime(
+        const agent_resource_runtime & runtime,
+        agent_resource_put_request & request) {
+    request.namespace_id = runtime.namespace_id;
+    request.session_id = runtime.session_id;
+    request.project_id = runtime.project_id;
+    request.turn_id = runtime.turn_id;
+}
 
 class agent_blob_store {
 public:
