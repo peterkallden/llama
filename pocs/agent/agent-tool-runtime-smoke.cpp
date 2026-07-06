@@ -1,5 +1,6 @@
 #include "agent-tool-provider.h"
 #include "agent-resource-store.h"
+#include "agent-tool-runtime-adapter.h"
 
 #include "agent/agent-runtime.h"
 #include "agent/tool-catalog.h"
@@ -15,44 +16,6 @@ namespace {
 agent_catalogued_resource_store g_runtime_resource_store(
     std::make_shared<agent_in_memory_blob_store>(),
     std::make_unique<agent_in_memory_resource_catalog>());
-
-class provider_agent_tool_runtime final : public common_agent_tool_runtime {
-public:
-    explicit provider_agent_tool_runtime(agent_tool_view & tool_view)
-        : tool_view(tool_view) {}
-
-    bool is_read_only(const std::string & tool_name) const override {
-        return tool_view.is_read_only(tool_name);
-    }
-
-    bool is_policy_gated(const std::string &) const override {
-        return false;
-    }
-
-    bool validate(const common_registered_tool_call & call, std::string & error) const override {
-        return tool_view.validate({"", call.name, call.arguments_json}, error);
-    }
-
-    common_tool_execution_result execute(const common_registered_tool_call & call) const override {
-        std::string error;
-        const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
-        if (result.ok) {
-            return common_tool_execution_result::success(
-                result.content_json,
-                result.content_summary,
-                result.resource_refs);
-        }
-        return common_tool_execution_result::failure(
-            result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
-            result.failure_class,
-            result.retryable,
-            result.safe_summary.empty() ? "The tool failed." : result.safe_summary,
-            result.raw_diagnostic);
-    }
-
-private:
-    agent_tool_view & tool_view;
-};
 
 class smoke_planner final : public common_planner {
 public:
@@ -206,7 +169,8 @@ int main() {
         return 1;
     }
 
-    provider_agent_tool_runtime tool_runtime(*tool_view);
+    std::unique_ptr<common_agent_tool_runtime> tool_runtime =
+        make_provider_agent_tool_runtime(*tool_view);
     common_plan_in_memory_store plan_store;
     if (!plan_store.open("", error)) {
         std::fprintf(stderr, "failed to open plan store: %s\n", error.c_str());
@@ -216,7 +180,7 @@ int main() {
     smoke_planner planner;
     smoke_executor executor;
     smoke_reflector reflector;
-    common_agent_runtime runtime(plan_store, planner, executor, reflector, &tool_runtime, nullptr);
+    common_agent_runtime runtime(plan_store, planner, executor, reflector, tool_runtime.get(), nullptr);
 
     common_agent_request request;
     request.prompt = "Find runtime resource evidence.";

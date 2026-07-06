@@ -283,6 +283,10 @@ public:
         return exposes_tool(name) && registry.is_read_only(name);
     }
 
+    bool is_policy_gated(const std::string & name) const override {
+        return exposes_tool(name) && registry.is_policy_gated(name);
+    }
+
     bool validate(const agent_tool_call & call, std::string & error) const override {
         if (!exposes_tool(call.name)) {
             error = "tool is unavailable in this runtime view";
@@ -366,6 +370,13 @@ public:
     bool is_read_only(const std::string & name) const override {
         auto it = definitions.find(name);
         return it != definitions.end() && it->second.read_only;
+    }
+
+    bool is_policy_gated(const std::string & name) const override {
+        auto it = definitions.find(name);
+        return it != definitions.end() &&
+            !it->second.read_only &&
+            it->second.requires_confirmation;
     }
 
     bool validate(const agent_tool_call & call, std::string & error) const override {
@@ -472,6 +483,11 @@ public:
     bool is_read_only(const std::string & name) const override {
         const auto * view = find_owner(name);
         return view != nullptr && view->is_read_only(name);
+    }
+
+    bool is_policy_gated(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->is_policy_gated(name);
     }
 
     bool validate(const agent_tool_call & call, std::string & error) const override {

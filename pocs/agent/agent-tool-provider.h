@@ -81,6 +81,7 @@ public:
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
     virtual bool exposes_tool(const std::string & name) const = 0;
     virtual bool is_read_only(const std::string & name) const = 0;
+    virtual bool is_policy_gated(const std::string & name) const = 0;
     virtual bool validate(const agent_tool_call & call, std::string & error) const = 0;
 
     virtual agent_tool_result call(
