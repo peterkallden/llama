@@ -1,5 +1,6 @@
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
+#include "agent/runtime-json-contracts.h"
 #include "plan/plan-bindings.h"
 #include "plan/plan-goal.h"
 #include "plan/plan-memory.h"
@@ -104,19 +105,6 @@ static common_agent_failure tool_failure(
         bool retryable,
         const std::string & safe_summary) {
     return {code, classification, "tool_execution", tool_name, step_id, evidence_id, retryable, safe_summary};
-}
-
-static json render_failure(const common_agent_failure & failure) {
-    return {
-        {"code", failure.code},
-        {"class", common_agent_failure_class_name(failure.classification)},
-        {"stage", failure.stage},
-        {"tool", failure.tool_name},
-        {"step_id", failure.step_id},
-        {"retryable", failure.retryable},
-        {"safe_summary", failure.safe_summary},
-        {"evidence_id", failure.evidence_id},
-    };
 }
 
 static common_agent_failure structured_tool_failure(const std::string & tool_name, const std::string & step_id,
@@ -320,8 +308,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         observed.plan_id = plan.id;
         observed.expected_version = plan.version;
         observed.reason_summary = "explicit user correction";
-        observed.observation = common_plan_observation{observation_id, "user_correction",
-            json({{"source_turn_id", correction.source_turn_id}, {"statement", correction.statement}}).dump(), 1.0f, {}, {}, 0};
+        observed.observation = common_plan_observation{
+            observation_id,
+            "user_correction",
+            common_agent_runtime_user_correction_to_json(
+                correction.source_turn_id,
+                correction.statement).dump(),
+            1.0f,
+            {},
+            {},
+            0};
         if (!store.apply(observed, plan, error)) { result.error = error; return result; }
         result.learning_signals.push_back({common_learning_signal_type::user_correction, plan.id, {}, {}, observation_id,
             "explicit user correction supplied by the caller"});
@@ -413,16 +409,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     reasoning_result));
                 result.reasoning_decoded_tokens += reasoning_result.decoded_tokens;
                 result.total_decoded_tokens += reasoning_result.decoded_tokens;
-                auto parsed = json::parse(reasoning, nullptr, false);
                 // Reasoning is evidence only. Small local models occasionally
                 // ignore the requested JSON envelope; preserve that bounded
                 // output as explicitly unstructured evidence instead of
                 // failing an otherwise valid blueprint execution.
-                if (parsed.is_object()) {
-                    reasoning = parsed.dump();
-                } else {
-                    reasoning = json({{"summary", reasoning}, {"format", "unstructured"}}).dump();
-                }
+                reasoning = common_agent_runtime_normalize_reasoning_observation_json(reasoning);
                 if (reasoning.size() > 4096) { result.error = "reasoning step result is too large"; return result; }
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;
@@ -473,7 +464,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool validation failure";
-                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, {}, 0};
+                observed.observation = common_plan_observation{
+                    failure_observation_id,
+                    tool_call->name,
+                    common_agent_runtime_failure_observation_to_json(failure).dump(),
+                    0.0f,
+                    {},
+                    {},
+                    0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;
@@ -501,7 +499,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 observed.plan_id = plan.id;
                 observed.expected_version = plan.version;
                 observed.reason_summary = "registered tool failure";
-                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, json({{"failure", render_failure(failure)}}).dump(), 0.0f, {}, execution.resource_refs, 0};
+                observed.observation = common_plan_observation{
+                    failure_observation_id,
+                    tool_call->name,
+                    common_agent_runtime_failure_observation_to_json(failure).dump(),
+                    0.0f,
+                    {},
+                    execution.resource_refs,
+                    0};
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
                 common_plan_operation failed;
                 failed.kind = common_plan_operation_kind::fail_step;
@@ -590,9 +595,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             observed.expected_version = plan.version;
             observed.reason_summary = "reflection learning hint";
             const std::string observation_id = "reflection:learning:" + std::to_string(plan.version) + ":" + std::to_string(iteration);
-            observed.observation = common_plan_observation{observation_id, "reflection_hint",
-                json({{"category", hint.category}, {"statement", hint.statement}, {"expected_reuse", hint.expected_reuse}}).dump(),
-                reflection.confidence, {}, {}, 0};
+            observed.observation = common_plan_observation{
+                observation_id,
+                "reflection_hint",
+                common_agent_runtime_reflection_learning_hint_to_json(hint).dump(),
+                reflection.confidence,
+                {},
+                {},
+                0};
             if (store.apply(observed, plan, error)) {
                 result.learning_signals.push_back({common_learning_signal_type::reflection_hint, plan.id, {}, {}, observation_id,
                     "reflection supplied a bounded reusable learning hint"});
