@@ -1,5 +1,5 @@
 set(TARGET llama-agent-poc)
-add_library(${TARGET} agent-bootstrap.cpp agent-bootstrap.h agent-package-json.cpp agent-package-json.h agent-prepared-generation.cpp agent-prepared-generation.h blueprint-selector.cpp blueprint-selector.h agent-runtime.cpp agent-runtime.h memory-learning.cpp memory-learning.h reflection-json.cpp reflection-json.h schema-contract.cpp schema-contract.h tool-adapters.cpp tool-adapters.h tool-catalog.cpp tool-catalog.h tool-chat-bridge.cpp tool-chat-bridge.h tool-registry.cpp tool-registry.h)
+add_library(${TARGET} agent-bootstrap.cpp agent-bootstrap.h agent-package-json.cpp agent-package-json.h agent-prepared-generation.cpp agent-prepared-generation.h blueprint-selector.cpp blueprint-selector.h agent-runtime.cpp agent-runtime.h memory-learning.cpp memory-learning.h reflection-json.cpp reflection-json.h schema-contract.cpp schema-contract.h tool-adapters.cpp tool-adapters.h tool-catalog.cpp tool-catalog.h tool-chat-bridge.cpp tool-chat-bridge.h tool-registry.cpp tool-registry.h tool-result-contracts.cpp tool-result-contracts.h)
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
 target_link_libraries(${TARGET} PUBLIC llama-plan llama-memory)

@@ -1,5 +1,6 @@
 #include "agent/tool-adapters.h"
 
+#include "agent/tool-result-contracts.h"
 #include "http.h"
 #include "memory/memory-retrieval.h"
 #include "memory/memory-tool-service.h"
@@ -181,15 +182,6 @@ common_tool_execution_result tool_network_failure(std::string code, std::string 
 
 common_tool_execution_result tool_limit_failure(std::string code, std::string raw_diagnostic, std::string safe_summary) {
     return tool_failure(std::move(code), common_tool_failure_class::limit, false, std::move(safe_summary), std::move(raw_diagnostic));
-}
-
-json memory_value(const common_memory_record & memory) {
-    return {
-        {"id", memory.id}, {"kind", common_memory_kind_name(memory.kind)},
-        {"content", memory.content}, {"summary", memory.summary},
-        {"scope", common_memory_scope_name(memory.scope)}, {"importance", memory.importance},
-        {"confidence", memory.confidence}, {"created_at", memory.created_at},
-    };
 }
 
 std::string utc_now() {
@@ -720,26 +712,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
                 }
 
-                json resource = {
-                    {"uri", descriptor.uri},
-                    {"name", descriptor.name},
-                    {"description", descriptor.description},
-                    {"mime_type", descriptor.mime_type},
-                    {"size_bytes", descriptor.size_bytes},
-                    {"scope", common_runtime_resource_scope_name(descriptor.scope)},
-                    {"metadata", {
-                        {"purpose", descriptor.metadata.purpose},
-                        {"content_summary", descriptor.metadata.content_summary},
-                        {"usage_hint", descriptor.metadata.usage_hint},
-                        {"limitations", descriptor.metadata.limitations},
-                        {"keywords", descriptor.metadata.keywords},
-                        {"entities", descriptor.metadata.entities},
-                    }},
-                };
                 return common_tool_execution_result::success(
-                    json({
-                        {"resource", std::move(resource)},
-                        {"content", text},
+                    common_tool_resource_read_result_to_json({
+                        descriptor,
+                        text,
                     }).dump(),
                     descriptor.metadata.content_summary.empty()
                         ? "Resource content loaded from the host-owned resource store."
@@ -770,21 +746,28 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     }
                     json results;
                     if (!parse_search_results(raw_html, limit, results)) {
-                        return tool_success_json({{"results", json::array()}, {"provider", "duckduckgo-lite"}});
+                        return tool_success_json(common_tool_web_search_result_to_json({
+                            json::array(),
+                            "duckduckgo-lite",
+                            std::nullopt,
+                            std::nullopt,
+                        }));
                     }
 
-                    json payload = {
-                        {"results", results},
-                        {"provider", "duckduckgo-lite"},
+                    common_tool_web_search_result payload{
+                        results,
+                        "duckduckgo-lite",
+                        std::nullopt,
+                        std::nullopt,
                     };
 
-                    const std::string full_payload = payload.dump();
+                    const std::string full_payload = common_tool_web_search_result_to_json(payload).dump();
                     const bool should_externalize =
                         bindings.resource_runtime.store != nullptr &&
                         (full_payload.size() > 2048 || results.size() > 3);
                     if (!should_externalize) {
                         return common_tool_execution_result::success(
-                            std::move(payload).dump(),
+                            common_tool_web_search_result_to_json(payload).dump(),
                             "Web search returned " + std::to_string(results.size()) + " candidate(s).");
                     }
 
@@ -813,12 +796,12 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         return tool_execution_failure("tool.web_search.resource_store_failed", std::move(err), "Web search results could not be materialized as a host resource.");
                     }
 
-                    payload["results"] = trim_search_results_for_inline(results, 3);
-                    payload["truncated"] = results.size() > 3;
-                    payload["total_results"] = results.size();
+                    payload.results = trim_search_results_for_inline(results, 3);
+                    payload.truncated = results.size() > 3;
+                    payload.total_results = results.size();
 
                     return common_tool_execution_result::success(
-                        std::move(payload).dump(),
+                        common_tool_web_search_result_to_json(payload).dump(),
                         "Web search returned " + std::to_string(results.size()) + " candidate(s); the full result set was stored as a turn resource.",
                         {std::move(resource_ref)});
                 }, error);
@@ -845,16 +828,25 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         return tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
                     }
 
-                    const std::string full_payload = fetched.dump();
-                    const std::string title = trim_copy(fetched.value("title", std::string{}));
-                    const std::string text = fetched.value("text", std::string{});
-                    const bool truncated = fetched.value("truncated", false);
+                    common_tool_web_fetch_result fetch_result{
+                        fetched.value("url", url),
+                        fetched.value("final_url", url),
+                        fetched.value("status", 0),
+                        fetched.value("content_type", std::string{}),
+                        fetched.value("title", std::string{}),
+                        fetched.value("text", std::string{}),
+                        fetched.value("truncated", false),
+                    };
+                    const std::string full_payload = common_tool_web_fetch_result_to_json(fetch_result).dump();
+                    const std::string title = trim_copy(fetch_result.title);
+                    const std::string text = fetch_result.text;
+                    const bool truncated = fetch_result.truncated;
                     const bool should_externalize =
                         bindings.resource_runtime.store != nullptr &&
                         (full_payload.size() > 4096 || text.size() > 2048 || truncated);
                     if (!should_externalize) {
                         return common_tool_execution_result::success(
-                            std::move(fetched).dump(),
+                            common_tool_web_fetch_result_to_json(fetch_result).dump(),
                             title.empty()
                                 ? "Fetched bounded page text from " + url + "."
                                 : "Fetched bounded page text for \"" + title + "\".");
@@ -889,19 +881,19 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         return tool_execution_failure("tool.web_fetch.resource_store_failed", std::move(err), "Web fetch result could not be materialized as a host resource.");
                     }
 
-                    json payload = {
-                        {"url", fetched.value("url", url)},
-                        {"final_url", fetched.value("final_url", url)},
-                        {"status", fetched.value("status", 0)},
-                        {"content_type", fetched.value("content_type", std::string{})},
-                        {"title", fetched.value("title", std::string{})},
-                        {"text_excerpt", bounded_text_preview(text, 1024)},
-                        {"text_length", text.size()},
-                        {"truncated", truncated},
+                    common_tool_web_fetch_inline_result payload{
+                        fetch_result.url,
+                        fetch_result.final_url,
+                        fetch_result.status,
+                        fetch_result.content_type,
+                        fetch_result.title,
+                        bounded_text_preview(text, 1024),
+                        text.size(),
+                        truncated,
                     };
 
                     return common_tool_execution_result::success(
-                        std::move(payload).dump(),
+                        common_tool_web_fetch_inline_result_to_json(payload).dump(),
                         title.empty()
                             ? "Fetched bounded page text from " + url + "; the full payload was stored as a turn resource."
                             : "Fetched bounded page text for \"" + title + "\"; the full payload was stored as a turn resource.",
@@ -919,9 +911,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!service.search(context, input, search_result, err)) {
                     return tool_execution_failure("tool.memory_search.retrieve_failed", std::move(err), "Memory search failed.");
                 }
-                json values = json::array();
-                for (const auto & hit : search_result.hits) values.push_back({{"memory", memory_value(hit.memory)}, {"score", hit.final_score}, {"provenance", hit.provenance}});
-                return tool_success_json({{"results", values}});
+                return tool_success_json(common_tool_memory_search_result_to_json({
+                    search_result.hits,
+                }));
             }, error);
         } else if (definition.executor_id == "builtin.memory_get" && bindings.memory_store) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
@@ -938,7 +930,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!memory || !common_memory_scope_matches(*memory, bindings.memory_query)) {
                     return tool_not_found_failure("tool.memory_get.unavailable", "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
                 }
-                return tool_success_json({{"memory", memory_value(*memory)}});
+                return tool_success_json(common_tool_memory_get_result_to_json(*memory));
             }, error);
         } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_store) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
@@ -957,37 +949,33 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
 
                 const auto & proposal = remember_result.proposal;
                 const auto & decision = remember_result.decision;
-                json response = {
-                    {"ok", true},
-                    {"decision", common_memory_remember_decision_name(decision.decision)},
-                    {"reason", decision.reason},
-                    {"kind", common_memory_kind_name(proposal.kind)},
-                    {"scope", common_memory_scope_name(proposal.scope)},
-                    {"content", proposal.content},
-                    {"related_count", decision.related_hits.size()},
+                common_tool_memory_remember_payload response{
+                    true,
+                    common_memory_remember_decision_name(decision.decision),
+                    decision.reason,
+                    proposal.kind,
+                    proposal.scope,
+                    proposal.content,
+                    decision.related_hits.size(),
                 };
-                if (!decision.related_hits.empty()) {
-                    json related = json::array();
-                    for (const auto & hit : decision.related_hits) {
-                        related.push_back({
-                            {"id", hit.memory.id},
-                            {"kind", common_memory_kind_name(hit.memory.kind)},
-                            {"score", hit.final_score},
-                            {"content", hit.memory.content},
-                        });
-                    }
-                    response["related"] = std::move(related);
+                for (const auto & hit : decision.related_hits) {
+                    response.related.push_back({
+                        hit.memory.id,
+                        hit.memory.kind,
+                        hit.final_score,
+                        hit.memory.content,
+                    });
                 }
                 if (decision.record.has_value()) {
                     if (!bindings.memory_store->put(*decision.record, err)) {
-                        response["ok"] = false;
-                        response["decision"] = "reject";
-                        response["error"] = "failed to persist accepted memory: " + err;
+                        response.ok = false;
+                        response.decision = "reject";
+                        response.error = "failed to persist accepted memory: " + err;
                     } else {
-                        response["id"] = decision.record->id;
+                        response.id = decision.record->id;
                     }
                 }
-                return tool_success_text(response.dump());
+                return tool_success_text(common_tool_memory_remember_result_to_json(response).dump());
             }, error, false, true);
         } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_remember_proposal) {
             installed = register_definition(definition, registry, bindings.memory_remember_proposal, error, false, true);
@@ -999,15 +987,27 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto plan = bindings.plan_store->get(*bindings.plan_id, err);
                 if (!err.empty()) return tool_execution_failure("tool.plan_get.load_failed", std::move(err), "Plan could not be loaded.");
                 if (!plan) return tool_not_found_failure("tool.plan_get.unavailable", "bound plan is unavailable", "Bound plan is unavailable.");
-                json steps = json::array();
-                for (const auto & step : plan->steps) steps.push_back({{"id", step.id}, {"title", step.title}, {"objective", step.objective}, {"status", (int) step.status}, {"selected_tool", step.selected_tool}});
-                json response = {{"plan_id", plan->id}, {"version", plan->version}, {"goal", plan->goal}, {"active_step", plan->active_step_id}, {"next_action", plan->next_action}, {"steps", steps}};
+                common_tool_plan_get_payload response;
+                response.plan_id = plan->id;
+                response.version = plan->version;
+                response.goal = plan->goal;
+                response.active_step = plan->active_step_id;
+                response.next_action = plan->next_action;
+                for (const auto & step : plan->steps) {
+                    response.steps.push_back({
+                        step.id,
+                        step.title,
+                        step.objective,
+                        (int) step.status,
+                        step.selected_tool,
+                    });
+                }
                 if (arguments.value("include_history", false)) {
                     const auto history = bindings.plan_store->history(*bindings.plan_id, err);
                     if (!err.empty()) return tool_execution_failure("tool.plan_get.history_failed", std::move(err), "Plan history could not be loaded.");
-                    response["history_count"] = history.size();
+                    response.history_count = history.size();
                 }
-                return tool_success_text(response.dump());
+                return tool_success_text(common_tool_plan_get_result_to_json(response).dump());
             }, error);
         }
         if (!error.empty()) return false;
