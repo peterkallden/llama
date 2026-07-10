@@ -15,11 +15,11 @@ public:
         return tool_view.is_policy_gated(tool_name);
     }
 
-    bool validate(const common_registered_tool_call & call, std::string & error) const override {
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
         return tool_view.validate({"", call.name, call.arguments_json}, error);
     }
 
-    common_tool_execution_result execute(const common_registered_tool_call & call) const override {
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         std::string error;
         const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
         if (result.ok) {

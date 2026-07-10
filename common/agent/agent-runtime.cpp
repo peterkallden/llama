@@ -155,7 +155,7 @@ static std::string next_tool_observation_id(const common_plan_state & plan, cons
 // Defaults are deliberately limited to deterministic read-only values. They
 // reduce the amount a small model must emit, but never fabricate a write path,
 // a mutation payload, or a selection among ambiguous results.
-static void apply_safe_tool_defaults(const common_agent_request & request, common_registered_tool_call & call) {
+static void apply_safe_tool_defaults(const common_agent_request & request, common_agent_tool_call & call) {
     auto arguments = json::parse(call.arguments_json, nullptr, false);
     if (!arguments.is_object()) return;
     bool changed = false;
@@ -199,7 +199,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     const auto normalize_planned_tool_step = [&](common_plan_step & step, bool degrade_on_any_invalid, std::string & detail) {
         detail.clear();
         if (!step.tool_call) return false;
-        common_registered_tool_call call{step.tool_call->name, step.tool_call->arguments_json};
+        common_agent_tool_call call{step.tool_call->name, step.tool_call->arguments_json};
         apply_safe_tool_defaults(request, call);
         step.tool_call->arguments_json = call.arguments_json;
         if (!tools) {
@@ -402,7 +402,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         // This makes normal plan progression deterministic; reflection remains
         // reserved for repair or replanning.
         while (true) {
-            std::optional<common_registered_tool_call> tool_call;
+            std::optional<common_agent_tool_call> tool_call;
             std::string tool_step_id = "request";
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::reasoning && !executed_step_ids.count(step.id)) {
                 const auto reasoning_result = executor.generate_reasoning_result(request, plan, step, error);
@@ -449,7 +449,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             }
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::tool && !executed_step_ids.count(step.id)) {
                 if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
-                tool_call = common_registered_tool_call{step.tool_call->name, step.tool_call->arguments_json};
+                tool_call = common_agent_tool_call{step.tool_call->name, step.tool_call->arguments_json};
                 if (!common_plan_materialize_tool_arguments(plan, step, tool_call->arguments_json, tool_call->arguments_json, error)) { result.events.push_back({common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "tool argument binding failed: " + error; return result; }
                 tool_step_id = step.id;
                 break;

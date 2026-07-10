@@ -2,6 +2,7 @@
 
 #include "../memory/memory-cli-memory.h"
 
+#include "agent-host-config.h"
 #include "agent-cli-selection.h"
 #include "agent-resource-store.h"
 #include "agent-tool-provider.h"
@@ -35,6 +36,15 @@ const char * plan_scope_name(common_plan_scope scope) {
         case common_plan_scope::global: return "global";
     }
     return "turn";
+}
+
+const char * find_server_config_path(int argc, char ** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            return i + 1 < argc ? argv[i + 1] : nullptr;
+        }
+    }
+    return nullptr;
 }
 
 class server_agent_embedding_provider final : public agent_embedding_provider {
@@ -169,17 +179,32 @@ bool parse_server_args(
         char ** argv,
         args & options,
         std::string & error) {
+    options = {};
     options.command = "agent-mcp-stdio-server";
-    options.backend = "auto";
-    options.plan_backend = "auto";
-    options.resource_blob_backend = "auto";
-    options.resource_metadata_backend = "auto";
     options.memory_scope = "session";
     options.memory_namespace = "local";
     options.memory_session = "default";
     options.tool_profile = "minimal";
     options.max_tool_rounds = 8;
     options.memory_token_budget = 768;
+
+    if (const char * config_path = find_server_config_path(argc, argv)) {
+        agent_host_config config;
+        if (!load_agent_host_config(config_path, config, error)) {
+            return false;
+        }
+        apply_agent_host_config_to_args(config, options);
+        agent_host_mcp_provider_config provider;
+        std::string provider_error;
+        if (select_agent_host_stdio_mcp_provider(config, provider, provider_error)) {
+            options.mcp_tool_command = provider.command.front();
+            options.mcp_tool_args.assign(provider.command.begin() + 1, provider.command.end());
+            options.mcp_tool_server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+            options.mcp_tool_prefix = provider.prefix;
+        } else if (!provider_error.empty()) {
+            return false;
+        }
+    }
 
     auto need_value = [&](const char * flag, int & index) -> const char * {
         if (index + 1 >= argc) {
@@ -190,7 +215,9 @@ bool parse_server_args(
     };
 
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--tool-profile") == 0) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; (void) value;
+        } else if (std::strcmp(argv[i], "--tool-profile") == 0) {
             const char * value = need_value(argv[i], i); if (!value) return false; options.tool_profile = value;
         } else if (std::strcmp(argv[i], "--repository-root") == 0) {
             const char * value = need_value(argv[i], i); if (!value) return false; options.repository_root = value;

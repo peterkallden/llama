@@ -44,6 +44,8 @@ Daemon command results now also carry a small internal daemon event list plus `d
 
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
 
+There is now also a first shared host-config slice above those flags. The foreground daemon and the real MCP stdio server can both accept `--config PATH` and load one small JSON host-owned configuration model for model/backend settings, runtime defaults, stores, resources, tool profile, MCP subprocess providers, and a few coarse limits. CLI flags still exist and still matter, but this is the first path where daemon/runtime construction does not have to start from a full CLI-style `args` object.
+
 The resource-store slice now follows the same host-owned backend pattern. The CLI and daemon argument surfaces accept:
 
 - `--resource-blob-backend auto|in-memory|fs|s3`
@@ -72,6 +74,8 @@ The runtime direction depends on keeping the layer boundaries boring and explici
 In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
 
 The first concrete example of that constraint is now in place for tracing: the structured trace envelope lives in a neutral `common/runtime-trace.h` header, while `common/agent` populates it and `pocs/agent` only adapts or serializes it for CLI/daemon surfaces.
+
+The same cleanup has now started for tool execution contracts. The lightweight tool-call and execution-result DTOs used by runtime-side tool validation/execution no longer need to live in the heavier native registry header; they now have their own smaller neutral contract header. The native registry still exists and still owns handlers, but the runtime-facing contract is starting to separate from the older registry-era shape.
 
 The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation remains intentionally local to `pocs/agent`, but it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
@@ -132,6 +136,17 @@ The runtime host does not parse CLI arguments. It should remain small enough tha
 The host inputs now carry a CLI-free runtime turn request: request payload, scope, inference options, runtime policy, runtime config, orchestration config, generation options, and memory authority. The CLI adapter translates `args` into that request at the edge.
 
 The host/runtime path now also carries one small tooling contract instead of threading separate `tools + profile_tools_active + tool_view` fields through each layer. That keeps the provider-facing shape more explicit: one host-owned tooling bundle contains the model-visible `common_chat_tool` list plus the resolved `agent_tool_view` used for execution.
+
+The new host-config slice is intentionally modest. It currently models:
+
+- model backend/path and optional embedding model
+- runtime defaults such as context size, `n_predict`, planning/reflection toggles, and trace/learning flags
+- memory/plan store backend and path
+- resource blob/metadata backend and path
+- tool profile, repository root, and a list of configured MCP providers
+- a few daemon-style limits such as queue capacity and max turn seconds
+
+In the current first slice, the daemon and real MCP stdio server only consume one enabled stdio MCP provider from that config path. That is deliberate: the config format is allowed to grow toward several external providers before the runtime/service assembly fully supports them all.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 
@@ -270,6 +285,8 @@ That seam now has two concrete test paths:
 The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list` and `tools/call`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a selected native tool profile through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
+
+That real MCP stdio server can now also be bootstrapped through the same `--config PATH` host-config entrypoint as the daemon. In practice that means the native profile export seam is no longer tied only to per-process CLI flags; it can already be described through a shared host-owned config file, even though the current server still exports native tools rather than a full resident agent runtime.
 
 That current subprocess story now has two intentionally different shapes:
 

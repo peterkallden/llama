@@ -1,9 +1,13 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-service.h"
 
+#include <nlohmann/json.hpp>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
+
+using json = nlohmann::ordered_json;
 
 namespace {
 
@@ -39,14 +43,48 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto config_root = std::filesystem::temp_directory_path() / "llama-agent-daemon-mcp-config-smoke";
+    std::filesystem::create_directories(config_root);
+    const auto config_path = config_root / "daemon-config.json";
+    {
+        std::ofstream out(config_path);
+        out << json{
+            {"model", {
+                {"backend", "server-context"},
+                {"path", "fake.gguf"},
+            }},
+            {"tools", {
+                {"profile", "minimal"},
+                {"providers", json::array({
+                    json{
+                        {"type", "mcp"},
+                        {"id", "github"},
+                        {"enabled", true},
+                        {"transport", "stdio"},
+                        {"command", json::array({server_path.string()})},
+                        {"prefix", "github"},
+                        {"server_name", "github"},
+                    },
+                })},
+            }},
+            {"limits", {
+                {"queue_capacity", 5},
+                {"max_tool_rounds", 2},
+            }},
+        }.dump(2);
+    }
+
     daemon_options options;
-    options.model = "fake.gguf";
-    options.default_mode = "chat";
-    options.tool_profile = "minimal";
-    options.mcp_tool_command = server_path.string();
-    options.mcp_tool_server_name = "github";
-    options.mcp_tool_prefix = "github";
-    options.max_tool_rounds = 2;
+    char program[] = "llama-agent-daemon";
+    char config_flag[] = "--config";
+    std::string config_path_string = config_path.string();
+    std::vector<char> config_path_buffer(config_path_string.begin(), config_path_string.end());
+    config_path_buffer.push_back('\0');
+    char * parse_argv[] = {program, config_flag, config_path_buffer.data()};
+    if (!parse_agent_daemon_args(3, parse_argv, options)) {
+        std::fprintf(stderr, "daemon config parse failed\n");
+        return 1;
+    }
 
     common_agent_daemon_runtime runtime;
     std::string error;

@@ -1,9 +1,13 @@
 #include "agent-tool-provider.h"
 
+#include <nlohmann/json.hpp>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+
+using json = nlohmann::ordered_json;
 
 namespace {
 
@@ -40,10 +44,21 @@ int main(int argc, char ** argv) {
     }
 
     std::string error;
+    const auto config_root = std::filesystem::temp_directory_path() / "llama-agent-mcp-stdio-server-smoke";
+    std::filesystem::create_directories(config_root);
+    const auto minimal_config = config_root / "minimal.json";
+    {
+        std::ofstream out(minimal_config);
+        out << json{
+            {"model", {{"backend", "server-context"}}},
+            {"tools", {{"profile", "minimal"}}},
+            {"limits", {{"max_tool_rounds", 8}}},
+        }.dump(2);
+    }
 
     agent_mcp_stdio_client minimal_client({
         "local",
-        {server_path.string(), "--tool-profile", "minimal"},
+        {server_path.string(), "--config", minimal_config.string()},
         {},
     });
     mcp_agent_tool_provider minimal_provider("local", minimal_client);
@@ -87,12 +102,23 @@ int main(int argc, char ** argv) {
     }
 
     const std::string repository_root = std::filesystem::weakly_canonical(std::filesystem::current_path()).string();
+    const auto research_config = config_root / "research.json";
+    {
+        std::ofstream out(research_config);
+        out << json{
+            {"model", {{"backend", "server-context"}}},
+            {"tools", {
+                {"profile", "research"},
+                {"repository_root", repository_root},
+            }},
+            {"limits", {{"max_tool_rounds", 8}}},
+        }.dump(2);
+    }
     agent_mcp_stdio_client research_client({
         "local",
         {
             server_path.string(),
-            "--tool-profile", "research",
-            "--repository-root", repository_root,
+            "--config", research_config.string(),
         },
         {},
     });

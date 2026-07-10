@@ -1,6 +1,7 @@
 #include "agent-daemon-adapter.h"
 
 #include "agent-cli-selection.h"
+#include "agent-host-config.h"
 #include "agent-resource-store.h"
 
 #include <cstdio>
@@ -9,6 +10,15 @@
 using json = nlohmann::ordered_json;
 
 namespace {
+
+const char * find_daemon_config_path(int argc, char ** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            return i + 1 < argc ? argv[i + 1] : nullptr;
+        }
+    }
+    return nullptr;
+}
 
 } // namespace
 
@@ -27,6 +37,18 @@ bool parse_mode(
 }
 
 bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
+    options = {};
+    if (const char * config_path = find_daemon_config_path(argc, argv)) {
+        agent_host_config config;
+        std::string config_error;
+        if (!load_agent_host_config(config_path, config, config_error)) {
+            std::fprintf(stderr, "%s\n", config_error.c_str());
+            return false;
+        }
+        apply_agent_host_config_to_daemon_options(config, options);
+        options.config_path = config_path;
+    }
+
     for (int i = 1; i < argc; ++i) {
         auto need_value = [&](const char * name) -> const char * {
             if (i + 1 >= argc) {
@@ -36,7 +58,9 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             return argv[++i];
         };
 
-        if (std::strcmp(argv[i], "--model") == 0) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.config_path = value;
+        } else if (std::strcmp(argv[i], "--model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.model = value;
         } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.embedding_model = value;
@@ -90,6 +114,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.resource_metadata_db = value;
         } else if (std::strcmp(argv[i], "--max-tool-rounds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_tool_rounds = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--queue-capacity") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.queue_capacity = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--max-turn-seconds") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.max_turn_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
             options.plan_show_summary = true;
         } else if (std::strcmp(argv[i], "--agent-trace") == 0) {
@@ -139,6 +167,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--max-tool-rounds must be between 0 and 4\n");
         return false;
     }
+    if (options.queue_capacity == 0) {
+        std::fprintf(stderr, "--queue-capacity must be at least 1\n");
+        return false;
+    }
     std::string resource_error;
     if (!validate_agent_resource_store_config({
             options.resource_blob_backend,
@@ -168,13 +200,13 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
 
 void print_agent_daemon_usage(const char * argv0) {
     std::fprintf(stderr,
-        "usage: %s --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
+        "usage: %s [--config PATH] --model MODEL [--default-mode chat|mini] [--planning-mode off|mini] [--reflection-mode off|always]\n"
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
-        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--n-predict N] [-ngl N]\n",
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n",
         argv0);
 }

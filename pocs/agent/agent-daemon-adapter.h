@@ -15,6 +15,7 @@
 #include <vector>
 
 struct daemon_options {
+    std::string config_path;
     std::string model;
     std::string embedding_model;
     std::string backend = "auto";
@@ -44,6 +45,8 @@ struct daemon_options {
     bool plan_show_summary = false;
     bool agent_trace = false;
     size_t max_tool_rounds = 0;
+    size_t queue_capacity = 8;
+    size_t max_turn_seconds = 0;
 };
 
 bool parse_mode(

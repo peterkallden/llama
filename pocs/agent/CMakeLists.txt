@@ -3,6 +3,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
     agent-daemon-client.cpp
+    agent-host-config.cpp
     agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
     agent-tool-runtime-adapter.cpp
@@ -178,6 +179,7 @@ add_executable(${TARGET}
     agent-mcp-stdio-server-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
+add_dependencies(${TARGET} llama-agent-mcp-stdio-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
@@ -301,6 +303,7 @@ add_executable(${TARGET}
     agent-daemon-mcp-config-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
+add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory

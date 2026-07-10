@@ -4,7 +4,7 @@
 #include "agent/agent-scope.h"
 #include "agent/agent-generation.h"
 #include "chat.h"
-#include "agent/tool-registry.h"
+#include "agent/tool-runtime-contract.h"
 #include "memory/memory-types.h"
 #include "memory/memory-candidate.h"
 #include "plan/plan-types.h"
@@ -150,7 +150,7 @@ struct common_agent_request {
     std::optional<common_agent_objective> objective;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
-    std::optional<common_registered_tool_call> tool_call;
+    std::optional<common_agent_tool_call> tool_call;
     size_t max_iterations = 2;
     size_t max_reflection_rounds = 1;
     size_t max_tool_batches = 1;

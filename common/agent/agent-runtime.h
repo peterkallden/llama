@@ -1,6 +1,6 @@
 #pragma once
 #include "agent/agent-contract.h"
-#include "agent/tool-registry.h"
+#include "agent/tool-runtime-contract.h"
 #include "plan/plan-store.h"
 #include <memory>
 
@@ -10,8 +10,8 @@ public:
     virtual ~common_agent_tool_runtime() = default;
     virtual bool is_read_only(const std::string & tool_name) const = 0;
     virtual bool is_policy_gated(const std::string & tool_name) const = 0;
-    virtual bool validate(const common_registered_tool_call & call, std::string & error) const = 0;
-    virtual common_tool_execution_result execute(const common_registered_tool_call & call) const = 0;
+    virtual bool validate(const common_agent_tool_call & call, std::string & error) const = 0;
+    virtual common_tool_execution_result execute(const common_agent_tool_call & call) const = 0;
 };
 
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };

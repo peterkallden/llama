@@ -24,7 +24,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
     }
-    common_agent_daemon_dispatcher dispatcher(std::move(runtime));
+    common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity);
     std::cout << make_agent_daemon_ready_response(options).dump() << std::endl;
 
     std::string line;
