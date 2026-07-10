@@ -271,6 +271,38 @@ The stdio client is still deliberately small. It is enough to prove the provider
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a selected native tool profile through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
+That current subprocess story now has two intentionally different shapes:
+
+- fake/smoke MCP server: small hand-authored stub tools used to exercise protocol, namespacing, error mapping and resource-link normalization
+- real MCP stdio server: a selected native tool profile exported through the same provider/bindings path the host runtime already uses
+
+The important implication is that "available through MCP" now means "available through the real stdio server's selected native tool profile and bindings", not "everything mentioned anywhere in MCP smokes". The fake server remains a protocol/regression harness, not the exported host surface.
+
+### MCP Export Surface Today
+
+The current real MCP stdio server exports native tools, not the whole agent runtime loop.
+
+| Capability | Available through real MCP stdio server | What it requires today |
+| --- | --- | --- |
+| `calculator`, `time_now` | Yes | `--tool-profile minimal` or any broader native profile |
+| Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository_diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
+| Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, currently `research`; host policy still decides whether network tools are exposed |
+| `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
+| Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus a real memory store, typically `--memory-db PATH` with the chosen memory backend |
+| Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory` or `research`, a bound memory store, and host policy that allows proposal-style writes |
+| Planning tools such as `plan_get` and `plan_propose` | Partly | A profile that includes them plus a real plan store; `plan_get` is only meaningful when a bound `--plan-id ID` exists |
+| Resource refs returned from native tools | Yes | The underlying native tool must materialize them through the host-owned resource store; `web_search`, `web_fetch` and `resource_read` are the first concrete examples |
+| Full mini/planning runtime, reflection loop, memory learning loop | No | Those are runtime behaviors, not MCP tools in the current slice |
+| Fake server tools such as `search_issues`, `search_recent_failures`, `create_issue` | No, not from the real server | Those remain test-only tools from the fake MCP server path |
+
+This is also the cleanest way to think about memory, planning and resources through MCP right now:
+
+- memory can be exported as native MCP-visible tools, but only when the server process is started with a host-owned memory store
+- planning can expose its native plan tools, but that is not the same thing as exporting the whole mini/planning runtime as an MCP tool surface
+- resources are the strongest fit so far because the real server always owns the resource store contract and native tools can already return opaque resource refs for deferred payloads
+
+So the current MCP stdio server is best understood as "native tool export through an MCP transport seam", not yet as "the agent runtime itself exposed as an MCP server".
+
 Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
 
 The stdio client now also keeps a small stderr tail from the MCP child and appends it to transport-level failures when the subprocess exits early or emits malformed JSON-RPC data. That keeps the first real subprocess smoke debuggable without pulling in a larger async lifecycle or logging subsystem yet.
