@@ -78,23 +78,25 @@ bool read_mcp_provider(
 
 } // namespace
 
-bool load_agent_host_config(
-        const std::string & path,
+bool parse_agent_host_config_json(
+        const json & parsed,
         agent_host_config & config,
         std::string & error) {
-    std::ifstream input(path);
-    if (!input.is_open()) {
-        error = "failed to open host config: " + path;
-        return false;
-    }
-
-    json parsed = json::parse(input, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object()) {
+    if (!parsed.is_object()) {
         error = "host config must be a JSON object";
         return false;
     }
 
     config = {};
+    read_optional(parsed, "schema_version", config.schema_version);
+    if (config.schema_version <= 0) {
+        error = "host config schema_version must be a positive integer";
+        return false;
+    }
+    if (config.schema_version != 1) {
+        error = "unsupported host config schema_version: " + std::to_string(config.schema_version);
+        return false;
+    }
 
     if (parsed.contains("model") && parsed["model"].is_object()) {
         const auto & model = parsed["model"];
@@ -169,6 +171,122 @@ bool load_agent_host_config(
         read_optional(limits, "max_tool_rounds", config.max_tool_rounds);
     }
 
+    if (!validate_agent_host_config(config, error)) {
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool load_agent_host_config(
+        const std::string & path,
+        agent_host_config & config,
+        std::string & error) {
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        error = "failed to open host config: " + path;
+        return false;
+    }
+
+    json parsed = json::parse(input, nullptr, false);
+    if (parsed.is_discarded()) {
+        error = "host config must be a JSON object";
+        return false;
+    }
+    return parse_agent_host_config_json(parsed, config, error);
+}
+
+nlohmann::ordered_json agent_host_config_to_json(
+        const agent_host_config & config) {
+    json providers = json::array();
+    for (const auto & provider : config.mcp_providers) {
+        providers.push_back({
+            {"type", provider.type},
+            {"id", provider.id},
+            {"enabled", provider.enabled},
+            {"transport", provider.transport},
+            {"prefix", provider.prefix},
+            {"server_name", provider.server_name},
+            {"command", provider.command},
+        });
+    }
+
+    return {
+        {"schema_version", config.schema_version},
+        {"model", {
+            {"backend", config.model_backend},
+            {"path", config.model_path},
+            {"embedding_model", config.embedding_model},
+        }},
+        {"runtime", {
+            {"context_size", config.runtime_context_size},
+            {"n_predict", config.n_predict},
+            {"n_gpu_layers", config.n_gpu_layers},
+            {"default_mode", config.default_mode},
+            {"planning_mode", config.planning_mode},
+            {"reflection_mode", config.reflection_mode},
+            {"memory_learn", config.memory_learn},
+            {"agent_plan", config.agent_plan},
+            {"memory_learn_show_candidate", config.memory_learn_show_candidate},
+            {"memory_learn_min_confidence", config.memory_learn_min_confidence},
+            {"memory_learn_min_reuse", config.memory_learn_min_reuse},
+            {"plan_show_summary", config.plan_show_summary},
+            {"agent_trace", config.agent_trace},
+        }},
+        {"stores", {
+            {"memory", {
+                {"backend", config.memory_backend},
+                {"path", config.memory_db},
+            }},
+            {"plan", {
+                {"backend", config.plan_backend},
+                {"path", config.plan_db},
+            }},
+        }},
+        {"resources", {
+            {"blob_backend", config.resource_blob_backend},
+            {"blob_root", config.resource_blob_root},
+            {"metadata_backend", config.resource_metadata_backend},
+            {"metadata_db", config.resource_metadata_db},
+        }},
+        {"tools", {
+            {"profile", config.tool_profile},
+            {"repository_root", config.repository_root},
+            {"providers", std::move(providers)},
+        }},
+        {"limits", {
+            {"queue_capacity", config.queue_capacity},
+            {"max_turn_seconds", config.max_turn_seconds},
+            {"max_tool_rounds", config.max_tool_rounds},
+        }},
+    };
+}
+
+bool validate_agent_host_config(
+        const agent_host_config & config,
+        std::string & error) {
+    if (config.schema_version != 1) {
+        error = "unsupported host config schema_version: " + std::to_string(config.schema_version);
+        return false;
+    }
+    if (config.queue_capacity == 0) {
+        error = "limits.queue_capacity must be greater than zero";
+        return false;
+    }
+    for (const auto & provider : config.mcp_providers) {
+        if (!provider.enabled) {
+            continue;
+        }
+        if (provider.transport.empty()) {
+            error = "enabled MCP provider is missing a transport";
+            return false;
+        }
+        if (provider.transport == "stdio" && provider.command.empty()) {
+            error = "enabled stdio MCP provider is missing a command";
+            return false;
+        }
+    }
     error.clear();
     return true;
 }

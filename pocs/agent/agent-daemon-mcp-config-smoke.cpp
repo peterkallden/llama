@@ -1,5 +1,6 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-service.h"
+#include "agent-host-config.h"
 
 #include <nlohmann/json.hpp>
 #include <cstdio>
@@ -87,6 +88,7 @@ int main(int argc, char ** argv) {
     char program[] = "llama-agent-daemon";
     char config_flag[] = "--config";
     std::string config_path_string = config_path.string();
+    std::string error;
     std::vector<char> config_path_buffer(config_path_string.begin(), config_path_string.end());
     config_path_buffer.push_back('\0');
     char * parse_argv[] = {program, config_flag, config_path_buffer.data()};
@@ -95,8 +97,29 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_host_config loaded_config;
+    if (!load_agent_host_config(config_path.string(), loaded_config, error)) {
+        std::fprintf(stderr, "explicit host config load failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (loaded_config.schema_version != 1) {
+        std::fprintf(stderr, "host config schema_version mismatch\n");
+        return 1;
+    }
+    if (!validate_agent_host_config(loaded_config, error)) {
+        std::fprintf(stderr, "host config validation failed: %s\n", error.c_str());
+        return 1;
+    }
+    const json roundtrip = agent_host_config_to_json(loaded_config);
+    if (!roundtrip.is_object() ||
+            roundtrip.value("schema_version", 0) != 1 ||
+            !roundtrip.contains("tools") ||
+            !roundtrip["tools"].is_object()) {
+        std::fprintf(stderr, "host config roundtrip serialization mismatch\n");
+        return 1;
+    }
+
     common_agent_daemon_runtime runtime;
-    std::string error;
     if (!initialize_agent_daemon_environment(options, runtime, error)) {
         std::fprintf(stderr, "daemon MCP environment init failed: %s\n", error.c_str());
         return 1;

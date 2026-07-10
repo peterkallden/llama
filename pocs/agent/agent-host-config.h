@@ -3,12 +3,16 @@
 #include "../common/cli-config.h"
 #include "agent-host-mcp-provider-config.h"
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <vector>
 
 struct daemon_options;
 
 struct agent_host_config {
+    int schema_version = 1;
+
     std::string model_backend = "server-context";
     std::string model_path;
     std::string embedding_model;
@@ -46,9 +50,21 @@ struct agent_host_config {
     size_t max_tool_rounds = 0;
 };
 
+bool parse_agent_host_config_json(
+    const nlohmann::ordered_json & value,
+    agent_host_config & config,
+    std::string & error);
+
 bool load_agent_host_config(
     const std::string & path,
     agent_host_config & config,
+    std::string & error);
+
+nlohmann::ordered_json agent_host_config_to_json(
+    const agent_host_config & config);
+
+bool validate_agent_host_config(
+    const agent_host_config & config,
     std::string & error);
 
 void apply_agent_host_config_to_daemon_options(
