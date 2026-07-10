@@ -65,6 +65,15 @@ int main(int argc, char ** argv) {
                         {"prefix", "github"},
                         {"server_name", "github"},
                     },
+                    json{
+                        {"type", "mcp"},
+                        {"id", "github_alt"},
+                        {"enabled", true},
+                        {"transport", "stdio"},
+                        {"command", json::array({server_path.string()})},
+                        {"prefix", "github_alt"},
+                        {"server_name", "github-alt"},
+                    },
                 })},
             }},
             {"limits", {
@@ -124,7 +133,9 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon tooling resolve did not return a tool view\n");
         return 1;
     }
-    if (!has_tool(tooling.tools, "calculator") || !has_tool(tooling.tools, "github_search_issues")) {
+    if (!has_tool(tooling.tools, "calculator") ||
+            !has_tool(tooling.tools, "github_search_issues") ||
+            !has_tool(tooling.tools, "github_alt_search_issues")) {
         std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
         return 1;
     }
@@ -148,6 +159,15 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon MCP tool call failed: %s\n", github_result.content_json.c_str());
         return 1;
     }
+    auto github_alt_result = tooling.tool_view->call({
+        "call-3",
+        "github_alt_search_issues",
+        R"({"query":"runtime host"})",
+    }, error);
+    if (!github_alt_result.ok || github_alt_result.content_json.find("stub issue") == std::string::npos) {
+        std::fprintf(stderr, "daemon secondary MCP tool call failed: %s\n", github_alt_result.content_json.c_str());
+        return 1;
+    }
     const auto resolved_tool_count = tooling.tools.size();
     tooling.tool_view = nullptr;
     tooling.owned_resources.clear();
@@ -162,20 +182,19 @@ int main(int argc, char ** argv) {
     }
 
     daemon_options bad_options = options;
-    bad_options.mcp_tool_args = {"--mode", "bad-tools-list"};
-    common_agent_daemon_runtime bad_runtime;
-    if (!initialize_agent_daemon_environment(bad_options, bad_runtime, error)) {
-        std::fprintf(stderr, "daemon MCP bad environment failed too early: %s\n", error.c_str());
+    if (bad_options.mcp_providers.size() < 2) {
+        std::fprintf(stderr, "daemon MCP bad tooling test requires at least two MCP providers\n");
         return 1;
     }
-    common_agent_daemon_service bad_service(std::move(bad_runtime));
-    common_agent_daemon_command_result bad_result;
-    if (bad_service.execute({
-            "bad-request",
-            common_agent_daemon_command_type::run_turn,
-            common_agent_runtime_session_manager_turn_request{
+    bad_options.mcp_providers[1].prefix = bad_options.mcp_providers[0].prefix;
+    common_agent_runtime_tooling bad_tooling;
+    error.clear();
+    if (resolve_agent_daemon_tooling(
+            bad_options,
+            nullptr,
+            {
                 common_agent_runtime_host_mode::chat,
-                "hello",
+                "find tooling",
                 "session-a",
                 "namespace-a",
                 "",
@@ -184,15 +203,16 @@ int main(int argc, char ** argv) {
                 common_plan_scope::turn,
                 0,
             },
-            std::nullopt,
-            {},
-            {},
-        }, bad_result, error)) {
-        std::fprintf(stderr, "daemon MCP bad turn unexpectedly succeeded\n");
+            *runtime.memory_store,
+            *runtime.plan_store,
+            runtime.resource_store.get(),
+            bad_tooling,
+            error)) {
+        std::fprintf(stderr, "daemon MCP bad tooling unexpectedly succeeded\n");
         return 1;
     }
-    if (bad_result.error.find("invalid JSON-RPC payload") == std::string::npos) {
-        std::fprintf(stderr, "daemon MCP bad turn did not preserve expected diagnostics: %s\n", bad_result.error.c_str());
+    if (error.find("duplicate tool exposed in composite provider") == std::string::npos) {
+        std::fprintf(stderr, "daemon MCP bad tooling did not preserve expected diagnostics: %s\n", error.c_str());
         return 1;
     }
 

@@ -1,4 +1,5 @@
 #include "agent-host-config.h"
+#include "agent-daemon-adapter.h"
 
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -211,6 +212,7 @@ void apply_agent_host_config_to_daemon_options(
         options.mcp_tool_server_name = provider.server_name.empty() ? provider.id : provider.server_name;
         options.mcp_tool_prefix = provider.prefix;
     }
+    options.mcp_providers = config.mcp_providers;
 }
 
 void apply_agent_host_config_to_args(

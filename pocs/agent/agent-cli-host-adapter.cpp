@@ -69,6 +69,14 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     request.mcp_tool_args = options.mcp_tool_args;
     request.mcp_tool_server_name = options.mcp_tool_server_name;
     request.mcp_tool_prefix = options.mcp_tool_prefix;
+    if (!options.mcp_tool_command.empty()) {
+        agent_host_stdio_mcp_provider_request provider;
+        provider.server_name = options.mcp_tool_server_name;
+        provider.exposed_name_prefix = options.mcp_tool_prefix;
+        provider.command_line.push_back(options.mcp_tool_command);
+        provider.command_line.insert(provider.command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
+        request.mcp_providers.push_back(std::move(provider));
+    }
     return request;
 }
 
@@ -167,29 +175,49 @@ bool resolve_agent_host_tool_selection(
             });
     }
 
-    std::unique_ptr<mcp_agent_tool_provider> mcp_provider;
-    if (!request.mcp_tool_command.empty()) {
+    std::vector<std::unique_ptr<mcp_agent_tool_provider>> mcp_providers;
+    if (!request.mcp_providers.empty()) {
+        for (const auto & provider_request : request.mcp_providers) {
+            if (provider_request.command_line.empty()) {
+                error = "MCP provider command line must not be empty";
+                return false;
+            }
+            auto client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
+                provider_request.server_name,
+                provider_request.command_line,
+                {},
+            });
+            auto provider = std::make_unique<mcp_agent_tool_provider>(
+                provider_request.server_name,
+                *client,
+                provider_request.exposed_name_prefix);
+            selection.mcp_clients.push_back(std::move(client));
+            mcp_providers.push_back(std::move(provider));
+        }
+    } else if (!request.mcp_tool_command.empty()) {
         std::vector<std::string> command_line;
         command_line.push_back(request.mcp_tool_command);
         command_line.insert(command_line.end(), request.mcp_tool_args.begin(), request.mcp_tool_args.end());
 
-        selection.mcp_client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
+        auto client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
             request.mcp_tool_server_name,
             std::move(command_line),
             {},
         });
-        mcp_provider = std::make_unique<mcp_agent_tool_provider>(
+        auto provider = std::make_unique<mcp_agent_tool_provider>(
             request.mcp_tool_server_name,
-            *selection.mcp_client,
+            *client,
             request.mcp_tool_prefix);
+        selection.mcp_clients.push_back(std::move(client));
+        mcp_providers.push_back(std::move(provider));
     }
 
-    if (native_provider || mcp_provider) {
+    if (native_provider || !mcp_providers.empty()) {
         composite_agent_tool_provider provider;
         if (native_provider) {
             provider.add_provider(*native_provider);
         }
-        if (mcp_provider) {
+        for (const auto & mcp_provider : mcp_providers) {
             provider.add_provider(*mcp_provider);
         }
 

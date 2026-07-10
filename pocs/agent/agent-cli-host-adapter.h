@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-host-mcp-provider-config.h"
 #include "agent-resource-store.h"
 #include "agent-tool-provider.h"
 #include "agent-runtime-host.h"
@@ -14,15 +15,22 @@
 struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
-    std::unique_ptr<agent_mcp_tool_client> mcp_client;
+    std::vector<std::unique_ptr<agent_mcp_tool_client>> mcp_clients;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
     std::unique_ptr<agent_resource_store> owned_resource_store;
+};
+
+struct agent_host_stdio_mcp_provider_request {
+    std::string server_name = "mcp";
+    std::vector<std::string> command_line;
+    std::string exposed_name_prefix;
 };
 
 struct agent_host_tool_selection_request {
     agent_tool_context tool_context;
     std::string repository_root;
     agent_resource_store_config resource_store_config;
+    std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";

@@ -148,7 +148,7 @@ The new host-config slice is intentionally modest. It currently models:
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
 
-In the current first slice, the daemon and real MCP stdio server only consume one enabled stdio MCP provider from that config path. That is deliberate: the config format is allowed to grow toward several external providers before the runtime/service assembly fully supports them all.
+In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. Non-stdio transports are still deferred, but the host-owned config model no longer has to collapse back down to a single external tool provider before runtime assembly.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 

@@ -74,7 +74,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    if (!selection.mcp_client) {
+    if (selection.mcp_clients.empty()) {
         std::fprintf(stderr, "CLI MCP selection did not retain the MCP client lifetime\n");
         return 1;
     }

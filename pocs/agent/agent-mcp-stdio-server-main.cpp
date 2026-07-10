@@ -218,8 +218,10 @@ bool parse_server_args(
         int argc,
         char ** argv,
         args & options,
+        std::vector<agent_host_mcp_provider_config> & configured_mcp_providers,
         std::string & error) {
     options = {};
+    configured_mcp_providers.clear();
     options.command = "agent-mcp-stdio-server";
     options.memory_scope = "session";
     options.memory_namespace = "local";
@@ -234,16 +236,7 @@ bool parse_server_args(
             return false;
         }
         apply_agent_host_config_to_args(config, options);
-        agent_host_mcp_provider_config provider;
-        std::string provider_error;
-        if (select_agent_host_stdio_mcp_provider(config, provider, provider_error)) {
-            options.mcp_tool_command = provider.command.front();
-            options.mcp_tool_args.assign(provider.command.begin() + 1, provider.command.end());
-            options.mcp_tool_server_name = provider.server_name.empty() ? provider.id : provider.server_name;
-            options.mcp_tool_prefix = provider.prefix;
-        } else if (!provider_error.empty()) {
-            return false;
-        }
+        configured_mcp_providers = config.mcp_providers;
     }
 
     auto need_value = [&](const char * flag, int & index) -> const char * {
@@ -415,7 +408,8 @@ common_memory_query make_memory_query(const args & options) {
 
 agent_tool_context make_tool_context(
         const args & options,
-        const std::string & repository_root) {
+        const std::string & repository_root,
+        const std::vector<agent_host_mcp_provider_config> & configured_mcp_providers) {
     agent_tool_context context;
     context.request_id = "mcp-stdio-server";
     context.turn_id = options.memory_turn.empty() ? "mcp-turn" : options.memory_turn;
@@ -430,7 +424,10 @@ agent_tool_context make_tool_context(
     context.scope.memory_scope = context.memory_scope;
     context.scope.plan_scope = context.plan_scope;
     context.scope.memory_global_opt_in = options.memory_global_opt_in;
-    context.allow_network = options.tool_profile == "research";
+    context.allow_network =
+        options.tool_profile == "research" ||
+        !configured_mcp_providers.empty() ||
+        !options.mcp_tool_command.empty();
     context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";
     context.allow_memory_proposals = context.allow_policy_gated_writes;
@@ -441,9 +438,10 @@ agent_tool_context make_tool_context(
 
 agent_host_tool_selection_request make_server_tool_selection_request(
         const args & options,
-        const std::string & repository_root) {
+        const std::string & repository_root,
+        const std::vector<agent_host_mcp_provider_config> & configured_mcp_providers) {
     agent_host_tool_selection_request request;
-    request.tool_context = make_tool_context(options, repository_root);
+    request.tool_context = make_tool_context(options, repository_root, configured_mcp_providers);
     request.repository_root = repository_root;
     request.resource_store_config = {
         options.resource_blob_backend,
@@ -451,6 +449,16 @@ agent_host_tool_selection_request make_server_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    for (const auto & provider : configured_mcp_providers) {
+        if (!provider.enabled || provider.type != "mcp" || provider.transport != "stdio" || provider.command.empty()) {
+            continue;
+        }
+        agent_host_stdio_mcp_provider_request request_provider;
+        request_provider.server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+        request_provider.exposed_name_prefix = provider.prefix;
+        request_provider.command_line = provider.command;
+        request.mcp_providers.push_back(std::move(request_provider));
+    }
     return request;
 }
 
@@ -460,22 +468,10 @@ bool apply_server_tool_exposure_policy(
         const args & options,
         agent_host_tool_selection_request & request,
         std::string & error) {
-    const std::vector<common_tool_definition> definitions = catalog.load_profile(profile_id, error);
-    if (!error.empty()) {
-        return false;
-    }
-
     request.tool_context.allowed_exposed_tool_names.clear();
-    for (const auto & definition : definitions) {
-        if (options.memory_db.empty() && definition.name.rfind("memory_", 0) == 0) {
-            continue;
-        }
-        if (options.plan_db.empty() && definition.name.rfind("plan_", 0) == 0) {
-            continue;
-        }
-        request.tool_context.allowed_exposed_tool_names.push_back(definition.name);
-    }
-
+    (void) catalog;
+    (void) profile_id;
+    (void) options;
     error.clear();
     return true;
 }
@@ -507,6 +503,7 @@ bool resolve_server_tool_selection(
 bool register_native_profile_tools(
         const common_tool_catalog & catalog,
         const std::string & profile_id,
+        const args & options,
         const common_agent_cli_tool_selection & initial_selection,
         const std::function<bool(common_agent_cli_tool_selection &, std::string &)> & resolve_selection,
         agent_mcp_server_tool_registry & registry,
@@ -527,22 +524,31 @@ bool register_native_profile_tools(
     }
 
     for (const auto & tool : initial_selection.tooling.tools) {
-        const auto definition_it = definitions_by_name.find(tool.name);
-        if (definition_it == definitions_by_name.end()) {
-            error = "resolved tool is missing catalog metadata: " + tool.name;
-            return false;
+        if (options.memory_db.empty() && tool.name.rfind("memory_", 0) == 0) {
+            continue;
+        }
+        if (options.plan_db.empty() && tool.name.rfind("plan_", 0) == 0) {
+            continue;
         }
 
-        const common_tool_definition definition = definition_it->second;
+        const auto definition_it = definitions_by_name.find(tool.name);
+        const bool has_definition = definition_it != definitions_by_name.end();
+        const common_tool_definition definition = has_definition ? definition_it->second : common_tool_definition{};
         if (!registry.register_tool({
                 tool.name,
-                tool.description.empty() ? definition.description : tool.description,
-                tool.parameters.empty() ? definition.input_schema_json : tool.parameters,
+                tool.description.empty()
+                    ? (has_definition ? definition.description : tool.name)
+                    : tool.description,
+                tool.parameters.empty()
+                    ? (has_definition ? definition.input_schema_json : R"({"type":"object"})")
+                    : tool.parameters,
                 initial_selection.tool_view->is_read_only(tool.name),
-                definition.requires_confirmation,
-                definition.risk_class == common_tool_risk_class::network_read,
-                definition.risk_class == common_tool_risk_class::memory_proposal,
-                definition.risk_class == common_tool_risk_class::plan_proposal,
+                has_definition
+                    ? definition.requires_confirmation
+                    : initial_selection.tool_view->is_policy_gated(tool.name),
+                has_definition && definition.risk_class == common_tool_risk_class::network_read,
+                has_definition && definition.risk_class == common_tool_risk_class::memory_proposal,
+                has_definition && definition.risk_class == common_tool_risk_class::plan_proposal,
                 [resolve_selection, tool_name = tool.name](
                         const agent_mcp_json & arguments,
                         agent_mcp_server_tool_result & result,
@@ -581,8 +587,9 @@ int main(int argc, char ** argv) {
 #endif
 
     args options;
+    std::vector<agent_host_mcp_provider_config> configured_mcp_providers;
     std::string error;
-    if (!parse_server_args(argc, argv, options, error)) {
+    if (!parse_server_args(argc, argv, options, configured_mcp_providers, error)) {
         std::fprintf(stderr, "failed to parse MCP stdio server args: %s\n", error.c_str());
         return 1;
     }
@@ -618,7 +625,10 @@ int main(int argc, char ** argv) {
     }
 
     std::string current_plan_id = options.plan_id;
-    auto tool_request = make_server_tool_selection_request(options, repository_root);
+    auto tool_request = make_server_tool_selection_request(
+        options,
+        repository_root,
+        configured_mcp_providers);
     if (!apply_server_tool_exposure_policy(catalog, options.tool_profile, options, tool_request, error)) {
         std::fprintf(stderr, "failed to apply MCP stdio server tool exposure policy: %s\n", error.c_str());
         return 1;
@@ -649,6 +659,7 @@ int main(int argc, char ** argv) {
     if (!register_native_profile_tools(
             catalog,
             options.tool_profile,
+            options,
             initial_selection,
             resolve_selection,
             registry,

@@ -1,21 +1,12 @@
 #pragma once
 
 #include "../common/cli-config.h"
-
-#include "agent-daemon-adapter.h"
+#include "agent-host-mcp-provider-config.h"
 
 #include <string>
 #include <vector>
 
-struct agent_host_mcp_provider_config {
-    std::string type = "mcp";
-    std::string id;
-    bool enabled = true;
-    std::string transport = "stdio";
-    std::vector<std::string> command;
-    std::string prefix;
-    std::string server_name;
-};
+struct daemon_options;
 
 struct agent_host_config {
     std::string model_backend = "server-context";

@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 
+#include "agent-host-mcp-provider-config.h"
 #include "agent-daemon-service.h"
 #include "agent-runtime-resident.h"
 #include "agent-runtime-assembly.h"
@@ -35,6 +36,7 @@ struct daemon_options {
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";
     std::string mcp_tool_prefix;
+    std::vector<agent_host_mcp_provider_config> mcp_providers;
     std::string resource_blob_backend = "auto";
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";

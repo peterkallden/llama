@@ -25,6 +25,20 @@ std::filesystem::path get_server_path(const char * argv0) {
 #endif
 }
 
+std::filesystem::path get_fake_server_path(const char * argv0) {
+    std::filesystem::path argv_path = argv0 != nullptr ? std::filesystem::path(argv0) : std::filesystem::path();
+    if (argv_path.has_parent_path()) {
+        argv_path = std::filesystem::absolute(argv_path);
+    } else {
+        argv_path = std::filesystem::current_path() / argv_path;
+    }
+#ifdef _WIN32
+    return argv_path.parent_path() / "llama-agent-mcp-stdio-fake-server.exe";
+#else
+    return argv_path.parent_path() / "llama-agent-mcp-stdio-fake-server";
+#endif
+}
+
 bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & name) {
     for (const auto & tool : tools) {
         if (tool.name == name) {
@@ -34,12 +48,28 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
     return false;
 }
 
+std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
+    std::string joined;
+    for (const auto & tool : tools) {
+        if (!joined.empty()) {
+            joined += ", ";
+        }
+        joined += tool.name;
+    }
+    return joined;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
     const auto server_path = get_server_path(argc > 0 ? argv[0] : nullptr);
     if (!std::filesystem::exists(server_path)) {
         std::fprintf(stderr, "MCP stdio server not found: %s\n", server_path.string().c_str());
+        return 1;
+    }
+    const auto fake_server_path = get_fake_server_path(argc > 0 ? argv[0] : nullptr);
+    if (!std::filesystem::exists(fake_server_path)) {
+        std::fprintf(stderr, "MCP stdio fake server not found: %s\n", fake_server_path.string().c_str());
         return 1;
     }
 
@@ -110,6 +140,19 @@ int main(int argc, char ** argv) {
             {"tools", {
                 {"profile", "research"},
                 {"repository_root", repository_root},
+                {"providers", json::array({
+                    {
+                        {"type", "mcp"},
+                        {"id", "github"},
+                        {"enabled", true},
+                        {"transport", "stdio"},
+                        {"prefix", "github"},
+                        {"server_name", "github"},
+                        {"command", json::array({
+                            fake_server_path.string(),
+                        })},
+                    },
+                })},
             }},
             {"limits", {{"max_tool_rounds", 8}}},
         }.dump(2);
@@ -134,8 +177,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to resolve research MCP stdio server tool view: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(research_view->chat_tools(), "local_repository_list")) {
-        std::fprintf(stderr, "research MCP profile did not expose repository_list\n");
+    if (!has_tool(research_view->chat_tools(), "local_repository_list") ||
+            !has_tool(research_view->chat_tools(), "local_github_search_issues")) {
+        std::fprintf(
+            stderr,
+            "research MCP profile did not expose expected native+MCP tools: %s\n",
+            join_tool_names(research_view->chat_tools()).c_str());
         return 1;
     }
 
@@ -149,10 +196,21 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto github_result = research_view->call({
+        "call-4",
+        "local_github_search_issues",
+        R"({"query":"runtime host"})",
+    }, error);
+    if (!github_result.ok || github_result.content_json.find("stub issue") == std::string::npos) {
+        std::fprintf(stderr, "github_search_issues did not return the expected MCP payload: %s\n", github_result.content_json.c_str());
+        return 1;
+    }
+
     std::printf("mcp_server_minimal_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("mcp_server_calculator=%s\n", calculator_result.content_json.c_str());
     std::printf("mcp_server_research_tools=%zu\n", research_view->chat_tools().size());
     std::printf("mcp_server_repository_list=%s\n", repository_result.content_json.c_str());
+    std::printf("mcp_server_github_search=%s\n", github_result.content_json.c_str());
     std::printf("mcp_server_invalid_code=%s\n", invalid_result.failure_code.c_str());
     return 0;
 }
