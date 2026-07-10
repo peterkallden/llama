@@ -73,9 +73,21 @@ The runtime direction depends on keeping the layer boundaries boring and explici
 
 In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
 
+The practical JSON rule is now the same: if JSON crosses a subsystem boundary and is not just a short-lived local implementation detail, it should move behind a named parse/serialize/validate helper. JSON as a wire or storage format is fine; raw `ordered_json` plus string `.dump()` should not silently become the contract.
+
 The first concrete example of that constraint is now in place for tracing: the structured trace envelope lives in a neutral `common/runtime-trace.h` header, while `common/agent` populates it and `pocs/agent` only adapts or serializes it for CLI/daemon surfaces.
 
 The same cleanup has now started for tool execution contracts. The lightweight tool-call and execution-result DTOs used by runtime-side tool validation/execution no longer need to live in the heavier native registry header; they now have their own smaller neutral contract header. The native registry still exists and still owns handlers, but the runtime-facing contract is starting to separate from the older registry-era shape.
+
+The same direction has now been reinforced around the biggest JSON-heavy runtime edges:
+
+- native tool payloads now serialize through named result-contract helpers instead of ad hoc JSON literals at each return site
+- daemon JSONL request/response shaping now goes through explicit daemon protocol helpers
+- MCP stdio transport still owns framing, but JSON-RPC request/notification construction and tool result parsing now live behind extracted protocol helpers
+- plan-step tool arguments now have a small named contract wrapper even though stored compatibility still remains `arguments_json`
+- host config now has an explicit `schema_version`, a validator, and a roundtrip JSON helper instead of only a one-way parse path
+
+That does not mean every JSON surface is now formalized. It means the highest-value runtime seams now have a named contract boundary, so later daemon/host/MCP work is less likely to hard-code behavior into scattered `.dump()` or `parse()` sites.
 
 The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation remains intentionally local to `pocs/agent`, but it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
@@ -259,6 +271,48 @@ Scope values are caller-provided authority:
 The model cannot choose these values. A future server or MCP host must derive them from authenticated caller/session context before constructing runtime inputs.
 
 For the current daemon/admin path, store location and backend are still chosen by the host process at startup. Clients can provide session/scope identifiers, but they should never be able to choose arbitrary persistence paths at turn time.
+
+## Remaining Informal JSON Surfaces
+
+The recent contract work removed several of the highest-friction JSON seams, but a number of important "still mostly implicit" JSON shapes remain. The most relevant near-term backlog looks roughly like this:
+
+1. `common/agent/agent-runtime.cpp`
+
+   Tool-call argument rewriting, reasoning payload normalization, failure observations, and memory-learning hint payloads still serialize small JSON documents inline. This is now one of the densest remaining runtime-core places where host-safe behavior still depends on implicit JSON shapes.
+
+2. `pocs/agent/agent-cli-selection.cpp`
+
+   Blueprint selection, replacement-step shaping, and selection output parsing still build and parse small JSON objects directly. This is not daemon wire protocol, but it is still a live contract between generation output and runtime interpretation.
+
+3. `pocs/agent/agent-daemon.cpp` plus `pocs/agent/agent-daemon-client.cpp`
+
+   The daemon wire payload itself is now formalized, but the JSONL transport loop still parses and emits raw JSON lines directly in the transport endpoints. The next cleanup here would likely separate JSONL framing from daemon protocol objects the same way MCP stdio now separates framing from JSON-RPC message construction.
+
+4. `pocs/agent/agent-tool-provider.cpp`
+
+   The provider/view boundary is structurally much better now, but result payload assembly still builds success/failure wrapper JSON inline before assigning `content_json`. This is converged compared with the older registry path, but it is still an implicit contract at the final provider normalization step.
+
+5. `common/memory/memory-tool-service.cpp`
+
+   Memory tool arguments are still parsed from raw JSON strings directly inside the service. This is a natural next target if memory tools should match the newer plan/tool contract style more closely.
+
+6. `common/plan/cozo/plan-cozo.cpp`
+
+   Plan persistence and event rows still serialize and deserialize larger JSON payloads inline for Cozo storage. Some of this is legitimate persistence encoding, but the stored row/document shapes are still only implicit.
+
+7. `common/memory/cozo/memory-cozo.cpp`
+
+   The same pattern exists on the memory side: several metadata/result/row shapes are persisted and reloaded as raw JSON without a named storage contract layer.
+
+8. `common/chat.cpp`
+
+   This file intentionally owns a large amount of OpenAI-compatible chat/tool JSON mapping, so not all JSON use here is debt. Even so, there are still some model-facing parsed/normalized shapes here that could benefit from more explicit contract helpers over time, especially where argument strings are parsed and re-emitted.
+
+9. `pocs/agent/agent-server-inference.cpp`
+
+   A few resident `server_context` result paths still parse response JSON blobs directly to interpret structured output. The scope is smaller than the files above, but it is still a live runtime seam.
+
+If we count "production-relevant, non-test JSON shapes that are still at least partly informal", there are about 8 to 9 meaningful clusters left. If we count every single `.dump()` or `parse()` site in persistence, chat compatibility, diagnostics, and tests, the raw number is much larger. The clustered backlog above is the useful planning unit.
 
 ### Tools
 
