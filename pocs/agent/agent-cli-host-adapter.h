@@ -37,6 +37,20 @@ struct agent_host_tool_selection_request {
     std::string mcp_tool_prefix;
 };
 
+bool has_enabled_stdio_mcp_provider(
+    const std::vector<agent_host_mcp_provider_config> & providers);
+
+void append_configured_stdio_mcp_providers(
+    const std::vector<agent_host_mcp_provider_config> & configured_providers,
+    std::vector<agent_host_stdio_mcp_provider_request> & request_providers);
+
+void append_legacy_stdio_mcp_provider(
+    const std::string & command,
+    const std::vector<std::string> & args,
+    const std::string & server_name,
+    const std::string & prefix,
+    std::vector<agent_host_stdio_mcp_provider_request> & request_providers);
+
 bool resolve_agent_host_tool_selection(
     common_memory_store & store,
     common_plan_store * plan_store,

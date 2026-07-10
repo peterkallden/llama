@@ -160,7 +160,9 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.profile_id = options.tool_profile;
     tool_request.tool_context.repository_root = options.repository_root;
     tool_request.tool_context.allow_network =
-        options.tool_profile == "research" || !options.mcp_providers.empty() || !options.mcp_tool_command.empty();
+        options.tool_profile == "research" ||
+        has_enabled_stdio_mcp_provider(options.mcp_providers) ||
+        !options.mcp_tool_command.empty();
     tool_request.tool_context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";
     tool_request.tool_context.allow_memory_proposals =
@@ -181,24 +183,14 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.mcp_tool_args = options.mcp_tool_args;
     tool_request.mcp_tool_server_name = options.mcp_tool_server_name;
     tool_request.mcp_tool_prefix = options.mcp_tool_prefix;
-    if (!options.mcp_providers.empty()) {
-        for (const auto & config : options.mcp_providers) {
-            if (!config.enabled || config.type != "mcp" || config.transport != "stdio" || config.command.empty()) {
-                continue;
-            }
-            agent_host_stdio_mcp_provider_request provider;
-            provider.server_name = config.server_name.empty() ? config.id : config.server_name;
-            provider.exposed_name_prefix = config.prefix;
-            provider.command_line = config.command;
-            tool_request.mcp_providers.push_back(std::move(provider));
-        }
-    } else if (!options.mcp_tool_command.empty()) {
-        agent_host_stdio_mcp_provider_request provider;
-        provider.server_name = options.mcp_tool_server_name;
-        provider.exposed_name_prefix = options.mcp_tool_prefix;
-        provider.command_line.push_back(options.mcp_tool_command);
-        provider.command_line.insert(provider.command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
-        tool_request.mcp_providers.push_back(std::move(provider));
+    append_configured_stdio_mcp_providers(options.mcp_providers, tool_request.mcp_providers);
+    if (tool_request.mcp_providers.empty()) {
+        append_legacy_stdio_mcp_provider(
+            options.mcp_tool_command,
+            options.mcp_tool_args,
+            options.mcp_tool_server_name,
+            options.mcp_tool_prefix,
+            tool_request.mcp_providers);
     }
     return tool_request;
 }

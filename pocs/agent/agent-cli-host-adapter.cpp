@@ -69,18 +69,61 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     request.mcp_tool_args = options.mcp_tool_args;
     request.mcp_tool_server_name = options.mcp_tool_server_name;
     request.mcp_tool_prefix = options.mcp_tool_prefix;
-    if (!options.mcp_tool_command.empty()) {
-        agent_host_stdio_mcp_provider_request provider;
-        provider.server_name = options.mcp_tool_server_name;
-        provider.exposed_name_prefix = options.mcp_tool_prefix;
-        provider.command_line.push_back(options.mcp_tool_command);
-        provider.command_line.insert(provider.command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
-        request.mcp_providers.push_back(std::move(provider));
-    }
+    append_legacy_stdio_mcp_provider(
+        options.mcp_tool_command,
+        options.mcp_tool_args,
+        options.mcp_tool_server_name,
+        options.mcp_tool_prefix,
+        request.mcp_providers);
     return request;
 }
 
 } // namespace
+
+bool has_enabled_stdio_mcp_provider(
+        const std::vector<agent_host_mcp_provider_config> & providers) {
+    for (const auto & provider : providers) {
+        if (provider.enabled &&
+                provider.type == "mcp" &&
+                provider.transport == "stdio" &&
+                !provider.command.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void append_configured_stdio_mcp_providers(
+        const std::vector<agent_host_mcp_provider_config> & configured_providers,
+        std::vector<agent_host_stdio_mcp_provider_request> & request_providers) {
+    for (const auto & provider : configured_providers) {
+        if (!provider.enabled || provider.type != "mcp" || provider.transport != "stdio" || provider.command.empty()) {
+            continue;
+        }
+        agent_host_stdio_mcp_provider_request request_provider;
+        request_provider.server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+        request_provider.exposed_name_prefix = provider.prefix;
+        request_provider.command_line = provider.command;
+        request_providers.push_back(std::move(request_provider));
+    }
+}
+
+void append_legacy_stdio_mcp_provider(
+        const std::string & command,
+        const std::vector<std::string> & args,
+        const std::string & server_name,
+        const std::string & prefix,
+        std::vector<agent_host_stdio_mcp_provider_request> & request_providers) {
+    if (command.empty()) {
+        return;
+    }
+    agent_host_stdio_mcp_provider_request provider;
+    provider.server_name = server_name;
+    provider.exposed_name_prefix = prefix;
+    provider.command_line.push_back(command);
+    provider.command_line.insert(provider.command_line.end(), args.begin(), args.end());
+    request_providers.push_back(std::move(provider));
+}
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
         common_memory_store & store,

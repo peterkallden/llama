@@ -426,7 +426,7 @@ agent_tool_context make_tool_context(
     context.scope.memory_global_opt_in = options.memory_global_opt_in;
     context.allow_network =
         options.tool_profile == "research" ||
-        !configured_mcp_providers.empty() ||
+        has_enabled_stdio_mcp_provider(configured_mcp_providers) ||
         !options.mcp_tool_command.empty();
     context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";
@@ -449,16 +449,7 @@ agent_host_tool_selection_request make_server_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
-    for (const auto & provider : configured_mcp_providers) {
-        if (!provider.enabled || provider.type != "mcp" || provider.transport != "stdio" || provider.command.empty()) {
-            continue;
-        }
-        agent_host_stdio_mcp_provider_request request_provider;
-        request_provider.server_name = provider.server_name.empty() ? provider.id : provider.server_name;
-        request_provider.exposed_name_prefix = provider.prefix;
-        request_provider.command_line = provider.command;
-        request.mcp_providers.push_back(std::move(request_provider));
-    }
+    append_configured_stdio_mcp_providers(configured_mcp_providers, request.mcp_providers);
     return request;
 }
 
