@@ -1,4 +1,5 @@
 #include "agent-tool-provider.h"
+#include "agent-tool-result-json-contracts.h"
 
 #include "agent/tool-registry.h"
 
@@ -9,60 +10,6 @@
 using json = nlohmann::ordered_json;
 
 namespace {
-
-json render_resource_ref(const common_runtime_resource_ref & resource) {
-    json result = {
-        {"uri", resource.uri},
-        {"scope", common_runtime_resource_scope_name(resource.scope)},
-    };
-    if (!resource.name.empty()) {
-        result["name"] = resource.name;
-    }
-    if (!resource.description.empty()) {
-        result["description"] = resource.description;
-    }
-    if (!resource.mime_type.empty()) {
-        result["mime_type"] = resource.mime_type;
-    }
-    if (resource.size_bytes > 0) {
-        result["size_bytes"] = resource.size_bytes;
-    }
-    json metadata = json::object();
-    if (!resource.metadata.purpose.empty()) {
-        metadata["purpose"] = resource.metadata.purpose;
-    }
-    if (!resource.metadata.content_summary.empty()) {
-        metadata["content_summary"] = resource.metadata.content_summary;
-    }
-    if (!resource.metadata.usage_hint.empty()) {
-        metadata["usage_hint"] = resource.metadata.usage_hint;
-    }
-    if (!resource.metadata.limitations.empty()) {
-        metadata["limitations"] = resource.metadata.limitations;
-    }
-    if (!resource.metadata.keywords.empty()) {
-        metadata["keywords"] = resource.metadata.keywords;
-    }
-    if (!resource.metadata.entities.empty()) {
-        metadata["entities"] = resource.metadata.entities;
-    }
-    if (!metadata.empty()) {
-        result["metadata"] = std::move(metadata);
-    }
-    return result;
-}
-
-void attach_resources_json(agent_tool_result & result, json & payload) {
-    if (result.resource_refs.empty()) {
-        return;
-    }
-
-    json resources = json::array();
-    for (const auto & resource : result.resource_refs) {
-        resources.push_back(render_resource_ref(resource));
-    }
-    payload["resources"] = std::move(resources);
-}
 
 size_t effective_result_limit(
         const agent_tool_context & context,
@@ -121,17 +68,13 @@ agent_tool_result make_failure_result(
     result.retryable = retryable;
     result.safe_summary = std::move(safe_summary);
     result.raw_diagnostic = std::move(raw_diagnostic);
-    auto payload = json({
-        {"ok", false},
-        {"error", {
-            {"code", result.failure_code.empty() ? "tool_call_rejected" : result.failure_code},
-            {"message", result.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : result.safe_summary},
-            {"retryable", result.retryable},
-            {"class", common_tool_failure_class_name(result.failure_class)},
-        }}
-    });
     result.content_summary = result.safe_summary;
-    attach_resources_json(result, payload);
+    auto payload = make_agent_tool_failure_payload_json(
+        result.failure_code.empty() ? "tool_call_rejected" : result.failure_code,
+        result.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : result.safe_summary,
+        result.retryable,
+        result.failure_class,
+        result.resource_refs);
     result.content_json = payload.dump();
     return result;
 }
@@ -171,14 +114,10 @@ agent_tool_result normalize_execution_result(
         : execution.content_summary;
     result.resource_refs = execution.resource_refs;
 
-    const auto value = json::parse(execution.output, nullptr, false);
-    auto payload = value.is_discarded()
-        ? json({{"ok", true}, {"result_text", execution.output}})
-        : json({{"ok", true}, {"result", value}});
-    if (!result.content_summary.empty()) {
-        payload["summary"] = result.content_summary;
-    }
-    attach_resources_json(result, payload);
+    auto payload = make_agent_tool_success_payload_json(
+        execution.output,
+        result.content_summary,
+        result.resource_refs);
     result.content_json = payload.dump();
     return result;
 }
@@ -241,20 +180,18 @@ agent_tool_result normalize_mcp_execution_result(
     result.content_summary = execution.text_content;
 
     if (!execution.structured_content_json.empty()) {
-        const auto value = json::parse(execution.structured_content_json, nullptr, false);
-        auto payload = value.is_discarded()
-            ? json({{"ok", true}, {"result_text", execution.structured_content_json}})
-            : json({{"ok", true}, {"result", value}});
-        if (!result.content_summary.empty()) {
-            payload["summary"] = result.content_summary;
-        }
-        attach_resources_json(result, payload);
+        auto payload = make_agent_tool_structured_success_payload_json(
+            execution.structured_content_json,
+            result.content_summary,
+            result.resource_refs);
         result.content_json = payload.dump();
         return result;
     }
 
-    auto payload = json({{"ok", true}, {"result_text", execution.text_content}});
-    attach_resources_json(result, payload);
+    auto payload = make_agent_tool_text_success_payload_json(
+        execution.text_content,
+        result.content_summary,
+        result.resource_refs);
     result.content_json = payload.dump();
     return result;
 }

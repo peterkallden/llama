@@ -8,6 +8,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-selection-contracts.cpp
     agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
+    agent-tool-result-json-contracts.cpp
     agent-tool-runtime-adapter.cpp
     agent-resource-catalog.cpp
     agent-resource-store.cpp
