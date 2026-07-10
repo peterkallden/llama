@@ -8,6 +8,10 @@
 #include "agent-tool-provider.h"
 #include "common/cli-config.h"
 #include "common/cli-scope.h"
+#include "memory/memory-in-memory.h"
+#ifdef LLAMA_MEMORY_USE_COZO
+#include "memory/cozo/memory-cozo.h"
+#endif
 #include "plan/plan-in-memory.h"
 #ifdef LLAMA_PLAN_USE_COZO
 #include "plan/cozo/plan-cozo.h"
@@ -27,6 +31,38 @@
 #endif
 
 namespace {
+
+std::string resolve_memory_backend(
+        const std::string & backend,
+        const std::string & memory_db,
+        std::string & error) {
+    std::string resolved = backend;
+    if (resolved == "auto") {
+        resolved = memory_db.empty() ? "in-memory" : "cozo";
+    }
+    if (resolved == "in-memory" && !memory_db.empty()) {
+        error = "--memory-db requires --backend cozo or the default auto backend";
+        return {};
+    }
+    error.clear();
+    return resolved;
+}
+
+std::string resolve_plan_backend(
+        const std::string & backend,
+        const std::string & plan_db,
+        std::string & error) {
+    std::string resolved = backend;
+    if (resolved == "auto") {
+        resolved = plan_db.empty() ? "in-memory" : "cozo";
+    }
+    if (resolved == "in-memory" && !plan_db.empty()) {
+        error = "--plan-db requires --plan-backend cozo or the default auto backend";
+        return {};
+    }
+    error.clear();
+    return resolved;
+}
 
 const char * plan_scope_name(common_plan_scope scope) {
     switch (scope) {
@@ -49,16 +85,18 @@ const char * find_server_config_path(int argc, char ** argv) {
 
 class server_agent_embedding_provider final : public agent_embedding_provider {
 public:
-    explicit server_agent_embedding_provider(const args & options)
-        : options_(options) {}
+    server_agent_embedding_provider(std::string model_path, int n_gpu_layers)
+        : model_path_(std::move(model_path)),
+          n_gpu_layers_(n_gpu_layers) {}
 
     bool embed(
             const std::string & purpose,
             const std::string & text,
             std::vector<float> & embedding,
             std::string & error) override {
-        return ensure_memory_cli_embedding(
-            options_,
+        return ensure_memory_cli_embedding_from_model(
+            model_path_,
+            n_gpu_layers_,
             text,
             embedding,
             purpose.c_str(),
@@ -66,7 +104,8 @@ public:
     }
 
 private:
-    const args & options_;
+    std::string model_path_;
+    int n_gpu_layers_ = 0;
 };
 
 std::string summarize_tool_result(
@@ -301,20 +340,51 @@ bool open_server_stores(
         std::unique_ptr<common_plan_store> & plan_store,
         std::unique_ptr<agent_resource_store> & resource_store,
         std::string & error) {
-    memory_store = make_memory_store(options, error);
-    if (!memory_store || !open_memory_store(*memory_store, options, error)) {
+    const std::string memory_backend = resolve_memory_backend(options.backend, options.memory_db, error);
+    if (!error.empty()) {
+        return false;
+    }
+    if (memory_backend == "cozo") {
+#ifdef LLAMA_MEMORY_USE_COZO
+        if (options.memory_db.empty()) {
+            error = "--backend cozo requires --memory-db PATH";
+            return false;
+        }
+        memory_store = std::make_unique<common_memory_cozo_store>();
+#else
+        error = "this binary was built without LLAMA_MEMORY_COZO";
+        return false;
+#endif
+    } else if (memory_backend == "in-memory") {
+        memory_store = std::make_unique<common_memory_in_memory_store>();
+    } else {
+        error = "unknown memory backend: " + memory_backend;
+        return false;
+    }
+    if (!memory_store->open(options.memory_db, error)) {
         return false;
     }
 
-    if (options.plan_backend == "cozo") {
+    const std::string plan_backend = resolve_plan_backend(options.plan_backend, options.plan_db, error);
+    if (!error.empty()) {
+        return false;
+    }
+    if (plan_backend == "cozo") {
 #ifdef LLAMA_PLAN_USE_COZO
+        if (options.plan_db.empty()) {
+            error = "--plan-backend cozo requires --plan-db PATH";
+            return false;
+        }
         plan_store = std::make_unique<common_plan_cozo_store>();
 #else
-        error = "plan backend 'cozo' requires a Cozo-enabled build";
+        error = "this binary was built without LLAMA_PLAN_COZO";
         return false;
 #endif
-    } else {
+    } else if (plan_backend == "in-memory") {
         plan_store = std::make_unique<common_plan_in_memory_store>();
+    } else {
+        error = "unknown plan backend: " + plan_backend;
+        return false;
     }
     if (!plan_store->open(options.plan_db, error)) {
         return false;
@@ -466,8 +536,13 @@ int main(int argc, char ** argv) {
     }
 
     std::unique_ptr<agent_embedding_provider> embedding_provider;
-    if (!options.embedding_model.empty() || !options.model.empty()) {
-        embedding_provider = std::make_unique<server_agent_embedding_provider>(options);
+    const std::string embedding_model = !options.embedding_model.empty()
+        ? options.embedding_model
+        : options.model;
+    if (!embedding_model.empty()) {
+        embedding_provider = std::make_unique<server_agent_embedding_provider>(
+            embedding_model,
+            options.n_gpu_layers);
     }
 
     common_tool_catalog catalog;

@@ -17,6 +17,14 @@ bool ensure_memory_cli_embedding(
     const char * label,
     std::string & error);
 
+bool ensure_memory_cli_embedding_from_model(
+    const std::string & model_path,
+    int n_gpu_layers,
+    const std::string & text,
+    std::vector<float> & embedding,
+    const char * label,
+    std::string & error);
+
 common_chat_tool memory_search_tool_definition();
 common_chat_tool memory_remember_tool_definition();
 

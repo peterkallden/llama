@@ -52,6 +52,26 @@ agent_tool_context make_agent_cli_tool_context(
     return tool_context;
 }
 
+agent_host_tool_selection_request make_agent_cli_tool_selection_request(
+        const args & options,
+        const common_memory_query & query,
+        const std::string & repository_root) {
+    agent_host_tool_selection_request request;
+    request.tool_context = make_agent_cli_tool_context(options, query, repository_root);
+    request.repository_root = repository_root;
+    request.resource_store_config = {
+        options.resource_blob_backend,
+        options.resource_blob_root,
+        options.resource_metadata_backend,
+        options.resource_metadata_db,
+    };
+    request.mcp_tool_command = options.mcp_tool_command;
+    request.mcp_tool_args = options.mcp_tool_args;
+    request.mcp_tool_server_name = options.mcp_tool_server_name;
+    request.mcp_tool_prefix = options.mcp_tool_prefix;
+    return request;
+}
+
 } // namespace
 
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
@@ -86,43 +106,38 @@ common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
     };
 }
 
-bool resolve_agent_cli_tool_selection(
+bool resolve_agent_host_tool_selection(
         common_memory_store & store,
         common_plan_store * plan_store,
         agent_resource_store * resource_store,
         std::string * current_plan_id,
-        const args & options,
+        const std::string & tool_profile,
+        const agent_host_tool_selection_request & request,
         const common_memory_query & query,
-        bool memory_enabled,
+        agent_embedding_provider * embedding_provider,
         common_agent_cli_tool_selection & selection,
         std::string & error) {
     selection = {};
 
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
-    if (memory_enabled) {
-        selection.embedding_provider = std::make_unique<cli_agent_embedding_provider>(options);
-    }
-    if (!options.tool_profile.empty()) {
+    if (!tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
-        if (!tool_catalog.bootstrap(options.tool_profile, bootstrap, error)) {
+        if (!tool_catalog.bootstrap(tool_profile, bootstrap, error)) {
             error = "tool bootstrap failed: " + error;
             return false;
         }
 
         common_native_tool_bindings bindings;
-        if (!options.repository_root.empty()) {
-            bindings.repository_root = std::filesystem::weakly_canonical(options.repository_root).string();
+        if (!request.repository_root.empty()) {
+            bindings.repository_root = request.repository_root;
         }
         bindings.plan_store = plan_store;
         bindings.plan_id = current_plan_id;
         if (resource_store == nullptr) {
-            selection.owned_resource_store = make_agent_resource_store({
-                options.resource_blob_backend,
-                options.resource_blob_root,
-                options.resource_metadata_backend,
-                options.resource_metadata_db,
-            }, error);
+            selection.owned_resource_store = make_agent_resource_store(
+                request.resource_store_config,
+                error);
             if (!selection.owned_resource_store) {
                 error = "resource store setup failed: " + error;
                 return false;
@@ -130,10 +145,10 @@ bool resolve_agent_cli_tool_selection(
             resource_store = selection.owned_resource_store.get();
         }
         bindings.resource_runtime.store = resource_store;
-        if (memory_enabled) {
-            bindings.memory_store = &store;
-            bindings.memory_query = query;
-            bindings.embed_memory_query = [provider = selection.embedding_provider.get()](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+        bindings.memory_store = &store;
+        bindings.memory_query = query;
+        if (embedding_provider != nullptr) {
+            bindings.embed_memory_query = [provider = embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return provider != nullptr &&
                     provider->embed("tool query", text, embedding, embedding_error);
             };
@@ -153,28 +168,23 @@ bool resolve_agent_cli_tool_selection(
     }
 
     std::unique_ptr<mcp_agent_tool_provider> mcp_provider;
-    if (!options.mcp_tool_command.empty()) {
+    if (!request.mcp_tool_command.empty()) {
         std::vector<std::string> command_line;
-        command_line.push_back(options.mcp_tool_command);
-        command_line.insert(command_line.end(), options.mcp_tool_args.begin(), options.mcp_tool_args.end());
+        command_line.push_back(request.mcp_tool_command);
+        command_line.insert(command_line.end(), request.mcp_tool_args.begin(), request.mcp_tool_args.end());
 
         selection.mcp_client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
-            options.mcp_tool_server_name,
+            request.mcp_tool_server_name,
             std::move(command_line),
             {},
         });
         mcp_provider = std::make_unique<mcp_agent_tool_provider>(
-            options.mcp_tool_server_name,
+            request.mcp_tool_server_name,
             *selection.mcp_client,
-            options.mcp_tool_prefix);
+            request.mcp_tool_prefix);
     }
 
     if (native_provider || mcp_provider) {
-        const auto repository_root = !options.repository_root.empty()
-            ? std::filesystem::weakly_canonical(options.repository_root).string()
-            : std::string();
-        const auto tool_context = make_agent_cli_tool_context(options, query, repository_root);
-
         composite_agent_tool_provider provider;
         if (native_provider) {
             provider.add_provider(*native_provider);
@@ -183,7 +193,7 @@ bool resolve_agent_cli_tool_selection(
             provider.add_provider(*mcp_provider);
         }
 
-        if (!(selection.tool_view = provider.resolve_tools(tool_context, error))) {
+        if (!(selection.tool_view = provider.resolve_tools(request.tool_context, error))) {
             error = "tool provider resolution failed: " + error;
             return false;
         }
@@ -196,6 +206,43 @@ bool resolve_agent_cli_tool_selection(
 
     error.clear();
     return true;
+}
+
+bool resolve_agent_cli_tool_selection(
+        common_memory_store & store,
+        common_plan_store * plan_store,
+        agent_resource_store * resource_store,
+        std::string * current_plan_id,
+        const args & options,
+        const common_memory_query & query,
+        bool memory_enabled,
+        common_agent_cli_tool_selection & selection,
+        std::string & error) {
+    selection = {};
+    std::unique_ptr<agent_embedding_provider> embedding_provider;
+    if (memory_enabled) {
+        embedding_provider = std::make_unique<cli_agent_embedding_provider>(options);
+    }
+
+    const auto repository_root = !options.repository_root.empty()
+        ? std::filesystem::weakly_canonical(options.repository_root).string()
+        : std::string();
+    const auto request = make_agent_cli_tool_selection_request(options, query, repository_root);
+    const bool ok = resolve_agent_host_tool_selection(
+        store,
+        plan_store,
+        resource_store,
+        current_plan_id,
+        options.tool_profile,
+        request,
+        query,
+        embedding_provider.get(),
+        selection,
+        error);
+    if (ok) {
+        selection.embedding_provider = std::move(embedding_provider);
+    }
+    return ok;
 }
 
 common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(

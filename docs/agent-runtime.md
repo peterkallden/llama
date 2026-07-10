@@ -137,6 +137,8 @@ The host inputs now carry a CLI-free runtime turn request: request payload, scop
 
 The host/runtime path now also carries one small tooling contract instead of threading separate `tools + profile_tools_active + tool_view` fields through each layer. That keeps the provider-facing shape more explicit: one host-owned tooling bundle contains the model-visible `common_chat_tool` list plus the resolved `agent_tool_view` used for execution.
 
+That provider assembly is now a little less CLI-shaped internally as well. The CLI-facing resolver still exists, but it now sits on top of a smaller host-owned tool-selection request: resolved `agent_tool_context`, repository root, resource-store config, and optional MCP stdio provider command. The foreground daemon now uses that host-owned request directly instead of first synthesizing a temporary CLI `args` object just to reach the tool provider seam.
+
 The new host-config slice is intentionally modest. It currently models:
 
 - model backend/path and optional embedding model
@@ -165,6 +167,8 @@ The foreground daemon entrypoint is now also split a little more cleanly. `agent
 The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a very small dispatcher: stdin/JSON parsing still happens on the transport thread, but command execution now runs through one worker thread and a small bounded in-process queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol, streaming events, cancellation, or multiple workers.
 
 The daemon adapter is now also slightly less CLI-shaped in its host construction path. It still uses the existing store-opening helpers, but it no longer has to synthesize a temporary full CLI `args` object just to build runtime policy, runtime config, orchestration config, or the resident session-host contract.
+
+That cleanup now extends one step further down the daemon path. The daemon runtime no longer synthesizes temporary CLI-style `args` just to open stores, build resource-store config, or resolve provider-backed tooling. Memory/plan store selection now follows the same host-owned backend/path values directly, including the old `auto` resolution rules, while tooling resolution receives a host-built tool-selection request instead of a CLI object.
 
 That service layer now understands a slightly broader host-oriented command surface:
 
@@ -270,6 +274,8 @@ There is now also a small provider/view boundary above those native pieces:
 - `agent_tool_view`: expose model-facing `common_chat_tool` values and execute one validated tool call.
 
 The first implementation started native-only, and it still uses the existing catalog, registry, and adapter bindings underneath. The chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
+
+The embedding callback that sits underneath memory-oriented native tools is also one step less CLI-bound now. There is still a CLI wrapper for convenience, but the underlying helper can now work from a host-owned model path plus `n_gpu_layers`, which lets the daemon and real MCP stdio server construct their own embedding providers without carrying full CLI option objects into that path.
 
 That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web_search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
 

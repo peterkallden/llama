@@ -204,16 +204,31 @@ bool ensure_memory_cli_embedding(
         std::vector<float> & embedding,
         const char * label,
         std::string & error) {
+    return ensure_memory_cli_embedding_from_model(
+        embedding_model_path(a),
+        a.n_gpu_layers,
+        text,
+        embedding,
+        label,
+        error);
+}
+
+bool ensure_memory_cli_embedding_from_model(
+        const std::string & model_path,
+        int n_gpu_layers,
+        const std::string & text,
+        std::vector<float> & embedding,
+        const char * label,
+        std::string & error) {
     if (!embedding.empty()) {
         return true;
     }
 
-    const std::string model_path = embedding_model_path(a);
     if (model_path.empty()) {
         return true;
     }
 
-    if (!compute_text_embedding(model_path, text, a.n_gpu_layers, embedding, error)) {
+    if (!compute_text_embedding(model_path, text, n_gpu_layers, embedding, error)) {
         return false;
     }
 

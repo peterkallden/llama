@@ -19,6 +19,28 @@ struct common_agent_cli_tool_selection {
     std::unique_ptr<agent_resource_store> owned_resource_store;
 };
 
+struct agent_host_tool_selection_request {
+    agent_tool_context tool_context;
+    std::string repository_root;
+    agent_resource_store_config resource_store_config;
+    std::string mcp_tool_command;
+    std::vector<std::string> mcp_tool_args;
+    std::string mcp_tool_server_name = "mcp";
+    std::string mcp_tool_prefix;
+};
+
+bool resolve_agent_host_tool_selection(
+    common_memory_store & store,
+    common_plan_store * plan_store,
+    agent_resource_store * resource_store,
+    std::string * current_plan_id,
+    const std::string & tool_profile,
+    const agent_host_tool_selection_request & request,
+    const common_memory_query & query,
+    agent_embedding_provider * embedding_provider,
+    common_agent_cli_tool_selection & selection,
+    std::string & error);
+
 common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
     common_memory_store & store,
     const args & options,
