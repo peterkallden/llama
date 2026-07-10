@@ -327,6 +327,15 @@ json trim_search_results_for_inline(
     return trimmed;
 }
 
+std::string bounded_text_preview(
+        const std::string & text,
+        size_t max_chars) {
+    if (text.size() <= max_chars) {
+        return text;
+    }
+    return text.substr(0, max_chars);
+}
+
 std::string url_encode(const std::string & value) {
     std::ostringstream out;
     out << std::hex << std::uppercase;
@@ -818,7 +827,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             if (bindings.web_fetch) {
                 installed = register_definition(definition, registry, bindings.web_fetch, error);
             } else {
-                installed = register_definition(definition, registry, [](const std::string & input) {
+                installed = register_definition(definition, registry, [bindings](const std::string & input) {
                     std::string err;
                     json arguments;
                     if (!parse_object(input, arguments, err) || !arguments.contains("url") || !arguments["url"].is_string()) {
@@ -835,7 +844,68 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     if (!http_fetch_text(url, (size_t) max_bytes, fetched, err)) {
                         return tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
                     }
-                    return tool_success_text(fetched.dump());
+
+                    const std::string full_payload = fetched.dump();
+                    const std::string title = trim_copy(fetched.value("title", std::string{}));
+                    const std::string text = fetched.value("text", std::string{});
+                    const bool truncated = fetched.value("truncated", false);
+                    const bool should_externalize =
+                        bindings.resource_runtime.store != nullptr &&
+                        (full_payload.size() > 4096 || text.size() > 2048 || truncated);
+                    if (!should_externalize) {
+                        return common_tool_execution_result::success(
+                            std::move(fetched).dump(),
+                            title.empty()
+                                ? "Fetched bounded page text from " + url + "."
+                                : "Fetched bounded page text for \"" + title + "\".");
+                    }
+
+                    std::vector<std::string> keywords;
+                    keywords.push_back(url);
+                    if (!title.empty()) {
+                        keywords.push_back(title);
+                    }
+
+                    common_runtime_resource_ref resource_ref;
+                    if (!persist_tool_resource(
+                            bindings,
+                            "web-fetch-result.json",
+                            "Full bounded web fetch payload for the current turn.",
+                            "application/json",
+                            full_payload,
+                            "web_fetch",
+                            make_tool_resource_metadata(
+                                "Preserve the full bounded web fetch result outside the inline model context.",
+                                title.empty()
+                                    ? "Fetched bounded page text from " + url + "."
+                                    : "Fetched bounded page text for \"" + title + "\".",
+                                "Use this resource when a later step needs the full fetched text or metadata rather than the inline excerpt.",
+                                truncated
+                                    ? "The fetched body was truncated by the configured byte limit and the text field contains extracted text only."
+                                    : "The text field contains extracted text only; raw HTML is not preserved in this native payload.",
+                                std::move(keywords)),
+                            resource_ref,
+                            err)) {
+                        return tool_execution_failure("tool.web_fetch.resource_store_failed", std::move(err), "Web fetch result could not be materialized as a host resource.");
+                    }
+
+                    json payload = {
+                        {"url", fetched.value("url", url)},
+                        {"final_url", fetched.value("final_url", url)},
+                        {"status", fetched.value("status", 0)},
+                        {"content_type", fetched.value("content_type", std::string{})},
+                        {"title", fetched.value("title", std::string{})},
+                        {"text_excerpt", bounded_text_preview(text, 1024)},
+                        {"text_length", text.size()},
+                        {"truncated", truncated},
+                    };
+
+                    return common_tool_execution_result::success(
+                        std::move(payload).dump(),
+                        title.empty()
+                            ? "Fetched bounded page text from " + url + "; the full payload was stored as a turn resource."
+                            : "Fetched bounded page text for \"" + title + "\"; the full payload was stored as a turn resource.",
+                        {std::move(resource_ref)});
                 }, error);
             }
         } else if (definition.executor_id == "builtin.memory_search" && bindings.memory_store) {

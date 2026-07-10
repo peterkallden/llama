@@ -127,6 +127,42 @@ int main() {
                     "Web search returned one stub candidate; the full result set was stored as a turn resource.",
                     {resource});
             };
+            bindings.web_fetch = [runtime](const std::string &) {
+                agent_resource_put_request request;
+                request.name = "web-fetch-result.json";
+                request.description = "Full bounded web fetch payload for the current turn.";
+                request.mime_type = "application/json";
+                request.text = R"({"url":"https://example.com/stub","final_url":"https://example.com/stub","status":200,"content_type":"text/html","title":"Stub Fetch Title","text":"Stub fetch body text that is intentionally long enough to live in the stored resource payload rather than only inline.","truncated":false})";
+                request.scope = common_runtime_resource_scope::turn;
+                request.source_provider = "native";
+                request.source_tool = "web_fetch";
+                request.metadata = {
+                    "Preserve the full bounded web fetch result outside the inline model context.",
+                    "Fetched bounded page text for \"Stub Fetch Title\".",
+                    "Use this resource when a later step needs the full fetched text or metadata rather than the inline excerpt.",
+                    "Provider smoke uses stubbed fetched text.",
+                    {"https://example.com/stub", "Stub Fetch Title"},
+                    {},
+                };
+                apply_agent_resource_runtime(runtime, request);
+
+                agent_resource_descriptor descriptor;
+                std::string error;
+                if (!runtime.store->put_text(request, descriptor, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.web_fetch.resource_store_failed",
+                        common_tool_failure_class::execution,
+                        false,
+                        "Provider smoke failed to write a fetched resource.",
+                        error);
+                }
+
+                common_runtime_resource_ref resource = descriptor;
+                return common_tool_execution_result::success(
+                    R"({"url":"https://example.com/stub","final_url":"https://example.com/stub","status":200,"content_type":"text/html","title":"Stub Fetch Title","text_excerpt":"Stub fetch body text that is intentionally long enough to live in the stored resource payload rather than only inline.","text_length":112,"truncated":false})",
+                    "Fetched bounded page text for \"Stub Fetch Title\"; the full payload was stored as a turn resource.",
+                    {resource});
+            };
             return true;
         });
 
@@ -172,6 +208,29 @@ int main() {
         return 1;
     }
 
+    const auto fetch_result = research_view->call({
+        "call-2d",
+        "web_fetch",
+        R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+    }, error);
+    if (!fetch_result.ok) {
+        std::fprintf(stderr, "web_fetch call failed: %s\n", fetch_result.content_json.c_str());
+        return 1;
+    }
+    if (fetch_result.resource_refs.empty()) {
+        std::fprintf(stderr, "web_fetch did not materialize a resource reference for the full fetch payload\n");
+        return 1;
+    }
+    if (fetch_result.resource_refs[0].metadata.content_summary.find("Stub Fetch Title") == std::string::npos) {
+        std::fprintf(stderr, "web_fetch resource metadata content summary was unexpected\n");
+        return 1;
+    }
+    if (fetch_result.content_json.find("\"text_excerpt\"") == std::string::npos ||
+            fetch_result.content_json.find("\"resources\"") == std::string::npos) {
+        std::fprintf(stderr, "web_fetch result payload did not include the expected inline excerpt and resources: %s\n", fetch_result.content_json.c_str());
+        return 1;
+    }
+
     const auto resource_read_result = research_view->call({
         "call-2c",
         "resource_read",
@@ -179,6 +238,16 @@ int main() {
     }, error);
     if (!resource_read_result.ok || resource_read_result.content_json.find("stub issue") == std::string::npos) {
         std::fprintf(stderr, "resource_read did not return the expected stored payload: %s\n", resource_read_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto fetch_resource_read_result = research_view->call({
+        "call-2e",
+        "resource_read",
+        std::string(R"({"uri":")") + fetch_result.resource_refs[0].uri + R"(","max_bytes":4096})",
+    }, error);
+    if (!fetch_resource_read_result.ok || fetch_resource_read_result.content_json.find("Stub fetch body text") == std::string::npos) {
+        std::fprintf(stderr, "resource_read did not return the expected stored fetch payload: %s\n", fetch_resource_read_result.content_json.c_str());
         return 1;
     }
 
@@ -230,6 +299,7 @@ int main() {
     std::printf("calculator_result=%s\n", first_result.content_json.c_str());
     std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web_search") ? "yes" : "no");
     std::printf("web_search_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
+    std::printf("web_fetch_resource_uri=%s\n", fetch_result.resource_refs.empty() ? "" : fetch_result.resource_refs[0].uri.c_str());
     std::printf("memory_remember_result=%s\n", memory_result.content_json.c_str());
     return 0;
 }
