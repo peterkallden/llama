@@ -254,17 +254,26 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-stdio-server)
 add_executable(${TARGET}
     agent-mcp-stdio-server-main.cpp
+    ${AGENT_RUNTIME_SOURCES}
     agent-mcp-server-protocol.cpp
     agent-mcp-server-tool-registry.cpp
     agent-mcp-stdio-server.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_link_libraries(${TARGET} PRIVATE
+    llama-memory
     llama-common
+    llama
+    llama-agent-poc
+    server-context
+    ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-dispatcher-smoke)
 add_executable(${TARGET}

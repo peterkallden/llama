@@ -1,12 +1,23 @@
 #include "agent-mcp-stdio-server.h"
 
-#include <chrono>
-#include <cctype>
-#include <cmath>
+#include "../memory/memory-cli-memory.h"
+
+#include "agent-cli-selection.h"
+#include "agent-resource-store.h"
+#include "agent-tool-provider.h"
+#include "common/cli-config.h"
+#include "common/cli-scope.h"
+#include "plan/plan-in-memory.h"
+#ifdef LLAMA_PLAN_USE_COZO
+#include "plan/cozo/plan-cozo.h"
+#endif
+
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <iomanip>
-#include <sstream>
+#include <filesystem>
+#include <map>
+#include <memory>
 #include <string>
 
 #ifdef _WIN32
@@ -16,218 +27,383 @@
 
 namespace {
 
-class calculator_parser {
-public:
-    explicit calculator_parser(const std::string & text) : text_(text) {}
+const char * plan_scope_name(common_plan_scope scope) {
+    switch (scope) {
+        case common_plan_scope::turn: return "turn";
+        case common_plan_scope::session: return "session";
+        case common_plan_scope::project: return "project";
+        case common_plan_scope::global: return "global";
+    }
+    return "turn";
+}
 
-    bool parse(double & value, std::string & error) {
-        value = expression(error);
-        skip_space();
-        if (!error.empty()) return false;
-        if (pos_ != text_.size() || !std::isfinite(value)) {
-            error = "invalid bounded arithmetic expression";
-            return false;
-        }
-        return true;
+class server_agent_embedding_provider final : public agent_embedding_provider {
+public:
+    explicit server_agent_embedding_provider(const args & options)
+        : options_(options) {}
+
+    bool embed(
+            const std::string & purpose,
+            const std::string & text,
+            std::vector<float> & embedding,
+            std::string & error) override {
+        return ensure_memory_cli_embedding(
+            options_,
+            text,
+            embedding,
+            purpose.c_str(),
+            error);
     }
 
 private:
-    double expression(std::string & error) {
-        double value = term(error);
-        while (error.empty()) {
-            skip_space();
-            if (take('+')) value += term(error);
-            else if (take('-')) value -= term(error);
-            else break;
-        }
-        return value;
-    }
+    const args & options_;
+};
 
-    double term(std::string & error) {
-        double value = factor(error);
-        while (error.empty()) {
-            skip_space();
-            if (take('*')) value *= factor(error);
-            else if (take('/')) {
-                const double divisor = factor(error);
-                if (error.empty() && divisor == 0.0) error = "division by zero";
-                else value /= divisor;
-            } else break;
-        }
-        return value;
+std::string summarize_tool_result(
+        const agent_tool_result & result,
+        const agent_mcp_json & structured_content) {
+    if (result.ok && !result.content_summary.empty()) {
+        return result.content_summary;
     }
-
-    double factor(std::string & error) {
-        skip_space();
-        if (take('+')) return factor(error);
-        if (take('-')) return -factor(error);
-        if (take('(')) {
-            const double value = expression(error);
-            skip_space();
-            if (error.empty() && !take(')')) error = "missing closing parenthesis";
-            return value;
+    if (!result.ok && !result.safe_summary.empty()) {
+        return result.safe_summary;
+    }
+    if (structured_content.is_object()) {
+        const std::string summary = structured_content.value("summary", std::string());
+        if (!summary.empty()) {
+            return summary;
         }
-        const size_t begin = pos_;
-        bool digit = false;
-        while (pos_ < text_.size() && (std::isdigit((unsigned char) text_[pos_]) || text_[pos_] == '.')) {
-            digit = digit || std::isdigit((unsigned char) text_[pos_]);
-            ++pos_;
-        }
-        if (!digit || pos_ - begin > 64) {
-            error = "expected a number";
-            return 0.0;
-        }
-        try {
-            return std::stod(text_.substr(begin, pos_ - begin));
-        } catch (...) {
-            error = "invalid number";
-            return 0.0;
+        const std::string result_text = structured_content.value("result_text", std::string());
+        if (!result_text.empty()) {
+            return result_text;
         }
     }
+    return {};
+}
 
-    void skip_space() {
-        while (pos_ < text_.size() && std::isspace((unsigned char) text_[pos_])) ++pos_;
+void append_resource_links(
+        const std::vector<common_runtime_resource_ref> & resources,
+        agent_mcp_server_tool_result & result) {
+    if (!result.content.is_array()) {
+        result.content = agent_mcp_json::array();
     }
 
-    bool take(char c) {
-        if (pos_ < text_.size() && text_[pos_] == c) {
-            ++pos_;
-            return true;
+    for (const auto & resource : resources) {
+        agent_mcp_json entry = {
+            {"type", "resource_link"},
+            {"uri", resource.uri},
+        };
+        if (!resource.name.empty()) {
+            entry["name"] = resource.name;
         }
+        if (!resource.description.empty()) {
+            entry["description"] = resource.description;
+        }
+        if (!resource.mime_type.empty()) {
+            entry["mimeType"] = resource.mime_type;
+        }
+        if (resource.size_bytes > 0) {
+            entry["sizeBytes"] = resource.size_bytes;
+        }
+
+        agent_mcp_json metadata = agent_mcp_json::object();
+        if (!resource.metadata.purpose.empty()) {
+            metadata["purpose"] = resource.metadata.purpose;
+        }
+        if (!resource.metadata.content_summary.empty()) {
+            metadata["content_summary"] = resource.metadata.content_summary;
+        }
+        if (!resource.metadata.usage_hint.empty()) {
+            metadata["usage_hint"] = resource.metadata.usage_hint;
+        }
+        if (!resource.metadata.limitations.empty()) {
+            metadata["limitations"] = resource.metadata.limitations;
+        }
+        if (!resource.metadata.keywords.empty()) {
+            metadata["keywords"] = resource.metadata.keywords;
+        }
+        if (!resource.metadata.entities.empty()) {
+            metadata["entities"] = resource.metadata.entities;
+        }
+        if (!metadata.empty()) {
+            entry["metadata"] = std::move(metadata);
+        }
+
+        result.content.push_back(std::move(entry));
+    }
+}
+
+agent_mcp_server_tool_result render_mcp_result(
+        const agent_tool_result & tool_result) {
+    agent_mcp_server_tool_result result;
+    result.ok = tool_result.ok;
+    result.failure_code = tool_result.failure_code;
+    result.failure_class = common_tool_failure_class_name(tool_result.failure_class);
+    result.retryable = tool_result.retryable;
+    result.safe_summary = tool_result.safe_summary;
+    result.raw_diagnostic = tool_result.raw_diagnostic;
+
+    const auto structured = agent_mcp_json::parse(tool_result.content_json, nullptr, false);
+    if (!structured.is_discarded()) {
+        result.structured_content = structured;
+    }
+
+    const std::string text = summarize_tool_result(tool_result, result.structured_content);
+    if (!text.empty()) {
+        result.content = agent_mcp_json::array({
+            {
+                {"type", "text"},
+                {"text", text},
+            },
+        });
+    } else {
+        result.content = agent_mcp_json::array();
+    }
+
+    append_resource_links(tool_result.resource_refs, result);
+    return result;
+}
+
+bool parse_server_args(
+        int argc,
+        char ** argv,
+        args & options,
+        std::string & error) {
+    options.command = "agent-mcp-stdio-server";
+    options.backend = "auto";
+    options.plan_backend = "auto";
+    options.resource_blob_backend = "auto";
+    options.resource_metadata_backend = "auto";
+    options.memory_scope = "session";
+    options.memory_namespace = "local";
+    options.memory_session = "default";
+    options.tool_profile = "minimal";
+    options.max_tool_rounds = 8;
+    options.memory_token_budget = 768;
+
+    auto need_value = [&](const char * flag, int & index) -> const char * {
+        if (index + 1 >= argc) {
+            error = std::string(flag) + " requires a value";
+            return nullptr;
+        }
+        return argv[++index];
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--tool-profile") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.tool_profile = value;
+        } else if (std::strcmp(argv[i], "--repository-root") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.repository_root = value;
+        } else if (std::strcmp(argv[i], "--backend") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.backend = value;
+        } else if (std::strcmp(argv[i], "--memory-db") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_db = value;
+        } else if (std::strcmp(argv[i], "--plan-backend") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.plan_backend = value;
+        } else if (std::strcmp(argv[i], "--plan-db") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.plan_db = value;
+        } else if (std::strcmp(argv[i], "--plan-id") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.plan_id = value;
+        } else if (std::strcmp(argv[i], "--memory-scope") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_scope = value;
+        } else if (std::strcmp(argv[i], "--memory-namespace") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_namespace = value;
+        } else if (std::strcmp(argv[i], "--memory-session") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_session = value;
+        } else if (std::strcmp(argv[i], "--memory-project") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_project = value;
+        } else if (std::strcmp(argv[i], "--memory-turn") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.memory_turn = value;
+        } else if (std::strcmp(argv[i], "--memory-global-opt-in") == 0) {
+            options.memory_global_opt_in = true;
+        } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.embedding_model = value;
+        } else if (std::strcmp(argv[i], "--model") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.model = value;
+        } else if (std::strcmp(argv[i], "--n-gpu-layers") == 0 || std::strcmp(argv[i], "-ngl") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.n_gpu_layers = std::atoi(value);
+        } else if (std::strcmp(argv[i], "--resource-blob-backend") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.resource_blob_backend = value;
+        } else if (std::strcmp(argv[i], "--resource-blob-root") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.resource_blob_root = value;
+        } else if (std::strcmp(argv[i], "--resource-metadata-backend") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.resource_metadata_backend = value;
+        } else if (std::strcmp(argv[i], "--resource-metadata-db") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.resource_metadata_db = value;
+        } else if (std::strcmp(argv[i], "--max-tool-rounds") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; options.max_tool_rounds = static_cast<size_t>(std::max(1, std::atoi(value)));
+        } else {
+            error = "unknown argument: " + std::string(argv[i]);
+            return false;
+        }
+    }
+
+    common_memory_scope memory_scope;
+    if (!common_memory_scope_parse(options.memory_scope, memory_scope)) {
+        error = "unsupported --memory-scope: " + options.memory_scope;
         return false;
     }
 
-    const std::string & text_;
-    size_t pos_ = 0;
-};
+    common_plan_scope plan_scope = common_cli_matching_plan_scope(memory_scope);
+    options.plan_scope = plan_scope_name(plan_scope);
 
-std::string utc_now() {
-    const auto now = std::chrono::system_clock::now();
-    const auto time = std::chrono::system_clock::to_time_t(now);
-    std::tm utc{};
-#ifdef _WIN32
-    gmtime_s(&utc, &time);
-#else
-    gmtime_r(&time, &utc);
-#endif
-    std::ostringstream out;
-    out << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
-    return out.str();
-}
+    if (memory_scope == common_memory_scope::turn && options.memory_turn.empty()) {
+        options.memory_turn = "mcp-turn";
+    }
+    if (memory_scope == common_memory_scope::project && options.memory_project.empty()) {
+        error = "--memory-project is required for project-scoped MCP tool export";
+        return false;
+    }
+    if (memory_scope == common_memory_scope::global && !options.memory_global_opt_in) {
+        error = "--memory-global-opt-in is required for global-scoped MCP tool export";
+        return false;
+    }
 
-bool add_text_content(
-        agent_mcp_server_tool_result & result,
-        std::string text) {
-    result.content = agent_mcp_json::array({
-        {
-            {"type", "text"},
-            {"text", std::move(text)},
-        },
-    });
+    if (options.tool_profile.empty()) {
+        error = "--tool-profile must not be empty";
+        return false;
+    }
+
+    error.clear();
     return true;
 }
 
-bool register_builtin_tools(
+bool open_server_stores(
+        const args & options,
+        std::unique_ptr<common_memory_store> & memory_store,
+        std::unique_ptr<common_plan_store> & plan_store,
+        std::unique_ptr<agent_resource_store> & resource_store,
+        std::string & error) {
+    memory_store = make_memory_store(options, error);
+    if (!memory_store || !open_memory_store(*memory_store, options, error)) {
+        return false;
+    }
+
+    if (options.plan_backend == "cozo") {
+#ifdef LLAMA_PLAN_USE_COZO
+        plan_store = std::make_unique<common_plan_cozo_store>();
+#else
+        error = "plan backend 'cozo' requires a Cozo-enabled build";
+        return false;
+#endif
+    } else {
+        plan_store = std::make_unique<common_plan_in_memory_store>();
+    }
+    if (!plan_store->open(options.plan_db, error)) {
+        return false;
+    }
+
+    resource_store = make_agent_resource_store({
+        options.resource_blob_backend,
+        options.resource_blob_root,
+        options.resource_metadata_backend,
+        options.resource_metadata_db,
+    }, error);
+    if (!resource_store) {
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+common_memory_query make_memory_query(const args & options) {
+    common_memory_query query;
+    query.limit = options.limit;
+    query.token_budget = options.memory_token_budget;
+    apply_memory_scope(options, query);
+    return query;
+}
+
+agent_tool_context make_tool_context(
+        const args & options,
+        const std::string & repository_root) {
+    agent_tool_context context;
+    context.request_id = "mcp-stdio-server";
+    context.turn_id = options.memory_turn.empty() ? "mcp-turn" : options.memory_turn;
+    context.profile_id = options.tool_profile;
+    context.repository_root = repository_root;
+    context.memory_scope = common_cli_memory_scope(options);
+    parse_plan_scope(options.plan_scope, context.plan_scope);
+    context.scope.namespace_id = options.memory_namespace;
+    context.scope.session_id = options.memory_session;
+    context.scope.project_id = options.memory_project;
+    context.scope.turn_id = context.turn_id;
+    context.scope.memory_scope = context.memory_scope;
+    context.scope.plan_scope = context.plan_scope;
+    context.scope.memory_global_opt_in = options.memory_global_opt_in;
+    context.allow_network = options.tool_profile == "research";
+    context.allow_policy_gated_writes =
+        options.tool_profile == "memory" || options.tool_profile == "research";
+    context.allow_memory_proposals = context.allow_policy_gated_writes;
+    context.allow_plan_proposals = context.allow_policy_gated_writes;
+    context.max_calls = std::max<size_t>(options.max_tool_rounds, 1);
+    return context;
+}
+
+bool register_native_profile_tools(
+        const common_tool_catalog & catalog,
+        const std::string & profile_id,
+        const agent_tool_context & context,
+        native_agent_tool_provider & provider,
         agent_mcp_server_tool_registry & registry,
         std::string & error) {
-    if (!registry.register_tool({
-            "echo",
-            "Echo bounded input text.",
-            R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","minLength":1,"maxLength":1024}}})",
-            true,
-            false,
-            false,
-            false,
-            false,
-            [](const agent_mcp_json & arguments, agent_mcp_server_tool_result & result, std::string & call_error) {
-                if (!arguments.contains("text") || !arguments["text"].is_string()) {
-                    call_error = "echo requires a bounded text string";
-                    return false;
-                }
-                const auto text = arguments["text"].get<std::string>();
-                if (text.empty() || text.size() > 1024) {
-                    call_error = "echo text is out of bounds";
-                    return false;
-                }
-                result.ok = true;
-                result.structured_content = {
-                    {"ok", true},
-                    {"result", {
-                        {"text", text},
-                    }},
-                };
-                result.safe_summary = "Echoed bounded input text.";
-                return add_text_content(result, text);
-            },
-        }, error)) {
+    std::unique_ptr<agent_tool_view> initial_view = provider.resolve_tools(context, error);
+    if (!initial_view) {
+        error = "failed to resolve native tool view: " + error;
         return false;
     }
 
-    if (!registry.register_tool({
-            "time_now",
-            "Return the current UTC time.",
-            R"({"type":"object","additionalProperties":false})",
-            true,
-            false,
-            false,
-            false,
-            false,
-            [](const agent_mcp_json & arguments, agent_mcp_server_tool_result & result, std::string & call_error) {
-                if (!arguments.empty()) {
-                    call_error = "time_now does not take arguments";
-                    return false;
-                }
-                const auto now = utc_now();
-                result.ok = true;
-                result.structured_content = {
-                    {"ok", true},
-                    {"result", {
-                        {"utc", now},
-                    }},
-                };
-                result.safe_summary = "Returned the current UTC time.";
-                return add_text_content(result, now);
-            },
-        }, error)) {
+    const std::vector<common_tool_definition> definitions = catalog.load_profile(profile_id, error);
+    if (!error.empty()) {
         return false;
     }
 
-    if (!registry.register_tool({
-            "calculator",
-            "Evaluate a bounded arithmetic expression.",
-            R"({"type":"object","additionalProperties":false,"required":["expression"],"properties":{"expression":{"type":"string","minLength":1,"maxLength":128}}})",
-            true,
-            false,
-            false,
-            false,
-            false,
-            [](const agent_mcp_json & arguments, agent_mcp_server_tool_result & result, std::string & call_error) {
-                if (!arguments.contains("expression") || !arguments["expression"].is_string()) {
-                    call_error = "calculator requires a bounded expression string";
-                    return false;
-                }
-                const auto expression = arguments["expression"].get<std::string>();
-                if (expression.empty() || expression.size() > 128) {
-                    call_error = "calculator expression is out of bounds";
-                    return false;
-                }
-                double value = 0.0;
-                calculator_parser parser(expression);
-                if (!parser.parse(value, call_error)) {
-                    return false;
-                }
-                result.ok = true;
-                result.structured_content = {
-                    {"ok", true},
-                    {"result", {
-                        {"value", value},
-                    }},
-                };
-                result.safe_summary = "Evaluated a bounded arithmetic expression.";
-                return add_text_content(result, std::to_string(value));
-            },
-        }, error)) {
-        return false;
+    std::map<std::string, common_tool_definition> definitions_by_name;
+    for (const auto & definition : definitions) {
+        definitions_by_name.emplace(definition.name, definition);
+    }
+
+    for (const auto & tool : initial_view->chat_tools()) {
+        const auto definition_it = definitions_by_name.find(tool.name);
+        if (definition_it == definitions_by_name.end()) {
+            error = "resolved tool is missing catalog metadata: " + tool.name;
+            return false;
+        }
+
+        const common_tool_definition definition = definition_it->second;
+        if (!registry.register_tool({
+                tool.name,
+                tool.description.empty() ? definition.description : tool.description,
+                tool.parameters.empty() ? definition.input_schema_json : tool.parameters,
+                initial_view->is_read_only(tool.name),
+                definition.requires_confirmation,
+                definition.risk_class == common_tool_risk_class::network_read,
+                definition.risk_class == common_tool_risk_class::memory_proposal,
+                definition.risk_class == common_tool_risk_class::plan_proposal,
+                [&provider, context, tool_name = tool.name](
+                        const agent_mcp_json & arguments,
+                        agent_mcp_server_tool_result & result,
+                        std::string & call_error) {
+                    std::string error;
+                    std::unique_ptr<agent_tool_view> view = provider.resolve_tools(context, error);
+                    if (!view) {
+                        call_error = "failed to resolve native MCP tool view: " + error;
+                        return false;
+                    }
+
+                    const agent_tool_result tool_result = view->call({
+                        "mcp-stdio-server:" + tool_name,
+                        tool_name,
+                        arguments.dump(),
+                    }, error);
+                    result = render_mcp_result(tool_result);
+                    call_error = tool_result.ok ? std::string() : error;
+                    return true;
+                },
+            }, error)) {
+            return false;
+        }
     }
 
     error.clear();
@@ -236,16 +412,90 @@ bool register_builtin_tools(
 
 } // namespace
 
-int main() {
+int main(int argc, char ** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
+    args options;
     std::string error;
+    if (!parse_server_args(argc, argv, options, error)) {
+        std::fprintf(stderr, "failed to parse MCP stdio server args: %s\n", error.c_str());
+        return 1;
+    }
+
+    std::string repository_root;
+    if (!options.repository_root.empty()) {
+        repository_root = std::filesystem::weakly_canonical(options.repository_root).string();
+    }
+
+    std::unique_ptr<common_memory_store> memory_store;
+    std::unique_ptr<common_plan_store> plan_store;
+    std::unique_ptr<agent_resource_store> resource_store;
+    if (!open_server_stores(options, memory_store, plan_store, resource_store, error)) {
+        std::fprintf(stderr, "failed to open MCP stdio server stores: %s\n", error.c_str());
+        return 1;
+    }
+
+    std::unique_ptr<agent_embedding_provider> embedding_provider;
+    if (!options.embedding_model.empty() || !options.model.empty()) {
+        embedding_provider = std::make_unique<server_agent_embedding_provider>(options);
+    }
+
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    if (!catalog.bootstrap(options.tool_profile, bootstrap, error)) {
+        std::fprintf(stderr, "failed to bootstrap MCP stdio server tool profile: %s\n", error.c_str());
+        return 1;
+    }
+
+    std::string current_plan_id = options.plan_id;
+    const common_memory_query memory_query = make_memory_query(options);
+    const agent_tool_context tool_context = make_tool_context(options, repository_root);
+
+    native_agent_tool_provider provider(
+        catalog,
+        [&options, &memory_store, &plan_store, &resource_store, &embedding_provider, &memory_query, &current_plan_id, repository_root](
+                const agent_tool_context & context,
+                common_native_tool_bindings & bindings,
+                std::string & binding_error) {
+            bindings.memory_store = memory_store.get();
+            bindings.plan_store = plan_store.get();
+            bindings.plan_id = current_plan_id.empty() ? nullptr : &current_plan_id;
+            bindings.memory_query = memory_query;
+            bindings.repository_root = repository_root;
+            bindings.resource_runtime.store = resource_store.get();
+            bindings.resource_runtime.namespace_id = context.scope.namespace_id;
+            bindings.resource_runtime.session_id = context.scope.session_id;
+            bindings.resource_runtime.project_id = context.scope.project_id;
+            bindings.resource_runtime.turn_id = context.scope.turn_id;
+            if (embedding_provider != nullptr) {
+                bindings.embed_memory_query = [provider = embedding_provider.get()](const std::string & text, std::vector<float> & embedding, std::string & error) {
+                    return provider != nullptr &&
+                        provider->embed("tool query", text, embedding, error);
+                };
+            }
+            if (options.memory_db.empty()) {
+                bindings.memory_store = nullptr;
+            }
+            if (options.plan_db.empty()) {
+                bindings.plan_store = nullptr;
+                bindings.plan_id = nullptr;
+            }
+            binding_error.clear();
+            return true;
+        });
+
     agent_mcp_server_tool_registry registry;
-    if (!register_builtin_tools(registry, error)) {
-        std::fprintf(stderr, "failed to register MCP stdio server tools: %s\n", error.c_str());
+    if (!register_native_profile_tools(
+            catalog,
+            options.tool_profile,
+            tool_context,
+            provider,
+            registry,
+            error)) {
+        std::fprintf(stderr, "failed to register MCP stdio native tools: %s\n", error.c_str());
         return 1;
     }
 
@@ -253,7 +503,7 @@ int main() {
         std::move(registry),
         {
             "llama-agent-mcp-stdio-server",
-            "0.1",
+            "0.2",
             "2024-11-05",
             false,
             false,

@@ -269,7 +269,7 @@ That seam now has two concrete test paths:
 
 The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list` and `tools/call`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
 
-On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and there is also a first real PoC MCP stdio server binary with simple read-only tools. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
+On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a selected native tool profile through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
 Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
 
@@ -436,7 +436,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
-- `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary with simple built-in tools
+- `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting selected native tool profiles such as `minimal` and `research`
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - ordinary chat smoke with local Qwen plus Nomic embedding
