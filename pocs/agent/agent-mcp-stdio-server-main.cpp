@@ -3,6 +3,7 @@
 #include "../memory/memory-cli-memory.h"
 
 #include "agent-host-config.h"
+#include "agent-cli-host-adapter.h"
 #include "agent-cli-selection.h"
 #include "agent-resource-store.h"
 #include "agent-tool-provider.h"
@@ -438,16 +439,80 @@ agent_tool_context make_tool_context(
     return context;
 }
 
+agent_host_tool_selection_request make_server_tool_selection_request(
+        const args & options,
+        const std::string & repository_root) {
+    agent_host_tool_selection_request request;
+    request.tool_context = make_tool_context(options, repository_root);
+    request.repository_root = repository_root;
+    request.resource_store_config = {
+        options.resource_blob_backend,
+        options.resource_blob_root,
+        options.resource_metadata_backend,
+        options.resource_metadata_db,
+    };
+    return request;
+}
+
+bool apply_server_tool_exposure_policy(
+        const common_tool_catalog & catalog,
+        const std::string & profile_id,
+        const args & options,
+        agent_host_tool_selection_request & request,
+        std::string & error) {
+    const std::vector<common_tool_definition> definitions = catalog.load_profile(profile_id, error);
+    if (!error.empty()) {
+        return false;
+    }
+
+    request.tool_context.allowed_exposed_tool_names.clear();
+    for (const auto & definition : definitions) {
+        if (options.memory_db.empty() && definition.name.rfind("memory_", 0) == 0) {
+            continue;
+        }
+        if (options.plan_db.empty() && definition.name.rfind("plan_", 0) == 0) {
+            continue;
+        }
+        request.tool_context.allowed_exposed_tool_names.push_back(definition.name);
+    }
+
+    error.clear();
+    return true;
+}
+
+bool resolve_server_tool_selection(
+        common_memory_store & memory_store,
+        common_plan_store & plan_store,
+        agent_resource_store & resource_store,
+        std::string * current_plan_id,
+        const std::string & tool_profile,
+        const agent_host_tool_selection_request & request,
+        const common_memory_query & query,
+        agent_embedding_provider * embedding_provider,
+        common_agent_cli_tool_selection & selection,
+        std::string & error) {
+    return resolve_agent_host_tool_selection(
+        memory_store,
+        &plan_store,
+        &resource_store,
+        current_plan_id,
+        tool_profile,
+        request,
+        query,
+        embedding_provider,
+        selection,
+        error);
+}
+
 bool register_native_profile_tools(
         const common_tool_catalog & catalog,
         const std::string & profile_id,
-        const agent_tool_context & context,
-        native_agent_tool_provider & provider,
+        const common_agent_cli_tool_selection & initial_selection,
+        const std::function<bool(common_agent_cli_tool_selection &, std::string &)> & resolve_selection,
         agent_mcp_server_tool_registry & registry,
         std::string & error) {
-    std::unique_ptr<agent_tool_view> initial_view = provider.resolve_tools(context, error);
-    if (!initial_view) {
-        error = "failed to resolve native tool view: " + error;
+    if (initial_selection.tool_view == nullptr) {
+        error = "failed to resolve native tool view";
         return false;
     }
 
@@ -461,7 +526,7 @@ bool register_native_profile_tools(
         definitions_by_name.emplace(definition.name, definition);
     }
 
-    for (const auto & tool : initial_view->chat_tools()) {
+    for (const auto & tool : initial_selection.tooling.tools) {
         const auto definition_it = definitions_by_name.find(tool.name);
         if (definition_it == definitions_by_name.end()) {
             error = "resolved tool is missing catalog metadata: " + tool.name;
@@ -473,23 +538,23 @@ bool register_native_profile_tools(
                 tool.name,
                 tool.description.empty() ? definition.description : tool.description,
                 tool.parameters.empty() ? definition.input_schema_json : tool.parameters,
-                initial_view->is_read_only(tool.name),
+                initial_selection.tool_view->is_read_only(tool.name),
                 definition.requires_confirmation,
                 definition.risk_class == common_tool_risk_class::network_read,
                 definition.risk_class == common_tool_risk_class::memory_proposal,
                 definition.risk_class == common_tool_risk_class::plan_proposal,
-                [&provider, context, tool_name = tool.name](
+                [resolve_selection, tool_name = tool.name](
                         const agent_mcp_json & arguments,
                         agent_mcp_server_tool_result & result,
                         std::string & call_error) {
                     std::string error;
-                    std::unique_ptr<agent_tool_view> view = provider.resolve_tools(context, error);
-                    if (!view) {
+                    common_agent_cli_tool_selection selection;
+                    if (!resolve_selection(selection, error) || selection.tool_view == nullptr) {
                         call_error = "failed to resolve native MCP tool view: " + error;
                         return false;
                     }
 
-                    const agent_tool_result tool_result = view->call({
+                    const agent_tool_result tool_result = selection.tool_view->call({
                         "mcp-stdio-server:" + tool_name,
                         tool_name,
                         arguments.dump(),
@@ -553,48 +618,39 @@ int main(int argc, char ** argv) {
     }
 
     std::string current_plan_id = options.plan_id;
-    const common_memory_query memory_query = make_memory_query(options);
-    const agent_tool_context tool_context = make_tool_context(options, repository_root);
-
-    native_agent_tool_provider provider(
-        catalog,
-        [&options, &memory_store, &plan_store, &resource_store, &embedding_provider, &memory_query, &current_plan_id, repository_root](
-                const agent_tool_context & context,
-                common_native_tool_bindings & bindings,
-                std::string & binding_error) {
-            bindings.memory_store = memory_store.get();
-            bindings.plan_store = plan_store.get();
-            bindings.plan_id = current_plan_id.empty() ? nullptr : &current_plan_id;
-            bindings.memory_query = memory_query;
-            bindings.repository_root = repository_root;
-            bindings.resource_runtime.store = resource_store.get();
-            bindings.resource_runtime.namespace_id = context.scope.namespace_id;
-            bindings.resource_runtime.session_id = context.scope.session_id;
-            bindings.resource_runtime.project_id = context.scope.project_id;
-            bindings.resource_runtime.turn_id = context.scope.turn_id;
-            if (embedding_provider != nullptr) {
-                bindings.embed_memory_query = [provider = embedding_provider.get()](const std::string & text, std::vector<float> & embedding, std::string & error) {
-                    return provider != nullptr &&
-                        provider->embed("tool query", text, embedding, error);
-                };
-            }
-            if (options.memory_db.empty()) {
-                bindings.memory_store = nullptr;
-            }
-            if (options.plan_db.empty()) {
-                bindings.plan_store = nullptr;
-                bindings.plan_id = nullptr;
-            }
-            binding_error.clear();
-            return true;
-        });
+    auto tool_request = make_server_tool_selection_request(options, repository_root);
+    if (!apply_server_tool_exposure_policy(catalog, options.tool_profile, options, tool_request, error)) {
+        std::fprintf(stderr, "failed to apply MCP stdio server tool exposure policy: %s\n", error.c_str());
+        return 1;
+    }
+    const auto memory_query = make_memory_query(options);
+    const auto resolve_selection = [&](
+            common_agent_cli_tool_selection & selection,
+            std::string & selection_error) {
+        return resolve_server_tool_selection(
+            *memory_store,
+            *plan_store,
+            *resource_store,
+            &current_plan_id,
+            options.tool_profile,
+            tool_request,
+            memory_query,
+            embedding_provider.get(),
+            selection,
+            selection_error);
+    };
+    common_agent_cli_tool_selection initial_selection;
+    if (!resolve_selection(initial_selection, error)) {
+        std::fprintf(stderr, "failed to resolve MCP stdio server tool view: %s\n", error.c_str());
+        return 1;
+    }
 
     agent_mcp_server_tool_registry registry;
     if (!register_native_profile_tools(
             catalog,
             options.tool_profile,
-            tool_context,
-            provider,
+            initial_selection,
+            resolve_selection,
             registry,
             error)) {
         std::fprintf(stderr, "failed to register MCP stdio native tools: %s\n", error.c_str());

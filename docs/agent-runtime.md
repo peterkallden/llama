@@ -294,6 +294,8 @@ On the server side, the subprocess path is now also a little more explicit. Ther
 
 That real MCP stdio server can now also be bootstrapped through the same `--config PATH` host-config entrypoint as the daemon. In practice that means the native profile export seam is no longer tied only to per-process CLI flags; it can already be described through a shared host-owned config file, even though the current server still exports native tools rather than a full resident agent runtime.
 
+Its internal tool assembly is now also closer to the rest of the host/runtime stack. The server no longer hand-builds a separate native provider wiring path for export; instead it resolves native tools through the same host-owned tool-selection seam used by the CLI/daemon side, while still applying its own export policy to keep the MCP-visible tool surface intentionally narrower than a fully bound local runtime.
+
 That current subprocess story now has two intentionally different shapes:
 
 - fake/smoke MCP server: small hand-authored stub tools used to exercise protocol, namespacing, error mapping and resource-link normalization
