@@ -9,6 +9,9 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+json normalize_tool_arguments(const std::string & tool_name, json arguments);
+json normalize_safe_integer_arguments(json arguments);
+
 json parse_tool_arguments_json(const std::string & text) {
     auto parsed = json::parse(text, nullptr, false);
     if (!parsed.is_discarded()) return parsed;
@@ -19,6 +22,26 @@ json parse_tool_arguments_json(const std::string & text) {
     bool changed = false;
     for (char & ch : normalized) if (ch == '\'') { ch = '"'; changed = true; }
     return changed ? json::parse(normalized, nullptr, false) : json();
+}
+
+bool parse_tool_arguments_contract(
+        const std::string & tool_name,
+        json arguments,
+        common_plan_tool_arguments_contract & contract,
+        std::string & error) {
+    if (!arguments.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    contract.value = normalize_tool_arguments(
+        tool_name,
+        normalize_safe_integer_arguments(std::move(arguments)));
+    if (!contract.value.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 bool calculator_expression_from_value(const json & value, std::string & expression) {
@@ -117,9 +140,22 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
         else if (tool.contains("arguments_json") && tool["arguments_json"].is_string()) arguments = parse_tool_arguments_json(tool["arguments_json"].get<std::string>());
     } else { error = "invalid step tool payload"; return false; }
     if (source.contains("args")) arguments = source["args"];
-    if (!arguments.is_object()) { error = "tool arguments must be a JSON object"; return false; }
-    arguments = normalize_safe_integer_arguments(std::move(arguments));
-    step.tool_call = common_plan_tool_call{name, normalize_tool_arguments(name, std::move(arguments)).dump()};
+
+    common_plan_tool_arguments_contract contract;
+    if (!parse_tool_arguments_contract(name, std::move(arguments), contract, error)) {
+        return false;
+    }
+
+    std::string normalized_arguments_json;
+    if (!common_plan_serialize_tool_arguments_contract_json(
+            name,
+            contract,
+            normalized_arguments_json,
+            error)) {
+        return false;
+    }
+
+    step.tool_call = common_plan_tool_call{name, std::move(normalized_arguments_json)};
     step.selected_tool = name;
     return true;
 }
@@ -251,12 +287,49 @@ bool common_plan_normalize_tool_arguments_json(
         const std::string & arguments_json,
         std::string & normalized_json,
         std::string & error) {
+    common_plan_tool_arguments_contract contract;
+    if (!common_plan_parse_tool_arguments_contract_json(
+            tool_name,
+            arguments_json,
+            contract,
+            error)) {
+        return false;
+    }
+    if (!common_plan_serialize_tool_arguments_contract_json(
+            tool_name,
+            contract,
+            normalized_json,
+            error)) {
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool common_plan_parse_tool_arguments_contract_json(
+        const std::string & tool_name,
+        const std::string & arguments_json,
+        common_plan_tool_arguments_contract & contract,
+        std::string & error) {
     const auto parsed = json::parse(arguments_json, nullptr, false);
     if (!parsed.is_object()) {
         error = "tool arguments must be a JSON object";
         return false;
     }
-    normalized_json = normalize_tool_arguments(tool_name, normalize_safe_integer_arguments(parsed)).dump();
+    return parse_tool_arguments_contract(tool_name, parsed, contract, error);
+}
+
+bool common_plan_serialize_tool_arguments_contract_json(
+        const std::string & tool_name,
+        const common_plan_tool_arguments_contract & contract,
+        std::string & arguments_json,
+        std::string & error) {
+    (void) tool_name;
+    if (!contract.value.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    arguments_json = contract.value.dump();
     error.clear();
     return true;
 }
