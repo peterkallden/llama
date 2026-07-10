@@ -179,10 +179,6 @@ agent_host_tool_selection_request make_daemon_tool_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
-    tool_request.mcp_tool_command = options.mcp_tool_command;
-    tool_request.mcp_tool_args = options.mcp_tool_args;
-    tool_request.mcp_tool_server_name = options.mcp_tool_server_name;
-    tool_request.mcp_tool_prefix = options.mcp_tool_prefix;
     append_configured_stdio_mcp_providers(options.mcp_providers, tool_request.mcp_providers);
     if (tool_request.mcp_providers.empty()) {
         append_legacy_stdio_mcp_provider(

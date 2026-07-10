@@ -426,8 +426,7 @@ agent_tool_context make_tool_context(
     context.scope.memory_global_opt_in = options.memory_global_opt_in;
     context.allow_network =
         options.tool_profile == "research" ||
-        has_enabled_stdio_mcp_provider(configured_mcp_providers) ||
-        !options.mcp_tool_command.empty();
+        has_enabled_stdio_mcp_provider(configured_mcp_providers);
     context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";
     context.allow_memory_proposals = context.allow_policy_gated_writes;

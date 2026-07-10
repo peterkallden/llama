@@ -31,10 +31,6 @@ struct agent_host_tool_selection_request {
     std::string repository_root;
     agent_resource_store_config resource_store_config;
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
-    std::string mcp_tool_command;
-    std::vector<std::string> mcp_tool_args;
-    std::string mcp_tool_server_name = "mcp";
-    std::string mcp_tool_prefix;
 };
 
 bool has_enabled_stdio_mcp_provider(

@@ -290,22 +290,22 @@ That seam now has two concrete test paths:
 
 The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list` and `tools/call`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
 
-On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a selected native tool profile through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
+On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
-That real MCP stdio server can now also be bootstrapped through the same `--config PATH` host-config entrypoint as the daemon. In practice that means the native profile export seam is no longer tied only to per-process CLI flags; it can already be described through a shared host-owned config file, even though the current server still exports native tools rather than a full resident agent runtime.
+That real MCP stdio server can now also be bootstrapped through the same `--config PATH` host-config entrypoint as the daemon. In practice that means the tool export seam is no longer tied only to per-process CLI flags; it can already be described through a shared host-owned config file, including enabled stdio MCP subprocess providers, even though the current server still exports tools rather than a full resident agent runtime.
 
-Its internal tool assembly is now also closer to the rest of the host/runtime stack. The server no longer hand-builds a separate native provider wiring path for export; instead it resolves native tools through the same host-owned tool-selection seam used by the CLI/daemon side, while still applying its own export policy to keep the MCP-visible tool surface intentionally narrower than a fully bound local runtime.
+Its internal tool assembly is now also closer to the rest of the host/runtime stack. The server no longer hand-builds a separate native provider wiring path for export; instead it resolves its tool surface through the same host-owned tool-selection seam used by the CLI/daemon side, while still applying its own export policy to keep the MCP-visible tool surface intentionally narrower than a fully bound local runtime.
 
 That current subprocess story now has two intentionally different shapes:
 
 - fake/smoke MCP server: small hand-authored stub tools used to exercise protocol, namespacing, error mapping and resource-link normalization
-- real MCP stdio server: a selected native tool profile exported through the same provider/bindings path the host runtime already uses
+- real MCP stdio server: a host-resolved tool surface exported through the same provider/bindings path the host runtime already uses
 
-The important implication is that "available through MCP" now means "available through the real stdio server's selected native tool profile and bindings", not "everything mentioned anywhere in MCP smokes". The fake server remains a protocol/regression harness, not the exported host surface.
+The important implication is that "available through MCP" now means "available through the real stdio server's resolved tool surface and bindings", not "everything mentioned anywhere in MCP smokes". The fake server remains a protocol/regression harness, not the exported host surface.
 
 ### MCP Export Surface Today
 
-The current real MCP stdio server exports native tools, not the whole agent runtime loop.
+The current real MCP stdio server exports a host-resolved tool surface, not the whole agent runtime loop. In practice that means native tools from the selected profile can appear there, and configured external stdio MCP providers can also be forwarded into that same exported surface when the host config enables them.
 
 | Capability | Available through real MCP stdio server | What it requires today |
 | --- | --- | --- |
@@ -314,6 +314,7 @@ The current real MCP stdio server exports native tools, not the whole agent runt
 | Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, currently `research`; host policy still decides whether network tools are exposed |
 | `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
 | Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus a real memory store, typically `--memory-db PATH` with the chosen memory backend |
+| External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | A host config or equivalent host-owned request that enables stdio MCP subprocess providers with a prefix and command |
 | Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory` or `research`, a bound memory store, and host policy that allows proposal-style writes |
 | Planning tools such as `plan_get` and `plan_propose` | Partly | A profile that includes them plus a real plan store; `plan_get` is only meaningful when a bound `--plan-id ID` exists |
 | Resource refs returned from native tools | Yes | The underlying native tool must materialize them through the host-owned resource store; `web_search`, `web_fetch` and `resource_read` are the first concrete examples |
@@ -493,7 +494,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
-- `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting selected native tool profiles such as `minimal` and `research`
+- `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - ordinary chat smoke with local Qwen plus Nomic embedding
