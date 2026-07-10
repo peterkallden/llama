@@ -453,20 +453,6 @@ agent_host_tool_selection_request make_server_tool_selection_request(
     return request;
 }
 
-bool apply_server_tool_exposure_policy(
-        const common_tool_catalog & catalog,
-        const std::string & profile_id,
-        const args & options,
-        agent_host_tool_selection_request & request,
-        std::string & error) {
-    request.tool_context.allowed_exposed_tool_names.clear();
-    (void) catalog;
-    (void) profile_id;
-    (void) options;
-    error.clear();
-    return true;
-}
-
 bool resolve_server_tool_selection(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
@@ -491,7 +477,7 @@ bool resolve_server_tool_selection(
         error);
 }
 
-bool register_native_profile_tools(
+bool register_resolved_profile_tools(
         const common_tool_catalog & catalog,
         const std::string & profile_id,
         const args & options,
@@ -547,7 +533,7 @@ bool register_native_profile_tools(
                     std::string error;
                     common_agent_cli_tool_selection selection;
                     if (!resolve_selection(selection, error) || selection.tool_view == nullptr) {
-                        call_error = "failed to resolve native MCP tool view: " + error;
+                        call_error = "failed to resolve MCP stdio server tool view: " + error;
                         return false;
                     }
 
@@ -620,10 +606,6 @@ int main(int argc, char ** argv) {
         options,
         repository_root,
         configured_mcp_providers);
-    if (!apply_server_tool_exposure_policy(catalog, options.tool_profile, options, tool_request, error)) {
-        std::fprintf(stderr, "failed to apply MCP stdio server tool exposure policy: %s\n", error.c_str());
-        return 1;
-    }
     const auto memory_query = make_memory_query(options);
     const auto resolve_selection = [&](
             common_agent_cli_tool_selection & selection,
@@ -647,7 +629,7 @@ int main(int argc, char ** argv) {
     }
 
     agent_mcp_server_tool_registry registry;
-    if (!register_native_profile_tools(
+    if (!register_resolved_profile_tools(
             catalog,
             options.tool_profile,
             options,
@@ -655,7 +637,7 @@ int main(int argc, char ** argv) {
             resolve_selection,
             registry,
             error)) {
-        std::fprintf(stderr, "failed to register MCP stdio native tools: %s\n", error.c_str());
+        std::fprintf(stderr, "failed to register MCP stdio server tools: %s\n", error.c_str());
         return 1;
     }
 
