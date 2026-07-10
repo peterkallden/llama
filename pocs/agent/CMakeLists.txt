@@ -4,6 +4,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-run-adapter.cpp
     agent-daemon-client.cpp
     agent-host-config.cpp
+    agent-mcp-protocol.cpp
     agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
     agent-tool-runtime-adapter.cpp

@@ -1,3 +1,4 @@
+#include "agent-mcp-protocol.h"
 #include "agent-tool-provider.h"
 
 #include <sheredom/subprocess.h>
@@ -107,89 +108,6 @@ bool write_json_rpc_message(FILE * stream, const json & message, std::string & e
     return true;
 }
 
-std::string join_text_content(const json & content) {
-    if (!content.is_array()) {
-        return {};
-    }
-
-    std::string joined;
-    for (const auto & item : content) {
-        if (!item.is_object()) {
-            continue;
-        }
-        if (item.value("type", "") != "text") {
-            continue;
-        }
-        const std::string text = item.value("text", "");
-        if (text.empty()) {
-            continue;
-        }
-        if (!joined.empty()) {
-            joined += "\n";
-        }
-        joined += text;
-    }
-    return joined;
-}
-
-std::vector<common_runtime_resource_ref> extract_resource_links(const json & content) {
-    std::vector<common_runtime_resource_ref> resources;
-    if (!content.is_array()) {
-        return resources;
-    }
-
-    for (const auto & item : content) {
-        if (!item.is_object()) {
-            continue;
-        }
-        if (item.value("type", "") != "resource_link") {
-            continue;
-        }
-        const std::string uri = item.value("uri", "");
-        if (uri.empty()) {
-            continue;
-        }
-
-        common_runtime_resource_ref resource;
-        resource.uri = uri;
-        resource.name = item.value("name", "");
-        resource.description = item.value("description", "");
-        resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
-        resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
-        resource.scope = common_runtime_resource_scope::turn;
-        if (item.contains("metadata") && item["metadata"].is_object()) {
-            const auto & metadata = item["metadata"];
-            resource.metadata.purpose = metadata.value("purpose", "");
-            resource.metadata.content_summary = metadata.value("content_summary", "");
-            resource.metadata.usage_hint = metadata.value("usage_hint", "");
-            resource.metadata.limitations = metadata.value("limitations", "");
-            if (metadata.contains("keywords") && metadata["keywords"].is_array()) {
-                for (const auto & keyword : metadata["keywords"]) {
-                    if (keyword.is_string()) resource.metadata.keywords.push_back(keyword.get<std::string>());
-                }
-            }
-            if (metadata.contains("entities") && metadata["entities"].is_array()) {
-                for (const auto & entity : metadata["entities"]) {
-                    if (entity.is_string()) resource.metadata.entities.push_back(entity.get<std::string>());
-                }
-            }
-        }
-        resources.push_back(std::move(resource));
-    }
-
-    return resources;
-}
-
-common_tool_failure_class parse_mcp_failure_class(const std::string & value) {
-    if (value == "validation") return common_tool_failure_class::validation;
-    if (value == "policy")     return common_tool_failure_class::policy;
-    if (value == "not_found")  return common_tool_failure_class::not_found;
-    if (value == "timeout")    return common_tool_failure_class::timeout;
-    if (value == "network")    return common_tool_failure_class::network;
-    if (value == "limit")      return common_tool_failure_class::limit;
-    return common_tool_failure_class::execution;
-}
-
 void append_tail(std::string & tail, const char * data, size_t size, size_t max_size) {
     if (data == nullptr || size == 0 || max_size == 0) {
         return;
@@ -266,14 +184,7 @@ bool agent_mcp_stdio_client::ensure_started(std::string & error) {
     }
 
     json response;
-    if (!send_request("initialize", json({
-            {"protocolVersion", "2024-11-05"},
-            {"capabilities", json::object()},
-            {"clientInfo", {
-                {"name", "llama-agent"},
-                {"version", "0.1"},
-            }},
-        }), response, error)) {
+    if (!send_request("initialize", make_mcp_initialize_params(), response, error)) {
         return false;
     }
 
@@ -294,11 +205,10 @@ bool agent_mcp_stdio_client::send_notification(
         const std::string & method,
         const json & params,
         std::string & error) {
-    return write_json_rpc_message(state->in, json({
-        {"jsonrpc", "2.0"},
-        {"method", method},
-        {"params", params},
-    }), error);
+    return write_json_rpc_message(
+        state->in,
+        make_mcp_jsonrpc_notification(method, params),
+        error);
 }
 
 bool agent_mcp_stdio_client::send_request(
@@ -313,12 +223,10 @@ bool agent_mcp_stdio_client::send_request(
     }
 
     const int request_id = state->next_request_id++;
-    if (!write_json_rpc_message(state->in, json({
-            {"jsonrpc", "2.0"},
-            {"id", request_id},
-            {"method", method},
-            {"params", params},
-        }), error)) {
+    if (!write_json_rpc_message(
+            state->in,
+            make_mcp_jsonrpc_request(request_id, method, params),
+            error)) {
         return false;
     }
 
@@ -459,30 +367,9 @@ bool agent_mcp_stdio_client::list_tools(
     }
 
     for (const auto & item : result["tools"]) {
-        if (!item.is_object()) {
-            continue;
-        }
-
         mcp_agent_tool_definition definition;
-        definition.provider_id = config.server_name;
-        definition.name = item.value("name", "");
-        definition.description = item.value("description", "");
-        if (item.contains("inputSchema")) {
-            definition.input_schema_json = item["inputSchema"].dump();
-        }
-
-        if (item.contains("annotations") && item["annotations"].is_object()) {
-            definition.read_only = item["annotations"].value("readOnlyHint", definition.read_only);
-        }
-        if (item.contains("hostPolicy") && item["hostPolicy"].is_object()) {
-            const auto & policy = item["hostPolicy"];
-            definition.requires_confirmation = policy.value("requiresConfirmation", definition.requires_confirmation);
-            definition.uses_network = policy.value("usesNetwork", definition.uses_network);
-            definition.writes_memory = policy.value("writesMemory", definition.writes_memory);
-            definition.writes_plan = policy.value("writesPlan", definition.writes_plan);
-        }
-
-        if (definition.name.empty()) {
+        std::string definition_error;
+        if (!parse_mcp_tool_definition(config.server_name, item, definition, definition_error)) {
             continue;
         }
         tools.push_back(std::move(definition));
@@ -513,45 +400,20 @@ bool agent_mcp_stdio_client::call_tool(
     }
 
     json response;
-    if (!send_request("tools/call", json({
-            {"name", tool.name},
-            {"arguments", arguments},
-        }), response, error)) {
+    if (!send_request(
+            "tools/call",
+            make_mcp_tools_call_params(tool.name, arguments),
+            response,
+            error)) {
         return false;
     }
 
     const auto & rpc_result = response["result"];
-    if (!rpc_result.is_object()) {
+    if (!parse_mcp_tool_call_result(rpc_result, result, error)) {
         collect_stderr_tail();
         capture_exit_if_needed();
-        error = with_transport_context("MCP tools/call response did not contain a result object");
+        error = with_transport_context(error);
         return false;
-    }
-
-    result.ok = !rpc_result.value("isError", false);
-    const auto content = rpc_result.value("content", json::array());
-    result.text_content = join_text_content(content);
-    result.resource_refs = extract_resource_links(content);
-    if (rpc_result.contains("structuredContent")) {
-        result.structured_content_json = rpc_result["structuredContent"].dump();
-    }
-    if (!result.ok) {
-        result.failure_code = "mcp.tool_error";
-        result.failure_class = common_tool_failure_class::execution;
-        result.retryable = false;
-        result.safe_summary = result.text_content.empty()
-            ? "The MCP server reported a tool error."
-            : result.text_content;
-
-        if (rpc_result.contains("errorInfo") && rpc_result["errorInfo"].is_object()) {
-            const auto & error_info = rpc_result["errorInfo"];
-            result.failure_code = error_info.value("code", result.failure_code);
-            result.failure_class = parse_mcp_failure_class(
-                error_info.value("class", std::string()));
-            result.retryable = error_info.value("retryable", result.retryable);
-            result.safe_summary = error_info.value("safeSummary", result.safe_summary);
-        }
-        result.raw_diagnostic = result.safe_summary;
     }
 
     error.clear();
