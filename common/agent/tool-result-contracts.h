@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/tool-runtime-contract.h"
 #include "memory/memory-tool-service.h"
 #include "plan/plan-types.h"
 #include "runtime-resource.h"
@@ -114,3 +115,12 @@ nlohmann::ordered_json common_tool_memory_remember_result_to_json(
 
 nlohmann::ordered_json common_tool_plan_get_result_to_json(
     const common_tool_plan_get_payload & result);
+
+nlohmann::ordered_json common_tool_chat_failure_payload_to_json(
+    const std::string & code,
+    const std::string & message,
+    bool retryable,
+    common_tool_failure_class failure_class);
+
+nlohmann::ordered_json common_tool_chat_success_payload_to_json(
+    const std::string & output_json_or_text);

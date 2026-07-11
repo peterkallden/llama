@@ -179,3 +179,27 @@ json common_tool_plan_get_result_to_json(
     }
     return payload;
 }
+
+json common_tool_chat_failure_payload_to_json(
+        const std::string & code,
+        const std::string & message,
+        bool retryable,
+        common_tool_failure_class failure_class) {
+    return {
+        {"ok", false},
+        {"error", {
+            {"code", code},
+            {"message", message},
+            {"retryable", retryable},
+            {"class", common_tool_failure_class_name(failure_class)},
+        }},
+    };
+}
+
+json common_tool_chat_success_payload_to_json(
+        const std::string & output_json_or_text) {
+    const auto value = json::parse(output_json_or_text, nullptr, false);
+    return value.is_discarded()
+        ? json({{"ok", true}, {"result_text", output_json_or_text}})
+        : json({{"ok", true}, {"result", value}});
+}

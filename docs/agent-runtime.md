@@ -82,6 +82,7 @@ The same cleanup has now started for tool execution contracts. The lightweight t
 The same direction has now been reinforced around the biggest JSON-heavy runtime edges:
 
 - native tool payloads now serialize through named result-contract helpers instead of ad hoc JSON literals at each return site
+- the older native chat-bridge path now also serializes tool success/failure payloads through named common-agent helpers instead of inlined JSON snippets
 - daemon JSONL request/response shaping now goes through explicit daemon protocol helpers
 - MCP stdio transport still owns framing, but JSON-RPC request/notification construction and tool result parsing now live behind extracted protocol helpers
 - plan-step tool arguments now have a small named contract wrapper even though stored compatibility still remains `arguments_json`

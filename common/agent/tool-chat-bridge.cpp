@@ -1,8 +1,5 @@
 #include "agent/tool-chat-bridge.h"
-
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::ordered_json;
+#include "agent/tool-result-contracts.h"
 
 bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, const std::string & profile_id,
         const common_tool_registry & registry, std::vector<common_chat_tool> & tools, std::string & error) {
@@ -33,28 +30,31 @@ bool common_tool_dispatch_chat_calls(common_chat_msg & assistant_message, const 
         tool_message.tool_name = call.name;
         tool_message.tool_call_id = call.id;
         if (!registry.contains(call.name)) {
-            tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_unavailable"}, {"message", "tool is not registered"}}}}).dump();
+            tool_message.content = common_tool_chat_failure_payload_to_json(
+                "tool_unavailable",
+                "tool is not registered",
+                false,
+                common_tool_failure_class::not_found).dump();
         } else if (!registry.is_read_only(call.name) && !registry.is_policy_gated(call.name)) {
-            tool_message.content = json({{"ok", false}, {"error", {{"code", "tool_not_read_only"}, {"message", "tool is not available in a read-only batch"}}}}).dump();
+            tool_message.content = common_tool_chat_failure_payload_to_json(
+                "tool_not_read_only",
+                "tool is not available in a read-only batch",
+                false,
+                common_tool_failure_class::policy).dump();
         } else {
             const auto execution = registry.execute({call.name, call.arguments});
             if (!execution.ok) {
-                tool_message.content = json({
-                    {"ok", false},
-                    {"error", {
-                        {"code", execution.failure_code.empty() ? "tool_call_rejected" : execution.failure_code},
-                        {"message", execution.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : execution.safe_summary},
-                        {"retryable", execution.retryable},
-                        {"class", common_tool_failure_class_name(execution.failure_class)},
-                    }}
-                }).dump();
+                tool_message.content = common_tool_chat_failure_payload_to_json(
+                    execution.failure_code.empty() ? "tool_call_rejected" : execution.failure_code,
+                    execution.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : execution.safe_summary,
+                    execution.retryable,
+                    execution.failure_class).dump();
                 result.tool_messages.push_back(std::move(tool_message));
                 continue;
             }
             auto output = execution.output;
             if (output.size() > 4096) output.resize(4096);
-            const auto value = json::parse(output, nullptr, false);
-            tool_message.content = value.is_discarded() ? json({{"ok", true}, {"result_text", output}}).dump() : json({{"ok", true}, {"result", value}}).dump();
+            tool_message.content = common_tool_chat_success_payload_to_json(output).dump();
             ++result.executed;
         }
         result.tool_messages.push_back(std::move(tool_message));
