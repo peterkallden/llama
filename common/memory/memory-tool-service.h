@@ -2,6 +2,8 @@
 
 #include "memory/memory-policy.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -47,9 +49,17 @@ bool common_memory_parse_tool_search_arguments_json(
     const std::string & arguments_json,
     common_memory_tool_search_arguments_contract & contract,
     std::string & error);
+bool common_memory_parse_tool_search_arguments_value(
+    const nlohmann::ordered_json & arguments,
+    common_memory_tool_search_arguments_contract & contract,
+    std::string & error);
 
 bool common_memory_parse_tool_remember_arguments_json(
     const std::string & arguments_json,
+    common_memory_tool_remember_arguments_contract & contract,
+    std::string & error);
+bool common_memory_parse_tool_remember_arguments_value(
+    const nlohmann::ordered_json & arguments,
     common_memory_tool_remember_arguments_contract & contract,
     std::string & error);
 

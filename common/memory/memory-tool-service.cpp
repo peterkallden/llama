@@ -31,10 +31,24 @@ bool common_memory_parse_tool_search_arguments_json(
         const std::string & arguments_json,
         common_memory_tool_search_arguments_contract & contract,
         std::string & error) {
-    contract = {};
-
     json arguments;
     if (!parse_object_arguments(arguments_json, arguments, error)) {
+        return false;
+    }
+    return common_memory_parse_tool_search_arguments_value(
+        arguments,
+        contract,
+        error);
+}
+
+bool common_memory_parse_tool_search_arguments_value(
+        const json & arguments,
+        common_memory_tool_search_arguments_contract & contract,
+        std::string & error) {
+    contract = {};
+
+    if (!arguments.is_object()) {
+        error = "arguments must be a JSON object";
         return false;
     }
     for (const auto & item : arguments.items()) {
@@ -70,10 +84,24 @@ bool common_memory_parse_tool_remember_arguments_json(
         const std::string & arguments_json,
         common_memory_tool_remember_arguments_contract & contract,
         std::string & error) {
-    contract = {};
-
     json arguments;
     if (!parse_object_arguments(arguments_json, arguments, error)) {
+        return false;
+    }
+    return common_memory_parse_tool_remember_arguments_value(
+        arguments,
+        contract,
+        error);
+}
+
+bool common_memory_parse_tool_remember_arguments_value(
+        const json & arguments,
+        common_memory_tool_remember_arguments_contract & contract,
+        std::string & error) {
+    contract = {};
+
+    if (!arguments.is_object()) {
+        error = "arguments must be a JSON object";
         return false;
     }
     for (const auto & item : arguments.items()) {
