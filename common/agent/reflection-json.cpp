@@ -39,6 +39,46 @@ std::string next_generated_repair_id(size_t index, const std::set<std::string> &
     return id;
 }
 
+bool normalize_tool_arguments_contract(
+    const std::string & tool_name,
+    const common_json_contract_value & arguments,
+    std::string & normalized_arguments,
+    std::string & error) {
+    common_plan_tool_arguments_contract contract;
+    if (!common_plan_parse_tool_arguments_contract_value(
+            tool_name,
+            arguments,
+            contract,
+            error)) {
+        return false;
+    }
+    return common_plan_serialize_tool_arguments_contract_json(
+        tool_name,
+        contract,
+        normalized_arguments,
+        error);
+}
+
+bool normalize_tool_arguments_json_text(
+    const std::string & tool_name,
+    const std::string & arguments_json,
+    std::string & normalized_arguments,
+    std::string & error) {
+    common_plan_tool_arguments_contract contract;
+    if (!common_plan_parse_tool_arguments_contract_json(
+            tool_name,
+            arguments_json,
+            contract,
+            error)) {
+        return false;
+    }
+    return common_plan_serialize_tool_arguments_contract_json(
+        tool_name,
+        contract,
+        normalized_arguments,
+        error);
+}
+
 bool parse_compact_tool(
     const common_json_contract_value & item,
     common_plan_step & step,
@@ -59,7 +99,7 @@ bool parse_compact_tool(
     if (item.contains("args")) arguments = item["args"];
     if (!arguments.is_object()) { error = "reflection add_steps tool arguments must be an object"; return false; }
     std::string normalized_arguments;
-    if (!common_plan_normalize_tool_arguments_json(name, arguments.dump(), normalized_arguments, error)) return false;
+    if (!normalize_tool_arguments_contract(name, arguments, normalized_arguments, error)) return false;
     step.tool_call = common_plan_tool_call{name, normalized_arguments};
     step.selected_tool = name;
     return true;
@@ -273,9 +313,12 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                     if (step.contains("tool_call") && step["tool_call"].is_object()) {
                         const auto & tool_call = step["tool_call"];
                         if (!tool_call.contains("name") || !tool_call["name"].is_string()) { error = "reflection tool_call requires name"; return false; }
+                        const auto tool_name = tool_call["name"].get<std::string>();
                         const auto arguments = tool_call.contains("arguments_json") && tool_call["arguments_json"].is_string() ? tool_call["arguments_json"].get<std::string>() : std::string("{}");
-                        parsed.tool_call = common_plan_tool_call{tool_call["name"].get<std::string>(), arguments};
-                        parsed.selected_tool = tool_call["name"].get<std::string>();
+                        std::string normalized_arguments;
+                        if (!normalize_tool_arguments_json_text(tool_name, arguments, normalized_arguments, error)) { return false; }
+                        parsed.tool_call = common_plan_tool_call{tool_name, normalized_arguments};
+                        parsed.selected_tool = tool_name;
                         parsed.mode = common_plan_step_mode::tool;
                     }
                     op.step = parsed;

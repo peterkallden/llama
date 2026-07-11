@@ -318,6 +318,18 @@ bool common_plan_parse_tool_arguments_contract_json(
     return parse_tool_arguments_contract(tool_name, parsed, contract, error);
 }
 
+bool common_plan_parse_tool_arguments_contract_value(
+        const std::string & tool_name,
+        const nlohmann::ordered_json & arguments,
+        common_plan_tool_arguments_contract & contract,
+        std::string & error) {
+    if (!arguments.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    return parse_tool_arguments_contract(tool_name, arguments, contract, error);
+}
+
 bool common_plan_serialize_tool_arguments_contract_json(
         const std::string & tool_name,
         const common_plan_tool_arguments_contract & contract,

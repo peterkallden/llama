@@ -1,6 +1,16 @@
 #include "agent/reflection-json.h"
 
 #include <cassert>
+#include <nlohmann/json.hpp>
+
+namespace {
+
+bool same_json_object(const std::string & lhs, const std::string & rhs) {
+    return nlohmann::json::parse(lhs, nullptr, false) ==
+           nlohmann::json::parse(rhs, nullptr, false);
+}
+
+} // namespace
 
 int main() {
     common_reflection_result result;
@@ -33,14 +43,22 @@ int main() {
     assert(result.proposed_plan_operations[7].step->tool_call && result.proposed_plan_operations[7].step->tool_call->name == "repository_search");
     assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_search","args":{"tool":{"name":"memory_search","arguments":{"query":"regression procedure","limit":"2"}}}}],"replace_steps":[{"step_id":"fetch","tool":"memory_search","args":{"tool":"memory_search","arguments":{"query":"corrected lookup","limit":"3"}}}]})", result, error));
     assert(result.proposed_plan_operations.size() == 2);
-    assert(result.proposed_plan_operations[0].step->tool_call->arguments_json == R"({"limit":2,"query":"regression procedure"})");
-    assert(result.proposed_plan_operations[1].step->tool_call->arguments_json == R"({"limit":3,"query":"corrected lookup"})");
+    assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
+    assert(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
     assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_search","args":{"tool":"memory_search","query":"regression procedure","limit":"2"}}],"replace_steps":[{"step_id":"fetch","tool":"memory_search","args":{"tool":"memory_search","query":"corrected lookup","limit":"3"}}]})", result, error));
     assert(result.proposed_plan_operations.size() == 2);
-    assert(result.proposed_plan_operations[0].step->tool_call->arguments_json == R"({"limit":2,"query":"regression procedure"})");
-    assert(result.proposed_plan_operations[1].step->tool_call->arguments_json == R"({"limit":3,"query":"corrected lookup"})");
+    assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
+    assert(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
     assert(common_reflection_parse_json(R"({"decision":"accept","ready_to_answer":true,"confidence":0.9,"revision_guidance":[],"learning_hint":{"category":"tool_precondition","statement":"Verify a repository path before reading it.","expected_reuse":0.8},"operations":[]})", result, error));
     assert(result.learning_hint && result.learning_hint->category == "tool_precondition");
+    const std::string explicit_tool_call_reflection =
+        "{\"decision\":\"revise\",\"operations\":[{\"kind\":\"add_step\",\"step\":"
+        "{\"id\":\"repair-fetch\",\"title\":\"Repair fetch\",\"objective\":\"Retry the fetch with normalized args\","
+        "\"tool_call\":{\"name\":\"memory_search\",\"arguments_json\":\"{\\\"tool\\\":\\\"memory_search\\\",\\\"query\\\":\\\"reopened evidence\\\",\\\"limit\\\":\\\"4\\\"}\"}}}]}";
+    assert(common_reflection_parse_json(explicit_tool_call_reflection, result, error));
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(result.proposed_plan_operations[0].step->tool_call);
+    assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":4,"query":"reopened evidence"})"));
     assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"mode":"reasoning"},{"mode":"reasoning"}]})", result, error));
     assert(result.proposed_plan_operations.size() == 2);
     assert(result.proposed_plan_operations[0].step->id == "repair_1");
