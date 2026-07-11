@@ -405,6 +405,8 @@ There is now also a first thin integration into the ordinary CLI host-adapter pa
 
 That CLI path can now also compose native and MCP-backed tools in the same resolved view. If both `--tool-profile` and `--mcp-tool-command` are present, the host resolves them through one small composite provider surface and keeps model-visible tool names unique at the merge boundary.
 
+The subprocess-based MCP smokes now also declare their helper binaries explicitly at the build layer. Targets that launch `llama-agent-mcp-stdio-fake-server` or the real `llama-agent-mcp-stdio-server` now depend on those helper executables directly, which avoids a subtle stale-binary failure mode where a smoke would exercise an older helper build and appear to hang or regress in protocol behavior even though the caller target itself had rebuilt cleanly.
+
 The foreground daemon can now also resolve the same native and MCP-backed tool surface that the CLI host adapter already uses. Session-host execution now has a per-turn tooling resolver hook, and the daemon uses it to rebuild tooling from the current host-owned session/scope turn contract before each turn. In practice that means `--tool-profile`, `--repository-root`, and `--mcp-tool-command` can now participate in the same resolved daemon tool view instead of the daemon having a narrower MCP-only wiring path.
 
 The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
@@ -563,6 +565,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
+- MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - ordinary chat smoke with local Qwen plus Nomic embedding
