@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-resident-debug",
+    [string]$Configuration = "Release",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$EmbeddingModel = "$HOME\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [switch]$Build
@@ -212,7 +213,7 @@ function Start-AgentDaemon {
     $arguments = ($ArgumentList | ForEach-Object { Quote-CmdArg $_ }) -join ' '
     $client = [AgentDaemonHarness]::new($ExePath, $arguments, (Split-Path -Parent $ExePath))
 
-    $ready = Read-DaemonResponse -Client $client -TimeoutSeconds 60
+    $ready = Read-DaemonResponse -Client $client -TimeoutSeconds $script:ReadyTimeoutSeconds
     if (-not $ready.ok -or $ready.event -ne "ready") {
         $diagnostics = Get-DaemonDiagnostics $client
         throw "Unexpected daemon ready response: $($ready | ConvertTo-Json -Compress)`n$diagnostics"
@@ -307,7 +308,7 @@ function Invoke-ToolingConfiguredScenario {
             project_id = "repo-tooling"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turn1.ok -and $turn1.response -eq "OK" -and -not $turn1.runtime_reused) "First tooling-configured turn should succeed without runtime reuse"
 
         $turn2 = Send-DaemonCommand -Client $client -Command @{
@@ -319,7 +320,7 @@ function Invoke-ToolingConfiguredScenario {
             project_id = "repo-tooling"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turn2.ok -and $turn2.response -eq "DONE" -and $turn2.runtime_reused) "Second tooling-configured turn should reuse the resident runtime"
 
         $status = Send-DaemonCommand -Client $client -Command @{
@@ -376,7 +377,7 @@ function Invoke-ChatLifecycleScenario {
             project_id = "repo-chat"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turn1.ok -and $turn1.response -eq "OK" -and -not $turn1.runtime_reused) "First chat turn should succeed without runtime reuse"
 
         $turn2 = Send-DaemonCommand -Client $client -Command @{
@@ -388,7 +389,7 @@ function Invoke-ChatLifecycleScenario {
             project_id = "repo-chat"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turn2.ok -and $turn2.response -eq "DONE" -and $turn2.runtime_reused) "Second chat turn should reuse the resident runtime"
 
         $reset = Send-DaemonCommand -Client $client -Command @{
@@ -408,7 +409,7 @@ function Invoke-ChatLifecycleScenario {
             project_id = "repo-chat"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turn3.ok -and $turn3.response -eq "AGAIN" -and -not $turn3.runtime_reused) "Turn after reset should rebuild the resident runtime"
 
         $close = Send-DaemonCommand -Client $client -Command @{
@@ -451,7 +452,7 @@ function Invoke-ProjectSwitchScenario {
             project_id = "project-a"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turnA.ok -and $turnA.response -eq "A" -and -not $turnA.runtime_reused) "First project-bound turn should succeed without runtime reuse"
 
         $turnB = Send-DaemonCommand -Client $client -Command @{
@@ -463,7 +464,7 @@ function Invoke-ProjectSwitchScenario {
             project_id = "project-b"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 180
+        } -TimeoutSeconds $chatTurnTimeoutSeconds
         Assert-True ($turnB.ok -and $turnB.response -eq "B" -and -not $turnB.runtime_reused) "Project switch should rebuild the resident runtime"
 
         $status = Send-DaemonCommand -Client $client -Command @{
@@ -499,7 +500,7 @@ function Invoke-TraceScenario {
             project_id = "repo-trace"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 240
+        } -TimeoutSeconds $miniTurnTimeoutSeconds
 
         Assert-True ($turn.ok -and $turn.response -eq "OK") "Trace scenario turn should succeed"
         Assert-True ($turn.trace_count -gt 0) "Trace scenario should expose trace entries"
@@ -535,7 +536,7 @@ function Invoke-MiniLearningScenario {
             project_id = "repo-mini"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 240
+        } -TimeoutSeconds $miniTurnTimeoutSeconds
         Assert-True ($turn1.ok -and $turn1.response -eq "OK" -and -not $turn1.runtime_reused) "First mini turn should succeed without runtime reuse"
         Assert-True (-not [string]::IsNullOrWhiteSpace($turn1.plan_id)) "First mini turn should expose a plan_id"
         Assert-True (-not [string]::IsNullOrWhiteSpace($turn1.memory_learning_summary)) "First mini turn should expose a memory learning summary"
@@ -549,7 +550,7 @@ function Invoke-MiniLearningScenario {
             project_id = "repo-mini"
             memory_scope = "project"
             plan_scope = "project"
-        } -TimeoutSeconds 240
+        } -TimeoutSeconds $miniTurnTimeoutSeconds
         Assert-True ($turn2.ok -and $turn2.response -eq "DONE" -and $turn2.runtime_reused) "Second mini turn should reuse the resident runtime"
         Assert-True ($turn2.plan_id -eq $turn1.plan_id) "Mini scenario should preserve plan_id across turns"
         Assert-True (-not [string]::IsNullOrWhiteSpace($turn2.memory_learning_summary)) "Second mini turn should expose a memory learning summary"
@@ -565,12 +566,17 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
 $cmake = Resolve-CMake
-$daemonPath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-daemon.exe"
-$fakeServerPath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-mcp-stdio-fake-server.exe"
-$toolingProbePath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-daemon-mcp-config-smoke.exe"
+$daemonPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-daemon.exe"
+$fakeServerPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-mcp-stdio-fake-server.exe"
+$toolingProbePath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-daemon-mcp-config-smoke.exe"
+$isDebugConfiguration = $Configuration -ieq "Debug"
+$script:ReadyTimeoutSeconds = if ($isDebugConfiguration) { 120 } else { 60 }
+$chatTurnTimeoutSeconds = if ($isDebugConfiguration) { 300 } else { 180 }
+$miniTurnTimeoutSeconds = if ($isDebugConfiguration) { 480 } else { 240 }
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
+Write-Host "Configuration: $Configuration"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
 
@@ -580,7 +586,7 @@ $haveEmbeddingModel = Test-Path -LiteralPath $EmbeddingModel
 
 if ($Build) {
     $targets = @("llama-agent-daemon", "llama-agent-mcp-stdio-fake-server", "llama-agent-daemon-mcp-config-smoke")
-    & $cmake --build $BuildDir --config Release --target $targets -j 1
+    & $cmake --build $BuildDir --config $Configuration --target $targets -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }

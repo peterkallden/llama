@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-resident-debug",
+    [string]$Configuration = "Release",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [switch]$Build
 )
@@ -59,18 +60,19 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
 $cmake = Resolve-CMake
-$cliPath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent.exe"
-$daemonPath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-daemon.exe"
-$fakeServerPath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-agent-mcp-stdio-fake-server.exe"
+$cliPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent.exe"
+$daemonPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-daemon.exe"
+$fakeServerPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-mcp-stdio-fake-server.exe"
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
+Write-Host "Configuration: $Configuration"
 Write-Host "Chat model: $ChatModel"
 
 Assert-PathExists -Path $ChatModel -Label "Chat model"
 
 if ($Build) {
-    & $cmake --build $BuildDir --config Release --target llama-agent-cli llama-agent-daemon llama-agent-mcp-stdio-fake-server -j 1
+    & $cmake --build $BuildDir --config $Configuration --target llama-agent-cli llama-agent-daemon llama-agent-mcp-stdio-fake-server -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }

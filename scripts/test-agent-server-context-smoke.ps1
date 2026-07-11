@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-cozo-ssl",
+    [string]$Configuration = "Release",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$EmbeddingModel = "$HOME\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\agent-runtime-driver-server-context-smoke",
@@ -105,7 +106,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
 $cmake = Resolve-CMake
-$exePath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-memory.exe"
+$exePath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-memory.exe"
 $workDir = Join-Path $repoRoot $WorkSubdir
 $memoryDb = Join-Path $workDir "memory.cozo"
 $planDb = Join-Path $workDir "plan.cozo"
@@ -113,6 +114,7 @@ $logPath = Join-Path $workDir "runtime-driver-server-context-smoke.log"
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
+Write-Host "Configuration: $Configuration"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
 Write-Host "Work dir: $workDir"
@@ -121,7 +123,7 @@ Assert-PathExists -Path $ChatModel -Label "Chat model"
 Assert-PathExists -Path $EmbeddingModel -Label "Embedding model"
 
 if ($Build) {
-    & $cmake --build $BuildDir --config Release --target llama-memory-poc -j 1
+    & $cmake --build $BuildDir --config $Configuration --target llama-memory-poc -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }
