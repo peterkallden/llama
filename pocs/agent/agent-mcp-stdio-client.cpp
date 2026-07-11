@@ -265,15 +265,18 @@ void agent_mcp_stdio_client::shutdown_process() {
             send_request("shutdown", json::object(), ignored_response, ignored_error);
             send_notification("exit", json::object(), ignored_error);
         }
-        collect_stderr_tail();
         if (state->in != nullptr) {
             std::fclose(state->in);
             state->in = nullptr;
         }
-        if (subprocess_alive(&state->proc)) {
-            subprocess_terminate(&state->proc);
+        collect_stderr_tail();
+        if (!state->joined) {
+            if (subprocess_alive(&state->proc)) {
+                subprocess_terminate(&state->proc);
+            }
+            subprocess_join(&state->proc, &state->exit_code);
+            state->joined = true;
         }
-        capture_exit_if_needed();
         collect_stderr_tail();
         subprocess_destroy(&state->proc);
     }

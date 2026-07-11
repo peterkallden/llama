@@ -162,6 +162,7 @@ add_executable(${TARGET}
     agent-mcp-stdio-client-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
+add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
