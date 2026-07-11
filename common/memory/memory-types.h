@@ -12,6 +12,8 @@ enum class common_memory_kind {
     observation,
     reflection,
     procedure,
+    constraint,
+    decision,
     goal,
     preference,
 };

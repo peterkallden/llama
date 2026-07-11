@@ -288,10 +288,14 @@ int main() {
     const auto memory_result = memory_view->call({
         "call-3",
         "memory_remember",
-        R"({"kind":"fact","content":"The provider smoke stores native memory proposals."})",
+        R"({"kind":"decision","content":"Use the existing memory store for symbolic project decisions before introducing a separate overlay system."})",
     }, error);
     if (!memory_result.ok || memory_result.content_json.find("\"decision\":\"accept\"") == std::string::npos) {
         std::fprintf(stderr, "memory_remember call did not succeed: %s\n", memory_result.content_json.c_str());
+        return 1;
+    }
+    if (memory_result.content_json.find("\"kind\":\"decision\"") == std::string::npos) {
+        std::fprintf(stderr, "memory_remember did not preserve the symbolic memory kind: %s\n", memory_result.content_json.c_str());
         return 1;
     }
 

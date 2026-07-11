@@ -108,6 +108,8 @@ The same contract-cleanup pattern now also covers two older JSON-heavy seams tha
 
 That is still intentionally modest. The stored compatibility format remains `arguments_json` where older plan/runtime paths expect it, but the contract boundary is now explicit at parse/materialize/serialize time.
 
+The same "almost boring" rule now applies to symbolic memory. The clean first fit is not a second symbolic-memory subsystem beside the current memory path; it is the existing host-owned memory model with a few more durable kinds and a later typed overlay above it. `procedure` already fills one symbolic role today, so the next incremental expansion is to let `constraint` and `decision` travel through the same scope, retrieval, proposal, provenance, MCP, and store contracts. Overlay compaction for planning, reflection, and reasoning should sit above that durable store rather than replace it.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -524,6 +526,17 @@ The current code should remain useful without any of these. The next steps shoul
    The first provider slice now exists behind an abstract MCP client contract and already has a small stdio transport adapter with basic shutdown and structured tool-error mapping. The next step is to harden that path further: clearer diagnostics, less forceful teardown, better request/response correlation under notifications, and then broader MCP capability support. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
 
 ## Backlog Notes
+
+- Keep symbolic memory inside the existing memory/store model, then add overlays above it.
+
+  The intended first symbolic slice is deliberately small:
+
+  - continue using the current host-owned memory stores, scopes, provenance, proposal policy, MCP exposure, and retrieval path
+  - treat `procedure`, `constraint`, and `decision` as the first symbolic memory kinds
+  - keep inferred post-turn learning conservative at first; new symbolic kinds should start as explicit proposal-backed memory rather than immediate auto-learn targets
+  - build later project/session overlays by compacting retrieved symbolic memories plus resource/evidence links instead of inventing a parallel persistence model
+
+  The next follow-up after this kind-level slice is a typed overlay builder for planning, reflection, and reasoning. That overlay should assemble a bounded block such as constraints, decisions, procedures, relevant facts, and evidence/resource references from already authorized memory retrieval. In other words: memory remains the durable source of truth, while overlays become a host-owned context-shaping view of that memory.
 
 - Keep tightening the session-versus-project split above the current manager key.
 

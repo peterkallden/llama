@@ -248,7 +248,7 @@ common_chat_tool memory_remember_tool_definition() {
     common_chat_tool tool;
     tool.name = "memory_remember";
     tool.description = "Propose a low-risk durable memory based on what the user explicitly stated. Native policy may reject, deduplicate, or store it.";
-    tool.parameters = R"({"type":"object","properties":{"kind":{"type":"string","description":"Memory kind to propose.","enum":["fact","preference","procedure","goal","observation","reflection","episode"]},"content":{"type":"string","description":"Single durable memory candidate stated as a concise sentence.","maxLength":512},"importance":{"type":"number","description":"Estimated importance from 0 to 1.","minimum":0.0,"maximum":1.0},"confidence":{"type":"number","description":"Estimated confidence from 0 to 1.","minimum":0.0,"maximum":1.0},"rationale":{"type":"string","description":"Short reason this might be worth remembering.","maxLength":240}},"required":["kind","content"],"additionalProperties":false})";
+    tool.parameters = R"({"type":"object","properties":{"kind":{"type":"string","description":"Memory kind to propose.","enum":["fact","preference","procedure","constraint","decision","goal","observation","reflection","episode"]},"content":{"type":"string","description":"Single durable memory candidate stated as a concise sentence.","maxLength":512},"importance":{"type":"number","description":"Estimated importance from 0 to 1.","minimum":0.0,"maximum":1.0},"confidence":{"type":"number","description":"Estimated confidence from 0 to 1.","minimum":0.0,"maximum":1.0},"rationale":{"type":"string","description":"Short reason this might be worth remembering.","maxLength":240}},"required":["kind","content"],"additionalProperties":false})";
     return tool;
 }
 

@@ -60,6 +60,8 @@ static bool auto_store_kind_allowed(common_memory_kind kind) {
         case common_memory_kind::fact:
         case common_memory_kind::preference:
         case common_memory_kind::procedure:
+        case common_memory_kind::constraint:
+        case common_memory_kind::decision:
             return true;
         case common_memory_kind::episode:
         case common_memory_kind::observation:

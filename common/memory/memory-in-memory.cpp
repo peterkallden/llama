@@ -39,6 +39,8 @@ const char * common_memory_kind_name(common_memory_kind kind) {
         case common_memory_kind::observation: return "observation";
         case common_memory_kind::reflection:  return "reflection";
         case common_memory_kind::procedure:   return "procedure";
+        case common_memory_kind::constraint:  return "constraint";
+        case common_memory_kind::decision:    return "decision";
         case common_memory_kind::goal:        return "goal";
         case common_memory_kind::preference:  return "preference";
     }
@@ -52,6 +54,8 @@ bool common_memory_kind_parse(const std::string & value, common_memory_kind & ou
     if (v == "observation") { out = common_memory_kind::observation; return true; }
     if (v == "reflection")  { out = common_memory_kind::reflection; return true; }
     if (v == "procedure")   { out = common_memory_kind::procedure; return true; }
+    if (v == "constraint")  { out = common_memory_kind::constraint; return true; }
+    if (v == "decision")    { out = common_memory_kind::decision; return true; }
     if (v == "goal")        { out = common_memory_kind::goal; return true; }
     if (v == "preference")  { out = common_memory_kind::preference; return true; }
     return false;
