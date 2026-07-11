@@ -16,6 +16,11 @@ bool agent_mcp_write_json_rpc_message(
     const agent_mcp_json & message,
     std::string & error);
 
+bool agent_mcp_write_malformed_json_rpc_result(
+    FILE * stream,
+    const agent_mcp_json & id,
+    std::string & error);
+
 agent_mcp_json agent_mcp_make_json_rpc_result(
     const agent_mcp_json & id,
     agent_mcp_json result);

@@ -63,11 +63,9 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
                     std::fprintf(diagnostics, "%s: emitting malformed tools/list payload\n", options_.server_name.c_str());
                     std::fflush(diagnostics);
                 }
-                const std::string body = "{\"jsonrpc\":\"2.0\",\"id\":" + id.dump() + ",\"result\":";
-                const std::string framed =
-                    "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
-                std::fwrite(framed.data(), 1, framed.size(), output);
-                std::fflush(output);
+                if (!agent_mcp_write_malformed_json_rpc_result(output, id, error)) {
+                    return 1;
+                }
                 return 11;
             }
             response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tools_list_result(registry_));

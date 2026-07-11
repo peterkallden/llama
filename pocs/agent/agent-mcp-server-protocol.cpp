@@ -90,6 +90,25 @@ bool agent_mcp_write_json_rpc_message(
     return true;
 }
 
+bool agent_mcp_write_malformed_json_rpc_result(
+        FILE * stream,
+        const agent_mcp_json & id,
+        std::string & error) {
+    error.clear();
+    const std::string body = std::string("{\"jsonrpc\":\"2.0\",\"id\":") + id.dump() + ",\"result\":";
+    const std::string framed =
+        "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    if (std::fwrite(framed.data(), 1, framed.size(), stream) != framed.size()) {
+        error = "failed to write malformed MCP JSON-RPC message";
+        return false;
+    }
+    if (std::fflush(stream) != 0) {
+        error = "failed to flush malformed MCP JSON-RPC message";
+        return false;
+    }
+    return true;
+}
+
 agent_mcp_json agent_mcp_make_json_rpc_result(
         const agent_mcp_json & id,
         agent_mcp_json result) {
