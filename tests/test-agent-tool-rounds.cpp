@@ -1,5 +1,7 @@
 #include "agent/agent-runtime.h"
+#include "agent/tool-registry.h"
 #include "plan/plan-in-memory.h"
+#include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
 
@@ -60,7 +62,8 @@ int main() {
     };
     assert(registry.register_tool(std::move(tool), error));
     planner p; executor e; reflector r;
-    common_agent_runtime runtime(store, p, e, r, &registry);
+    test_tool_runtime_registry_adapter tool_runtime(registry);
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
     common_agent_request request;
     request.prompt = "two rounds";
     request.max_iterations = 2;

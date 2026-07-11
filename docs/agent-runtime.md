@@ -83,6 +83,7 @@ The same direction has now been reinforced around the biggest JSON-heavy runtime
 
 - native tool payloads now serialize through named result-contract helpers instead of ad hoc JSON literals at each return site
 - the older native chat-bridge path now also serializes tool success/failure payloads through named common-agent helpers instead of inlined JSON snippets
+- the runtime core now also routes its remaining bounded observation/default JSON seams through named runtime-contract helpers instead of open-coding request-tool default stamping and observation payload `.dump()` calls in `agent-runtime.cpp`
 - daemon JSONL request/response shaping now goes through explicit daemon protocol helpers
 - MCP stdio transport still owns framing, but JSON-RPC request/notification construction and tool result parsing now live behind extracted protocol helpers
 - plan-step tool arguments now have a small named contract wrapper even though stored compatibility still remains `arguments_json`
@@ -287,7 +288,7 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
 1. `common/agent/agent-runtime.cpp`
 
-   Tool-call argument rewriting, reasoning payload normalization, failure observations, and memory-learning hint payloads still serialize small JSON documents inline. This is now one of the densest remaining runtime-core places where host-safe behavior still depends on implicit JSON shapes.
+   This file is much cleaner now: request-tool safe defaults plus the bounded user-correction, failure-observation, reflection-hint, and reasoning-observation payload seams all go through named runtime JSON helpers. The remaining runtime-core cleanup is more about reducing mixed responsibilities than about raw JSON literals.
 
 2. `pocs/agent/agent-cli-selection.cpp`
 

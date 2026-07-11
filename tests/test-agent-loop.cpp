@@ -1,8 +1,10 @@
 #include "agent/agent-runtime.h"
+#include "agent/tool-registry.h"
 #include "agent/memory-learning.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "plan/plan-goal.h"
+#include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
 
@@ -266,7 +268,8 @@ int main() {
     planner p;
     executor e;
     reflector r;
-    common_agent_runtime runtime(store, p, e, r, &tools);
+    test_tool_runtime_registry_adapter tool_runtime(tools);
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
     common_agent_request request;
     request.prompt = "answer";
     request.session_id = "s";
@@ -286,7 +289,7 @@ int main() {
     common_plan_in_memory_store mixed_store;
     assert(mixed_store.open("", error));
     mixed_initial_plan_planner mixed_p;
-    common_agent_runtime mixed_runtime(mixed_store, mixed_p, e, r, &tools);
+    common_agent_runtime mixed_runtime(mixed_store, mixed_p, e, r, &tool_runtime);
     common_agent_request mixed_request = request;
     mixed_request.plan_id.reset();
     const auto mixed = mixed_runtime.run(mixed_request);
@@ -298,7 +301,7 @@ int main() {
     common_plan_in_memory_store objective_store;
     assert(objective_store.open("", error));
     planner objective_planner;
-    common_agent_runtime objective_runtime(objective_store, objective_planner, e, r, &tools);
+    common_agent_runtime objective_runtime(objective_store, objective_planner, e, r, &tool_runtime);
     common_agent_request objective_request = request;
     objective_request.objective = common_agent_objective{"Explain the current status", "Return a verified status", {"Use the lookup result"}, {"Do not mutate repository state"}};
     const auto objective_result = objective_runtime.run(objective_request);
@@ -318,7 +321,7 @@ int main() {
     common_memory_post_turn_learner learner(memories, extractor,
         [](const std::string &, std::vector<float> & embedding, std::string & embed_error) { embedding = {1.0f}; embed_error.clear(); return true; });
     request.project_id = "project-a";
-    common_agent_runtime learning_runtime(store, p, e, r, &tools, &learner);
+    common_agent_runtime learning_runtime(store, p, e, r, &tool_runtime, &learner);
     const auto learned = learning_runtime.run(request);
     assert(learned.error.empty() && learned.learned_memory_candidate);
     assert(learned.memory_learning_summary.rfind("accepted:", 0) == 0);
@@ -356,7 +359,7 @@ int main() {
     common_plan_in_memory_store correction_store;
     assert(correction_store.open("", error));
     planner correction_p;
-    common_agent_runtime correction_runtime(correction_store, correction_p, e, r, &tools);
+    common_agent_runtime correction_runtime(correction_store, correction_p, e, r, &tool_runtime);
     common_agent_request correction_request = request;
     correction_request.plan_id.reset();
     correction_request.user_correction = common_agent_user_correction{"prior-turn-7", "Use the calculator result rather than mental arithmetic."};
@@ -380,7 +383,8 @@ int main() {
     };
     assert(failing_tools.register_tool(std::move(failing_tool), error));
     planner failing_p;
-    common_agent_runtime failure_runtime(failure_store, failing_p, e, r, &failing_tools);
+    test_tool_runtime_registry_adapter failing_tool_runtime(failing_tools);
+    common_agent_runtime failure_runtime(failure_store, failing_p, e, r, &failing_tool_runtime);
     common_agent_request failure_request;
     failure_request.prompt = "inspect";
     failure_request.session_id = "s";
@@ -404,7 +408,7 @@ int main() {
     common_plan_in_memory_store invalid_args_store;
     assert(invalid_args_store.open("", error));
     invalid_tool_arguments_planner invalid_args_p;
-    common_agent_runtime invalid_args_runtime(invalid_args_store, invalid_args_p, e, r, &tools);
+    common_agent_runtime invalid_args_runtime(invalid_args_store, invalid_args_p, e, r, &tool_runtime);
     common_agent_request invalid_args_request = failure_request;
     const auto invalid_args_run = invalid_args_runtime.run(invalid_args_request);
     assert(invalid_args_run.error.empty() && invalid_args_run.response == "draft");

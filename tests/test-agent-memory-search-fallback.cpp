@@ -1,5 +1,7 @@
 #include "agent/agent-runtime.h"
+#include "agent/tool-registry.h"
 #include "plan/plan-in-memory.h"
+#include "test-tool-runtime-registry-adapter.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -57,7 +59,8 @@ int main() {
     planner p;
     executor e;
     reflector r;
-    common_agent_runtime runtime(store, p, e, r, &tools);
+    test_tool_runtime_registry_adapter tool_runtime(tools);
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
     common_agent_request request;
     request.prompt = "What is my favorite breakfast?";
     request.max_tool_batches = 1;
