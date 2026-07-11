@@ -286,7 +286,7 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
 3. `pocs/agent/agent-daemon.cpp` plus `pocs/agent/agent-daemon-client.cpp`
 
-   The daemon wire payload itself is now formalized, but the JSONL transport loop still parses and emits raw JSON lines directly in the transport endpoints. The next cleanup here would likely separate JSONL framing from daemon protocol objects the same way MCP stdio now separates framing from JSON-RPC message construction.
+   The daemon wire payload and the JSONL transport framing are now both explicit seams. The daemon protocol still owns the command/response objects, while the transport endpoints now reuse one small JSONL helper for line-oriented parsing and emission instead of open-coding request/shutdown JSON in each caller.
 
 4. `pocs/agent/agent-tool-provider.cpp`
 

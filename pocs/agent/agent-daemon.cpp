@@ -1,14 +1,11 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-dispatcher.h"
+#include "agent-daemon-jsonl-protocol.h"
 
 #include "log.h"
 
-#include <nlohmann/json.hpp>
-
 #include <iostream>
 #include <string>
-
-using json = nlohmann::ordered_json;
 
 int main(int argc, char ** argv) {
     daemon_options options;
@@ -27,14 +24,10 @@ int main(int argc, char ** argv) {
     common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity);
     std::cout << make_agent_daemon_ready_response(options).dump() << std::endl;
 
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) {
-            continue;
-        }
-
-        const auto parsed = json::parse(line, nullptr, false);
-        if (parsed.is_discarded() || !parsed.is_object()) {
+    std::string protocol_error;
+    nlohmann::ordered_json parsed;
+    while (read_agent_daemon_jsonl_message(stdin, parsed, protocol_error)) {
+        if (!parsed.is_object()) {
             std::cout << make_agent_daemon_error_response("invalid JSON request").dump() << std::endl;
             continue;
         }
@@ -55,6 +48,10 @@ int main(int argc, char ** argv) {
         if (dispatcher.shutdown_requested()) {
             break;
         }
+    }
+
+    if (!protocol_error.empty() && !std::feof(stdin)) {
+        std::cout << make_agent_daemon_error_response(protocol_error).dump() << std::endl;
     }
 
     return 0;

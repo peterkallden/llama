@@ -1,8 +1,9 @@
 #include "agent-daemon-client.h"
 
 #include "agent-cli-config.h"
-#include "agent-resource-store.h"
 #include "agent-cli-selection.h"
+#include "agent-daemon-jsonl-protocol.h"
+#include "agent-resource-store.h"
 
 #include <nlohmann/json.hpp>
 #include <sheredom/subprocess.h>
@@ -43,60 +44,6 @@ std::vector<char *> to_cstr_vec(const std::vector<std::string> & values) {
     result.push_back(nullptr);
     return result;
 }
-
-bool read_protocol_message(FILE * stream, json & out, std::string & error) {
-    out = json();
-    error.clear();
-
-    char buffer[4096];
-    while (std::fgets(buffer, sizeof(buffer), stream) != nullptr) {
-        std::string line(buffer);
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-
-        const auto parsed = json::parse(line, nullptr, false);
-        if (parsed.is_discarded() || !parsed.is_object()) {
-            error = "daemon emitted a non-JSON protocol line: " + line;
-            return false;
-        }
-
-        out = parsed;
-        return true;
-    }
-
-    error = "daemon closed before returning a protocol response";
-    return false;
-}
-
-bool write_protocol_message(FILE * stream, const json & message, std::string & error) {
-    error.clear();
-    const std::string line = message.dump() + "\n";
-    if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
-        error = "failed to write daemon request";
-        return false;
-    }
-    if (std::fflush(stream) != 0) {
-        error = "failed to flush daemon request";
-        return false;
-    }
-    return true;
-}
-
-struct daemon_client_request {
-    std::string prompt;
-    std::string session_id;
-    std::string namespace_id;
-    std::string project_id;
-    std::string turn_id;
-    std::string memory_scope;
-    std::string plan_scope;
-    int n_predict = 0;
-    std::string mode = "chat";
-};
 
 std::string default_plan_scope_for_memory_scope(const std::string & memory_scope) {
     if (memory_scope == "turn" || memory_scope == "session" ||
@@ -257,7 +204,7 @@ public:
         daemon_err_thread = std::thread(forward_daemon_diagnostics, daemon_err);
 
         json ready;
-        if (!read_protocol_message(daemon_out, ready, error)) {
+        if (!read_agent_daemon_jsonl_message(daemon_out, ready, error)) {
             terminate_if_running();
             return false;
         }
@@ -272,7 +219,7 @@ public:
     }
 
     bool run_turn(
-            const daemon_client_request & request,
+            const agent_daemon_jsonl_turn_request & request,
             json & response,
             std::string & error) {
         response = json();
@@ -281,22 +228,13 @@ public:
             return false;
         }
 
-        json protocol_request = {
-            {"prompt", request.prompt},
-            {"session_id", request.session_id},
-            {"namespace_id", request.namespace_id},
-            {"project_id", request.project_id},
-            {"turn_id", request.turn_id},
-            {"memory_scope", request.memory_scope},
-            {"plan_scope", request.plan_scope},
-            {"n_predict", request.n_predict},
-            {"mode", request.mode},
-        };
-
-        if (!write_protocol_message(daemon_in, protocol_request, error)) {
+        if (!write_agent_daemon_jsonl_message(
+                daemon_in,
+                make_agent_daemon_jsonl_turn_request(request),
+                error)) {
             return false;
         }
-        return read_protocol_message(daemon_out, response, error);
+        return read_agent_daemon_jsonl_message(daemon_out, response, error);
     }
 
     bool shutdown(std::string & error) {
@@ -306,8 +244,11 @@ public:
         }
 
         json response;
-        bool ok = write_protocol_message(daemon_in, json({{"command", "shutdown"}}), error) &&
-                  read_protocol_message(daemon_out, response, error);
+        bool ok = write_agent_daemon_jsonl_message(
+                      daemon_in,
+                      make_agent_daemon_jsonl_shutdown_request(),
+                      error) &&
+                  read_agent_daemon_jsonl_message(daemon_out, response, error);
         if (ok && (!response.value("ok", false) || response.value("event", "") != "shutdown")) {
             error = "unexpected daemon shutdown response: " + response.dump();
             ok = false;
@@ -405,7 +346,7 @@ bool validate_daemon_command_args(const char * argv0, const args & a, bool requi
     return true;
 }
 
-daemon_client_request make_daemon_client_request(
+agent_daemon_jsonl_turn_request make_daemon_client_request(
         const args & a,
         const std::string & prompt,
         const std::string & turn_id = {}) {

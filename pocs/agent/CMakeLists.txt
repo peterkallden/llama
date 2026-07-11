@@ -3,6 +3,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
     agent-daemon-client.cpp
+    agent-daemon-jsonl-protocol.cpp
     agent-host-config.cpp
     agent-mcp-protocol.cpp
     agent-selection-contracts.cpp
@@ -322,6 +323,20 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
+set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
+add_executable(${TARGET}
+    agent-daemon-jsonl-protocol-smoke.cpp
+    agent-daemon-jsonl-protocol.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/vendor
+)
+target_link_libraries(${TARGET} PRIVATE
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
     agent-daemon-mcp-config-smoke.cpp
@@ -419,6 +434,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-cli-run-mcp-smoke
     llama-agent-daemon-dispatcher-smoke
     llama-agent-daemon-protocol-smoke
+    llama-agent-daemon-jsonl-protocol-smoke
     llama-agent-daemon-mcp-config-smoke
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-resource-store-smoke
