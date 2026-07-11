@@ -1,5 +1,7 @@
 #pragma once
 
+#include "plan/plan-json.h"
+
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -20,13 +22,19 @@ struct agent_plan_selection_contract {
 struct agent_blueprint_binding_contract_entry {
     std::string step_id;
     std::string tool_name;
-    nlohmann::ordered_json arguments = nlohmann::ordered_json::object();
+    common_plan_tool_arguments_contract arguments;
 };
 
 nlohmann::ordered_json make_agent_blueprint_selection_schema_json(
     const std::vector<std::string> & blueprint_ids);
 
+std::string make_agent_blueprint_selection_schema_json_string(
+    const std::vector<std::string> & blueprint_ids);
+
 nlohmann::ordered_json make_agent_plan_selection_schema_json(
+    const std::vector<std::string> & plan_ids);
+
+std::string make_agent_plan_selection_schema_json_string(
     const std::vector<std::string> & plan_ids);
 
 bool parse_agent_blueprint_selection_contract_json(

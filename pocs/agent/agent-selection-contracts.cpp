@@ -44,6 +44,11 @@ json make_agent_blueprint_selection_schema_json(
     };
 }
 
+std::string make_agent_blueprint_selection_schema_json_string(
+        const std::vector<std::string> & blueprint_ids) {
+    return make_agent_blueprint_selection_schema_json(blueprint_ids).dump();
+}
+
 json make_agent_plan_selection_schema_json(
         const std::vector<std::string> & plan_ids) {
     json ids = json::array({""});
@@ -60,6 +65,11 @@ json make_agent_plan_selection_schema_json(
             {"confidence", {{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
         }},
     };
+}
+
+std::string make_agent_plan_selection_schema_json_string(
+        const std::vector<std::string> & plan_ids) {
+    return make_agent_plan_selection_schema_json(plan_ids).dump();
 }
 
 bool parse_agent_blueprint_selection_contract_json(
@@ -119,7 +129,7 @@ bool parse_agent_blueprint_binding_contract_json(
         bindings.push_back({
             binding["step_id"].get<std::string>(),
             tool["name"].get<std::string>(),
-            tool["arguments"],
+            common_plan_tool_arguments_contract{tool["arguments"]},
         });
     }
 

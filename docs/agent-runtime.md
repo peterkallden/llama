@@ -292,7 +292,7 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
 2. `pocs/agent/agent-cli-selection.cpp`
 
-   Blueprint selection, replacement-step shaping, and selection output parsing still build and parse small JSON objects directly. This is not daemon wire protocol, but it is still a live contract between generation output and runtime interpretation.
+   This seam is narrower now too: selection schemas are requested through named schema-string helpers, and blueprint-binding tool arguments travel as a named plan tool-arguments contract instead of raw nested JSON until the final plan serializer step. The remaining work there is mostly around separating more assembly responsibility out of the CLI adapter, not about ad hoc nested selection payloads.
 
 3. `pocs/agent/agent-daemon.cpp` plus `pocs/agent/agent-daemon-client.cpp`
 
