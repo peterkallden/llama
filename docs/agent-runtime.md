@@ -299,11 +299,11 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
 4. `pocs/agent/agent-tool-provider.cpp`
 
-   The provider/view boundary is structurally much better now, but result payload assembly still builds success/failure wrapper JSON inline before assigning `content_json`. This is converged compared with the older registry path, but it is still an implicit contract at the final provider normalization step.
+   The provider/view boundary is structurally much better now, and the final success/failure payload shaping has been pulled behind named helper contracts. The remaining work here is mostly around richer typed normalization and eventual schema validation parity for MCP, rather than hand-built wrapper JSON at each provider return site.
 
 5. `common/memory/memory-tool-service.cpp`
 
-   Memory tool arguments are still parsed from raw JSON strings directly inside the service. This is a natural next target if memory tools should match the newer plan/tool contract style more closely.
+   Memory tool `search` and `remember` now parse through named argument-contract helpers before the service logic runs. The follow-up work here is mostly about extending that pattern to any additional memory tool surfaces rather than first extraction.
 
 6. `common/plan/cozo/plan-cozo.cpp`
 

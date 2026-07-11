@@ -59,24 +59,13 @@ agent_tool_result make_failure_result(
         bool retryable,
         std::string safe_summary,
         std::string raw_diagnostic = {}) {
-    agent_tool_result result;
-    result.ok = false;
-    result.tool_call_id = call.id;
-    result.tool_name = call.name;
-    result.failure_code = std::move(failure_code);
-    result.failure_class = failure_class;
-    result.retryable = retryable;
-    result.safe_summary = std::move(safe_summary);
-    result.raw_diagnostic = std::move(raw_diagnostic);
-    result.content_summary = result.safe_summary;
-    auto payload = make_agent_tool_failure_payload_json(
-        result.failure_code.empty() ? "tool_call_rejected" : result.failure_code,
-        result.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : result.safe_summary,
-        result.retryable,
-        result.failure_class,
-        result.resource_refs);
-    result.content_json = payload.dump();
-    return result;
+    return make_agent_tool_failure_result(
+        call,
+        std::move(failure_code),
+        failure_class,
+        retryable,
+        std::move(safe_summary),
+        std::move(raw_diagnostic));
 }
 
 agent_tool_result normalize_execution_result(
@@ -105,21 +94,11 @@ agent_tool_result normalize_execution_result(
             "tool result bytes exceeded configured limit");
     }
 
-    agent_tool_result result;
-    result.ok = true;
-    result.tool_call_id = call.id;
-    result.tool_name = call.name;
-    result.content_summary = execution.content_summary.empty()
-        ? definition.description
-        : execution.content_summary;
-    result.resource_refs = execution.resource_refs;
-
-    auto payload = make_agent_tool_success_payload_json(
+    return make_agent_tool_json_success_result(
+        call,
         execution.output,
-        result.content_summary,
-        result.resource_refs);
-    result.content_json = payload.dump();
-    return result;
+        execution.content_summary.empty() ? definition.description : execution.content_summary,
+        execution.resource_refs);
 }
 
 bool is_mcp_definition_allowed(
@@ -172,28 +151,19 @@ agent_tool_result normalize_mcp_execution_result(
             execution.raw_diagnostic);
     }
 
-    agent_tool_result result;
-    result.ok = true;
-    result.tool_call_id = call.id;
-    result.tool_name = call.name;
-    result.resource_refs = execution.resource_refs;
-    result.content_summary = execution.text_content;
-
     if (!execution.structured_content_json.empty()) {
-        auto payload = make_agent_tool_structured_success_payload_json(
+        return make_agent_tool_structured_success_result(
+            call,
             execution.structured_content_json,
-            result.content_summary,
-            result.resource_refs);
-        result.content_json = payload.dump();
-        return result;
+            execution.text_content,
+            execution.resource_refs);
     }
 
-    auto payload = make_agent_tool_text_success_payload_json(
+    return make_agent_tool_text_success_result(
+        call,
         execution.text_content,
-        result.content_summary,
-        result.resource_refs);
-    result.content_json = payload.dump();
-    return result;
+        execution.text_content,
+        execution.resource_refs);
 }
 
 class native_agent_tool_view : public agent_tool_view {

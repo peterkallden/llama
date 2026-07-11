@@ -121,3 +121,85 @@ json make_agent_tool_text_success_payload_json(
     attach_agent_tool_resource_refs_json(resources, payload);
     return payload;
 }
+
+agent_tool_result make_agent_tool_failure_result(
+        const agent_tool_call & call,
+        const std::string & failure_code,
+        common_tool_failure_class failure_class,
+        bool retryable,
+        const std::string & safe_summary,
+        const std::string & raw_diagnostic,
+        std::vector<common_runtime_resource_ref> resources) {
+    agent_tool_result result;
+    result.ok = false;
+    result.tool_call_id = call.id;
+    result.tool_name = call.name;
+    result.failure_code = failure_code;
+    result.failure_class = failure_class;
+    result.retryable = retryable;
+    result.safe_summary = safe_summary;
+    result.raw_diagnostic = raw_diagnostic;
+    result.content_summary = result.safe_summary;
+    result.resource_refs = std::move(resources);
+    result.content_json = make_agent_tool_failure_payload_json(
+        result.failure_code.empty() ? "tool_call_rejected" : result.failure_code,
+        result.safe_summary.empty() ? "The tool call was rejected by its contract or executor." : result.safe_summary,
+        result.retryable,
+        result.failure_class,
+        result.resource_refs).dump();
+    return result;
+}
+
+agent_tool_result make_agent_tool_json_success_result(
+        const agent_tool_call & call,
+        const std::string & output_json_or_text,
+        const std::string & summary,
+        std::vector<common_runtime_resource_ref> resources) {
+    agent_tool_result result;
+    result.ok = true;
+    result.tool_call_id = call.id;
+    result.tool_name = call.name;
+    result.content_summary = summary;
+    result.resource_refs = std::move(resources);
+    result.content_json = make_agent_tool_success_payload_json(
+        output_json_or_text,
+        result.content_summary,
+        result.resource_refs).dump();
+    return result;
+}
+
+agent_tool_result make_agent_tool_structured_success_result(
+        const agent_tool_call & call,
+        const std::string & structured_content_json,
+        const std::string & summary,
+        std::vector<common_runtime_resource_ref> resources) {
+    agent_tool_result result;
+    result.ok = true;
+    result.tool_call_id = call.id;
+    result.tool_name = call.name;
+    result.content_summary = summary;
+    result.resource_refs = std::move(resources);
+    result.content_json = make_agent_tool_structured_success_payload_json(
+        structured_content_json,
+        result.content_summary,
+        result.resource_refs).dump();
+    return result;
+}
+
+agent_tool_result make_agent_tool_text_success_result(
+        const agent_tool_call & call,
+        const std::string & text,
+        const std::string & summary,
+        std::vector<common_runtime_resource_ref> resources) {
+    agent_tool_result result;
+    result.ok = true;
+    result.tool_call_id = call.id;
+    result.tool_name = call.name;
+    result.content_summary = summary;
+    result.resource_refs = std::move(resources);
+    result.content_json = make_agent_tool_text_success_payload_json(
+        text,
+        result.content_summary,
+        result.resource_refs).dump();
+    return result;
+}
