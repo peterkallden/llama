@@ -81,65 +81,96 @@ std::string common_agent_runtime_reflection_learning_hint_json(
     return common_agent_runtime_reflection_learning_hint_to_json(hint).dump();
 }
 
-std::string common_agent_runtime_normalize_reasoning_observation_json(
+nlohmann::ordered_json common_agent_runtime_reasoning_observation_to_json(
         const std::string & reasoning_text) {
     const auto parsed = json::parse(reasoning_text, nullptr, false);
     if (parsed.is_object()) {
-        return parsed.dump();
+        return parsed;
     }
-    return json({
+    return {
         {"summary", reasoning_text},
         {"format", "unstructured"},
-    }).dump();
+    };
+}
+
+std::string common_agent_runtime_normalize_reasoning_observation_json(
+        const std::string & reasoning_text) {
+    return common_agent_runtime_reasoning_observation_to_json(reasoning_text).dump();
+}
+
+bool common_agent_runtime_apply_safe_tool_defaults_to_json(
+        const common_agent_request & request,
+        const std::string & tool_name,
+        const json & arguments,
+        json & normalized_arguments,
+        bool & changed,
+        std::string & error) {
+    error.clear();
+    changed = false;
+    if (!arguments.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+
+    normalized_arguments = arguments;
+    const auto set_prompt_query = [&](size_t max_length) {
+        if (normalized_arguments.contains("query")) {
+            return;
+        }
+        std::string query;
+        if (infer_memory_search_query(request.prompt, query) && query.size() <= max_length) {
+            normalized_arguments["query"] = std::move(query);
+            changed = true;
+        }
+    };
+
+    if (tool_name == "calculator" && !normalized_arguments.contains("expression")) {
+        std::string expression;
+        if (infer_calculator_expression(request.prompt, expression)) {
+            normalized_arguments["expression"] = std::move(expression);
+            changed = true;
+        }
+    } else if (tool_name == "memory_search") {
+        set_prompt_query(1024);
+    } else if (tool_name == "repository_search") {
+        set_prompt_query(256);
+        if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
+        if (!normalized_arguments.contains("max_results")) { normalized_arguments["max_results"] = 16; changed = true; }
+    } else if (tool_name == "web_search") {
+        set_prompt_query(256);
+        if (!normalized_arguments.contains("limit")) { normalized_arguments["limit"] = 5; changed = true; }
+    } else if (tool_name == "repository_read") {
+        if (!normalized_arguments.contains("start_line")) { normalized_arguments["start_line"] = 1; changed = true; }
+        if (!normalized_arguments.contains("end_line")) { normalized_arguments["end_line"] = 200; changed = true; }
+    } else if (tool_name == "resource_read") {
+        if (!normalized_arguments.contains("max_bytes")) { normalized_arguments["max_bytes"] = 8192; changed = true; }
+    } else if (tool_name == "repository_list") {
+        if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
+        if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }
+    }
+
+    return true;
 }
 
 bool common_agent_runtime_apply_safe_tool_defaults(
         const common_agent_request & request,
         common_agent_tool_call & call) {
-    auto arguments = json::parse(call.arguments_json, nullptr, false);
-    if (!arguments.is_object()) {
+    const auto arguments = json::parse(call.arguments_json, nullptr, false);
+    json normalized_arguments;
+    bool changed = false;
+    std::string error;
+    if (!common_agent_runtime_apply_safe_tool_defaults_to_json(
+            request,
+            call.name,
+            arguments,
+            normalized_arguments,
+            changed,
+            error)) {
         return false;
     }
 
-    bool changed = false;
-    const auto set_prompt_query = [&](size_t max_length) {
-        if (arguments.contains("query")) {
-            return;
-        }
-        std::string query;
-        if (infer_memory_search_query(request.prompt, query) && query.size() <= max_length) {
-            arguments["query"] = std::move(query);
-            changed = true;
-        }
-    };
-
-    if (call.name == "calculator" && !arguments.contains("expression")) {
-        std::string expression;
-        if (infer_calculator_expression(request.prompt, expression)) {
-            arguments["expression"] = std::move(expression);
-            changed = true;
-        }
-    } else if (call.name == "memory_search") {
-        set_prompt_query(1024);
-    } else if (call.name == "repository_search") {
-        set_prompt_query(256);
-        if (!arguments.contains("path")) { arguments["path"] = ""; changed = true; }
-        if (!arguments.contains("max_results")) { arguments["max_results"] = 16; changed = true; }
-    } else if (call.name == "web_search") {
-        set_prompt_query(256);
-        if (!arguments.contains("limit")) { arguments["limit"] = 5; changed = true; }
-    } else if (call.name == "repository_read") {
-        if (!arguments.contains("start_line")) { arguments["start_line"] = 1; changed = true; }
-        if (!arguments.contains("end_line")) { arguments["end_line"] = 200; changed = true; }
-    } else if (call.name == "resource_read") {
-        if (!arguments.contains("max_bytes")) { arguments["max_bytes"] = 8192; changed = true; }
-    } else if (call.name == "repository_list") {
-        if (!arguments.contains("path")) { arguments["path"] = ""; changed = true; }
-        if (!arguments.contains("depth")) { arguments["depth"] = 1; changed = true; }
-    }
-
     if (changed) {
-        call.arguments_json = arguments.dump();
+        call.arguments_json = normalized_arguments.dump();
     }
     return changed;
 }
