@@ -2,6 +2,26 @@
 
 using json = nlohmann::ordered_json;
 
+namespace {
+
+bool parse_string_array_field(
+        const json & value,
+        std::vector<std::string> & output) {
+    if (!value.is_array()) {
+        return false;
+    }
+    output.clear();
+    for (const auto & item : value) {
+        if (!item.is_string()) {
+            return false;
+        }
+        output.push_back(item.get<std::string>());
+    }
+    return true;
+}
+
+} // namespace
+
 bool read_agent_daemon_jsonl_message(
         FILE * stream,
         json & out,
@@ -69,4 +89,49 @@ json make_agent_daemon_jsonl_shutdown_request() {
     return {
         {"command", "shutdown"},
     };
+}
+
+bool parse_agent_daemon_jsonl_ready_response(
+        const json & message,
+        agent_daemon_jsonl_ready_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object() ||
+            !message.value("ok", false) ||
+            message.value("event", std::string()) != "ready") {
+        error = "unexpected daemon ready response";
+        return false;
+    }
+    if (!message.contains("default_mode") || !message["default_mode"].is_string()) {
+        error = "daemon ready response is missing default_mode";
+        return false;
+    }
+    if (!message.contains("protocol_version") || !message["protocol_version"].is_number_integer()) {
+        error = "daemon ready response is missing protocol_version";
+        return false;
+    }
+    if (!message.contains("capabilities") ||
+            !parse_string_array_field(message["capabilities"], response.capabilities)) {
+        error = "daemon ready response is missing capabilities";
+        return false;
+    }
+
+    response.default_mode = message["default_mode"].get<std::string>();
+    response.protocol_version = message["protocol_version"].get<int>();
+    error.clear();
+    return true;
+}
+
+bool parse_agent_daemon_jsonl_event_response(
+        const json & message,
+        const std::string & expected_event,
+        std::string & error) {
+    if (!message.is_object() ||
+            !message.value("ok", false) ||
+            message.value("event", std::string()) != expected_event) {
+        error = "unexpected daemon " + expected_event + " response";
+        return false;
+    }
+    error.clear();
+    return true;
 }

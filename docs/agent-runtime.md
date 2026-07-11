@@ -85,6 +85,7 @@ The same direction has now been reinforced around the biggest JSON-heavy runtime
 - the older native chat-bridge path now also serializes tool success/failure payloads through named common-agent helpers instead of inlined JSON snippets
 - the runtime core now also routes its remaining bounded observation/default JSON seams through named runtime-contract helpers instead of open-coding request-tool default stamping and observation payload `.dump()` calls in `agent-runtime.cpp`
 - daemon JSONL request/response shaping now goes through explicit daemon protocol helpers
+- the foreground daemon and its child-process client now also share named JSONL ready/event parsers instead of validating those protocol messages inline
 - MCP stdio transport still owns framing, but JSON-RPC request/notification construction and tool result parsing now live behind extracted protocol helpers
 - plan-step tool arguments now have a small named contract wrapper even though stored compatibility still remains `arguments_json`
 - host config now has an explicit `schema_version`, a validator, and a roundtrip JSON helper instead of only a one-way parse path

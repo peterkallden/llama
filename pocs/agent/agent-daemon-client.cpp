@@ -208,8 +208,9 @@ public:
             terminate_if_running();
             return false;
         }
-        if (!ready.value("ok", false) || ready.value("event", "") != "ready") {
-            error = "unexpected daemon ready response: " + ready.dump();
+        agent_daemon_jsonl_ready_response ready_response;
+        if (!parse_agent_daemon_jsonl_ready_response(ready, ready_response, error)) {
+            error += ": " + ready.dump();
             terminate_if_running();
             return false;
         }
@@ -249,8 +250,8 @@ public:
                       make_agent_daemon_jsonl_shutdown_request(),
                       error) &&
                   read_agent_daemon_jsonl_message(daemon_out, response, error);
-        if (ok && (!response.value("ok", false) || response.value("event", "") != "shutdown")) {
-            error = "unexpected daemon shutdown response: " + response.dump();
+        if (ok && !parse_agent_daemon_jsonl_event_response(response, "shutdown", error)) {
+            error += ": " + response.dump();
             ok = false;
         }
 

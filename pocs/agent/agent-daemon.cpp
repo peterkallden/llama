@@ -7,6 +7,16 @@
 #include <iostream>
 #include <string>
 
+namespace {
+
+bool emit_agent_daemon_jsonl_message(
+        const nlohmann::ordered_json & message) {
+    std::string error;
+    return write_agent_daemon_jsonl_message(stdout, message, error);
+}
+
+} // namespace
+
 int main(int argc, char ** argv) {
     daemon_options options;
     if (!parse_agent_daemon_args(argc, argv, options)) {
@@ -22,19 +32,21 @@ int main(int argc, char ** argv) {
         return 2;
     }
     common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity);
-    std::cout << make_agent_daemon_ready_response(options).dump() << std::endl;
+    if (!emit_agent_daemon_jsonl_message(make_agent_daemon_ready_response(options))) {
+        return 2;
+    }
 
     std::string protocol_error;
     nlohmann::ordered_json parsed;
     while (read_agent_daemon_jsonl_message(stdin, parsed, protocol_error)) {
         if (!parsed.is_object()) {
-            std::cout << make_agent_daemon_error_response("invalid JSON request").dump() << std::endl;
+            emit_agent_daemon_jsonl_message(make_agent_daemon_error_response("invalid JSON request"));
             continue;
         }
 
         common_agent_daemon_command command;
         if (!parse_agent_daemon_command(parsed, options, dispatcher.default_mode(), command, error)) {
-            std::cout << make_agent_daemon_error_response(error).dump() << std::endl;
+            emit_agent_daemon_jsonl_message(make_agent_daemon_error_response(error));
             continue;
         }
 
@@ -44,14 +56,14 @@ int main(int argc, char ** argv) {
         if (!error.empty() && result.error.empty()) {
             result.error = error;
         }
-        std::cout << make_agent_daemon_command_response(result).dump() << std::endl;
+        emit_agent_daemon_jsonl_message(make_agent_daemon_command_response(result));
         if (dispatcher.shutdown_requested()) {
             break;
         }
     }
 
     if (!protocol_error.empty() && !std::feof(stdin)) {
-        std::cout << make_agent_daemon_error_response(protocol_error).dump() << std::endl;
+        emit_agent_daemon_jsonl_message(make_agent_daemon_error_response(protocol_error));
     }
 
     return 0;

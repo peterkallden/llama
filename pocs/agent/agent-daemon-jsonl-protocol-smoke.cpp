@@ -59,6 +59,35 @@ int main() {
         return 1;
     }
 
+    agent_daemon_jsonl_ready_response ready;
+    if (!parse_agent_daemon_jsonl_ready_response(
+            {
+                {"ok", true},
+                {"event", "ready"},
+                {"default_mode", "chat"},
+                {"protocol_version", 1},
+                {"capabilities", json::array({"chat", "mini"})},
+            },
+            ready,
+            error) ||
+            ready.default_mode != "chat" ||
+            ready.protocol_version != 1 ||
+            ready.capabilities.size() != 2) {
+        std::fprintf(stderr, "ready response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
+    if (!parse_agent_daemon_jsonl_event_response(
+            {
+                {"ok", true},
+                {"event", "shutdown"},
+            },
+            "shutdown",
+            error)) {
+        std::fprintf(stderr, "shutdown response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
     std::printf("daemon_jsonl_shutdown=%s\n", shutdown_request.value("command", "").c_str());
     return 0;
