@@ -132,6 +132,42 @@ int main(int argc, char ** argv) {
             "2024-11-05",
             mode == "bad-tools-list",
             mode == "exit-after-initialize",
+            [](agent_mcp_json & result, std::string & error) {
+                result = {
+                    {"resources", agent_mcp_json::array({
+                        {
+                            {"uri", "mcp-resource://github/search_issues/stub-1"},
+                            {"name", "search-results.json"},
+                            {"description", "Full GitHub issue search result set"},
+                            {"mimeType", "application/json"},
+                            {"sizeBytes", 128},
+                        },
+                    })},
+                };
+                error.clear();
+                return true;
+            },
+            [](const agent_mcp_json & params, agent_mcp_json & result, std::string & error) {
+                const auto uri = params.value("uri", "");
+                if (uri != "mcp-resource://github/search_issues/stub-1") {
+                    error = "resource was not found";
+                    return false;
+                }
+                result = {
+                    {"contents", agent_mcp_json::array({
+                        {
+                            {"uri", uri},
+                            {"name", "search-results.json"},
+                            {"description", "Full GitHub issue search result set"},
+                            {"mimeType", "application/json"},
+                            {"sizeBytes", 128},
+                            {"text", R"({"items":[{"title":"stub issue"}]})"},
+                        },
+                    })},
+                };
+                error.clear();
+                return true;
+            },
         });
     return server.run(stdin, stdout, stderr);
 }

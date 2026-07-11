@@ -420,3 +420,58 @@ bool agent_mcp_stdio_client::call_tool(
     (void) context;
     return true;
 }
+
+bool agent_mcp_stdio_client::list_resources(
+        std::vector<mcp_agent_resource_definition> & resources,
+        std::string & error) {
+    resources.clear();
+    if (!ensure_started(error)) {
+        return false;
+    }
+
+    json response;
+    if (!send_request("resources/list", json::object(), response, error)) {
+        return false;
+    }
+
+    const auto & rpc_result = response["result"];
+    if (!parse_mcp_resources_list_result(rpc_result, resources, error)) {
+        collect_stderr_tail();
+        capture_exit_if_needed();
+        error = with_transport_context(error);
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool agent_mcp_stdio_client::read_resource(
+        const std::string & uri,
+        mcp_agent_resource_read_result & result,
+        std::string & error) {
+    result = {};
+    if (!ensure_started(error)) {
+        return false;
+    }
+
+    json response;
+    if (!send_request(
+            "resources/read",
+            make_mcp_resources_read_params(uri),
+            response,
+            error)) {
+        return false;
+    }
+
+    const auto & rpc_result = response["result"];
+    if (!parse_mcp_resource_read_result(rpc_result, result, error)) {
+        collect_stderr_tail();
+        capture_exit_if_needed();
+        error = with_transport_context(error);
+        return false;
+    }
+
+    error.clear();
+    return true;
+}

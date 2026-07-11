@@ -21,6 +21,9 @@ nlohmann::ordered_json make_mcp_tools_call_params(
     const std::string & name,
     const nlohmann::ordered_json & arguments);
 
+nlohmann::ordered_json make_mcp_resources_read_params(
+    const std::string & uri);
+
 bool parse_mcp_tool_definition(
     const std::string & provider_id,
     const nlohmann::ordered_json & item,
@@ -30,4 +33,14 @@ bool parse_mcp_tool_definition(
 bool parse_mcp_tool_call_result(
     const nlohmann::ordered_json & rpc_result,
     mcp_agent_tool_call_result & result,
+    std::string & error);
+
+bool parse_mcp_resources_list_result(
+    const nlohmann::ordered_json & rpc_result,
+    std::vector<mcp_agent_resource_definition> & resources,
+    std::string & error);
+
+bool parse_mcp_resource_read_result(
+    const nlohmann::ordered_json & rpc_result,
+    mcp_agent_resource_read_result & result,
     std::string & error);

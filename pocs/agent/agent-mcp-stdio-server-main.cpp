@@ -183,6 +183,42 @@ void append_resource_links(
     }
 }
 
+agent_mcp_json render_mcp_resource(
+        const agent_resource_descriptor & descriptor) {
+    agent_mcp_json entry = {
+        {"uri", descriptor.uri},
+        {"name", descriptor.name},
+        {"description", descriptor.description},
+        {"mimeType", descriptor.mime_type},
+        {"sizeBytes", descriptor.size_bytes},
+    };
+
+    agent_mcp_json metadata = agent_mcp_json::object();
+    if (!descriptor.metadata.purpose.empty()) {
+        metadata["purpose"] = descriptor.metadata.purpose;
+    }
+    if (!descriptor.metadata.content_summary.empty()) {
+        metadata["content_summary"] = descriptor.metadata.content_summary;
+    }
+    if (!descriptor.metadata.usage_hint.empty()) {
+        metadata["usage_hint"] = descriptor.metadata.usage_hint;
+    }
+    if (!descriptor.metadata.limitations.empty()) {
+        metadata["limitations"] = descriptor.metadata.limitations;
+    }
+    if (!descriptor.metadata.keywords.empty()) {
+        metadata["keywords"] = descriptor.metadata.keywords;
+    }
+    if (!descriptor.metadata.entities.empty()) {
+        metadata["entities"] = descriptor.metadata.entities;
+    }
+    if (!metadata.empty()) {
+        entry["metadata"] = std::move(metadata);
+    }
+
+    return entry;
+}
+
 agent_mcp_server_tool_result render_mcp_result(
         const agent_tool_result & tool_result) {
     agent_mcp_server_tool_result result;
@@ -500,9 +536,6 @@ bool register_resolved_profile_tools(
     }
 
     for (const auto & tool : initial_selection.tooling.tools) {
-        if (options.memory_db.empty() && tool.name.rfind("memory_", 0) == 0) {
-            continue;
-        }
         if (options.plan_db.empty() && tool.name.rfind("plan_", 0) == 0) {
             continue;
         }
@@ -627,6 +660,15 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto resource_authority = make_agent_resource_read_authority(
+        {
+            resource_store.get(),
+            options.memory_namespace,
+            options.memory_session,
+            options.memory_project,
+            options.memory_turn.empty() ? "mcp-turn" : options.memory_turn,
+        });
+
     agent_mcp_server_tool_registry registry;
     if (!register_resolved_profile_tools(
             catalog,
@@ -648,6 +690,45 @@ int main(int argc, char ** argv) {
             "2024-11-05",
             false,
             false,
+            [resource_store = resource_store.get(), resource_authority](agent_mcp_json & result, std::string & callback_error) {
+                std::vector<agent_resource_descriptor> descriptors;
+                if (!resource_store->list(resource_authority, descriptors, callback_error)) {
+                    return false;
+                }
+                result = {
+                    {"resources", agent_mcp_json::array()},
+                };
+                for (const auto & descriptor : descriptors) {
+                    result["resources"].push_back(render_mcp_resource(descriptor));
+                }
+                callback_error.clear();
+                return true;
+            },
+            [resource_store = resource_store.get(), resource_authority](const agent_mcp_json & params, agent_mcp_json & result, std::string & callback_error) {
+                const std::string uri = params.value("uri", "");
+                if (uri.empty()) {
+                    callback_error = "resources/read requires a uri";
+                    return false;
+                }
+
+                agent_resource_descriptor descriptor;
+                if (!resource_store->stat(uri, resource_authority, descriptor, callback_error)) {
+                    return false;
+                }
+
+                std::string text;
+                if (!resource_store->read_text(uri, resource_authority, 32768, text, callback_error)) {
+                    return false;
+                }
+
+                agent_mcp_json content = render_mcp_resource(descriptor);
+                content["text"] = text;
+                result = {
+                    {"contents", agent_mcp_json::array({std::move(content)})},
+                };
+                callback_error.clear();
+                return true;
+            },
         });
     return server.run(stdin, stdout, stderr);
 }

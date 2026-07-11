@@ -355,7 +355,7 @@ That seam now has two concrete test paths:
 - an in-process fake MCP client used to exercise provider filtering and result normalization
 - a first stdio-based MCP client adapter that speaks JSON-RPC-style `Content-Length` framed messages to a subprocess
 
-The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list` and `tools/call`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
+The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
@@ -380,9 +380,10 @@ The current real MCP stdio server exports a host-resolved tool surface, not the 
 | Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository_diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
 | Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, currently `research`; host policy still decides whether network tools are exposed |
 | `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
-| Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus a real memory store, typically `--memory-db PATH` with the chosen memory backend |
+| `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads through the MCP resource capability |
+| Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus any host-owned memory store, including the default in-memory store or an explicit persistent backend such as `--memory-db PATH` |
 | External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | A host config or equivalent host-owned request that enables stdio MCP subprocess providers with a prefix and command |
-| Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory` or `research`, a bound memory store, and host policy that allows proposal-style writes |
+| Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory` or `research`, a host-owned memory store, and host policy that allows proposal-style writes |
 | Planning tools such as `plan_get` and `plan_propose` | Partly | A profile that includes them plus a real plan store; `plan_get` is only meaningful when a bound `--plan-id ID` exists |
 | Resource refs returned from native tools | Yes | The underlying native tool must materialize them through the host-owned resource store; `web_search`, `web_fetch` and `resource_read` are the first concrete examples |
 | Full mini/planning runtime, reflection loop, memory learning loop | No | Those are runtime behaviors, not MCP tools in the current slice |
@@ -390,9 +391,9 @@ The current real MCP stdio server exports a host-resolved tool surface, not the 
 
 This is also the cleanest way to think about memory, planning and resources through MCP right now:
 
-- memory can be exported as native MCP-visible tools, but only when the server process is started with a host-owned memory store
+- memory can be exported as native MCP-visible tools when the server process has any host-owned memory store, including the default in-memory store
 - planning can expose its native plan tools, but that is not the same thing as exporting the whole mini/planning runtime as an MCP tool surface
-- resources are the strongest fit so far because the real server always owns the resource store contract and native tools can already return opaque resource refs for deferred payloads
+- resources are the strongest fit so far because the real server always owns the resource store contract, can now expose `resources/list` and `resources/read`, and native tools can already return opaque resource refs for deferred payloads
 
 So the current MCP stdio server is best understood as "native tool export through an MCP transport seam", not yet as "the agent runtime itself exposed as an MCP server".
 

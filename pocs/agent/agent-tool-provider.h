@@ -142,6 +142,15 @@ struct mcp_agent_tool_call_result {
     std::string raw_diagnostic;
 };
 
+struct mcp_agent_resource_definition {
+    common_runtime_resource_ref resource;
+};
+
+struct mcp_agent_resource_read_result {
+    common_runtime_resource_ref resource;
+    std::string text_content;
+};
+
 class agent_mcp_tool_client {
 public:
     virtual ~agent_mcp_tool_client() = default;
@@ -212,6 +221,15 @@ public:
         const std::string & arguments_json,
         mcp_agent_tool_call_result & result,
         std::string & error) override;
+
+    bool list_resources(
+        std::vector<mcp_agent_resource_definition> & resources,
+        std::string & error);
+
+    bool read_resource(
+        const std::string & uri,
+        mcp_agent_resource_read_result & result,
+        std::string & error);
 
 private:
     bool ensure_started(std::string & error);

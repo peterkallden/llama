@@ -78,6 +78,11 @@ public:
         agent_resource_descriptor & out,
         std::string & error) const override;
 
+    bool list(
+        const agent_resource_read_authority & authority,
+        std::vector<agent_resource_descriptor> & out,
+        std::string & error) const override;
+
 private:
     std::shared_ptr<agent_blob_store> blob_store_;
     std::unique_ptr<agent_resource_catalog> catalog_;

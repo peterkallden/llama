@@ -6,6 +6,44 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+bool parse_resource_ref_from_json(
+        const json & item,
+        common_runtime_resource_ref & resource) {
+    if (!item.is_object()) {
+        return false;
+    }
+    const std::string uri = item.value("uri", "");
+    if (uri.empty()) {
+        return false;
+    }
+
+    resource = {};
+    resource.uri = uri;
+    resource.name = item.value("name", item.value("title", std::string()));
+    resource.description = item.value("description", "");
+    resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
+    resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
+    resource.scope = common_runtime_resource_scope::turn;
+    if (item.contains("metadata") && item["metadata"].is_object()) {
+        const auto & metadata = item["metadata"];
+        resource.metadata.purpose = metadata.value("purpose", "");
+        resource.metadata.content_summary = metadata.value("content_summary", "");
+        resource.metadata.usage_hint = metadata.value("usage_hint", "");
+        resource.metadata.limitations = metadata.value("limitations", "");
+        if (metadata.contains("keywords") && metadata["keywords"].is_array()) {
+            for (const auto & keyword : metadata["keywords"]) {
+                if (keyword.is_string()) resource.metadata.keywords.push_back(keyword.get<std::string>());
+            }
+        }
+        if (metadata.contains("entities") && metadata["entities"].is_array()) {
+            for (const auto & entity : metadata["entities"]) {
+                if (entity.is_string()) resource.metadata.entities.push_back(entity.get<std::string>());
+            }
+        }
+    }
+    return true;
+}
+
 std::string join_text_content(const json & content) {
     if (!content.is_array()) {
         return {};
@@ -50,30 +88,9 @@ std::vector<common_runtime_resource_ref> extract_resource_links(const json & con
         }
 
         common_runtime_resource_ref resource;
-        resource.uri = uri;
-        resource.name = item.value("name", "");
-        resource.description = item.value("description", "");
-        resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
-        resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
-        resource.scope = common_runtime_resource_scope::turn;
-        if (item.contains("metadata") && item["metadata"].is_object()) {
-            const auto & metadata = item["metadata"];
-            resource.metadata.purpose = metadata.value("purpose", "");
-            resource.metadata.content_summary = metadata.value("content_summary", "");
-            resource.metadata.usage_hint = metadata.value("usage_hint", "");
-            resource.metadata.limitations = metadata.value("limitations", "");
-            if (metadata.contains("keywords") && metadata["keywords"].is_array()) {
-                for (const auto & keyword : metadata["keywords"]) {
-                    if (keyword.is_string()) resource.metadata.keywords.push_back(keyword.get<std::string>());
-                }
-            }
-            if (metadata.contains("entities") && metadata["entities"].is_array()) {
-                for (const auto & entity : metadata["entities"]) {
-                    if (entity.is_string()) resource.metadata.entities.push_back(entity.get<std::string>());
-                }
-            }
+        if (parse_resource_ref_from_json(item, resource)) {
+            resources.push_back(std::move(resource));
         }
-        resources.push_back(std::move(resource));
     }
 
     return resources;
@@ -130,6 +147,13 @@ json make_mcp_tools_call_params(
     return {
         {"name", name},
         {"arguments", arguments},
+    };
+}
+
+json make_mcp_resources_read_params(
+        const std::string & uri) {
+    return {
+        {"uri", uri},
     };
 }
 
@@ -210,5 +234,55 @@ bool parse_mcp_tool_call_result(
         result.raw_diagnostic = result.safe_summary;
     }
 
+    return true;
+}
+
+bool parse_mcp_resources_list_result(
+        const json & rpc_result,
+        std::vector<mcp_agent_resource_definition> & resources,
+        std::string & error) {
+    resources.clear();
+    error.clear();
+
+    if (!rpc_result.is_object() || !rpc_result.contains("resources") || !rpc_result["resources"].is_array()) {
+        error = "MCP resources/list response did not contain a resources array";
+        return false;
+    }
+
+    for (const auto & item : rpc_result["resources"]) {
+        mcp_agent_resource_definition definition;
+        if (!parse_resource_ref_from_json(item, definition.resource)) {
+            error = "MCP resource entry is invalid";
+            return false;
+        }
+        resources.push_back(std::move(definition));
+    }
+
+    return true;
+}
+
+bool parse_mcp_resource_read_result(
+        const json & rpc_result,
+        mcp_agent_resource_read_result & result,
+        std::string & error) {
+    result = {};
+    error.clear();
+
+    if (!rpc_result.is_object() || !rpc_result.contains("contents") || !rpc_result["contents"].is_array() ||
+            rpc_result["contents"].empty() || !rpc_result["contents"][0].is_object()) {
+        error = "MCP resources/read response did not contain a contents array";
+        return false;
+    }
+
+    const auto & first = rpc_result["contents"][0];
+    if (!parse_resource_ref_from_json(first, result.resource)) {
+        error = "MCP resource read content is invalid";
+        return false;
+    }
+    if (!first.contains("text") || !first["text"].is_string()) {
+        error = "MCP resource read content did not contain text";
+        return false;
+    }
+    result.text_content = first["text"].get<std::string>();
     return true;
 }

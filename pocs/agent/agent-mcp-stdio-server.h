@@ -2,6 +2,7 @@
 
 #include "agent-mcp-server-tool-registry.h"
 
+#include <functional>
 #include <cstdio>
 #include <string>
 
@@ -11,6 +12,8 @@ struct agent_mcp_stdio_server_options {
     std::string protocol_version = "2024-11-05";
     bool emit_malformed_tools_list = false;
     bool exit_after_initialize = false;
+    std::function<bool(agent_mcp_json & result, std::string & error)> list_resources;
+    std::function<bool(const agent_mcp_json & params, agent_mcp_json & result, std::string & error)> read_resource;
 };
 
 class agent_mcp_stdio_server {

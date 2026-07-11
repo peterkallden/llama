@@ -35,6 +35,7 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
                 {"protocolVersion", options_.protocol_version},
                 {"capabilities", {
                     {"tools", agent_mcp_json::object()},
+                    {"resources", options_.list_resources ? agent_mcp_json::object() : agent_mcp_json()},
                 }},
                 {"serverInfo", {
                     {"name", options_.server_name},
@@ -69,6 +70,29 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
                 return 11;
             }
             response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tools_list_result(registry_));
+        } else if (method == "resources/list") {
+            if (!options_.list_resources) {
+                response = agent_mcp_make_json_rpc_error(id, -32601, "method not found");
+            } else {
+                agent_mcp_json result;
+                if (!options_.list_resources(result, error)) {
+                    response = agent_mcp_make_json_rpc_error(id, -32000, error.empty() ? "resources/list failed" : error);
+                } else {
+                    response = agent_mcp_make_json_rpc_result(id, std::move(result));
+                }
+            }
+        } else if (method == "resources/read") {
+            if (!options_.read_resource) {
+                response = agent_mcp_make_json_rpc_error(id, -32601, "method not found");
+            } else {
+                const auto params = message.value("params", agent_mcp_json::object());
+                agent_mcp_json result;
+                if (!options_.read_resource(params, result, error)) {
+                    response = agent_mcp_make_json_rpc_error(id, -32000, error.empty() ? "resources/read failed" : error);
+                } else {
+                    response = agent_mcp_make_json_rpc_result(id, std::move(result));
+                }
+            }
         } else if (method == "tools/call") {
             const auto params = message.value("params", agent_mcp_json::object());
             const std::string name = params.value("name", "");

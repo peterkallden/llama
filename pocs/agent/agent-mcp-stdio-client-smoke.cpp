@@ -90,6 +90,22 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    std::vector<mcp_agent_resource_definition> resources;
+    if (!client.list_resources(resources, error) ||
+            resources.empty() ||
+            resources[0].resource.uri != "mcp-resource://github/search_issues/stub-1") {
+        std::fprintf(stderr, "resources/list did not return the expected MCP resources: %s\n", error.c_str());
+        return 1;
+    }
+
+    mcp_agent_resource_read_result resource_read;
+    if (!client.read_resource("mcp-resource://github/search_issues/stub-1", resource_read, error) ||
+            resource_read.resource.mime_type != "application/json" ||
+            resource_read.text_content.find("stub issue") == std::string::npos) {
+        std::fprintf(stderr, "resources/read did not return the expected MCP resource content: %s\n", error.c_str());
+        return 1;
+    }
+
     const auto failure_result = read_view->call({
         "call-err",
         "github_search_recent_failures",
@@ -151,6 +167,7 @@ int main(int argc, char ** argv) {
     std::printf("stdio_mcp_tools=%zu\n", write_view->chat_tools().size());
     std::printf("stdio_mcp_search_result=%s\n", search_result.content_json.c_str());
     std::printf("stdio_mcp_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
+    std::printf("stdio_mcp_resource_text=%s\n", resource_read.text_content.c_str());
     std::printf("stdio_mcp_failure_code=%s\n", failure_result.failure_code.c_str());
     std::printf("stdio_mcp_create_result=%s\n", create_result.content_json.c_str());
     std::printf("stdio_mcp_error_context=%s\n", error.c_str());

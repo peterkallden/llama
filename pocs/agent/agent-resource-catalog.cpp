@@ -34,3 +34,16 @@ bool agent_in_memory_resource_catalog::find_descriptor(
     error.clear();
     return true;
 }
+
+bool agent_in_memory_resource_catalog::list_descriptors(
+    std::vector<agent_resource_descriptor> & out,
+    std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    out.clear();
+    out.reserve(resources_.size());
+    for (const auto & entry : resources_) {
+        out.push_back(entry.second);
+    }
+    error.clear();
+    return true;
+}

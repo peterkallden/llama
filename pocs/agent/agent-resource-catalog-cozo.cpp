@@ -321,4 +321,32 @@ bool agent_cozo_resource_catalog::find_descriptor(
     return true;
 }
 
+bool agent_cozo_resource_catalog::list_descriptors(
+    std::vector<agent_resource_descriptor> & out,
+    std::string & error) const {
+    std::string result;
+    if (!run(
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json]",
+            "{}",
+            result,
+            error)) {
+        return false;
+    }
+
+    const auto parsed = json::parse(result, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || !parsed["rows"].is_array()) {
+        error = "unexpected Cozo resource list result";
+        return false;
+    }
+
+    out.clear();
+    for (const auto & row : parsed["rows"]) {
+        if (row.is_array()) {
+            out.push_back(descriptor_from_row(row));
+        }
+    }
+    error.clear();
+    return true;
+}
+
 #endif

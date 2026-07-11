@@ -1,5 +1,6 @@
 #include "agent-resource-store.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <ctime>
@@ -415,6 +416,32 @@ bool agent_catalogued_resource_store::stat(
         return false;
     }
     return authority_allows(out, authority, error);
+}
+
+bool agent_catalogued_resource_store::list(
+    const agent_resource_read_authority & authority,
+    std::vector<agent_resource_descriptor> & out,
+    std::string & error) const {
+    std::vector<agent_resource_descriptor> descriptors;
+    if (!catalog_->list_descriptors(descriptors, error)) {
+        return false;
+    }
+
+    out.clear();
+    for (const auto & descriptor : descriptors) {
+        std::string filter_error;
+        if (authority_allows(descriptor, authority, filter_error)) {
+            out.push_back(descriptor);
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const auto & lhs, const auto & rhs) {
+        if (lhs.created_at != rhs.created_at) {
+            return lhs.created_at > rhs.created_at;
+        }
+        return lhs.uri < rhs.uri;
+    });
+    error.clear();
+    return true;
 }
 
 std::shared_ptr<agent_blob_store> make_agent_blob_store(

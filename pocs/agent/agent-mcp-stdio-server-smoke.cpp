@@ -131,6 +131,65 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto memory_config = config_root / "memory.json";
+    {
+        std::ofstream out(memory_config);
+        out << json{
+            {"model", {{"backend", "server-context"}}},
+            {"tools", {{"profile", "memory"}}},
+            {"limits", {{"max_tool_rounds", 8}}},
+        }.dump(2);
+    }
+    agent_mcp_stdio_client memory_client({
+        "local",
+        {server_path.string(), "--config", memory_config.string()},
+        {},
+    });
+    mcp_agent_tool_provider memory_provider("local", memory_client);
+
+    agent_tool_context memory_context;
+    memory_context.request_id = "mcp-server-smoke";
+    memory_context.turn_id = "turn-1";
+    memory_context.allow_policy_gated_writes = true;
+    memory_context.allow_memory_proposals = true;
+
+    std::unique_ptr<agent_tool_view> memory_view = memory_provider.resolve_tools(memory_context, error);
+    if (!memory_view) {
+        std::fprintf(stderr, "failed to resolve memory MCP stdio server tool view: %s\n", error.c_str());
+        return 1;
+    }
+    if (!has_tool(memory_view->chat_tools(), "local_memory_search") ||
+            !has_tool(memory_view->chat_tools(), "local_memory_remember")) {
+        std::fprintf(stderr, "memory MCP profile did not expose expected memory tools: %s\n", join_tool_names(memory_view->chat_tools()).c_str());
+        return 1;
+    }
+
+    const auto remember_result = memory_view->call({
+        "call-memory-1",
+        "local_memory_remember",
+        R"({"kind":"procedure","content":"Verify scope before reading stored runtime evidence.","importance":0.8,"confidence":0.75,"rationale":"Useful MCP smoke memory."})",
+    }, error);
+    if (!remember_result.ok || remember_result.content_json.find("\"ok\":true") == std::string::npos) {
+        std::fprintf(stderr, "memory_remember did not return the expected payload: %s\n", remember_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto memory_search_result = memory_view->call({
+        "call-memory-2",
+        "local_memory_search",
+        R"({"query":"scope runtime evidence","limit":4})",
+    }, error);
+    if (!memory_search_result.ok || memory_search_result.content_json.find("Verify scope before reading stored runtime evidence.") == std::string::npos) {
+        std::fprintf(stderr, "memory_search did not return the remembered content: %s\n", memory_search_result.content_json.c_str());
+        return 1;
+    }
+
+    std::vector<mcp_agent_resource_definition> listed_resources;
+    if (!memory_client.list_resources(listed_resources, error)) {
+        std::fprintf(stderr, "resources/list failed against real MCP stdio server: %s\n", error.c_str());
+        return 1;
+    }
+
     const std::string repository_root = std::filesystem::weakly_canonical(std::filesystem::current_path()).string();
     const auto research_config = config_root / "research.json";
     {
@@ -208,6 +267,9 @@ int main(int argc, char ** argv) {
 
     std::printf("mcp_server_minimal_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("mcp_server_calculator=%s\n", calculator_result.content_json.c_str());
+    std::printf("mcp_server_memory_tools=%zu\n", memory_view->chat_tools().size());
+    std::printf("mcp_server_memory_search=%s\n", memory_search_result.content_json.c_str());
+    std::printf("mcp_server_listed_resources=%zu\n", listed_resources.size());
     std::printf("mcp_server_research_tools=%zu\n", research_view->chat_tools().size());
     std::printf("mcp_server_repository_list=%s\n", repository_result.content_json.c_str());
     std::printf("mcp_server_github_search=%s\n", github_result.content_json.c_str());

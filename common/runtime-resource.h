@@ -244,4 +244,9 @@ public:
         const agent_resource_read_authority & authority,
         agent_resource_descriptor & out,
         std::string & error) const = 0;
+
+    virtual bool list(
+        const agent_resource_read_authority & authority,
+        std::vector<agent_resource_descriptor> & out,
+        std::string & error) const = 0;
 };

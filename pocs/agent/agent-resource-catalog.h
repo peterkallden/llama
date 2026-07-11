@@ -22,6 +22,10 @@ public:
         const std::string & uri,
         agent_resource_descriptor & out,
         std::string & error) const = 0;
+
+    virtual bool list_descriptors(
+        std::vector<agent_resource_descriptor> & out,
+        std::string & error) const = 0;
 };
 
 class agent_in_memory_resource_catalog : public agent_resource_catalog {
@@ -37,6 +41,10 @@ public:
     bool find_descriptor(
         const std::string & uri,
         agent_resource_descriptor & out,
+        std::string & error) const override;
+
+    bool list_descriptors(
+        std::vector<agent_resource_descriptor> & out,
         std::string & error) const override;
 
 private:
@@ -65,6 +73,10 @@ public:
     bool find_descriptor(
         const std::string & uri,
         agent_resource_descriptor & out,
+        std::string & error) const override;
+
+    bool list_descriptors(
+        std::vector<agent_resource_descriptor> & out,
         std::string & error) const override;
 
 private:
