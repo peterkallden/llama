@@ -213,8 +213,19 @@ bool register_definition(const common_tool_definition & definition, common_tool_
 
 bool repository_path(const std::string & root, const std::string & relative, std::filesystem::path & out, std::string & error) {
     if (root.empty()) { error = "repository tools require a runtime repository root"; return false; }
-    const auto base = std::filesystem::weakly_canonical(root);
-    const auto requested = relative.empty() ? base : std::filesystem::weakly_canonical(base / relative);
+    std::error_code fs_error;
+    const auto base = std::filesystem::weakly_canonical(root, fs_error);
+    if (fs_error) {
+        error = "repository root could not be resolved";
+        return false;
+    }
+    const auto requested = relative.empty()
+        ? base
+        : std::filesystem::weakly_canonical(base / relative, fs_error);
+    if (fs_error) {
+        error = "repository path could not be resolved";
+        return false;
+    }
     const auto base_text = base.generic_string();
     const auto requested_text = requested.generic_string();
     if (requested_text != base_text && requested_text.rfind(base_text + "/", 0) != 0) { error = "repository path escapes the runtime root"; return false; }

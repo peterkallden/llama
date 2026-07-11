@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,10 +25,33 @@ struct common_memory_tool_search_result {
     std::string context;
 };
 
+struct common_memory_tool_search_arguments_contract {
+    std::string query;
+    std::optional<size_t> limit;
+};
+
+struct common_memory_tool_remember_arguments_contract {
+    std::string kind;
+    std::string content;
+    std::optional<float> importance;
+    std::optional<float> confidence;
+    std::optional<std::string> rationale;
+};
+
 struct common_memory_tool_remember_result {
     common_memory_remember_request proposal;
     common_memory_remember_result decision;
 };
+
+bool common_memory_parse_tool_search_arguments_json(
+    const std::string & arguments_json,
+    common_memory_tool_search_arguments_contract & contract,
+    std::string & error);
+
+bool common_memory_parse_tool_remember_arguments_json(
+    const std::string & arguments_json,
+    common_memory_tool_remember_arguments_contract & contract,
+    std::string & error);
 
 class common_memory_tool_service {
 public:

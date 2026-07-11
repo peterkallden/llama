@@ -33,9 +33,8 @@ bool parse_tool_arguments_contract(
         error = "tool arguments must be a JSON object";
         return false;
     }
-    contract.value = normalize_tool_arguments(
-        tool_name,
-        normalize_safe_integer_arguments(std::move(arguments)));
+    contract.value = normalize_safe_integer_arguments(
+        normalize_tool_arguments(tool_name, std::move(arguments)));
     if (!contract.value.is_object()) {
         error = "tool arguments must be a JSON object";
         return false;
@@ -329,7 +328,7 @@ bool common_plan_serialize_tool_arguments_contract_json(
         error = "tool arguments must be a JSON object";
         return false;
     }
-    arguments_json = contract.value.dump();
+    arguments_json = normalize_safe_integer_arguments(contract.value).dump();
     error.clear();
     return true;
 }

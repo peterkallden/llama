@@ -1,9 +1,5 @@
 #include "plan/plan-bindings.h"
 
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::ordered_json;
-
 namespace {
 
 const common_plan_step * find_step(const common_plan_state & plan, const std::string & id) {
@@ -20,7 +16,11 @@ const common_plan_observation * find_step_observation(const common_plan_state & 
     return nullptr;
 }
 
-bool resolve_value(const common_plan_state & plan, json & value, size_t depth, std::string & error) {
+bool resolve_value(
+        const common_plan_state & plan,
+        nlohmann::ordered_json & value,
+        size_t depth,
+        std::string & error) {
     if (depth > 16) { error = "tool argument binding nesting is too deep"; return false; }
     if (value.is_array()) {
         for (auto & item : value) if (!resolve_value(plan, item, depth + 1, error)) return false;
@@ -45,11 +45,11 @@ bool resolve_value(const common_plan_state & plan, json & value, size_t depth, s
         }
         const auto * observation = find_step_observation(plan, step_id);
         if (!observation) { error = "tool argument binding source has no observation"; return false; }
-        const auto source = json::parse(observation->summary, nullptr, false);
+        const auto source = nlohmann::ordered_json::parse(observation->summary, nullptr, false);
         if (source.is_discarded()) { error = "tool argument binding source is not JSON"; return false; }
         try {
-            value = source.at(json::json_pointer(pointer));
-        } catch (const json::exception &) {
+            value = source.at(nlohmann::ordered_json::json_pointer(pointer));
+        } catch (const nlohmann::ordered_json::exception &) {
             error = "tool argument binding JSON pointer was not found";
             return false;
         }
@@ -61,14 +61,68 @@ bool resolve_value(const common_plan_state & plan, json & value, size_t depth, s
 
 } // namespace
 
-bool common_plan_materialize_tool_arguments(const common_plan_state & plan, const common_plan_step & step,
-        const std::string & arguments_json, std::string & materialized_arguments_json, std::string & error) {
-    if (arguments_json.size() > 4096) { error = "tool arguments are too large to materialize"; return false; }
-    auto arguments = json::parse(arguments_json, nullptr, false);
-    if (!arguments.is_object()) { error = "tool arguments must be a JSON object"; return false; }
-    if (!resolve_value(plan, arguments, 0, error)) return false;
-    materialized_arguments_json = arguments.dump();
-    if (materialized_arguments_json.size() > 4096) { error = "materialized tool arguments are too large"; return false; }
+bool common_plan_materialize_tool_arguments_contract(
+        const common_plan_state & plan,
+        const common_plan_step & step,
+        const common_plan_tool_arguments_contract & contract,
+        common_plan_tool_arguments_contract & materialized_contract,
+        std::string & error) {
+    (void) step;
+    materialized_contract = contract;
+    if (!materialized_contract.value.is_object()) {
+        error = "tool arguments must be a JSON object";
+        return false;
+    }
+    if (!resolve_value(plan, materialized_contract.value, 0, error)) {
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool common_plan_materialize_tool_arguments(
+        const common_plan_state & plan,
+        const common_plan_step & step,
+        const std::string & arguments_json,
+        std::string & materialized_arguments_json,
+        std::string & error) {
+    if (arguments_json.size() > 4096) {
+        error = "tool arguments are too large to materialize";
+        return false;
+    }
+
+    const std::string tool_name = step.tool_call ? step.tool_call->name : std::string();
+    common_plan_tool_arguments_contract contract;
+    if (!common_plan_parse_tool_arguments_contract_json(
+            tool_name,
+            arguments_json,
+            contract,
+            error)) {
+        return false;
+    }
+
+    common_plan_tool_arguments_contract materialized_contract;
+    if (!common_plan_materialize_tool_arguments_contract(
+            plan,
+            step,
+            contract,
+            materialized_contract,
+            error)) {
+        return false;
+    }
+
+    if (!common_plan_serialize_tool_arguments_contract_json(
+            tool_name,
+            materialized_contract,
+            materialized_arguments_json,
+            error)) {
+        return false;
+    }
+
+    if (materialized_arguments_json.size() > 4096) {
+        error = "materialized tool arguments are too large";
+        return false;
+    }
     error.clear();
     return true;
 }

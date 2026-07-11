@@ -96,6 +96,14 @@ That contract is now also a little less ad hoc for tools. Native tool bindings n
 
 That resource metadata is also starting to become more than a storage note. The current descriptor shape now has room for host-authored purpose, short content summary, usage hint, limitations, and lightweight semantic tags such as keywords or entity names. The intended meaning is practical rather than decorative: a resource row should answer what it is, why it was created, what it contains in short, how a later step can use it, and what its limits are.
 
+The same contract-cleanup pattern now also covers two older JSON-heavy seams that were still carrying more history than necessary:
+
+- plan tool-argument parsing/materialization now goes through the named `common_plan_tool_arguments_contract` path instead of reparsing and redumping ad hoc JSON inside `plan-bindings`
+- the plan argument serializer now re-applies the safe integer normalization pass, so wrapped or legacy small-model shapes cannot leak `"limit":"2"` style control fields back out after normalization
+- memory tool `search` and `remember` execution now parse JSON through named argument-contract helpers before business logic runs, instead of letting the service implementation read raw `ordered_json` directly
+
+That is still intentionally modest. The stored compatibility format remains `arguments_json` where older plan/runtime paths expect it, but the contract boundary is now explicit at parse/materialize/serialize time.
+
 ## Layer Responsibilities
 
 ### CLI Adapter

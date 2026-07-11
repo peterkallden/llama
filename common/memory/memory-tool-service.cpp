@@ -27,15 +27,11 @@ bool parse_object_arguments(
 
 } // namespace
 
-common_memory_tool_service::common_memory_tool_service(common_memory_store & store)
-    : store(store) {}
-
-bool common_memory_tool_service::search(
-        const common_memory_tool_context & context,
+bool common_memory_parse_tool_search_arguments_json(
         const std::string & arguments_json,
-        common_memory_tool_search_result & result,
-        std::string & error) const {
-    result = {};
+        common_memory_tool_search_arguments_contract & contract,
+        std::string & error) {
+    contract = {};
 
     json arguments;
     if (!parse_object_arguments(arguments_json, arguments, error)) {
@@ -52,7 +48,95 @@ bool common_memory_tool_service::search(
         return false;
     }
 
-    result.query = arguments.at("query").get<std::string>();
+    contract.query = arguments.at("query").get<std::string>();
+    if (arguments.contains("limit")) {
+        if (!arguments.at("limit").is_number_unsigned() && !arguments.at("limit").is_number_integer()) {
+            error = "limit must be an integer";
+            return false;
+        }
+        const int requested_limit = arguments.at("limit").get<int>();
+        if (requested_limit < 1) {
+            error = "limit must be at least 1";
+            return false;
+        }
+        contract.limit = static_cast<size_t>(requested_limit);
+    }
+
+    error.clear();
+    return true;
+}
+
+bool common_memory_parse_tool_remember_arguments_json(
+        const std::string & arguments_json,
+        common_memory_tool_remember_arguments_contract & contract,
+        std::string & error) {
+    contract = {};
+
+    json arguments;
+    if (!parse_object_arguments(arguments_json, arguments, error)) {
+        return false;
+    }
+    for (const auto & item : arguments.items()) {
+        if (item.key() != "kind" && item.key() != "content" && item.key() != "importance" &&
+                item.key() != "confidence" && item.key() != "rationale") {
+            error = "unsupported argument: " + item.key();
+            return false;
+        }
+    }
+    if (!arguments.contains("kind") || !arguments.at("kind").is_string()) {
+        error = "kind must be a string";
+        return false;
+    }
+    if (!arguments.contains("content") || !arguments.at("content").is_string()) {
+        error = "content must be a string";
+        return false;
+    }
+
+    contract.kind = arguments.at("kind").get<std::string>();
+    contract.content = arguments.at("content").get<std::string>();
+
+    if (arguments.contains("importance")) {
+        if (!arguments.at("importance").is_number()) {
+            error = "importance must be a number";
+            return false;
+        }
+        contract.importance = arguments.at("importance").get<float>();
+    }
+    if (arguments.contains("confidence")) {
+        if (!arguments.at("confidence").is_number()) {
+            error = "confidence must be a number";
+            return false;
+        }
+        contract.confidence = arguments.at("confidence").get<float>();
+    }
+    if (arguments.contains("rationale")) {
+        if (!arguments.at("rationale").is_string()) {
+            error = "rationale must be a string";
+            return false;
+        }
+        contract.rationale = arguments.at("rationale").get<std::string>();
+    }
+
+    error.clear();
+    return true;
+}
+
+common_memory_tool_service::common_memory_tool_service(common_memory_store & store)
+    : store(store) {}
+
+bool common_memory_tool_service::search(
+        const common_memory_tool_context & context,
+        const std::string & arguments_json,
+        common_memory_tool_search_result & result,
+        std::string & error) const {
+    result = {};
+
+    common_memory_tool_search_arguments_contract contract;
+    if (!common_memory_parse_tool_search_arguments_json(arguments_json, contract, error)) {
+        return false;
+    }
+
+    result.query = contract.query;
     if (result.query.empty() || result.query.size() > context.max_query_chars) {
         error = "query must contain between 1 and 1024 characters";
         return false;
@@ -62,17 +146,12 @@ bool common_memory_tool_service::search(
     query.text = result.query;
 
     size_t limit = std::clamp(query.limit, size_t(1), context.max_search_limit);
-    if (arguments.contains("limit")) {
-        if (!arguments.at("limit").is_number_unsigned() && !arguments.at("limit").is_number_integer()) {
-            error = "limit must be an integer";
-            return false;
-        }
-        const int requested_limit = arguments.at("limit").get<int>();
-        if (requested_limit < 1 || requested_limit > (int) context.max_search_limit) {
+    if (contract.limit.has_value()) {
+        if (*contract.limit > context.max_search_limit) {
             error = "limit must be between 1 and 8";
             return false;
         }
-        limit = (size_t) requested_limit;
+        limit = *contract.limit;
     }
     query.limit = limit;
 
@@ -108,32 +187,17 @@ bool common_memory_tool_service::remember_proposal(
         return false;
     }
 
-    json arguments;
-    if (!parse_object_arguments(arguments_json, arguments, error)) {
-        return false;
-    }
-    for (const auto & item : arguments.items()) {
-        if (item.key() != "kind" && item.key() != "content" && item.key() != "importance" &&
-                item.key() != "confidence" && item.key() != "rationale") {
-            error = "unsupported argument: " + item.key();
-            return false;
-        }
-    }
-    if (!arguments.contains("kind") || !arguments.at("kind").is_string()) {
-        error = "kind must be a string";
-        return false;
-    }
-    if (!arguments.contains("content") || !arguments.at("content").is_string()) {
-        error = "content must be a string";
+    common_memory_tool_remember_arguments_contract contract;
+    if (!common_memory_parse_tool_remember_arguments_json(arguments_json, contract, error)) {
         return false;
     }
 
     common_memory_remember_request proposal;
-    if (!common_memory_kind_parse(arguments.at("kind").get<std::string>(), proposal.kind)) {
+    if (!common_memory_kind_parse(contract.kind, proposal.kind)) {
         error = "unsupported memory kind";
         return false;
     }
-    proposal.content = arguments.at("content").get<std::string>();
+    proposal.content = contract.content;
     proposal.scope = context.query_defaults.scope;
     proposal.namespace_id = context.query_defaults.namespace_id;
     proposal.session_id = context.query_defaults.session_id;
@@ -145,26 +209,14 @@ bool common_memory_tool_service::remember_proposal(
         return false;
     }
 
-    if (arguments.contains("importance")) {
-        if (!arguments.at("importance").is_number()) {
-            error = "importance must be a number";
-            return false;
-        }
-        proposal.importance = arguments.at("importance").get<float>();
+    if (contract.importance.has_value()) {
+        proposal.importance = *contract.importance;
     }
-    if (arguments.contains("confidence")) {
-        if (!arguments.at("confidence").is_number()) {
-            error = "confidence must be a number";
-            return false;
-        }
-        proposal.confidence = arguments.at("confidence").get<float>();
+    if (contract.confidence.has_value()) {
+        proposal.confidence = *contract.confidence;
     }
-    if (arguments.contains("rationale")) {
-        if (!arguments.at("rationale").is_string()) {
-            error = "rationale must be a string";
-            return false;
-        }
-        proposal.rationale = arguments.at("rationale").get<std::string>();
+    if (contract.rationale.has_value()) {
+        proposal.rationale = *contract.rationale;
         if (proposal.rationale.size() > context.max_rationale_chars) {
             error = "rationale must contain at most 240 characters";
             return false;
