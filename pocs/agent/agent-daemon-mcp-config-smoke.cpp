@@ -199,7 +199,7 @@ int main(int argc, char ** argv) {
 
     common_agent_daemon_service service(std::move(runtime));
     common_agent_daemon_command_result status;
-    if (!service.populate_status(status, error) || !status.ready || !status.live) {
+    if (!service.populate_status(status, error) || !status.status.ready || !status.status.live) {
         std::fprintf(stderr, "daemon MCP status was not ready after init: %s\n", error.c_str());
         return 1;
     }
@@ -239,8 +239,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    std::printf("daemon_mcp_ready=%s\n", status.ready ? "true" : "false");
-    std::printf("daemon_mcp_status=%s\n", status.state.c_str());
+    std::printf("daemon_mcp_ready=%s\n", status.status.ready ? "true" : "false");
+    std::printf("daemon_mcp_status=%s\n", common_agent_daemon_state_name(status.status.state));
     std::printf("daemon_tooling_tools=%zu\n", resolved_tool_count);
     return 0;
 }

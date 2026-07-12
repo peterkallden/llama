@@ -45,15 +45,8 @@ struct common_agent_daemon_event {
     std::string detail;
 };
 
-struct common_agent_daemon_command_result {
-    bool ok = false;
-    std::string request_id;
-    std::string event;
-    std::string target_request_id;
-    std::string target_turn_id;
-    std::string active_request_id;
-    std::string active_turn_id;
-    std::string state;
+struct common_agent_daemon_status {
+    common_agent_daemon_state state = common_agent_daemon_state::starting;
     bool live = false;
     bool ready = false;
     bool worker_running = false;
@@ -63,8 +56,19 @@ struct common_agent_daemon_command_result {
     size_t max_queue_size = 0;
     size_t queue_capacity_remaining = 0;
     size_t session_count = 0;
-    size_t daemon_event_count = 0;
+    std::string active_request_id;
+    std::string active_turn_id;
     std::vector<common_agent_runtime_session_descriptor> sessions;
+};
+
+struct common_agent_daemon_command_result {
+    bool ok = false;
+    std::string request_id;
+    std::string event;
+    std::string target_request_id;
+    std::string target_turn_id;
+    common_agent_daemon_status status;
+    size_t daemon_event_count = 0;
     std::vector<common_agent_daemon_event> events;
     common_agent_runtime_session_manager_turn_result turn_result;
     std::string error;

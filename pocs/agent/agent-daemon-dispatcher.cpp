@@ -173,8 +173,8 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                 error = "active turn cancellation is not supported yet";
                 result.ok = false;
                 result.event = "turn_cancel_rejected";
-                result.active_request_id = active_request_id;
-                result.active_turn_id = active_turn_id;
+                result.status.active_request_id = active_request_id;
+                result.status.active_turn_id = active_turn_id;
                 result.error = error;
                 append_daemon_event(
                     result,
@@ -241,19 +241,19 @@ bool common_agent_daemon_dispatcher::populate_status_locked(
         return false;
     }
 
-    result.active_request_id = active_request;
-    result.active_turn_id = active_turn;
-    result.queued_command_count = queued_count;
-    result.worker_running = worker_running;
-    result.accepting_commands = accepting_commands;
-    result.shutdown_requested = service.shutdown_requested();
-    result.max_queue_size = max_queue_size;
-    result.queue_capacity_remaining =
+    result.status.active_request_id = active_request;
+    result.status.active_turn_id = active_turn;
+    result.status.queued_command_count = queued_count;
+    result.status.worker_running = worker_running;
+    result.status.accepting_commands = accepting_commands;
+    result.status.shutdown_requested = service.shutdown_requested();
+    result.status.max_queue_size = max_queue_size;
+    result.status.queue_capacity_remaining =
         max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
-    result.state = common_agent_daemon_state_name(service.state());
+    result.status.state = service.state();
     result.event = "status";
-    result.live = result.live && worker_running;
-    result.ready = result.ready && accepting_commands && worker_running;
+    result.status.live = result.status.live && worker_running;
+    result.status.ready = result.status.ready && accepting_commands && worker_running;
     return true;
 }
 

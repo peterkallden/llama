@@ -70,17 +70,17 @@ int main() {
     status_result.event = "status";
     status_result.daemon_event_count = 1;
     status_result.events.push_back({"status.reported", "status-1", "", "ready"});
-    status_result.state = "ready";
-    status_result.live = true;
-    status_result.ready = true;
-    status_result.worker_running = true;
-    status_result.accepting_commands = true;
-    status_result.shutdown_requested = false;
-    status_result.session_count = 1;
-    status_result.queued_command_count = 0;
-    status_result.max_queue_size = 8;
-    status_result.queue_capacity_remaining = 8;
-    status_result.sessions.push_back({
+    status_result.status.state = common_agent_daemon_state::ready;
+    status_result.status.live = true;
+    status_result.status.ready = true;
+    status_result.status.worker_running = true;
+    status_result.status.accepting_commands = true;
+    status_result.status.shutdown_requested = false;
+    status_result.status.session_count = 1;
+    status_result.status.queued_command_count = 0;
+    status_result.status.max_queue_size = 8;
+    status_result.status.queue_capacity_remaining = 8;
+    status_result.status.sessions.push_back({
         {"namespace-a", "session-a"},
         "project-a",
         common_memory_scope::project,

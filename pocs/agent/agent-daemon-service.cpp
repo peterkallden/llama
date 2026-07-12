@@ -51,14 +51,19 @@ bool common_agent_daemon_service::populate_status(
         std::string & error) const {
     result.ok = runtime.host != nullptr;
     result.event = "status";
-    result.state = common_agent_daemon_state_name(state_value);
-    result.live = state_value != common_agent_daemon_state::stopped;
-    result.ready = state_value == common_agent_daemon_state::ready;
+    result.status.state = state_value;
+    result.status.live = state_value != common_agent_daemon_state::stopped;
+    result.status.ready = state_value == common_agent_daemon_state::ready;
     if (runtime.host) {
-        result.sessions = runtime.host->list_sessions();
-        result.session_count = result.sessions.size();
+        result.status.sessions = runtime.host->list_sessions();
+        result.status.session_count = result.status.sessions.size();
     }
-    append_daemon_event(result, "status.reported", result.request_id, {}, result.state);
+    append_daemon_event(
+        result,
+        "status.reported",
+        result.request_id,
+        {},
+        common_agent_daemon_state_name(result.status.state));
     error.clear();
     return result.ok;
 }

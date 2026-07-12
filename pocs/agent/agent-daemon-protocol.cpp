@@ -198,24 +198,24 @@ json make_agent_daemon_base_response(
 json make_agent_daemon_status_response(
         const common_agent_daemon_command_result & result) {
     json response = make_agent_daemon_base_response(result);
-    response["state"] = result.state;
-    response["live"] = result.live;
-    response["ready"] = result.ready;
-    response["worker_running"] = result.worker_running;
-    response["accepting_commands"] = result.accepting_commands;
-    response["shutdown_requested"] = result.shutdown_requested;
-    response["sessions"] = result.session_count;
-    response["queued_commands"] = result.queued_command_count;
-    response["max_queue_size"] = result.max_queue_size;
-    response["queue_capacity_remaining"] = result.queue_capacity_remaining;
-    if (!result.active_request_id.empty()) {
-        response["active_request_id"] = result.active_request_id;
+    response["state"] = common_agent_daemon_state_name(result.status.state);
+    response["live"] = result.status.live;
+    response["ready"] = result.status.ready;
+    response["worker_running"] = result.status.worker_running;
+    response["accepting_commands"] = result.status.accepting_commands;
+    response["shutdown_requested"] = result.status.shutdown_requested;
+    response["sessions"] = result.status.session_count;
+    response["queued_commands"] = result.status.queued_command_count;
+    response["max_queue_size"] = result.status.max_queue_size;
+    response["queue_capacity_remaining"] = result.status.queue_capacity_remaining;
+    if (!result.status.active_request_id.empty()) {
+        response["active_request_id"] = result.status.active_request_id;
     }
-    if (!result.active_turn_id.empty()) {
-        response["active_turn_id"] = result.active_turn_id;
+    if (!result.status.active_turn_id.empty()) {
+        response["active_turn_id"] = result.status.active_turn_id;
     }
     json session_array = json::array();
-    for (const auto & session : result.sessions) {
+    for (const auto & session : result.status.sessions) {
         session_array.push_back(serialize_agent_daemon_session_status(session));
     }
     response["session_keys"] = std::move(session_array);
@@ -234,11 +234,11 @@ json make_agent_daemon_lifecycle_response(
     if (!result.target_turn_id.empty()) {
         response["target_turn_id"] = result.target_turn_id;
     }
-    if (!result.active_request_id.empty()) {
-        response["active_request_id"] = result.active_request_id;
+    if (!result.status.active_request_id.empty()) {
+        response["active_request_id"] = result.status.active_request_id;
     }
-    if (!result.active_turn_id.empty()) {
-        response["active_turn_id"] = result.active_turn_id;
+    if (!result.status.active_turn_id.empty()) {
+        response["active_turn_id"] = result.status.active_turn_id;
     }
     if (!result.error.empty()) {
         response["error"] = result.error;

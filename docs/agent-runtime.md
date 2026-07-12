@@ -38,6 +38,8 @@ What exists today is a narrow foreground daemon, not a production service lifecy
 
 That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
 
+The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
+
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
 Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
