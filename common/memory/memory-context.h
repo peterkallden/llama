@@ -46,6 +46,14 @@ std::vector<common_memory_hit> common_memory_select_symbolic_overlay_hits(
     common_memory_overlay_stage stage,
     size_t max_hits = 8);
 
+common_memory_policy_pack common_memory_compact_policy_pack(
+    const common_memory_policy_pack & policy_pack,
+    const common_memory_policy_pack_render_config & config = {});
+
+std::vector<common_memory_hit> common_memory_compact_symbolic_overlay_hits(
+    const std::vector<common_memory_hit> & hits,
+    const common_memory_symbolic_overlay_config & config = {});
+
 std::string common_memory_render_policy_pack(
     const common_memory_policy_pack & policy_pack,
     const common_memory_policy_pack_render_config & config = {});

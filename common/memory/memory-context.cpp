@@ -1,8 +1,10 @@
 #include "memory/memory-context.h"
 
 #include <algorithm>
+#include <cctype>
 #include <iomanip>
 #include <sstream>
+#include <unordered_set>
 
 static void replace_all(std::string & s, const std::string & from, const std::string & to) {
     size_t pos = 0;
@@ -194,6 +196,65 @@ std::string bounded_policy_text(
     return text;
 }
 
+std::string trim_copy(const std::string & value) {
+    size_t begin = 0;
+    while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin]))) {
+        ++begin;
+    }
+    size_t end = value.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(begin, end - begin);
+}
+
+std::string normalize_compaction_key(const std::string & value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    bool previous_space = false;
+    for (unsigned char ch : value) {
+        if (std::isspace(ch)) {
+            if (!previous_space && !normalized.empty()) {
+                normalized.push_back(' ');
+            }
+            previous_space = true;
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(ch)));
+        previous_space = false;
+    }
+    if (!normalized.empty() && normalized.back() == ' ') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+void append_compacted_policy_items(
+        const std::vector<std::string> & source,
+        std::vector<std::string> & destination,
+        std::unordered_set<std::string> & seen,
+        size_t max_items,
+        size_t per_item_char_budget) {
+    for (const auto & value : source) {
+        if (destination.size() >= max_items) {
+            break;
+        }
+        std::string trimmed = trim_copy(value);
+        if (trimmed.empty()) {
+            continue;
+        }
+        if (trimmed.size() > per_item_char_budget) {
+            trimmed.resize(per_item_char_budget);
+            trimmed += "...";
+        }
+        const std::string key = normalize_compaction_key(trimmed);
+        if (key.empty() || !seen.insert(key).second) {
+            continue;
+        }
+        destination.push_back(std::move(trimmed));
+    }
+}
+
 } // namespace
 
 std::vector<common_memory_hit> common_memory_select_symbolic_overlay_hits(
@@ -239,34 +300,128 @@ std::vector<common_memory_hit> common_memory_select_symbolic_overlay_hits(
     return selected;
 }
 
+common_memory_policy_pack common_memory_compact_policy_pack(
+        const common_memory_policy_pack & policy_pack,
+        const common_memory_policy_pack_render_config & config) {
+    common_memory_policy_pack compacted = policy_pack;
+    compacted.purpose = trim_copy(compacted.purpose);
+    compacted.goal = trim_copy(compacted.goal);
+    compacted.success_criteria = trim_copy(compacted.success_criteria);
+
+    std::unordered_set<std::string> seen;
+    for (const auto & scalar : {compacted.purpose, compacted.goal, compacted.success_criteria}) {
+        const std::string key = normalize_compaction_key(scalar);
+        if (!key.empty()) {
+            seen.insert(key);
+        }
+    }
+
+    compacted.constraints.clear();
+    compacted.decisions.clear();
+    compacted.preferred_procedures.clear();
+    append_compacted_policy_items(
+        policy_pack.constraints,
+        compacted.constraints,
+        seen,
+        config.max_constraints,
+        config.per_item_char_budget);
+    append_compacted_policy_items(
+        policy_pack.decisions,
+        compacted.decisions,
+        seen,
+        config.max_decisions,
+        config.per_item_char_budget);
+    append_compacted_policy_items(
+        policy_pack.preferred_procedures,
+        compacted.preferred_procedures,
+        seen,
+        config.max_preferred_procedures,
+        config.per_item_char_budget);
+    return compacted;
+}
+
+std::vector<common_memory_hit> common_memory_compact_symbolic_overlay_hits(
+        const std::vector<common_memory_hit> & hits,
+        const common_memory_symbolic_overlay_config & config) {
+    if (hits.empty()) {
+        return {};
+    }
+
+    const size_t max_total_hits =
+        config.max_constraints +
+        config.max_decisions +
+        config.max_procedures +
+        (config.include_facts ? config.max_facts : 0);
+    if (max_total_hits == 0) {
+        return {};
+    }
+
+    std::unordered_set<std::string> seen;
+    std::vector<common_memory_hit> compacted;
+    compacted.reserve(std::min(max_total_hits, hits.size()));
+
+    for (const auto & hit : hits) {
+        if (!config.include_facts && hit.memory.kind == common_memory_kind::fact) {
+            continue;
+        }
+
+        common_memory_hit trimmed = hit;
+        if (!trimmed.memory.summary.empty() &&
+                trimmed.memory.summary.size() > config.per_item_char_budget) {
+            trimmed.memory.summary.resize(config.per_item_char_budget);
+            trimmed.memory.summary += "...";
+        }
+        if (trimmed.memory.summary.empty() &&
+                trimmed.memory.content.size() > config.per_item_char_budget) {
+            trimmed.memory.content.resize(config.per_item_char_budget);
+            trimmed.memory.content += "...";
+        }
+
+        const std::string content_key = normalize_compaction_key(
+            trimmed.memory.summary.empty() ? trimmed.memory.content : trimmed.memory.summary);
+        const std::string dedupe_key =
+            std::string(common_memory_kind_name(trimmed.memory.kind)) + "|" + content_key;
+        if (content_key.empty() || !seen.insert(dedupe_key).second) {
+            continue;
+        }
+        compacted.push_back(std::move(trimmed));
+        if (compacted.size() >= max_total_hits) {
+            break;
+        }
+    }
+
+    return compacted;
+}
+
 std::string common_memory_render_policy_pack(
         const common_memory_policy_pack & policy_pack,
         const common_memory_policy_pack_render_config & config) {
+    const auto compacted = common_memory_compact_policy_pack(policy_pack, config);
     if (config.char_budget == 0) {
         return {};
     }
-    if (policy_pack.purpose.empty() &&
-            policy_pack.goal.empty() &&
-            policy_pack.success_criteria.empty() &&
-            policy_pack.constraints.empty() &&
-            policy_pack.decisions.empty() &&
-            policy_pack.preferred_procedures.empty()) {
+    if (compacted.purpose.empty() &&
+            compacted.goal.empty() &&
+            compacted.success_criteria.empty() &&
+            compacted.constraints.empty() &&
+            compacted.decisions.empty() &&
+            compacted.preferred_procedures.empty()) {
         return {};
     }
 
     std::ostringstream out;
     out << "<policy_pack>\n";
-    if (!policy_pack.id.empty()) {
-        out << "Id: " << bounded_policy_text(policy_pack.id, config.per_item_char_budget) << "\n";
+    if (!compacted.id.empty()) {
+        out << "Id: " << bounded_policy_text(compacted.id, config.per_item_char_budget) << "\n";
     }
-    if (!policy_pack.purpose.empty()) {
-        out << "Purpose: " << bounded_policy_text(policy_pack.purpose, config.per_item_char_budget) << "\n";
+    if (!compacted.purpose.empty()) {
+        out << "Purpose: " << bounded_policy_text(compacted.purpose, config.per_item_char_budget) << "\n";
     }
-    if (!policy_pack.goal.empty()) {
-        out << "Goal: " << bounded_policy_text(policy_pack.goal, config.per_item_char_budget) << "\n";
+    if (!compacted.goal.empty()) {
+        out << "Goal: " << bounded_policy_text(compacted.goal, config.per_item_char_budget) << "\n";
     }
-    if (!policy_pack.success_criteria.empty()) {
-        out << "Success criteria: " << bounded_policy_text(policy_pack.success_criteria, config.per_item_char_budget) << "\n";
+    if (!compacted.success_criteria.empty()) {
+        out << "Success criteria: " << bounded_policy_text(compacted.success_criteria, config.per_item_char_budget) << "\n";
     }
     out << "\n";
     size_t current_size = out.str().size();
@@ -274,11 +429,11 @@ std::string common_memory_render_policy_pack(
     append_symbolic_section(out, current_size, config.char_budget, "Constraints",
         [&]() {
             std::vector<common_memory_hit> synthetic;
-            for (size_t i = 0; i < policy_pack.constraints.size() && i < config.max_constraints; ++i) {
+            for (size_t i = 0; i < compacted.constraints.size() && i < config.max_constraints; ++i) {
                 common_memory_record record;
-                record.id = policy_pack.id.empty() ? "policy-constraint-" + std::to_string(i + 1) : policy_pack.id + ":constraint:" + std::to_string(i + 1);
+                record.id = compacted.id.empty() ? "policy-constraint-" + std::to_string(i + 1) : compacted.id + ":constraint:" + std::to_string(i + 1);
                 record.kind = common_memory_kind::constraint;
-                record.content = policy_pack.constraints[i];
+                record.content = compacted.constraints[i];
                 synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
             }
             return synthetic;
@@ -289,11 +444,11 @@ std::string common_memory_render_policy_pack(
     append_symbolic_section(out, current_size, config.char_budget, "Decisions",
         [&]() {
             std::vector<common_memory_hit> synthetic;
-            for (size_t i = 0; i < policy_pack.decisions.size() && i < config.max_decisions; ++i) {
+            for (size_t i = 0; i < compacted.decisions.size() && i < config.max_decisions; ++i) {
                 common_memory_record record;
-                record.id = policy_pack.id.empty() ? "policy-decision-" + std::to_string(i + 1) : policy_pack.id + ":decision:" + std::to_string(i + 1);
+                record.id = compacted.id.empty() ? "policy-decision-" + std::to_string(i + 1) : compacted.id + ":decision:" + std::to_string(i + 1);
                 record.kind = common_memory_kind::decision;
-                record.content = policy_pack.decisions[i];
+                record.content = compacted.decisions[i];
                 synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
             }
             return synthetic;
@@ -304,11 +459,11 @@ std::string common_memory_render_policy_pack(
     append_symbolic_section(out, current_size, config.char_budget, "Preferred procedures",
         [&]() {
             std::vector<common_memory_hit> synthetic;
-            for (size_t i = 0; i < policy_pack.preferred_procedures.size() && i < config.max_preferred_procedures; ++i) {
+            for (size_t i = 0; i < compacted.preferred_procedures.size() && i < config.max_preferred_procedures; ++i) {
                 common_memory_record record;
-                record.id = policy_pack.id.empty() ? "policy-procedure-" + std::to_string(i + 1) : policy_pack.id + ":procedure:" + std::to_string(i + 1);
+                record.id = compacted.id.empty() ? "policy-procedure-" + std::to_string(i + 1) : compacted.id + ":procedure:" + std::to_string(i + 1);
                 record.kind = common_memory_kind::procedure;
-                record.content = policy_pack.preferred_procedures[i];
+                record.content = compacted.preferred_procedures[i];
                 synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
             }
             return synthetic;
@@ -330,7 +485,8 @@ std::string common_memory_render_policy_pack(
 std::string common_memory_render_symbolic_overlay(
         const std::vector<common_memory_hit> & hits,
         const common_memory_symbolic_overlay_config & config) {
-    if (hits.empty() || config.char_budget == 0) {
+    const auto compacted_hits = common_memory_compact_symbolic_overlay_hits(hits, config);
+    if (compacted_hits.empty() || config.char_budget == 0) {
         return {};
     }
 
@@ -339,7 +495,7 @@ std::string common_memory_render_symbolic_overlay(
     std::vector<common_memory_hit> procedures;
     std::vector<common_memory_hit> facts;
 
-    for (const auto & hit : hits) {
+    for (const auto & hit : compacted_hits) {
         switch (hit.memory.kind) {
             case common_memory_kind::constraint:
                 constraints.push_back(hit);

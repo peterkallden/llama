@@ -14,6 +14,19 @@
 
 namespace {
 
+size_t count_substring_occurrences(const std::string & text, const std::string & needle) {
+    if (needle.empty()) {
+        return 0;
+    }
+    size_t count = 0;
+    size_t offset = 0;
+    while ((offset = text.find(needle, offset)) != std::string::npos) {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
+
 agent_catalogued_resource_store g_runtime_resource_store(
     std::make_shared<agent_in_memory_blob_store>(),
     std::make_unique<agent_in_memory_resource_catalog>());
@@ -118,6 +131,12 @@ int main() {
         procedure.kind = common_memory_kind::procedure;
         procedure.content = "Run a bounded search first, then answer using the recorded evidence.";
         symbolic_hits.push_back({procedure, 0.7f, 0.0f, 0.0f, 0.7f, "runtime-smoke"});
+
+        common_memory_record duplicate_constraint;
+        duplicate_constraint.id = "memory-constraint-duplicate";
+        duplicate_constraint.kind = common_memory_kind::constraint;
+        duplicate_constraint.content = "Do not let the model choose host authority such as resource scope or store identity.";
+        symbolic_hits.push_back({duplicate_constraint, 0.6f, 0.0f, 0.0f, 0.6f, "runtime-smoke"});
     }
     const std::string symbolic_overlay = common_memory_render_symbolic_overlay(symbolic_hits);
     if (symbolic_overlay.find("Constraints:") == std::string::npos ||
@@ -126,14 +145,22 @@ int main() {
         std::fprintf(stderr, "symbolic overlay did not render the expected sections: %s\n", symbolic_overlay.c_str());
         return 1;
     }
+    if (count_substring_occurrences(
+                symbolic_overlay,
+                "Do not let the model choose host authority such as resource scope or store identity.") != 1) {
+        std::fprintf(stderr, "symbolic overlay compaction did not deduplicate repeated constraint text: %s\n", symbolic_overlay.c_str());
+        return 1;
+    }
     common_memory_policy_pack policy_pack;
     policy_pack.id = "runtime-smoke-policy";
     policy_pack.purpose = "Keep host authority explicit while using resident runtime evidence.";
     policy_pack.constraints = {
         "Do not let the model choose scope or storage authority.",
         "Keep runtime evidence host-owned and bounded.",
+        "Do not let the model choose scope or storage authority.",
     };
     policy_pack.decisions = {
+        "Prefer resource references for larger tool payloads.",
         "Prefer resource references for larger tool payloads.",
     };
     const std::string rendered_policy_pack = common_memory_render_policy_pack(policy_pack);
@@ -141,6 +168,15 @@ int main() {
             rendered_policy_pack.find("Constraints:") == std::string::npos ||
             rendered_policy_pack.find("Decisions:") == std::string::npos) {
         std::fprintf(stderr, "policy pack did not render the expected sections: %s\n", rendered_policy_pack.c_str());
+        return 1;
+    }
+    if (count_substring_occurrences(
+                rendered_policy_pack,
+                "Do not let the model choose scope or storage authority.") != 1 ||
+            count_substring_occurrences(
+                rendered_policy_pack,
+                "Prefer resource references for larger tool payloads.") != 1) {
+        std::fprintf(stderr, "policy pack compaction did not deduplicate repeated items: %s\n", rendered_policy_pack.c_str());
         return 1;
     }
     const auto planning_overlay_hits = common_memory_select_symbolic_overlay_hits(
