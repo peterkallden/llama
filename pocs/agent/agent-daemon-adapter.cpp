@@ -1,6 +1,8 @@
 #include "agent-daemon-adapter.h"
 
 #include "agent-cli-selection.h"
+#include "agent-daemon-dispatcher.h"
+#include "agent-daemon-jsonl-protocol.h"
 #include "agent-host-config.h"
 #include "agent-resource-store.h"
 
@@ -18,6 +20,13 @@ const char * find_daemon_config_path(int argc, char ** argv) {
         }
     }
     return nullptr;
+}
+
+bool emit_agent_daemon_jsonl_message(
+        FILE * output,
+        const json & message,
+        std::string & error) {
+    return write_agent_daemon_jsonl_message(output, message, error);
 }
 
 } // namespace
@@ -209,4 +218,70 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n",
         argv0);
+}
+
+bool run_agent_daemon_jsonl_adapter(
+        FILE * input,
+        FILE * output,
+        const daemon_options & options,
+        common_agent_daemon_dispatcher & dispatcher,
+        std::string & error) {
+    error.clear();
+    if (!emit_agent_daemon_jsonl_message(output, make_agent_daemon_ready_response(options), error)) {
+        return false;
+    }
+
+    std::string protocol_error;
+    json parsed;
+    while (read_agent_daemon_jsonl_message(input, parsed, protocol_error)) {
+        if (!parsed.is_object()) {
+            if (!emit_agent_daemon_jsonl_message(
+                        output,
+                        make_agent_daemon_error_response("invalid JSON request"),
+                        error)) {
+                return false;
+            }
+            continue;
+        }
+
+        common_agent_daemon_command command;
+        error.clear();
+        if (!parse_agent_daemon_command(parsed, options, dispatcher.default_mode(), command, error)) {
+            if (!emit_agent_daemon_jsonl_message(
+                        output,
+                        make_agent_daemon_error_response(error),
+                        error)) {
+                return false;
+            }
+            continue;
+        }
+
+        common_agent_daemon_command_result result;
+        error.clear();
+        dispatcher.execute(command, result, error);
+        if (!error.empty() && result.error.empty()) {
+            result.error = error;
+        }
+        if (!emit_agent_daemon_jsonl_message(
+                    output,
+                    make_agent_daemon_command_response(result),
+                    error)) {
+            return false;
+        }
+        if (dispatcher.shutdown_requested()) {
+            break;
+        }
+    }
+
+    if (!protocol_error.empty() && !std::feof(input)) {
+        if (!emit_agent_daemon_jsonl_message(
+                    output,
+                    make_agent_daemon_error_response(protocol_error),
+                    error)) {
+            return false;
+        }
+    }
+
+    error.clear();
+    return true;
 }

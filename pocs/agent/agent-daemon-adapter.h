@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,6 +52,8 @@ struct daemon_options {
     size_t max_turn_seconds = 0;
 };
 
+class common_agent_daemon_dispatcher;
+
 bool parse_mode(
     const std::string & value,
     common_agent_runtime_host_mode & mode);
@@ -84,3 +87,10 @@ nlohmann::ordered_json make_agent_daemon_ready_response(const daemon_options & o
 nlohmann::ordered_json make_agent_daemon_error_response(const std::string & error);
 nlohmann::ordered_json make_agent_daemon_command_response(
     const common_agent_daemon_command_result & result);
+
+bool run_agent_daemon_jsonl_adapter(
+    FILE * input,
+    FILE * output,
+    const daemon_options & options,
+    common_agent_daemon_dispatcher & dispatcher,
+    std::string & error);
