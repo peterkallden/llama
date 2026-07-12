@@ -110,6 +110,8 @@ That is still intentionally modest. The stored compatibility format remains `arg
 
 The same "almost boring" rule now applies to symbolic memory. The clean first fit is not a second symbolic-memory subsystem beside the current memory path; it is the existing host-owned memory model with a few more durable kinds and a later typed overlay above it. `procedure` already fills one symbolic role today, so the next incremental expansion is to let `constraint` and `decision` travel through the same scope, retrieval, proposal, provenance, MCP, and store contracts. Overlay compaction for planning, reflection, and reasoning should sit above that durable store rather than replace it.
 
+That first overlay slice now exists in a deliberately narrow form. `common/memory` can render a compact symbolic overlay from already retrieved memories, grouping bounded `constraint`, `decision`, `procedure`, and a small amount of supporting `fact` context. The current planner, reasoning, draft, reflection, and memory-learning prompts still keep the older full memory context available, but they can now prepend this typed overlay so the model gets a cleaner symbolic summary without changing persistence, authority, or retrieval ownership.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -537,6 +539,8 @@ The current code should remain useful without any of these. The next steps shoul
   - build later project/session overlays by compacting retrieved symbolic memories plus resource/evidence links instead of inventing a parallel persistence model
 
   The next follow-up after this kind-level slice is a typed overlay builder for planning, reflection, and reasoning. That overlay should assemble a bounded block such as constraints, decisions, procedures, relevant facts, and evidence/resource references from already authorized memory retrieval. In other words: memory remains the durable source of truth, while overlays become a host-owned context-shaping view of that memory.
+
+  The current implementation is still intentionally conservative: the overlay is only a renderer over already retrieved memories, not a new retrieval path, scoring policy, or compaction store. The next useful step is therefore to make symbolic retrieval/selection a little smarter per stage, especially so planning and reflection can emphasize project-scoped constraints and decisions while reasoning can keep favoring procedure memories plus any directly relevant symbolic guidance.
 
 - Keep tightening the session-versus-project split above the current manager key.
 

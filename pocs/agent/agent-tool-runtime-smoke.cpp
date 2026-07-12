@@ -4,6 +4,7 @@
 
 #include "agent/agent-runtime.h"
 #include "agent/tool-catalog.h"
+#include "memory/memory-context.h"
 #include "plan/plan-in-memory.h"
 
 #include <cstdio>
@@ -98,6 +99,34 @@ public:
 } // namespace
 
 int main() {
+    std::vector<common_memory_hit> symbolic_hits;
+    {
+        common_memory_record constraint;
+        constraint.id = "memory-constraint";
+        constraint.kind = common_memory_kind::constraint;
+        constraint.content = "Do not let the model choose host authority such as resource scope or store identity.";
+        symbolic_hits.push_back({constraint, 0.9f, 0.0f, 0.0f, 0.9f, "runtime-smoke"});
+
+        common_memory_record decision;
+        decision.id = "memory-decision";
+        decision.kind = common_memory_kind::decision;
+        decision.content = "Use host-owned resource references for large tool outputs instead of forcing everything inline.";
+        symbolic_hits.push_back({decision, 0.8f, 0.0f, 0.0f, 0.8f, "runtime-smoke"});
+
+        common_memory_record procedure;
+        procedure.id = "memory-procedure";
+        procedure.kind = common_memory_kind::procedure;
+        procedure.content = "Run a bounded search first, then answer using the recorded evidence.";
+        symbolic_hits.push_back({procedure, 0.7f, 0.0f, 0.0f, 0.7f, "runtime-smoke"});
+    }
+    const std::string symbolic_overlay = common_memory_render_symbolic_overlay(symbolic_hits);
+    if (symbolic_overlay.find("Constraints:") == std::string::npos ||
+            symbolic_overlay.find("Decisions:") == std::string::npos ||
+            symbolic_overlay.find("Procedures:") == std::string::npos) {
+        std::fprintf(stderr, "symbolic overlay did not render the expected sections: %s\n", symbolic_overlay.c_str());
+        return 1;
+    }
+
     std::string error;
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
@@ -188,6 +217,7 @@ int main() {
     request.session_id = "runtime-smoke-session";
     request.turn_id = "runtime-smoke-turn";
     request.plan_scope = common_plan_scope::session;
+    request.memories = symbolic_hits;
     request.enable_planning = true;
     request.enable_reflection = false;
     request.max_iterations = 1;
