@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent-daemon-lifecycle.h"
 #include "agent-runtime-session-manager.h"
 #include "agent-resource-store.h"
 
@@ -80,6 +81,11 @@ public:
 
     bool shutdown_requested() const { return shutdown_requested_flag; }
     common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
+    common_agent_daemon_state state() const { return state_value; }
+    common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value; }
+
+    void mark_stopping();
+    void mark_stopped();
 
     bool populate_status(
         common_agent_daemon_command_result & result,
@@ -87,5 +93,7 @@ public:
 
 private:
     common_agent_daemon_runtime runtime;
+    common_agent_daemon_state state_value = common_agent_daemon_state::starting;
+    common_agent_daemon_shutdown_mode shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
     bool shutdown_requested_flag = false;
 };

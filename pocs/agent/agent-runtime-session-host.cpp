@@ -2,6 +2,7 @@
 
 #include "agent-runtime-resident.h"
 #include "agent-tool-provider.h"
+#include "memory/memory-context.h"
 
 namespace {
 

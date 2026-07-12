@@ -27,16 +27,33 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
 } // namespace
 
 common_agent_daemon_service::common_agent_daemon_service(common_agent_daemon_runtime runtime)
-    : runtime(std::move(runtime)) {}
+    : runtime(std::move(runtime)) {
+    state_value = this->runtime.host ? common_agent_daemon_state::ready : common_agent_daemon_state::failed;
+}
+
+void common_agent_daemon_service::mark_stopping() {
+    if (state_value == common_agent_daemon_state::failed ||
+            state_value == common_agent_daemon_state::stopped) {
+        return;
+    }
+    state_value = common_agent_daemon_state::stopping;
+}
+
+void common_agent_daemon_service::mark_stopped() {
+    if (state_value == common_agent_daemon_state::failed) {
+        return;
+    }
+    state_value = common_agent_daemon_state::stopped;
+}
 
 bool common_agent_daemon_service::populate_status(
         common_agent_daemon_command_result & result,
         std::string & error) const {
     result.ok = runtime.host != nullptr;
     result.event = "status";
-    result.state = result.ok ? "ready" : "failed";
-    result.live = true;
-    result.ready = result.ok;
+    result.state = common_agent_daemon_state_name(state_value);
+    result.live = state_value != common_agent_daemon_state::stopped;
+    result.ready = state_value == common_agent_daemon_state::ready;
     if (runtime.host) {
         result.sessions = runtime.host->list_sessions();
         result.session_count = result.sessions.size();
@@ -122,6 +139,8 @@ bool common_agent_daemon_service::execute(
 
         case common_agent_daemon_command_type::shutdown:
             shutdown_requested_flag = true;
+            shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
+            state_value = common_agent_daemon_state::draining;
             result.ok = true;
             result.event = "shutdown";
             append_daemon_event(

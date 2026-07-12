@@ -36,6 +36,8 @@ runtime host
 
 What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, one worker-driven execution lane behind a small in-process command queue, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
+That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
+
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
 Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
@@ -493,6 +495,167 @@ That MCP-facing tool surface has now also been tightened slightly around naming 
 One intentional gap remains in the current MCP tool path: validation currently enforces that tool arguments parse as a JSON object, but it does not yet validate those arguments against the advertised `inputSchema`. Native tools already get stronger contract validation through the registry path; fuller MCP schema validation is still an explicit follow-up item rather than something hidden behind the current PoC surface.
 
 Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
+
+## Service Direction
+
+The next daemon-facing step should be designed as a host/service core that can later be run as a Unix-style service even though current development happens on Windows. That should affect the shape of the code now, but not force immediate platform-specific daemonization work.
+
+The long-term target should look more like this:
+
+```text
+process host / transport adapter
+        |
+        +--> stdio foreground host
+        +--> future unix-socket host
+        +--> future named-pipe host
+        +--> future HTTP host
+                |
+                v
+agent daemon service
+        |
+        +--> lifecycle state
+        +--> command ingress
+        +--> scheduler / worker lanes
+        +--> session manager
+        +--> event/result sink
+                |
+                v
+agent runtime host
+        |
+        +--> inference provider
+        +--> tool provider
+        +--> stores
+        +--> policy and scope resolution
+                |
+                v
+resident inference backend
+        +--> local CLI generation adapter
+        +--> server_context host
+        +--> later remote or pooled backends
+```
+
+The important rule is that the service core should not know whether it is hosted from foreground stdio, a Unix service wrapper, a Windows process wrapper, or a later HTTP listener. Those are transport/process-host choices around the same command/session/runtime core, not separate daemon implementations.
+
+`llama-server` remains useful inspiration here, but mostly for responsibility boundaries rather than for direct reuse of its public REST surface. In practice the reusable ideas are:
+
+- transport threads should not run agent turns directly
+- requests should become commands/tasks that move through a queue or scheduler
+- readiness, drain and shutdown should be explicit service concerns
+- inference/context ownership should stay inside the inference side of the host rather than leaking into transport code
+
+For this branch that means `server_context` should be treated as an inference/backend building block under `llama-agent`, not as the outer service model. The agent daemon should own routing, session lifetime, tool policy and stores; the inference backend should own model/context execution.
+
+### Service States
+
+The service lifecycle should become explicit before new transports or real background hosting are added. A small target state model is:
+
+- `starting`
+- `ready`
+- `draining`
+- `stopping`
+- `stopped`
+- `failed`
+
+The corresponding host-facing operations should stay equally small:
+
+- `start()`
+- `request_shutdown(drain|cancel)`
+- `status()`
+- `accepting_commands()`
+
+Foreground stdio can keep using this lifecycle first. A later Unix-service or detached-process wrapper should only host the same service object and react to the same lifecycle/status contracts.
+
+### Scheduler Direction
+
+The daemon is still intentionally single-lane today, but the next design should already make room for asynchronous and multi-session execution.
+
+The intended shape is:
+
+```text
+transport adapters
+        |
+        v
+bounded command queue
+        |
+        v
+scheduler / dispatcher
+        |
+        +--> worker lane 1
+        +--> worker lane 2
+        +--> ...
+```
+
+The first implementation does not need multiple workers yet. One worker lane remains the right small step. The important part is that queueing, scheduling and worker ownership become explicit, so later concurrency is an extension of the same contract rather than a rewrite.
+
+That scheduler should eventually be able to enforce rules such as:
+
+- different sessions may run in parallel when capacity exists
+- the same session should normally serialize turns
+- cancellation and deadlines should target queued or active commands by request/turn identity
+- inference-capacity limits should be separate from logical session ownership
+
+### Session and Lifetime Model
+
+The long-term host model should keep three identities distinct:
+
+- `namespace` as tenant/authority boundary
+- `project` as longer-lived shared work container
+- `session` as live runtime/conversation lane inside that project
+
+That aligns with the current daemon/session direction, but it should become more explicit over time. A future multi-session host should be able to keep several sessions alive inside one project without treating each session as a separate model owner.
+
+The same principle applies to runtime lifetime:
+
+- process lifetime
+- model lifetime
+- inference-context lifetime
+- agent-session lifetime
+- turn lifetime
+
+The current runtime/session split is already moving in that direction. The next cleanup should keep carrying that split upward so a host can unload one session, reset one context, or expire one lane without forcing a model reload.
+
+### Beta-Oriented Step Plan
+
+If the goal is a first beta that still feels structurally safe, the natural order is:
+
+1. Keep the current foreground/stdin path as the reference host.
+
+   It is already useful for smoke, integration and admin/test work. The goal is not to replace it yet, but to make it one transport/process-host around a cleaner service core.
+
+2. Make the daemon service lifecycle explicit.
+
+   Promote the current dispatcher/service shape into a clearer service object with lifecycle state, readiness, drain/shutdown intent and status reporting that does not depend on the JSONL transport.
+
+3. Keep JSONL/stdin as a transport adapter, not as the service definition.
+
+   The current JSONL protocol is still the right first transport. The next cleanup is to keep command parsing/emission outside the long-lived service core, so later Unix socket or HTTP adapters can reuse the same commands and results.
+
+4. Keep the scheduler contract ahead of real concurrency.
+
+   Preserve one worker lane first, but make queue, dispatcher and active-command ownership explicit enough that multi-worker scheduling can be added later without moving session logic again.
+
+5. Harden keyed session ownership before detached hosting.
+
+   Session reset/close/status already exist. The next step is to keep session state, project binding, policy-pack state and resident runtime reuse under the session manager instead of letting transport-facing code grow new side state.
+
+6. Add a second process-host mode only after the core above is clear.
+
+   A later detached process, Unix-service wrapper or socket listener should only host the same daemon service. It should not introduce a second runtime/session path.
+
+### Minimum Prep Before A Beta
+
+Before trying to present the daemon as a first beta, a few minimum seams should be in place so later async/multi-session/service work does not force a large redesign:
+
+- one explicit service lifecycle/state contract above the current dispatcher
+- one transport-neutral command/result surface
+- one transport-neutral status/readiness surface
+- one clear owner for live sessions and their resident runtime state
+- one clear split between model lifetime, inference-context lifetime and session lifetime
+- one bounded command queue with explicit capacity and shutdown behavior
+- one place for cancellation/deadline identity, even if active-turn abort stays narrow at first
+- one event/result seam that can later grow from bounded summaries into streaming without changing the service core
+
+Those are the minimum structural preparations, not a request to build the full production service now. The point is to avoid creating a "foreground daemon architecture" and then later a separate "real service architecture". There should be one daemon/service core, with foreground stdio as the first host around it.
 
 ## What Not To Build Yet
 

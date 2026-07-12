@@ -44,6 +44,7 @@ common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
         std::lock_guard<std::mutex> lock(mutex);
         accepting_commands = false;
         stop_requested = true;
+        service.mark_stopping();
     }
     condition.notify_all();
     if (worker.joinable()) {
@@ -52,6 +53,7 @@ common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
     {
         std::lock_guard<std::mutex> lock(mutex);
         worker_running = false;
+        service.mark_stopped();
     }
 }
 
@@ -248,11 +250,9 @@ bool common_agent_daemon_dispatcher::populate_status_locked(
     result.max_queue_size = max_queue_size;
     result.queue_capacity_remaining =
         max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
-    result.state = service.shutdown_requested()
-        ? "draining"
-        : (worker_running ? "ready" : "stopped");
+    result.state = common_agent_daemon_state_name(service.state());
     result.event = "status";
-    result.live = worker_running;
+    result.live = result.live && worker_running;
     result.ready = result.ready && accepting_commands && worker_running;
     return true;
 }
@@ -312,6 +312,7 @@ void common_agent_daemon_dispatcher::worker_loop() {
             if (service.shutdown_requested()) {
                 accepting_commands = false;
                 stop_requested = true;
+                service.mark_stopping();
             }
         }
 
@@ -322,5 +323,6 @@ void common_agent_daemon_dispatcher::worker_loop() {
     {
         std::lock_guard<std::mutex> lock(mutex);
         worker_running = false;
+        service.mark_stopped();
     }
 }
