@@ -21,7 +21,7 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
     }
-    return command.turn->turn_id;
+    return command.turn->request.turn_id;
 }
 
 } // namespace
@@ -107,7 +107,7 @@ bool common_agent_daemon_service::execute(
                 return false;
             }
 
-            result.ok = runtime.host->reset_session(*command.session, error);
+            result.ok = runtime.host->reset_session(command.session->key, error);
             result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = result.ok ? "session_reset" : "session_reset_failed";
             if (!result.ok) {
@@ -137,7 +137,7 @@ bool common_agent_daemon_service::execute(
                 return false;
             }
 
-            result.ok = runtime.host->close_session(*command.session, error);
+            result.ok = runtime.host->close_session(command.session->key, error);
             result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = result.ok ? "session_closed" : "session_close_failed";
             if (!result.ok) {
@@ -187,7 +187,7 @@ bool common_agent_daemon_service::execute(
             }
 
             error.clear();
-            runtime.host->run_turn(*command.turn, result.turn_result, error);
+            runtime.host->run_turn(command.turn->request, result.turn_result, error);
             result.response_kind = common_agent_daemon_response_kind::turn;
             result.ok = result.turn_result.ok;
             if (!error.empty() && result.turn_result.error.empty()) {

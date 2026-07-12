@@ -45,9 +45,11 @@ bool parse_agent_daemon_command_name(
     }
     if (command_name == "cancel_turn") {
         command.type = common_agent_daemon_command_type::cancel_turn;
-        command.target_request_id = parsed.value("target_request_id", "");
-        command.target_turn_id = parsed.value("target_turn_id", "");
-        if (command.target_request_id.empty() && command.target_turn_id.empty()) {
+        command.cancel = common_agent_daemon_cancel_payload{
+            parsed.value("target_request_id", ""),
+            parsed.value("target_turn_id", ""),
+        };
+        if (command.cancel->target_request_id.empty() && command.cancel->target_turn_id.empty()) {
             error = "cancel_turn requires target_request_id or target_turn_id";
             return false;
         }
@@ -58,9 +60,11 @@ bool parse_agent_daemon_command_name(
         command.type = command_name == "reset_session"
             ? common_agent_daemon_command_type::reset_session
             : common_agent_daemon_command_type::close_session;
-        command.session = common_agent_runtime_session_key{
-            parsed.value("namespace_id", "default-namespace"),
-            parsed.value("session_id", "default-session"),
+        command.session = common_agent_daemon_session_payload{
+            {
+                parsed.value("namespace_id", "default-namespace"),
+                parsed.value("session_id", "default-session"),
+            }
         };
         error.clear();
         return true;
@@ -291,7 +295,7 @@ bool parse_agent_daemon_command(
     }
     if (command.type == common_agent_daemon_command_type::run_turn) {
         command.turn.emplace();
-        if (!parse_agent_daemon_turn_request(parsed, options, default_mode, *command.turn, error)) {
+        if (!parse_agent_daemon_turn_request(parsed, options, default_mode, command.turn->request, error)) {
             return false;
         }
     }

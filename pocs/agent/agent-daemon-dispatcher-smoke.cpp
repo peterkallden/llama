@@ -18,16 +18,16 @@ common_agent_daemon_command make_turn_command(
     common_agent_daemon_command command;
     command.request_id = std::move(request_id);
     command.type = common_agent_daemon_command_type::run_turn;
-    command.turn = common_agent_runtime_session_manager_turn_request{};
-    command.turn->mode = common_agent_runtime_host_mode::chat;
-    command.turn->prompt = std::move(prompt);
-    command.turn->session_id = "dispatcher-smoke-session";
-    command.turn->namespace_id = "dispatcher-smoke";
-    command.turn->project_id = "dispatcher-smoke-project";
-    command.turn->turn_id = std::move(turn_id);
-    command.turn->memory_scope = common_memory_scope::project;
-    command.turn->plan_scope = common_plan_scope::project;
-    command.turn->n_predict = n_predict;
+    command.turn = common_agent_daemon_turn_payload{};
+    command.turn->request.mode = common_agent_runtime_host_mode::chat;
+    command.turn->request.prompt = std::move(prompt);
+    command.turn->request.session_id = "dispatcher-smoke-session";
+    command.turn->request.namespace_id = "dispatcher-smoke";
+    command.turn->request.project_id = "dispatcher-smoke-project";
+    command.turn->request.turn_id = std::move(turn_id);
+    command.turn->request.memory_scope = common_memory_scope::project;
+    command.turn->request.plan_scope = common_plan_scope::project;
+    command.turn->request.n_predict = n_predict;
     return command;
 }
 
@@ -95,7 +95,7 @@ int main(int argc, char ** argv) {
     common_agent_daemon_command cancel_command;
     cancel_command.request_id = "cancel-1";
     cancel_command.type = common_agent_daemon_command_type::cancel_turn;
-    cancel_command.target_request_id = "turn-2";
+    cancel_command.cancel = common_agent_daemon_cancel_payload{"turn-2", {}};
 
     common_agent_daemon_command_result cancel_result;
     std::string cancel_error;

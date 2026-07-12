@@ -48,10 +48,10 @@ int main() {
     }
     if (turn_command.type != common_agent_daemon_command_type::run_turn ||
             !turn_command.turn.has_value() ||
-            turn_command.turn->mode != common_agent_runtime_host_mode::mini ||
-            turn_command.turn->memory_scope != common_memory_scope::project ||
-            turn_command.turn->plan_scope != common_plan_scope::project ||
-            turn_command.turn->n_predict != 42) {
+            turn_command.turn->request.mode != common_agent_runtime_host_mode::mini ||
+            turn_command.turn->request.memory_scope != common_memory_scope::project ||
+            turn_command.turn->request.plan_scope != common_plan_scope::project ||
+            turn_command.turn->request.n_predict != 42) {
         std::fprintf(stderr, "run_turn command did not preserve expected fields\n");
         return 1;
     }

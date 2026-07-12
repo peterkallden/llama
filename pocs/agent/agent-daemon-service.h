@@ -29,13 +29,25 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<common_agent_runtime_session_manager> host;
 };
 
+struct common_agent_daemon_turn_payload {
+    common_agent_runtime_session_manager_turn_request request;
+};
+
+struct common_agent_daemon_session_payload {
+    common_agent_runtime_session_key key;
+};
+
+struct common_agent_daemon_cancel_payload {
+    std::string target_request_id;
+    std::string target_turn_id;
+};
+
 struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
-    std::optional<common_agent_runtime_session_manager_turn_request> turn;
-    std::optional<common_agent_runtime_session_key> session;
-    std::string target_request_id;
-    std::string target_turn_id;
+    std::optional<common_agent_daemon_turn_payload> turn;
+    std::optional<common_agent_daemon_session_payload> session;
+    std::optional<common_agent_daemon_cancel_payload> cancel;
 };
 
 struct common_agent_daemon_event {

@@ -23,7 +23,7 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
     }
-    return command.turn->turn_id;
+    return command.turn->request.turn_id;
 }
 
 } // namespace
@@ -141,8 +141,8 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
     result = {};
     result.request_id = command.request_id;
     result.response_kind = common_agent_daemon_response_kind::lifecycle;
-    result.target_request_id = command.target_request_id;
-    result.target_turn_id = command.target_turn_id;
+    result.target_request_id = command.cancel.has_value() ? command.cancel->target_request_id : std::string();
+    result.target_turn_id = command.cancel.has_value() ? command.cancel->target_turn_id : std::string();
 
     std::shared_ptr<queued_command> cancelled_item;
     {
@@ -155,12 +155,14 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             }
 
             const bool request_match =
-                !command.target_request_id.empty() &&
-                queued->command.request_id == command.target_request_id;
+                command.cancel.has_value() &&
+                !command.cancel->target_request_id.empty() &&
+                queued->command.request_id == command.cancel->target_request_id;
             const bool turn_match =
-                !command.target_turn_id.empty() &&
+                command.cancel.has_value() &&
+                !command.cancel->target_turn_id.empty() &&
                 queued->command.turn.has_value() &&
-                queued->command.turn->turn_id == command.target_turn_id;
+                queued->command.turn->request.turn_id == command.cancel->target_turn_id;
             if (!request_match && !turn_match) {
                 continue;
             }
@@ -171,8 +173,12 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         }
 
         if (!cancelled_item) {
-            if ((!command.target_request_id.empty() && command.target_request_id == active_request_id) ||
-                    (!command.target_turn_id.empty() && command.target_turn_id == active_turn_id)) {
+            if ((command.cancel.has_value() &&
+                    !command.cancel->target_request_id.empty() &&
+                    command.cancel->target_request_id == active_request_id) ||
+                    (command.cancel.has_value() &&
+                    !command.cancel->target_turn_id.empty() &&
+                    command.cancel->target_turn_id == active_turn_id)) {
                 error = "active turn cancellation is not supported yet";
                 result.ok = false;
                 result.response_kind = common_agent_daemon_response_kind::lifecycle;
@@ -184,7 +190,9 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                     result,
                     "turn.cancel_rejected",
                     command.request_id,
-                    command.target_turn_id.empty() ? active_turn_id : command.target_turn_id,
+                    !command.cancel.has_value() || command.cancel->target_turn_id.empty()
+                        ? active_turn_id
+                        : command.cancel->target_turn_id,
                     error);
                 return false;
             }
@@ -201,7 +209,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             result,
             "turn.cancel_rejected",
             command.request_id,
-            command.target_turn_id,
+            command.cancel.has_value() ? command.cancel->target_turn_id : std::string(),
             error);
         return false;
     }
@@ -229,9 +237,9 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         result,
         "turn.cancelled",
         command.request_id,
-        command.target_turn_id.empty()
+        !command.cancel.has_value() || command.cancel->target_turn_id.empty()
             ? command_turn_id(cancelled_item->command)
-            : command.target_turn_id,
+            : command.cancel->target_turn_id,
         "queued turn cancelled");
     error.clear();
     return true;
@@ -285,7 +293,7 @@ void common_agent_daemon_dispatcher::worker_loop() {
                 active_request_id = item->command.request_id;
                 active_turn_id =
                     item->command.turn.has_value()
-                        ? item->command.turn->turn_id
+                        ? item->command.turn->request.turn_id
                         : std::string();
             } else {
                 active_request_id.clear();

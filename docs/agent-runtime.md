@@ -42,6 +42,8 @@ The same daemon path is now also a little less transport-shaped around status re
 
 The response side is now slightly less string-shaped too. The daemon command result carries an explicit response kind for `turn`, `status`, or lifecycle/session actions, so the current JSONL adapter no longer has to infer the response shape only from ad hoc event-string conventions before serializing it.
 
+The command side is now also a little less ad hoc. The transport still speaks the same JSONL command fields, but the host-owned daemon command contract now carries small typed payloads for turn execution, session actions and queued-turn cancellation instead of relying only on a flat bag of optional top-level fields.
+
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
 Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
