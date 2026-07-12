@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <string_view>
 #include <string>
 #include <thread>
 #include <vector>
@@ -76,14 +77,73 @@ std::string normalize_daemon_session_line(std::string line) {
     return line;
 }
 
-void forward_daemon_diagnostics(FILE * stream) {
+bool daemon_diagnostic_has_prefix(
+        std::string_view line,
+        std::string_view prefix) {
+    return line.find(prefix) != std::string_view::npos;
+}
+
+bool is_routine_daemon_diagnostic(std::string_view line) {
+    static const std::string_view noisy_prefixes[] = {
+        "llama_model_loader:",
+        "print_info:",
+        "init_tokenizer:",
+        "load:",
+        "load_tensors:",
+        "create_tensor:",
+        "done_getting_tensors:",
+        "repack:",
+        "llama_context:",
+        "llama_kv_cache:",
+        "sched_reserve:",
+        "graph_reserve:",
+        "set_adapters_lora:",
+        "adapters_lora_are_same:",
+        "set_embeddings:",
+        "set_abort_callback:",
+        "common_speculative_init:",
+        "srv          init:",
+        "~llama_context:",
+        ".",
+    };
+
+    for (const auto & prefix : noisy_prefixes) {
+        if (daemon_diagnostic_has_prefix(line, prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool should_forward_daemon_diagnostic(
+        std::string_view line,
+        bool verbose) {
+    if (verbose) {
+        return true;
+    }
+
+    if (is_routine_daemon_diagnostic(line)) {
+        return false;
+    }
+
+    return true;
+}
+
+void forward_daemon_diagnostics(FILE * stream, bool verbose) {
     if (stream == nullptr) {
         return;
     }
 
     char buffer[4096];
     while (std::fgets(buffer, sizeof(buffer), stream) != nullptr) {
-        std::fwrite(buffer, 1, std::strlen(buffer), stderr);
+        std::string line(buffer);
+        if (!should_forward_daemon_diagnostic(line, verbose)) {
+            continue;
+        }
+        std::fprintf(stderr, "[daemon-stderr] %s", line.c_str());
+        if (line.empty() || line.back() != '\n') {
+            std::fputc('\n', stderr);
+        }
         std::fflush(stderr);
     }
 }
@@ -214,7 +274,7 @@ public:
             return false;
         }
 
-        daemon_err_thread = std::thread(forward_daemon_diagnostics, daemon_err);
+        daemon_err_thread = std::thread(forward_daemon_diagnostics, daemon_err, a.agent_trace);
 
         json ready;
         if (!read_agent_daemon_jsonl_message(daemon_out, ready, error)) {
