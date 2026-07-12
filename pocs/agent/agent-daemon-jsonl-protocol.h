@@ -18,6 +18,21 @@ struct agent_daemon_jsonl_turn_request {
     std::string mode = "chat";
 };
 
+struct agent_daemon_jsonl_status_request {};
+
+struct agent_daemon_jsonl_shutdown_request {};
+
+struct agent_daemon_jsonl_session_request {
+    std::string command;
+    std::string session_id;
+    std::string namespace_id;
+};
+
+struct agent_daemon_jsonl_cancel_request {
+    std::string target_request_id;
+    std::string target_turn_id;
+};
+
 struct agent_daemon_jsonl_ready_response {
     std::string default_mode;
     int protocol_version = 0;
@@ -37,7 +52,17 @@ bool write_agent_daemon_jsonl_message(
 nlohmann::ordered_json make_agent_daemon_jsonl_turn_request(
     const agent_daemon_jsonl_turn_request & request);
 
-nlohmann::ordered_json make_agent_daemon_jsonl_shutdown_request();
+nlohmann::ordered_json make_agent_daemon_jsonl_status_request(
+    const agent_daemon_jsonl_status_request & request = {});
+
+nlohmann::ordered_json make_agent_daemon_jsonl_shutdown_request(
+    const agent_daemon_jsonl_shutdown_request & request = {});
+
+nlohmann::ordered_json make_agent_daemon_jsonl_session_request(
+    const agent_daemon_jsonl_session_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_cancel_request(
+    const agent_daemon_jsonl_cancel_request & request);
 
 bool parse_agent_daemon_jsonl_ready_response(
     const nlohmann::ordered_json & message,

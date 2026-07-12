@@ -73,6 +73,7 @@ bool write_agent_daemon_jsonl_message(
 json make_agent_daemon_jsonl_turn_request(
         const agent_daemon_jsonl_turn_request & request) {
     return {
+        {"command", "run_turn"},
         {"prompt", request.prompt},
         {"session_id", request.session_id},
         {"namespace_id", request.namespace_id},
@@ -85,9 +86,35 @@ json make_agent_daemon_jsonl_turn_request(
     };
 }
 
-json make_agent_daemon_jsonl_shutdown_request() {
+json make_agent_daemon_jsonl_status_request(
+        const agent_daemon_jsonl_status_request &) {
+    return {
+        {"command", "status"},
+    };
+}
+
+json make_agent_daemon_jsonl_shutdown_request(
+        const agent_daemon_jsonl_shutdown_request &) {
     return {
         {"command", "shutdown"},
+    };
+}
+
+json make_agent_daemon_jsonl_session_request(
+        const agent_daemon_jsonl_session_request & request) {
+    return {
+        {"command", request.command},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+    };
+}
+
+json make_agent_daemon_jsonl_cancel_request(
+        const agent_daemon_jsonl_cancel_request & request) {
+    return {
+        {"command", "cancel_turn"},
+        {"target_request_id", request.target_request_id},
+        {"target_turn_id", request.target_turn_id},
     };
 }
 

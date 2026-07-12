@@ -19,6 +19,7 @@ int main() {
         "mini",
     });
     if (!turn_request.is_object() ||
+            turn_request.value("command", "") != "run_turn" ||
             turn_request.value("prompt", "") != "hello" ||
             turn_request.value("mode", "") != "mini" ||
             turn_request.value("n_predict", 0) != 42) {
@@ -26,7 +27,39 @@ int main() {
         return 1;
     }
 
-    const auto shutdown_request = make_agent_daemon_jsonl_shutdown_request();
+    const auto status_request = make_agent_daemon_jsonl_status_request({});
+    if (!status_request.is_object() ||
+            status_request.value("command", "") != "status") {
+        std::fprintf(stderr, "status request contract mismatch\n");
+        return 1;
+    }
+
+    const auto cancel_request = make_agent_daemon_jsonl_cancel_request({
+        "req-2",
+        "turn-2",
+    });
+    if (!cancel_request.is_object() ||
+            cancel_request.value("command", "") != "cancel_turn" ||
+            cancel_request.value("target_request_id", "") != "req-2" ||
+            cancel_request.value("target_turn_id", "") != "turn-2") {
+        std::fprintf(stderr, "cancel request contract mismatch\n");
+        return 1;
+    }
+
+    const auto reset_request = make_agent_daemon_jsonl_session_request({
+        "reset_session",
+        "session-a",
+        "namespace-a",
+    });
+    if (!reset_request.is_object() ||
+            reset_request.value("command", "") != "reset_session" ||
+            reset_request.value("session_id", "") != "session-a" ||
+            reset_request.value("namespace_id", "") != "namespace-a") {
+        std::fprintf(stderr, "session request contract mismatch\n");
+        return 1;
+    }
+
+    const auto shutdown_request = make_agent_daemon_jsonl_shutdown_request({});
     if (!shutdown_request.is_object() ||
             shutdown_request.value("command", "") != "shutdown") {
         std::fprintf(stderr, "shutdown request contract mismatch\n");
@@ -89,6 +122,8 @@ int main() {
     }
 
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
+    std::printf("daemon_jsonl_status=%s\n", status_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_cancel=%s\n", cancel_request.value("command", "").c_str());
     std::printf("daemon_jsonl_shutdown=%s\n", shutdown_request.value("command", "").c_str());
     return 0;
 }

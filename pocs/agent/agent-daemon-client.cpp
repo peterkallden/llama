@@ -247,7 +247,7 @@ public:
         json response;
         bool ok = write_agent_daemon_jsonl_message(
                       daemon_in,
-                      make_agent_daemon_jsonl_shutdown_request(),
+                      make_agent_daemon_jsonl_shutdown_request({}),
                       error) &&
                   read_agent_daemon_jsonl_message(daemon_out, response, error);
         if (ok && !parse_agent_daemon_jsonl_event_response(response, "shutdown", error)) {
