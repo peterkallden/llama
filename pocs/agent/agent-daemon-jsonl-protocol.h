@@ -39,6 +39,26 @@ struct agent_daemon_jsonl_ready_response {
     std::vector<std::string> capabilities;
 };
 
+struct agent_daemon_jsonl_turn_response {
+    bool ok = false;
+    std::string response;
+    std::string error;
+    bool runtime_reused = false;
+    int event_count = 0;
+};
+
+struct agent_daemon_jsonl_status_response {
+    bool ok = false;
+    nlohmann::ordered_json payload;
+    std::string error;
+};
+
+struct agent_daemon_jsonl_event_response {
+    bool ok = false;
+    std::string event;
+    std::string error;
+};
+
 bool read_agent_daemon_jsonl_message(
     FILE * stream,
     nlohmann::ordered_json & out,
@@ -67,6 +87,21 @@ nlohmann::ordered_json make_agent_daemon_jsonl_cancel_request(
 bool parse_agent_daemon_jsonl_ready_response(
     const nlohmann::ordered_json & message,
     agent_daemon_jsonl_ready_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_turn_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_turn_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_status_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_status_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_event_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_event_response & response,
     std::string & error);
 
 bool parse_agent_daemon_jsonl_event_response(

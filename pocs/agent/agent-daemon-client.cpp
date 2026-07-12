@@ -273,11 +273,12 @@ public:
             daemon_err = nullptr;
             return false;
         }
+        transport = jsonl_transport(daemon_in, daemon_out);
 
         daemon_err_thread = std::thread(forward_daemon_diagnostics, daemon_err, a.agent_trace);
 
         json ready;
-        if (!read_agent_daemon_jsonl_message(daemon_out, ready, error)) {
+        if (!transport.read(ready, error)) {
             terminate_if_running();
             return false;
         }
@@ -294,36 +295,43 @@ public:
 
     bool run_turn(
             const agent_daemon_jsonl_turn_request & request,
-            json & response,
+            agent_daemon_jsonl_turn_response & response,
             std::string & error) {
-        return send_request(
-            make_agent_daemon_jsonl_turn_request(request),
-            response,
-            error);
+        json message;
+        if (!send_request(make_agent_daemon_jsonl_turn_request(request), message, error)) {
+            return false;
+        }
+        return parse_agent_daemon_jsonl_turn_response(message, response, error);
     }
 
-    bool status(json & response, std::string & error) {
-        return send_request(
-            make_agent_daemon_jsonl_status_request({}),
-            response,
-            error);
+    bool status(agent_daemon_jsonl_status_response & response, std::string & error) {
+        json message;
+        if (!send_request(make_agent_daemon_jsonl_status_request({}), message, error)) {
+            return false;
+        }
+        return parse_agent_daemon_jsonl_status_response(message, response, error);
     }
 
     bool reset_session(
             const std::string & session_id,
             const std::string & namespace_id,
-            json & response,
+            agent_daemon_jsonl_event_response & response,
             std::string & error) {
+        json message;
         const bool ok = send_request(
             make_agent_daemon_jsonl_session_request({
                 "reset_session",
                 session_id,
                 namespace_id,
             }),
-            response,
+            message,
             error);
-        if (ok && !parse_agent_daemon_jsonl_event_response(response, "session_reset", error)) {
-            error += ": " + response.dump();
+        if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
+            error += ": " + message.dump();
+            return false;
+        }
+        if (ok && response.event != "session_reset") {
+            error = "unexpected daemon session_reset response: " + message.dump();
             return false;
         }
         return ok;
@@ -332,18 +340,23 @@ public:
     bool close_session(
             const std::string & session_id,
             const std::string & namespace_id,
-            json & response,
+            agent_daemon_jsonl_event_response & response,
             std::string & error) {
+        json message;
         const bool ok = send_request(
             make_agent_daemon_jsonl_session_request({
                 "close_session",
                 session_id,
                 namespace_id,
             }),
-            response,
+            message,
             error);
-        if (ok && !parse_agent_daemon_jsonl_event_response(response, "session_closed", error)) {
-            error += ": " + response.dump();
+        if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
+            error += ": " + message.dump();
+            return false;
+        }
+        if (ok && response.event != "session_closed") {
+            error = "unexpected daemon session_closed response: " + message.dump();
             return false;
         }
         return ok;
@@ -371,6 +384,7 @@ public:
         daemon_in = nullptr;
         daemon_out = nullptr;
         daemon_err = nullptr;
+        transport = jsonl_transport();
         if (daemon_err_thread.joinable()) {
             daemon_err_thread.join();
         }
@@ -385,20 +399,50 @@ public:
     }
 
 private:
+    class jsonl_transport {
+    public:
+        jsonl_transport() = default;
+
+        jsonl_transport(FILE * input, FILE * output) :
+                input(input),
+                output(output) {
+        }
+
+        bool write(const json & message, std::string & error) const {
+            if (input == nullptr) {
+                error = "daemon input pipe is not available";
+                return false;
+            }
+            return write_agent_daemon_jsonl_message(input, message, error);
+        }
+
+        bool read(json & message, std::string & error) const {
+            if (output == nullptr) {
+                error = "daemon output pipe is not available";
+                return false;
+            }
+            return read_agent_daemon_jsonl_message(output, message, error);
+        }
+
+    private:
+        FILE * input = nullptr;
+        FILE * output = nullptr;
+    };
+
     bool send_request(
             const json & request,
             json & response,
             std::string & error) {
         response = json();
-        if (!running || daemon_in == nullptr || daemon_out == nullptr) {
+        if (!running) {
             error = "daemon session is not running";
             return false;
         }
 
-        if (!write_agent_daemon_jsonl_message(daemon_in, request, error)) {
+        if (!transport.write(request, error)) {
             return false;
         }
-        return read_agent_daemon_jsonl_message(daemon_out, response, error);
+        return transport.read(response, error);
     }
     void terminate_if_running() {
         if (!daemon_in && !daemon_out && !running) {
@@ -411,6 +455,7 @@ private:
         daemon_in = nullptr;
         daemon_out = nullptr;
         daemon_err = nullptr;
+        transport = jsonl_transport();
         if (daemon_err_thread.joinable()) {
             daemon_err_thread.join();
         }
@@ -422,6 +467,7 @@ private:
     FILE * daemon_in = nullptr;
     FILE * daemon_out = nullptr;
     FILE * daemon_err = nullptr;
+    jsonl_transport transport;
     std::thread daemon_err_thread;
     int exit_code = 1;
     bool running = false;
@@ -503,7 +549,7 @@ int run_daemon_chat_command(const char * argv0, const args & a) {
         return 1;
     }
 
-    json response;
+    agent_daemon_jsonl_turn_response response;
     if (!session.run_turn(make_daemon_client_request(a, a.prompt), response, error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         session.shutdown(error);
@@ -515,11 +561,7 @@ int run_daemon_chat_command(const char * argv0, const args & a) {
         }
         return 1;
     }
-    if (!response.value("ok", false)) {
-        std::fprintf(stderr, "%s\n", response.value("error", "daemon turn failed").c_str());
-        return 1;
-    }
-    std::printf("%s\n", response.value("response", "").c_str());
+    std::printf("%s\n", response.response.c_str());
     return 0;
 }
 
@@ -537,16 +579,12 @@ int run_daemon_session_command(const char * argv0, const args & a) {
 
     int prompts_sent = 0;
     auto run_one = [&](const std::string & prompt, const std::string & turn_id = std::string()) -> bool {
-        json response;
+        agent_daemon_jsonl_turn_response response;
         if (!session.run_turn(make_daemon_client_request(a, prompt, turn_id), response, error)) {
             std::fprintf(stderr, "%s\n", error.c_str());
             return false;
         }
-        if (!response.value("ok", false)) {
-            std::fprintf(stderr, "%s\n", response.value("error", "daemon turn failed").c_str());
-            return false;
-        }
-        std::printf("%s\n", response.value("response", "").c_str());
+        std::printf("%s\n", response.response.c_str());
         ++prompts_sent;
         return true;
     };
@@ -566,33 +604,33 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             break;
         }
         if (line == "/status") {
-            json response;
+            agent_daemon_jsonl_status_response response;
             if (!session.status(response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-status] %s\n", response.dump().c_str());
+            std::printf("[daemon-status] %s\n", response.payload.dump().c_str());
             continue;
         }
         if (line == "/reset") {
-            json response;
+            agent_daemon_jsonl_event_response response;
             if (!session.reset_session(a.memory_session, a.memory_namespace, response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-reset] %s\n", response.value("event", "").c_str());
+            std::printf("[daemon-reset] %s\n", response.event.c_str());
             continue;
         }
         if (line == "/close") {
-            json response;
+            agent_daemon_jsonl_event_response response;
             if (!session.close_session(a.memory_session, a.memory_namespace, response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-close] %s\n", response.value("event", "").c_str());
+            std::printf("[daemon-close] %s\n", response.event.c_str());
             continue;
         }
         if (line == "/help") {

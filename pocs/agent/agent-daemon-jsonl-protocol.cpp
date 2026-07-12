@@ -149,13 +149,84 @@ bool parse_agent_daemon_jsonl_ready_response(
     return true;
 }
 
+bool parse_agent_daemon_jsonl_turn_response(
+        const json & message,
+        agent_daemon_jsonl_turn_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon turn response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.response = message.value("response", std::string());
+    response.error = message.value("error", std::string());
+    response.runtime_reused = message.value("runtime_reused", false);
+    response.event_count = message.value("event_count", 0);
+
+    if (response.ok) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon turn failed" : response.error;
+    return false;
+}
+
+bool parse_agent_daemon_jsonl_status_response(
+        const json & message,
+        agent_daemon_jsonl_status_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon status response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.payload = message;
+    response.error = message.value("error", std::string());
+
+    if (response.ok) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon status failed" : response.error;
+    return false;
+}
+
+bool parse_agent_daemon_jsonl_event_response(
+        const json & message,
+        agent_daemon_jsonl_event_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon event response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
+    response.error = message.value("error", std::string());
+
+    if (response.ok && !response.event.empty()) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon event failed" : response.error;
+    return false;
+}
+
 bool parse_agent_daemon_jsonl_event_response(
         const json & message,
         const std::string & expected_event,
         std::string & error) {
-    if (!message.is_object() ||
-            !message.value("ok", false) ||
-            message.value("event", std::string()) != expected_event) {
+    agent_daemon_jsonl_event_response response;
+    if (!parse_agent_daemon_jsonl_event_response(message, response, error) ||
+            response.event != expected_event) {
         error = "unexpected daemon " + expected_event + " response";
         return false;
     }
