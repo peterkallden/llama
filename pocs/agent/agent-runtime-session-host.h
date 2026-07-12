@@ -36,6 +36,7 @@ struct common_agent_runtime_session_host_turn_request {
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
     int n_predict = 0;
+    std::optional<common_memory_policy_pack> policy_pack;
 };
 
 struct common_agent_runtime_session_host_turn_result {
@@ -62,6 +63,7 @@ struct common_agent_runtime_session_host_descriptor {
     std::string project_id;
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string policy_pack_id;
 };
 
 struct common_agent_runtime_session_host_config {
@@ -131,6 +133,12 @@ private:
     common_agent_runtime_turn_request make_base_turn_request(
         const common_agent_runtime_session_host_turn_request & request) const;
 
+    std::optional<common_memory_policy_pack> resolve_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request) const;
+
+    void update_session_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request);
+
     bool resolve_tooling(
         const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
@@ -139,6 +147,7 @@ private:
 
     common_agent_runtime_session_host_config config;
     common_agent_runtime_session_host_runtime_key active_runtime_key;
+    std::optional<common_memory_policy_pack> active_policy_pack;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
 };

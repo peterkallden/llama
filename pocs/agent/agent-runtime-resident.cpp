@@ -89,6 +89,11 @@ void common_agent_runtime_resident_runtime::set_tooling(common_agent_runtime_too
     tooling = std::move(next_tooling);
 }
 
+void common_agent_runtime_resident_runtime::set_policy_pack(
+        std::optional<common_memory_policy_pack> policy_pack) {
+    base_turn_request.request.policy_pack = std::move(policy_pack);
+}
+
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,

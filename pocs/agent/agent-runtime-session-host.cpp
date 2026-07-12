@@ -84,6 +84,7 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
     resident_request.session_id = request.session_id;
     resident_request.namespace_id = request.namespace_id;
     resident_request.project_id = request.project_id;
+    resident_request.policy_pack = resolve_policy_pack(request);
     resident_request.memory_scope = request.memory_scope;
     resident_request.plan_scope = request.plan_scope;
     if (request.n_predict > 0) {
@@ -102,6 +103,28 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
         turn_request.generation_options.n_predict = resident_request.n_predict;
     }
     return turn_request;
+}
+
+std::optional<common_memory_policy_pack> common_agent_runtime_session_host::resolve_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request) const {
+    if (request.policy_pack.has_value()) {
+        return request.policy_pack;
+    }
+    if (active_policy_pack.has_value()) {
+        return active_policy_pack;
+    }
+    return config.resident_request.policy_pack;
+}
+
+void common_agent_runtime_session_host::update_session_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request) {
+    if (!request.policy_pack.has_value()) {
+        return;
+    }
+    active_policy_pack = request.policy_pack;
+    if (runtime) {
+        runtime->set_policy_pack(active_policy_pack);
+    }
 }
 
 bool common_agent_runtime_session_host::resolve_tooling(
@@ -164,6 +187,7 @@ bool common_agent_runtime_session_host::run_turn(
         result.error = error;
         return false;
     }
+    update_session_policy_pack(request);
     common_agent_runtime_tooling resolved_tooling;
     if (!resolve_tooling(runtime.get(), request, resolved_tooling, error)) {
         result.error = error;
@@ -212,17 +236,22 @@ common_agent_runtime_session * common_agent_runtime_session_host::session() {
 }
 
 common_agent_runtime_session_host_descriptor common_agent_runtime_session_host::describe_session() const {
+    const auto resolved_policy_pack = active_policy_pack.has_value()
+        ? active_policy_pack
+        : config.resident_request.policy_pack;
     return {
         active_runtime_key.namespace_id,
         active_runtime_key.session_id,
         active_runtime_key.project_id,
         active_runtime_key.memory_scope,
         active_runtime_key.plan_scope,
+        resolved_policy_pack.has_value() ? resolved_policy_pack->id : std::string(),
     };
 }
 
 void common_agent_runtime_session_host::reset() {
     runtime.reset();
     active_runtime_key = {};
+    active_policy_pack.reset();
     generated_turn_counter = 0;
 }

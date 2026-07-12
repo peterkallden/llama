@@ -69,6 +69,7 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
             descriptor.project_id,
             descriptor.memory_scope,
             descriptor.plan_scope,
+            descriptor.policy_pack_id,
         });
     }
     return sessions;

@@ -54,6 +54,7 @@ public:
     explicit common_agent_runtime_resident_runtime(common_agent_runtime_resident_runtime_config config);
 
     void set_tooling(common_agent_runtime_tooling tooling);
+    void set_policy_pack(std::optional<common_memory_policy_pack> policy_pack);
 
     bool run_chat_prompt(
         const std::string & prompt,

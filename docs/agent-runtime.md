@@ -118,6 +118,8 @@ The next adjacent layer is now also explicit: a small host-owned policy-pack con
 
 That policy-pack seam is now present in the runtime/session contracts as well, not only in prompt rendering. Resident/session configuration can carry a stable pack across turns, the mini runtime path now preserves that host-owned pack instead of dropping it while rebuilding `common_agent_request`, and the daemon resident-request builder can seed one small session-level pack from host configuration. Request/objective and active-plan derivation still remain as fallbacks, but the host path no longer depends on those fallbacks alone.
 
+The session layer now owns that seam a little more explicitly too. A session-host turn can provide a policy-pack override once, the host retains it as session state, later turns can omit it without losing the active pack, and daemon/session status can report the current `policy_pack_id` for diagnostics. The intent is still conservative: policy-pack identity is session state, not part of the resident model/inference reuse key.
+
 ## Layer Responsibilities
 
 ### CLI Adapter

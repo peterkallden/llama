@@ -22,6 +22,7 @@ struct common_agent_runtime_session_descriptor {
     std::string project_id;
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string policy_pack_id;
 };
 
 using common_agent_runtime_session_manager_turn_request = common_agent_runtime_session_host_turn_request;

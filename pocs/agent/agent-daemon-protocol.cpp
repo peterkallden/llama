@@ -134,13 +134,17 @@ json serialize_agent_daemon_event(
 
 json serialize_agent_daemon_session_status(
         const common_agent_runtime_session_descriptor & session) {
-    return {
+    json session_json = {
         {"namespace_id", session.key.namespace_id},
         {"session_id", session.key.session_id},
         {"project_id", session.project_id},
         {"memory_scope", common_memory_scope_name(session.memory_scope)},
         {"plan_scope", daemon_plan_scope_name(session.plan_scope)},
     };
+    if (!session.policy_pack_id.empty()) {
+        session_json["policy_pack_id"] = session.policy_pack_id;
+    }
+    return session_json;
 }
 
 json serialize_agent_daemon_trace_entry(
