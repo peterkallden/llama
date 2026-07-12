@@ -319,11 +319,9 @@ public:
             std::string & error) {
         json message;
         const bool ok = send_request(
-            make_agent_daemon_jsonl_session_request({
-                "reset_session",
+            make_agent_daemon_jsonl_reset_session_request(
                 session_id,
-                namespace_id,
-            }),
+                namespace_id),
             message,
             error);
         if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
@@ -344,11 +342,9 @@ public:
             std::string & error) {
         json message;
         const bool ok = send_request(
-            make_agent_daemon_jsonl_session_request({
-                "close_session",
+            make_agent_daemon_jsonl_close_session_request(
                 session_id,
-                namespace_id,
-            }),
+                namespace_id),
             message,
             error);
         if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
@@ -610,7 +606,7 @@ int run_daemon_session_command(const char * argv0, const args & a) {
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-status] %s\n", response.payload.dump().c_str());
+            std::printf("[daemon-status] %s\n", render_agent_daemon_jsonl_status_summary(response).c_str());
             continue;
         }
         if (line == "/reset") {

@@ -68,7 +68,7 @@ Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
 
 try {
-    $lines = @("/help", "/quit")
+    $lines = @("/status", "/help", "/quit")
     (($lines -join "`n") + "`n") |
         & $exePath daemon-session `
             --model $ChatModel `
@@ -88,14 +88,20 @@ try {
     $stdoutLines = @(Get-Content -LiteralPath $stdoutPath)
     $stderrLines = @(Get-Content -LiteralPath $stderrPath)
 
-    if ($stdoutLines.Count -lt 2) {
-        throw "Expected at least 2 stdout lines, got $($stdoutLines.Count)"
+    if ($stdoutLines.Count -lt 3) {
+        throw "Expected at least 3 stdout lines, got $($stdoutLines.Count)"
     }
     if ($stdoutLines[0] -ne "READY") {
         throw "Expected first stdout line to be READY, got: $($stdoutLines[0])"
     }
-    if ($stdoutLines[1] -ne "[daemon-help] /status /reset /close /quit") {
-        throw "Expected help line on stdout, got: $($stdoutLines[1])"
+    if (-not $stdoutLines[1].StartsWith("[daemon-status] state=ready ")) {
+        throw "Expected typed status line on stdout, got: $($stdoutLines[1])"
+    }
+    if ($stdoutLines[1] -notmatch "sessions=1") {
+        throw "Expected status line to include sessions=1, got: $($stdoutLines[1])"
+    }
+    if ($stdoutLines[2] -ne "[daemon-help] /status /reset /close /quit") {
+        throw "Expected help line on stdout, got: $($stdoutLines[2])"
     }
     if ($stderrLines.Count -ne 0) {
         throw "Expected empty stderr, got: $($stderrLines -join ' | ')"

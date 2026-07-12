@@ -4,6 +4,18 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+const char * session_command_name(agent_daemon_jsonl_session_command command) {
+    switch (command) {
+        case agent_daemon_jsonl_session_command::reset: return "reset_session";
+        case agent_daemon_jsonl_session_command::close: return "close_session";
+    }
+    return "reset_session";
+}
+
+std::string bool_name(bool value) {
+    return value ? "yes" : "no";
+}
+
 bool parse_string_array_field(
         const json & value,
         std::vector<std::string> & output) {
@@ -103,10 +115,30 @@ json make_agent_daemon_jsonl_shutdown_request(
 json make_agent_daemon_jsonl_session_request(
         const agent_daemon_jsonl_session_request & request) {
     return {
-        {"command", request.command},
+        {"command", session_command_name(request.command)},
         {"session_id", request.session_id},
         {"namespace_id", request.namespace_id},
     };
+}
+
+json make_agent_daemon_jsonl_reset_session_request(
+        const std::string & session_id,
+        const std::string & namespace_id) {
+    return make_agent_daemon_jsonl_session_request({
+        agent_daemon_jsonl_session_command::reset,
+        session_id,
+        namespace_id,
+    });
+}
+
+json make_agent_daemon_jsonl_close_session_request(
+        const std::string & session_id,
+        const std::string & namespace_id) {
+    return make_agent_daemon_jsonl_session_request({
+        agent_daemon_jsonl_session_command::close,
+        session_id,
+        namespace_id,
+    });
 }
 
 json make_agent_daemon_jsonl_cancel_request(
@@ -185,8 +217,37 @@ bool parse_agent_daemon_jsonl_status_response(
     }
 
     response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
+    response.state = message.value("state", std::string());
+    response.live = message.value("live", false);
+    response.ready = message.value("ready", false);
+    response.worker_running = message.value("worker_running", false);
+    response.accepting_commands = message.value("accepting_commands", false);
+    response.shutdown_requested = message.value("shutdown_requested", false);
+    response.sessions = message.value("sessions", 0);
+    response.queued_commands = message.value("queued_commands", 0);
+    response.max_queue_size = message.value("max_queue_size", 0);
+    response.queue_capacity_remaining = message.value("queue_capacity_remaining", 0);
+    response.active_request_id = message.value("active_request_id", std::string());
+    response.active_turn_id = message.value("active_turn_id", std::string());
     response.payload = message;
     response.error = message.value("error", std::string());
+
+    if (message.contains("session_keys") && message["session_keys"].is_array()) {
+        for (const auto & item : message["session_keys"]) {
+            if (!item.is_object()) {
+                continue;
+            }
+            response.session_keys.push_back({
+                item.value("namespace_id", std::string()),
+                item.value("session_id", std::string()),
+                item.value("project_id", std::string()),
+                item.value("memory_scope", std::string()),
+                item.value("plan_scope", std::string()),
+                item.value("policy_pack_id", std::string()),
+            });
+        }
+    }
 
     if (response.ok) {
         error.clear();
@@ -232,4 +293,42 @@ bool parse_agent_daemon_jsonl_event_response(
     }
     error.clear();
     return true;
+}
+
+std::string render_agent_daemon_jsonl_status_summary(
+        const agent_daemon_jsonl_status_response & response) {
+    std::string rendered =
+        "state=" + response.state +
+        " live=" + bool_name(response.live) +
+        " ready=" + bool_name(response.ready) +
+        " worker=" + bool_name(response.worker_running) +
+        " accepting=" + bool_name(response.accepting_commands) +
+        " shutdown=" + bool_name(response.shutdown_requested) +
+        " queued=" + std::to_string(response.queued_commands) +
+        "/" + std::to_string(response.max_queue_size) +
+        " capacity=" + std::to_string(response.queue_capacity_remaining) +
+        " sessions=" + std::to_string(response.sessions);
+    if (!response.active_request_id.empty()) {
+        rendered += " active_request=" + response.active_request_id;
+    }
+    if (!response.active_turn_id.empty()) {
+        rendered += " active_turn=" + response.active_turn_id;
+    }
+    if (!response.session_keys.empty()) {
+        rendered += " session_bindings=";
+        for (size_t i = 0; i < response.session_keys.size(); ++i) {
+            const auto & session = response.session_keys[i];
+            if (i > 0) {
+                rendered += ",";
+            }
+            rendered += session.namespace_id + "/" + session.session_id;
+            if (!session.project_id.empty()) {
+                rendered += "@" + session.project_id;
+            }
+            if (!session.policy_pack_id.empty()) {
+                rendered += "#" + session.policy_pack_id;
+            }
+        }
+    }
+    return rendered;
 }

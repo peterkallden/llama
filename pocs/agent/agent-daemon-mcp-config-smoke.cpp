@@ -204,6 +204,40 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    common_agent_daemon_command shutdown_command;
+    shutdown_command.request_id = "shutdown-1";
+    shutdown_command.type = common_agent_daemon_command_type::shutdown;
+    common_agent_daemon_command_result shutdown_result;
+    error.clear();
+    if (!service.execute(shutdown_command, shutdown_result, error) ||
+            !shutdown_result.ok ||
+            shutdown_result.event != "shutdown") {
+        std::fprintf(stderr, "daemon shutdown lifecycle contract failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command rejected_turn;
+    rejected_turn.request_id = "turn-after-shutdown";
+    rejected_turn.type = common_agent_daemon_command_type::run_turn;
+    rejected_turn.turn = common_agent_daemon_turn_payload{};
+    rejected_turn.turn->request.mode = common_agent_runtime_host_mode::chat;
+    rejected_turn.turn->request.prompt = "hello";
+    rejected_turn.turn->request.session_id = "session-a";
+    rejected_turn.turn->request.namespace_id = "namespace-a";
+    rejected_turn.turn->request.project_id = "project-a";
+    rejected_turn.turn->request.turn_id = "turn-a";
+    rejected_turn.turn->request.memory_scope = common_memory_scope::session;
+    rejected_turn.turn->request.plan_scope = common_plan_scope::turn;
+    common_agent_daemon_command_result rejected_turn_result;
+    error.clear();
+    if (service.execute(rejected_turn, rejected_turn_result, error) ||
+            rejected_turn_result.events.empty() ||
+            rejected_turn_result.events.back().type != "turn.rejected" ||
+            error.find("not accepting new turns") == std::string::npos) {
+        std::fprintf(stderr, "daemon post-shutdown turn rejection contract failed: %s\n", error.c_str());
+        return 1;
+    }
+
     daemon_options bad_options = options;
     if (bad_options.mcp_providers.size() < 2) {
         std::fprintf(stderr, "daemon MCP bad tooling test requires at least two MCP providers\n");

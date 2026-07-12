@@ -47,7 +47,7 @@ int main() {
     }
 
     const auto reset_request = make_agent_daemon_jsonl_session_request({
-        "reset_session",
+        agent_daemon_jsonl_session_command::reset,
         "session-a",
         "namespace-a",
     });
@@ -56,6 +56,14 @@ int main() {
             reset_request.value("session_id", "") != "session-a" ||
             reset_request.value("namespace_id", "") != "namespace-a") {
         std::fprintf(stderr, "session request contract mismatch\n");
+        return 1;
+    }
+    const auto close_request = make_agent_daemon_jsonl_close_session_request(
+        "session-a",
+        "namespace-a");
+    if (!close_request.is_object() ||
+            close_request.value("command", "") != "close_session") {
+        std::fprintf(stderr, "close session request contract mismatch\n");
         return 1;
     }
 
@@ -121,9 +129,53 @@ int main() {
         return 1;
     }
 
+    agent_daemon_jsonl_status_response status_response;
+    if (!parse_agent_daemon_jsonl_status_response(
+            {
+                {"ok", true},
+                {"event", "status"},
+                {"state", "ready"},
+                {"live", true},
+                {"ready", true},
+                {"worker_running", true},
+                {"accepting_commands", true},
+                {"shutdown_requested", false},
+                {"sessions", 1},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+                {"session_keys", json::array({
+                    {
+                        {"namespace_id", "namespace-a"},
+                        {"session_id", "session-a"},
+                        {"project_id", "project-a"},
+                        {"memory_scope", "project"},
+                        {"plan_scope", "project"},
+                        {"policy_pack_id", "pack-a"},
+                    }
+                })},
+            },
+            status_response,
+            error) ||
+            status_response.state != "ready" ||
+            status_response.sessions != 1 ||
+            status_response.session_keys.size() != 1 ||
+            status_response.session_keys[0].policy_pack_id != "pack-a") {
+        std::fprintf(stderr, "status response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+    const std::string rendered_status = render_agent_daemon_jsonl_status_summary(status_response);
+    if (rendered_status.find("state=ready") == std::string::npos ||
+            rendered_status.find("session_bindings=namespace-a/session-a@project-a#pack-a") == std::string::npos) {
+        std::fprintf(stderr, "status render mismatch: %s\n", rendered_status.c_str());
+        return 1;
+    }
+
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
     std::printf("daemon_jsonl_status=%s\n", status_request.value("command", "").c_str());
     std::printf("daemon_jsonl_cancel=%s\n", cancel_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_close=%s\n", close_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_status_summary=%s\n", rendered_status.c_str());
     std::printf("daemon_jsonl_shutdown=%s\n", shutdown_request.value("command", "").c_str());
     return 0;
 }

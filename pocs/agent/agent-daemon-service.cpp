@@ -173,6 +173,18 @@ bool common_agent_daemon_service::execute(
                 append_daemon_event(result, "turn.failed", command.request_id, {}, error);
                 return false;
             }
+            if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
+                error = "daemon is not accepting new turns";
+                result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::turn;
+                append_daemon_event(
+                    result,
+                    "turn.rejected",
+                    command.request_id,
+                    command_turn_id(command),
+                    error);
+                return false;
+            }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
                 result.error = error;

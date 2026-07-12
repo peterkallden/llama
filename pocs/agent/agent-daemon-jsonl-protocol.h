@@ -22,8 +22,13 @@ struct agent_daemon_jsonl_status_request {};
 
 struct agent_daemon_jsonl_shutdown_request {};
 
+enum class agent_daemon_jsonl_session_command {
+    reset,
+    close,
+};
+
 struct agent_daemon_jsonl_session_request {
-    std::string command;
+    agent_daemon_jsonl_session_command command = agent_daemon_jsonl_session_command::reset;
     std::string session_id;
     std::string namespace_id;
 };
@@ -47,8 +52,31 @@ struct agent_daemon_jsonl_turn_response {
     int event_count = 0;
 };
 
+struct agent_daemon_jsonl_session_status {
+    std::string namespace_id;
+    std::string session_id;
+    std::string project_id;
+    std::string memory_scope;
+    std::string plan_scope;
+    std::string policy_pack_id;
+};
+
 struct agent_daemon_jsonl_status_response {
     bool ok = false;
+    std::string event;
+    std::string state;
+    bool live = false;
+    bool ready = false;
+    bool worker_running = false;
+    bool accepting_commands = false;
+    bool shutdown_requested = false;
+    int sessions = 0;
+    int queued_commands = 0;
+    int max_queue_size = 0;
+    int queue_capacity_remaining = 0;
+    std::string active_request_id;
+    std::string active_turn_id;
+    std::vector<agent_daemon_jsonl_session_status> session_keys;
     nlohmann::ordered_json payload;
     std::string error;
 };
@@ -81,6 +109,14 @@ nlohmann::ordered_json make_agent_daemon_jsonl_shutdown_request(
 nlohmann::ordered_json make_agent_daemon_jsonl_session_request(
     const agent_daemon_jsonl_session_request & request);
 
+nlohmann::ordered_json make_agent_daemon_jsonl_reset_session_request(
+    const std::string & session_id,
+    const std::string & namespace_id);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_close_session_request(
+    const std::string & session_id,
+    const std::string & namespace_id);
+
 nlohmann::ordered_json make_agent_daemon_jsonl_cancel_request(
     const agent_daemon_jsonl_cancel_request & request);
 
@@ -108,3 +144,6 @@ bool parse_agent_daemon_jsonl_event_response(
     const nlohmann::ordered_json & message,
     const std::string & expected_event,
     std::string & error);
+
+std::string render_agent_daemon_jsonl_status_summary(
+    const agent_daemon_jsonl_status_response & response);
