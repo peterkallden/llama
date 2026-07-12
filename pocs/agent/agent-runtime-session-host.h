@@ -2,6 +2,7 @@
 
 #include "agent-runtime-turn.h"
 #include "agent-runtime-tooling.h"
+#include "agent/agent-contract.h"
 
 #include <functional>
 #include <memory>
@@ -138,6 +139,10 @@ private:
 
     void update_session_policy_pack(
         const common_agent_runtime_session_host_turn_request & request);
+
+    void compact_session_policy_pack_after_reflection(
+        const common_agent_result & agent_result,
+        common_agent_runtime_session_host_turn_result & result);
 
     bool resolve_tooling(
         const common_agent_runtime_resident_runtime * runtime,

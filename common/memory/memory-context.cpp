@@ -393,6 +393,18 @@ std::vector<common_memory_hit> common_memory_compact_symbolic_overlay_hits(
     return compacted;
 }
 
+bool common_memory_policy_pack_needs_compaction(
+        const common_memory_policy_pack & policy_pack,
+        const common_memory_policy_pack_render_config & config) {
+    const auto compacted = common_memory_compact_policy_pack(policy_pack, config);
+    return policy_pack.purpose != compacted.purpose ||
+        policy_pack.goal != compacted.goal ||
+        policy_pack.success_criteria != compacted.success_criteria ||
+        policy_pack.constraints != compacted.constraints ||
+        policy_pack.decisions != compacted.decisions ||
+        policy_pack.preferred_procedures != compacted.preferred_procedures;
+}
+
 std::string common_memory_render_policy_pack(
         const common_memory_policy_pack & policy_pack,
         const common_memory_policy_pack_render_config & config) {

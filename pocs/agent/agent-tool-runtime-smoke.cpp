@@ -170,6 +170,10 @@ int main() {
         std::fprintf(stderr, "policy pack did not render the expected sections: %s\n", rendered_policy_pack.c_str());
         return 1;
     }
+    if (!common_memory_policy_pack_needs_compaction(policy_pack)) {
+        std::fprintf(stderr, "policy pack compaction heuristic did not detect repeated items\n");
+        return 1;
+    }
     if (count_substring_occurrences(
                 rendered_policy_pack,
                 "Do not let the model choose scope or storage authority.") != 1 ||
@@ -177,6 +181,11 @@ int main() {
                 rendered_policy_pack,
                 "Prefer resource references for larger tool payloads.") != 1) {
         std::fprintf(stderr, "policy pack compaction did not deduplicate repeated items: %s\n", rendered_policy_pack.c_str());
+        return 1;
+    }
+    common_memory_policy_pack compact_policy_pack = common_memory_compact_policy_pack(policy_pack);
+    if (common_memory_policy_pack_needs_compaction(compact_policy_pack)) {
+        std::fprintf(stderr, "compacted policy pack should not still need compaction\n");
         return 1;
     }
     const auto planning_overlay_hits = common_memory_select_symbolic_overlay_hits(

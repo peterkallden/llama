@@ -127,6 +127,39 @@ void common_agent_runtime_session_host::update_session_policy_pack(
     }
 }
 
+void common_agent_runtime_session_host::compact_session_policy_pack_after_reflection(
+        const common_agent_result & agent_result,
+        common_agent_runtime_session_host_turn_result & result) {
+    if (!agent_result.reflected) {
+        return;
+    }
+
+    const auto resolved_policy_pack = active_policy_pack.has_value()
+        ? active_policy_pack
+        : config.resident_request.policy_pack;
+    if (!resolved_policy_pack.has_value() ||
+            !common_memory_policy_pack_needs_compaction(*resolved_policy_pack)) {
+        return;
+    }
+
+    active_policy_pack = common_memory_compact_policy_pack(*resolved_policy_pack);
+    if (runtime) {
+        runtime->set_policy_pack(active_policy_pack);
+    }
+
+    result.trace.push_back({
+        common_runtime_trace_stage::reflection,
+        common_runtime_trace_kind::updated,
+        "session policy pack compacted after reflection",
+        result.plan_id,
+        {},
+        {},
+        {},
+        active_policy_pack->id,
+    });
+    result.trace_count = result.trace.size();
+}
+
 bool common_agent_runtime_session_host::resolve_tooling(
         const common_agent_runtime_resident_runtime * runtime,
         const common_agent_runtime_session_host_turn_request & request,
@@ -223,6 +256,7 @@ bool common_agent_runtime_session_host::run_turn(
     result.memory_learning_related_count = agent_result.memory_learning_related_count;
     result.memory_learning_summary = agent_result.memory_learning_summary;
     result.trace = std::move(agent_result.trace);
+    compact_session_policy_pack_after_reflection(agent_result, result);
     result.error = ok ? std::string() : error;
     return ok;
 }

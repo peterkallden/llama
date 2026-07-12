@@ -50,6 +50,10 @@ common_memory_policy_pack common_memory_compact_policy_pack(
     const common_memory_policy_pack & policy_pack,
     const common_memory_policy_pack_render_config & config = {});
 
+bool common_memory_policy_pack_needs_compaction(
+    const common_memory_policy_pack & policy_pack,
+    const common_memory_policy_pack_render_config & config = {});
+
 std::vector<common_memory_hit> common_memory_compact_symbolic_overlay_hits(
     const std::vector<common_memory_hit> & hits,
     const common_memory_symbolic_overlay_config & config = {});
