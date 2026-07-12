@@ -63,6 +63,19 @@ std::string effective_plan_scope_for_daemon_request(const args & a) {
     return a.plan_scope;
 }
 
+std::string normalize_daemon_session_line(std::string line) {
+    if (line.size() >= 3 &&
+            (unsigned char) line[0] == 0xEF &&
+            (unsigned char) line[1] == 0xBB &&
+            (unsigned char) line[2] == 0xBF) {
+        line.erase(0, 3);
+    }
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+        line.pop_back();
+    }
+    return line;
+}
+
 void forward_daemon_diagnostics(FILE * stream) {
     if (stream == nullptr) {
         return;
@@ -223,19 +236,57 @@ public:
             const agent_daemon_jsonl_turn_request & request,
             json & response,
             std::string & error) {
-        response = json();
-        if (!running || daemon_in == nullptr || daemon_out == nullptr) {
-            error = "daemon session is not running";
-            return false;
-        }
+        return send_request(
+            make_agent_daemon_jsonl_turn_request(request),
+            response,
+            error);
+    }
 
-        if (!write_agent_daemon_jsonl_message(
-                daemon_in,
-                make_agent_daemon_jsonl_turn_request(request),
-                error)) {
+    bool status(json & response, std::string & error) {
+        return send_request(
+            make_agent_daemon_jsonl_status_request({}),
+            response,
+            error);
+    }
+
+    bool reset_session(
+            const std::string & session_id,
+            const std::string & namespace_id,
+            json & response,
+            std::string & error) {
+        const bool ok = send_request(
+            make_agent_daemon_jsonl_session_request({
+                "reset_session",
+                session_id,
+                namespace_id,
+            }),
+            response,
+            error);
+        if (ok && !parse_agent_daemon_jsonl_event_response(response, "session_reset", error)) {
+            error += ": " + response.dump();
             return false;
         }
-        return read_agent_daemon_jsonl_message(daemon_out, response, error);
+        return ok;
+    }
+
+    bool close_session(
+            const std::string & session_id,
+            const std::string & namespace_id,
+            json & response,
+            std::string & error) {
+        const bool ok = send_request(
+            make_agent_daemon_jsonl_session_request({
+                "close_session",
+                session_id,
+                namespace_id,
+            }),
+            response,
+            error);
+        if (ok && !parse_agent_daemon_jsonl_event_response(response, "session_closed", error)) {
+            error += ": " + response.dump();
+            return false;
+        }
+        return ok;
     }
 
     bool shutdown(std::string & error) {
@@ -245,11 +296,10 @@ public:
         }
 
         json response;
-        bool ok = write_agent_daemon_jsonl_message(
-                      daemon_in,
+        bool ok = send_request(
                       make_agent_daemon_jsonl_shutdown_request({}),
-                      error) &&
-                  read_agent_daemon_jsonl_message(daemon_out, response, error);
+                      response,
+                      error);
         if (ok && !parse_agent_daemon_jsonl_event_response(response, "shutdown", error)) {
             error += ": " + response.dump();
             ok = false;
@@ -275,6 +325,21 @@ public:
     }
 
 private:
+    bool send_request(
+            const json & request,
+            json & response,
+            std::string & error) {
+        response = json();
+        if (!running || daemon_in == nullptr || daemon_out == nullptr) {
+            error = "daemon session is not running";
+            return false;
+        }
+
+        if (!write_agent_daemon_jsonl_message(daemon_in, request, error)) {
+            return false;
+        }
+        return read_agent_daemon_jsonl_message(daemon_out, response, error);
+    }
     void terminate_if_running() {
         if (!daemon_in && !daemon_out && !running) {
             return;
@@ -433,11 +498,51 @@ int run_daemon_session_command(const char * argv0, const args & a) {
 
     std::string line;
     while (std::getline(std::cin, line)) {
+        line = normalize_daemon_session_line(std::move(line));
         if (line.empty()) {
             continue;
         }
         if (line == "/quit" || line == "/exit") {
             break;
+        }
+        if (line == "/status") {
+            json response;
+            if (!session.status(response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-status] %s\n", response.dump().c_str());
+            continue;
+        }
+        if (line == "/reset") {
+            json response;
+            if (!session.reset_session(a.memory_session, a.memory_namespace, response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-reset] %s\n", response.value("event", "").c_str());
+            continue;
+        }
+        if (line == "/close") {
+            json response;
+            if (!session.close_session(a.memory_session, a.memory_namespace, response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-close] %s\n", response.value("event", "").c_str());
+            continue;
+        }
+        if (line == "/help") {
+            std::printf("[daemon-help] /status /reset /close /quit\n");
+            continue;
+        }
+        if (!line.empty() && line.front() == '/') {
+            std::fprintf(stderr, "unknown daemon-session command: %s\n", line.c_str());
+            std::printf("[daemon-help] /status /reset /close /quit\n");
+            continue;
         }
         if (!run_one(line)) {
             session.shutdown(error);
