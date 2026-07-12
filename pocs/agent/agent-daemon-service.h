@@ -61,9 +61,16 @@ struct common_agent_daemon_status {
     std::vector<common_agent_runtime_session_descriptor> sessions;
 };
 
+enum class common_agent_daemon_response_kind {
+    turn,
+    status,
+    lifecycle,
+};
+
 struct common_agent_daemon_command_result {
     bool ok = false;
     std::string request_id;
+    common_agent_daemon_response_kind response_kind = common_agent_daemon_response_kind::turn;
     std::string event;
     std::string target_request_id;
     std::string target_turn_id;

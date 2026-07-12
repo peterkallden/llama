@@ -76,6 +76,7 @@ bool common_agent_daemon_dispatcher::execute(
             result = {};
             result.ok = false;
             result.request_id = command.request_id;
+            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = "command_rejected";
             result.error = error;
             append_daemon_event(
@@ -91,6 +92,7 @@ bool common_agent_daemon_dispatcher::execute(
             result = {};
             result.ok = false;
             result.request_id = command.request_id;
+            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = "command_rejected";
             result.error = error;
             append_daemon_event(
@@ -138,6 +140,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         std::string & error) {
     result = {};
     result.request_id = command.request_id;
+    result.response_kind = common_agent_daemon_response_kind::lifecycle;
     result.target_request_id = command.target_request_id;
     result.target_turn_id = command.target_turn_id;
 
@@ -172,6 +175,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                     (!command.target_turn_id.empty() && command.target_turn_id == active_turn_id)) {
                 error = "active turn cancellation is not supported yet";
                 result.ok = false;
+                result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "turn_cancel_rejected";
                 result.status.active_request_id = active_request_id;
                 result.status.active_turn_id = active_turn_id;
@@ -190,6 +194,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
     if (!cancelled_item) {
         error = "target turn is not queued";
         result.ok = false;
+        result.response_kind = common_agent_daemon_response_kind::lifecycle;
         result.event = "turn_cancel_rejected";
         result.error = error;
         append_daemon_event(
@@ -204,6 +209,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
     queued_result queued;
     queued.ok = false;
     queued.result.request_id = cancelled_item->command.request_id;
+    queued.result.response_kind = common_agent_daemon_response_kind::turn;
     queued.result.turn_result.cancelled = true;
     queued.result.turn_result.error = "turn cancelled before execution";
     queued.result.error = queued.result.turn_result.error;
@@ -217,6 +223,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
     cancelled_item->promise.set_value(std::move(queued));
 
     result.ok = true;
+    result.response_kind = common_agent_daemon_response_kind::lifecycle;
     result.event = "turn_cancelled";
     append_daemon_event(
         result,

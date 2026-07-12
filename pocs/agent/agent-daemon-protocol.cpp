@@ -324,12 +324,13 @@ json make_agent_daemon_error_response(const std::string & error) {
 }
 
 json make_agent_daemon_command_response(const common_agent_daemon_command_result & result) {
-    if (result.event == "status") {
-        return make_agent_daemon_status_response(result);
-    }
-
-    if (!result.event.empty()) {
-        return make_agent_daemon_lifecycle_response(result);
+    switch (result.response_kind) {
+        case common_agent_daemon_response_kind::status:
+            return make_agent_daemon_status_response(result);
+        case common_agent_daemon_response_kind::lifecycle:
+            return make_agent_daemon_lifecycle_response(result);
+        case common_agent_daemon_response_kind::turn:
+            return make_agent_daemon_turn_response(result);
     }
     return make_agent_daemon_turn_response(result);
 }

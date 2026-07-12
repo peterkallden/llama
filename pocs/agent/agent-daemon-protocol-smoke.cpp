@@ -67,6 +67,7 @@ int main() {
     common_agent_daemon_command_result status_result;
     status_result.ok = true;
     status_result.request_id = "status-1";
+    status_result.response_kind = common_agent_daemon_response_kind::status;
     status_result.event = "status";
     status_result.daemon_event_count = 1;
     status_result.events.push_back({"status.reported", "status-1", "", "ready"});
@@ -101,6 +102,7 @@ int main() {
     common_agent_daemon_command_result turn_result;
     turn_result.ok = true;
     turn_result.request_id = "turn-1";
+    turn_result.response_kind = common_agent_daemon_response_kind::turn;
     turn_result.turn_result.response = "DONE";
     turn_result.turn_result.runtime_reused = true;
     turn_result.turn_result.trace.push_back({

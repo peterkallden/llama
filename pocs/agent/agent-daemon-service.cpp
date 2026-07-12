@@ -50,6 +50,7 @@ bool common_agent_daemon_service::populate_status(
         common_agent_daemon_command_result & result,
         std::string & error) const {
     result.ok = runtime.host != nullptr;
+    result.response_kind = common_agent_daemon_response_kind::status;
     result.event = "status";
     result.status.state = state_value;
     result.status.live = state_value != common_agent_daemon_state::stopped;
@@ -92,6 +93,7 @@ bool common_agent_daemon_service::execute(
             if (!command.session.has_value()) {
                 error = "reset_session command missing session payload";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "session_reset_failed";
                 append_daemon_event(result, "session.reset_failed", command.request_id, {}, error);
                 return false;
@@ -99,12 +101,14 @@ bool common_agent_daemon_service::execute(
             if (!runtime.host) {
                 error = "daemon host is not initialized";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "session_reset_failed";
                 append_daemon_event(result, "session.reset_failed", command.request_id, {}, error);
                 return false;
             }
 
             result.ok = runtime.host->reset_session(*command.session, error);
+            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = result.ok ? "session_reset" : "session_reset_failed";
             if (!result.ok) {
                 result.error = error;
@@ -119,6 +123,7 @@ bool common_agent_daemon_service::execute(
             if (!command.session.has_value()) {
                 error = "close_session command missing session payload";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "session_close_failed";
                 append_daemon_event(result, "session.close_failed", command.request_id, {}, error);
                 return false;
@@ -126,12 +131,14 @@ bool common_agent_daemon_service::execute(
             if (!runtime.host) {
                 error = "daemon host is not initialized";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "session_close_failed";
                 append_daemon_event(result, "session.close_failed", command.request_id, {}, error);
                 return false;
             }
 
             result.ok = runtime.host->close_session(*command.session, error);
+            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = result.ok ? "session_closed" : "session_close_failed";
             if (!result.ok) {
                 result.error = error;
@@ -147,6 +154,7 @@ bool common_agent_daemon_service::execute(
             shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
             state_value = common_agent_daemon_state::draining;
             result.ok = true;
+            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = "shutdown";
             append_daemon_event(
                 result,
@@ -161,12 +169,14 @@ bool common_agent_daemon_service::execute(
             if (!command.turn.has_value()) {
                 error = "run_turn command missing turn payload";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::turn;
                 append_daemon_event(result, "turn.failed", command.request_id, {}, error);
                 return false;
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
                 result.error = error;
+                result.response_kind = common_agent_daemon_response_kind::turn;
                 append_daemon_event(
                     result,
                     "turn.failed",
@@ -178,6 +188,7 @@ bool common_agent_daemon_service::execute(
 
             error.clear();
             runtime.host->run_turn(*command.turn, result.turn_result, error);
+            result.response_kind = common_agent_daemon_response_kind::turn;
             result.ok = result.turn_result.ok;
             if (!error.empty() && result.turn_result.error.empty()) {
                 result.turn_result.error = error;
@@ -198,6 +209,7 @@ bool common_agent_daemon_service::execute(
 
     error = "unsupported daemon command";
     result.error = error;
+    result.response_kind = common_agent_daemon_response_kind::lifecycle;
     append_daemon_event(result, "command.failed", command.request_id, {}, error);
     return false;
 }
