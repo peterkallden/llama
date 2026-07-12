@@ -54,6 +54,15 @@ struct daemon_options {
 
 class common_agent_daemon_dispatcher;
 
+struct agent_daemon_foreground_request {
+    common_agent_daemon_command command;
+};
+
+struct agent_daemon_foreground_response {
+    common_agent_daemon_command_result result;
+    bool shutdown_after = false;
+};
+
 bool parse_mode(
     const std::string & value,
     common_agent_runtime_host_mode & mode);
@@ -87,6 +96,19 @@ nlohmann::ordered_json make_agent_daemon_ready_response(const daemon_options & o
 nlohmann::ordered_json make_agent_daemon_error_response(const std::string & error);
 nlohmann::ordered_json make_agent_daemon_command_response(
     const common_agent_daemon_command_result & result);
+
+bool parse_agent_daemon_foreground_request(
+    const nlohmann::ordered_json & parsed,
+    const daemon_options & options,
+    common_agent_runtime_host_mode default_mode,
+    agent_daemon_foreground_request & request,
+    std::string & error);
+
+bool execute_agent_daemon_foreground_request(
+    const agent_daemon_foreground_request & request,
+    common_agent_daemon_dispatcher & dispatcher,
+    agent_daemon_foreground_response & response,
+    std::string & error);
 
 bool run_agent_daemon_jsonl_adapter(
     FILE * input,

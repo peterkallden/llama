@@ -221,6 +221,8 @@ The foreground JSONL transport loop is now also explicitly owned by the daemon a
 
 That adapter loop is now a little thinner too. The outer loop still owns stream framing and lifetime, but one small helper now owns the "parse one JSONL request, run one daemon command, serialize one response" path. It is still synchronous and intentionally modest, but later foreground/socket/pipe adapters now have a cleaner seam above raw stdio framing.
 
+There is now also a first explicit foreground request/response contract above that helper. The adapter no longer treats "one foreground admin request" as only a transient local combination of parsed JSON plus immediate writeback. It now has a named host-owned foreground request/result seam that can later be reused by a socket/pipe/HTTP adapter without first inheriting the stdio loop structure itself.
+
 The daemon adapter is now also slightly less CLI-shaped in its host construction path. It still uses the existing store-opening helpers, but it no longer has to synthesize a temporary full CLI `args` object just to build runtime policy, runtime config, orchestration config, or the resident session-host contract.
 
 That cleanup now extends one step further down the daemon path. The daemon runtime no longer synthesizes temporary CLI-style `args` just to open stores, build resource-store config, or resolve provider-backed tooling. Memory/plan store selection now follows the same host-owned backend/path values directly, including the old `auto` resolution rules, while tooling resolution receives a host-built tool-selection request instead of a CLI object.
@@ -242,6 +244,77 @@ The dispatcher/protocol path now also carries a small status snapshot on non-sta
 
 `cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while attempts to cancel the currently active turn are rejected with a `turn.cancel_rejected` daemon event plus the active request/turn identity. That is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end cancellation token or safe active-turn abort semantics, and the current foreground JSONL transport is still request/response serial from one stdin stream.
 
+One concrete "full current functionality" foreground run looks like this on Windows/PowerShell:
+
+```powershell
+@'
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "C:\\Users\\kalld\\models\\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    "embedding_model": "C:\\Users\\kalld\\models\\nomic-embed-text-v1.5.Q4_K_M.gguf"
+  },
+  "runtime": {
+    "planning_mode": "mini",
+    "reflection_mode": "always",
+    "memory_learn": "post-turn",
+    "agent_plan": "auto",
+    "n_predict": 96
+  },
+  "stores": {
+    "memory": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-memory.cozo"
+    },
+    "plan": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-plan.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "fs",
+    "blob_root": ".\\work\\agent-resources",
+    "metadata_backend": "cozo",
+    "metadata_db": ".\\work\\agent-resources.cozo"
+  },
+  "tools": {
+    "profile": "minimal",
+    "repository_root": "C:\\Users\\kalld\\Documents\\Codex\\llama-dyn",
+    "providers": [
+      {
+        "type": "mcp",
+        "id": "local-mcp",
+        "enabled": true,
+        "transport": "stdio",
+        "command": [
+          ".\\build-plan-resident-cozo-debug-3\\bin\\Release\\llama-agent-mcp-stdio-fake-server.exe"
+        ],
+        "prefix": "local",
+        "server_name": "local"
+      }
+    ]
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "max_tool_rounds": 2,
+    "max_turn_seconds": 120
+  }
+}
+'@ | Set-Content .\work\agent-host.json -Encoding utf8
+
+@(
+  '{"request_id":"status-1","command":"status"}',
+  '{"request_id":"turn-1","mode":"mini","prompt":"Plan how to inspect the repository tooling path.","session_id":"demo-session","namespace_id":"local","project_id":"llama-dyn","memory_scope":"project","plan_scope":"project"}',
+  '{"request_id":"shutdown-1","command":"shutdown"}'
+) | Set-Content .\work\agent-requests.jsonl -Encoding ascii
+
+Get-Content .\work\agent-requests.jsonl |
+  .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe --config .\work\agent-host.json
+```
+
+That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan stores, filesystem+Cozo resource storage, mini planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
+
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
 That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/reset`, `/close`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
@@ -253,6 +326,8 @@ That foreground client path is now also slightly less ad hoc internally. It has 
 The `daemon-session` admin/test surface is now a little friendlier too. Its `/status` command no longer echoes the raw daemon JSON object back to stdout; it renders one compact typed summary of lifecycle state, queue health, active work, and bound sessions while still relying on the same parsed JSONL status contract underneath.
 
 That rendering is now its own small CLI-facing seam rather than another helper hidden in the wire-protocol file. The JSONL parser still owns the transport/status DTOs, while the foreground client owns the tiny status-summary contract and rendering policy that turns those DTOs into a stable human-facing admin/test line.
+
+The same client path now also uses the lifecycle snapshot actively instead of only carrying it through the protocol. `reset`, `close`, and `shutdown` now parse lifecycle responses through the richer DTO and use the embedded state snapshot for rendering and shutdown validation rather than treating those replies as event strings alone.
 
 Those child-process adapters now also pass through the same daemon-owned tool configuration surface as the direct JSONL admin/test path: `--tool-profile`, `--repository-root`, and `--mcp-tool-command` all reach the foreground daemon when present. The chat-oriented daemon client path also now defaults its plan scope more conservatively when planning is off, so a simple session- or project-scoped admin/test chat turn does not accidentally force a synthetic turn-scoped contract.
 

@@ -316,7 +316,7 @@ public:
     bool reset_session(
             const std::string & session_id,
             const std::string & namespace_id,
-            agent_daemon_jsonl_event_response & response,
+            agent_daemon_jsonl_lifecycle_response & response,
             std::string & error) {
         json message;
         const bool ok = send_request(
@@ -325,7 +325,7 @@ public:
                 namespace_id),
             message,
             error);
-        if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
+        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
             error += ": " + message.dump();
             return false;
         }
@@ -339,7 +339,7 @@ public:
     bool close_session(
             const std::string & session_id,
             const std::string & namespace_id,
-            agent_daemon_jsonl_event_response & response,
+            agent_daemon_jsonl_lifecycle_response & response,
             std::string & error) {
         json message;
         const bool ok = send_request(
@@ -348,7 +348,7 @@ public:
                 namespace_id),
             message,
             error);
-        if (ok && !parse_agent_daemon_jsonl_event_response(message, response, error)) {
+        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
             error += ": " + message.dump();
             return false;
         }
@@ -365,13 +365,23 @@ public:
             return true;
         }
 
-        json response;
+        json message;
         bool ok = send_request(
                       make_agent_daemon_jsonl_shutdown_request({}),
-                      response,
+                      message,
                       error);
-        if (ok && !parse_agent_daemon_jsonl_event_response(response, "shutdown", error)) {
-            error += ": " + response.dump();
+        agent_daemon_jsonl_lifecycle_response response;
+        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
+            error += ": " + message.dump();
+            ok = false;
+        } else if (ok && response.event != "shutdown") {
+            error = "unexpected daemon shutdown response: " + message.dump();
+            ok = false;
+        } else if (ok &&
+                response.status.state != "draining" &&
+                response.status.state != "stopping" &&
+                response.status.state != "stopped") {
+            error = "unexpected daemon shutdown state: " + response.status.state;
             ok = false;
         }
 
@@ -612,23 +622,25 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             continue;
         }
         if (line == "/reset") {
-            agent_daemon_jsonl_event_response response;
+            agent_daemon_jsonl_lifecycle_response response;
             if (!session.reset_session(a.memory_session, a.memory_namespace, response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-reset] %s\n", response.event.c_str());
+            const auto summary = make_agent_daemon_client_lifecycle_summary(response);
+            std::printf("[daemon-reset] %s\n", render_agent_daemon_client_lifecycle_summary(summary).c_str());
             continue;
         }
         if (line == "/close") {
-            agent_daemon_jsonl_event_response response;
+            agent_daemon_jsonl_lifecycle_response response;
             if (!session.close_session(a.memory_session, a.memory_namespace, response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-close] %s\n", response.event.c_str());
+            const auto summary = make_agent_daemon_client_lifecycle_summary(response);
+            std::printf("[daemon-close] %s\n", render_agent_daemon_client_lifecycle_summary(summary).c_str());
             continue;
         }
         if (line == "/help") {

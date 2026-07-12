@@ -254,6 +254,39 @@ bool parse_agent_daemon_jsonl_status_response(
     return false;
 }
 
+bool parse_agent_daemon_jsonl_lifecycle_response(
+        const json & message,
+        agent_daemon_jsonl_lifecycle_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon lifecycle response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
+    response.target_request_id = message.value("target_request_id", std::string());
+    response.target_turn_id = message.value("target_turn_id", std::string());
+    response.error = message.value("error", std::string());
+
+    std::string status_error;
+    if (!parse_agent_daemon_jsonl_status_response(message, response.status, status_error)) {
+        if (response.ok) {
+            error = status_error.empty() ? "daemon lifecycle response missing status snapshot" : status_error;
+            return false;
+        }
+    }
+
+    if (response.ok && !response.event.empty()) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon lifecycle failed" : response.error;
+    return false;
+}
+
 bool parse_agent_daemon_jsonl_event_response(
         const json & message,
         agent_daemon_jsonl_event_response & response,

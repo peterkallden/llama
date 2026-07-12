@@ -151,9 +151,17 @@ try {
         Show-Diagnostics -Path $stderrPath
         throw "reset_session response mismatch: $($lines[4])"
     }
+    if ($reset.state -ne "ready" -or -not $reset.accepting_commands) {
+        Show-Diagnostics -Path $stderrPath
+        throw "reset_session lifecycle snapshot mismatch: $($lines[4])"
+    }
     if (-not $close.ok -or $close.event -ne "session_closed") {
         Show-Diagnostics -Path $stderrPath
         throw "close_session response mismatch: $($lines[5])"
+    }
+    if ($close.state -ne "ready" -or -not $close.accepting_commands) {
+        Show-Diagnostics -Path $stderrPath
+        throw "close_session lifecycle snapshot mismatch: $($lines[5])"
     }
     if (-not $finalStatus.ok -or $finalStatus.event -ne "status" -or $finalStatus.sessions -ne 0) {
         Show-Diagnostics -Path $stderrPath
@@ -167,6 +175,10 @@ try {
     if (-not $shutdown.ok -or $shutdown.event -ne "shutdown") {
         Show-Diagnostics -Path $stderrPath
         throw "Shutdown response mismatch: $($lines[7])"
+    }
+    if ($shutdown.state -ne "draining" -or -not $shutdown.shutdown_requested -or $shutdown.accepting_commands) {
+        Show-Diagnostics -Path $stderrPath
+        throw "Shutdown lifecycle snapshot mismatch: $($lines[7])"
     }
 
     Write-Host ""

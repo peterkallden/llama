@@ -60,3 +60,16 @@ std::string render_agent_daemon_client_status_summary(
     }
     return rendered;
 }
+
+agent_daemon_client_lifecycle_summary make_agent_daemon_client_lifecycle_summary(
+        const agent_daemon_jsonl_lifecycle_response & response) {
+    agent_daemon_client_lifecycle_summary summary;
+    summary.event = response.event;
+    summary.status = make_agent_daemon_client_status_summary(response.status);
+    return summary;
+}
+
+std::string render_agent_daemon_client_lifecycle_summary(
+        const agent_daemon_client_lifecycle_summary & summary) {
+    return summary.event + " " + render_agent_daemon_client_status_summary(summary.status);
+}

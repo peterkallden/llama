@@ -10,8 +10,19 @@ struct agent_daemon_client_status_summary {
     std::vector<std::string> session_bindings;
 };
 
+struct agent_daemon_client_lifecycle_summary {
+    std::string event;
+    agent_daemon_client_status_summary status;
+};
+
 agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
     const agent_daemon_jsonl_status_response & response);
 
 std::string render_agent_daemon_client_status_summary(
     const agent_daemon_client_status_summary & summary);
+
+agent_daemon_client_lifecycle_summary make_agent_daemon_client_lifecycle_summary(
+    const agent_daemon_jsonl_lifecycle_response & response);
+
+std::string render_agent_daemon_client_lifecycle_summary(
+    const agent_daemon_client_lifecycle_summary & summary);

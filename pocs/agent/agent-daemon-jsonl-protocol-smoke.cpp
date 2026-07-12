@@ -130,6 +130,31 @@ int main() {
         return 1;
     }
 
+    agent_daemon_jsonl_lifecycle_response lifecycle_response;
+    if (!parse_agent_daemon_jsonl_lifecycle_response(
+            {
+                {"ok", true},
+                {"event", "shutdown"},
+                {"state", "draining"},
+                {"live", true},
+                {"ready", false},
+                {"worker_running", true},
+                {"accepting_commands", false},
+                {"shutdown_requested", true},
+                {"sessions", 0},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+            },
+            lifecycle_response,
+            error) ||
+            lifecycle_response.event != "shutdown" ||
+            lifecycle_response.status.state != "draining" ||
+            !lifecycle_response.status.shutdown_requested) {
+        std::fprintf(stderr, "lifecycle response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
     agent_daemon_jsonl_status_response status_response;
     if (!parse_agent_daemon_jsonl_status_response(
             {

@@ -87,6 +87,15 @@ struct agent_daemon_jsonl_event_response {
     std::string error;
 };
 
+struct agent_daemon_jsonl_lifecycle_response {
+    bool ok = false;
+    std::string event;
+    std::string target_request_id;
+    std::string target_turn_id;
+    agent_daemon_jsonl_status_response status;
+    std::string error;
+};
+
 bool read_agent_daemon_jsonl_message(
     FILE * stream,
     nlohmann::ordered_json & out,
@@ -138,6 +147,11 @@ bool parse_agent_daemon_jsonl_status_response(
 bool parse_agent_daemon_jsonl_event_response(
     const nlohmann::ordered_json & message,
     agent_daemon_jsonl_event_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_lifecycle_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_lifecycle_response & response,
     std::string & error);
 
 bool parse_agent_daemon_jsonl_event_response(
