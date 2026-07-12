@@ -35,6 +35,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.current_plan_id,
         inputs.scope,
         inputs.installed_blueprint_candidates,
+        inputs.policy_pack,
         inputs.memories,
         inputs.memory_scope,
         inputs.memory_enabled,
@@ -55,6 +56,7 @@ common_agent_request make_agent_runtime_driver_request(
     if (!execution.current_plan_id.empty()) {
         request.plan_id = execution.current_plan_id;
     }
+    request.policy_pack = execution.policy_pack;
     common_agent_scope_apply(execution.scope, request);
     request.max_iterations = execution.policy.max_iterations;
     request.max_reflection_rounds = execution.policy.max_reflection_rounds;

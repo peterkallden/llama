@@ -53,6 +53,7 @@ struct common_agent_runtime_driver_inputs {
     std::string & current_plan_id;
     const common_agent_scope & scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    std::optional<common_memory_policy_pack> policy_pack;
     const std::vector<common_memory_hit> & memories;
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
@@ -70,6 +71,7 @@ struct common_agent_runtime_driver_execution {
     std::string & current_plan_id;
     common_agent_scope scope;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    std::optional<common_memory_policy_pack> policy_pack;
     const std::vector<common_memory_hit> & memories;
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;

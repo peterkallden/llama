@@ -112,6 +112,12 @@ The same "almost boring" rule now applies to symbolic memory. The clean first fi
 
 That first overlay slice now exists in a deliberately narrow form. `common/memory` can render a compact symbolic overlay from already retrieved memories, grouping bounded `constraint`, `decision`, `procedure`, and a small amount of supporting `fact` context. The current planner, reasoning, draft, reflection, and memory-learning prompts still keep the older full memory context available, but they can now prepend this typed overlay so the model gets a cleaner symbolic summary without changing persistence, authority, or retrieval ownership.
 
+The next small refinement is now also in place: overlay selection is stage-aware before rendering. The current selector is still deterministic and intentionally simple, but it no longer treats every prompt phase the same. Planning prefers `constraint` and `decision`; reasoning still favors `procedure` while allowing relevant symbolic guidance to follow; reflection emphasizes `constraint` and `decision`; and memory-learning can bias back toward `decision` plus reusable `procedure` context. That keeps retrieval and persistence unchanged while giving each runtime phase a cleaner symbolic slice from the same authorized memory set.
+
+The next adjacent layer is now also explicit: a small host-owned policy-pack contract can be rendered ahead of the retrieval overlay. This follows the same broad shape as bootstrap blueprints and plan templates, but it is intentionally not a plan and not a second memory store. It is a compact declarative pack for purpose, goal, success criteria, constraints, decisions, and preferred procedures that a host or session can supply directly. The current prompt builders can derive a lightweight pack from caller-owned objective data or from the active plan's blueprint-like constraints, then prepend it before stage-selected symbolic memory.
+
+That policy-pack seam is now present in the runtime/session contracts as well, not only in prompt rendering. Resident/session configuration can carry a stable pack across turns, the mini runtime path now preserves that host-owned pack instead of dropping it while rebuilding `common_agent_request`, and the daemon resident-request builder can seed one small session-level pack from host configuration. Request/objective and active-plan derivation still remain as fallbacks, but the host path no longer depends on those fallbacks alone.
+
 ## Layer Responsibilities
 
 ### CLI Adapter
@@ -541,6 +547,10 @@ The current code should remain useful without any of these. The next steps shoul
   The next follow-up after this kind-level slice is a typed overlay builder for planning, reflection, and reasoning. That overlay should assemble a bounded block such as constraints, decisions, procedures, relevant facts, and evidence/resource references from already authorized memory retrieval. In other words: memory remains the durable source of truth, while overlays become a host-owned context-shaping view of that memory.
 
   The current implementation is still intentionally conservative: the overlay is only a renderer over already retrieved memories, not a new retrieval path, scoring policy, or compaction store. The next useful step is therefore to make symbolic retrieval/selection a little smarter per stage, especially so planning and reflection can emphasize project-scoped constraints and decisions while reasoning can keep favoring procedure memories plus any directly relevant symbolic guidance.
+
+  The current stage-aware selector is still only the first cut. It uses bounded kind-based weighting on the already retrieved hit set rather than a new retrieval pass. A later refinement can add project/session affinity, tool/step metadata boosts, evidence reuse hints, and more explicit cross-links, but that should stay above the same host-owned memory authority and below prompt rendering.
+
+  The same principle applies to session policy. Blueprints are still the right inspiration for the declarative shape, but not the right runtime type to reuse directly. A later host/session layer can own stable policy packs per project or per resident lane, while retrieval overlays stay ephemeral and evidence-driven. That keeps executable plan structure, durable symbolic memory, and host/session policy related but distinct.
 
 - Keep tightening the session-versus-project split above the current manager key.
 

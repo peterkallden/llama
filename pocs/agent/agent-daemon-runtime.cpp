@@ -18,6 +18,28 @@
 
 namespace {
 
+std::optional<common_memory_policy_pack> make_daemon_policy_pack(
+        const daemon_options & options) {
+    common_memory_policy_pack pack;
+    pack.id = "daemon-session-policy";
+    pack.purpose = "Run host-owned resident agent turns through the foreground daemon.";
+    pack.goal = options.planning_mode == "mini"
+        ? "Plan, execute bounded steps, and answer without widening host authority."
+        : "Answer through the resident runtime without widening host authority.";
+    pack.constraints = {
+        "Treat memory, tools, plans, and resources as host-owned authority rather than model choices.",
+        "Keep tool use within the configured profile and bounded runtime policy.",
+    };
+    pack.decisions = {
+        "Inference backend: server-context resident host.",
+        std::string("Tool profile: ") + (options.tool_profile.empty() ? "none" : options.tool_profile),
+    };
+    if (options.planning_mode == "mini") {
+        pack.preferred_procedures.push_back("Prefer bounded planning plus evidence-backed synthesis before answering.");
+    }
+    return pack;
+}
+
 std::string resolve_memory_backend(
         const std::string & backend,
         const std::string & memory_db,
@@ -115,6 +137,7 @@ common_agent_runtime_resident_request_config make_resident_request_config(
         "",
         "",
         "",
+        make_daemon_policy_pack(options),
         options.model,
         options.n_predict,
         options.n_gpu_layers,

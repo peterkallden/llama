@@ -74,6 +74,71 @@ std::string common_memory_render_context(const std::vector<common_memory_hit> & 
 
 namespace {
 
+float symbolic_stage_kind_bonus(
+        common_memory_overlay_stage stage,
+        common_memory_kind kind) {
+    switch (stage) {
+        case common_memory_overlay_stage::planning:
+            switch (kind) {
+                case common_memory_kind::constraint: return 0.40f;
+                case common_memory_kind::decision:   return 0.30f;
+                case common_memory_kind::procedure:  return 0.20f;
+                case common_memory_kind::fact:       return 0.10f;
+                default:                             return -0.30f;
+            }
+        case common_memory_overlay_stage::reasoning:
+            switch (kind) {
+                case common_memory_kind::procedure:  return 0.55f;
+                case common_memory_kind::constraint: return 0.20f;
+                case common_memory_kind::decision:   return 0.20f;
+                case common_memory_kind::fact:       return 0.10f;
+                default:                             return -0.30f;
+            }
+        case common_memory_overlay_stage::reflection:
+            switch (kind) {
+                case common_memory_kind::constraint: return 0.35f;
+                case common_memory_kind::decision:   return 0.35f;
+                case common_memory_kind::procedure:  return 0.15f;
+                case common_memory_kind::fact:       return 0.10f;
+                default:                             return -0.30f;
+            }
+        case common_memory_overlay_stage::memory_learning:
+            switch (kind) {
+                case common_memory_kind::decision:   return 0.35f;
+                case common_memory_kind::procedure:  return 0.30f;
+                case common_memory_kind::fact:       return 0.20f;
+                case common_memory_kind::constraint: return 0.15f;
+                default:                             return -0.30f;
+            }
+        case common_memory_overlay_stage::general:
+            switch (kind) {
+                case common_memory_kind::constraint: return 0.25f;
+                case common_memory_kind::decision:   return 0.25f;
+                case common_memory_kind::procedure:  return 0.25f;
+                case common_memory_kind::fact:       return 0.10f;
+                default:                             return -0.30f;
+            }
+    }
+    return 0.0f;
+}
+
+bool symbolic_kind_allowed(common_memory_kind kind) {
+    switch (kind) {
+        case common_memory_kind::constraint:
+        case common_memory_kind::decision:
+        case common_memory_kind::procedure:
+        case common_memory_kind::fact:
+            return true;
+        case common_memory_kind::episode:
+        case common_memory_kind::observation:
+        case common_memory_kind::reflection:
+        case common_memory_kind::goal:
+        case common_memory_kind::preference:
+            return false;
+    }
+    return false;
+}
+
 bool append_symbolic_section(
         std::ostringstream & out,
         size_t & current_size,
@@ -118,7 +183,149 @@ bool append_symbolic_section(
     return true;
 }
 
+std::string bounded_policy_text(
+        const std::string & value,
+        size_t max_chars) {
+    std::string text = common_memory_escape_context_text(value);
+    if (text.size() > max_chars) {
+        text.resize(max_chars);
+        text += "...";
+    }
+    return text;
+}
+
 } // namespace
+
+std::vector<common_memory_hit> common_memory_select_symbolic_overlay_hits(
+        const std::vector<common_memory_hit> & hits,
+        common_memory_overlay_stage stage,
+        size_t max_hits) {
+    if (hits.empty() || max_hits == 0) {
+        return {};
+    }
+
+    struct scored_hit {
+        common_memory_hit hit;
+        float score = 0.0f;
+        size_t original_index = 0;
+    };
+
+    std::vector<scored_hit> scored;
+    scored.reserve(hits.size());
+    for (size_t index = 0; index < hits.size(); ++index) {
+        const auto & hit = hits[index];
+        if (!symbolic_kind_allowed(hit.memory.kind)) {
+            continue;
+        }
+        scored.push_back({
+            hit,
+            hit.final_score + symbolic_stage_kind_bonus(stage, hit.memory.kind),
+            index,
+        });
+    }
+
+    std::stable_sort(scored.begin(), scored.end(), [](const scored_hit & lhs, const scored_hit & rhs) {
+        if (lhs.score != rhs.score) {
+            return lhs.score > rhs.score;
+        }
+        return lhs.original_index < rhs.original_index;
+    });
+
+    std::vector<common_memory_hit> selected;
+    selected.reserve(std::min(max_hits, scored.size()));
+    for (size_t index = 0; index < scored.size() && selected.size() < max_hits; ++index) {
+        selected.push_back(scored[index].hit);
+    }
+    return selected;
+}
+
+std::string common_memory_render_policy_pack(
+        const common_memory_policy_pack & policy_pack,
+        const common_memory_policy_pack_render_config & config) {
+    if (config.char_budget == 0) {
+        return {};
+    }
+    if (policy_pack.purpose.empty() &&
+            policy_pack.goal.empty() &&
+            policy_pack.success_criteria.empty() &&
+            policy_pack.constraints.empty() &&
+            policy_pack.decisions.empty() &&
+            policy_pack.preferred_procedures.empty()) {
+        return {};
+    }
+
+    std::ostringstream out;
+    out << "<policy_pack>\n";
+    if (!policy_pack.id.empty()) {
+        out << "Id: " << bounded_policy_text(policy_pack.id, config.per_item_char_budget) << "\n";
+    }
+    if (!policy_pack.purpose.empty()) {
+        out << "Purpose: " << bounded_policy_text(policy_pack.purpose, config.per_item_char_budget) << "\n";
+    }
+    if (!policy_pack.goal.empty()) {
+        out << "Goal: " << bounded_policy_text(policy_pack.goal, config.per_item_char_budget) << "\n";
+    }
+    if (!policy_pack.success_criteria.empty()) {
+        out << "Success criteria: " << bounded_policy_text(policy_pack.success_criteria, config.per_item_char_budget) << "\n";
+    }
+    out << "\n";
+    size_t current_size = out.str().size();
+
+    append_symbolic_section(out, current_size, config.char_budget, "Constraints",
+        [&]() {
+            std::vector<common_memory_hit> synthetic;
+            for (size_t i = 0; i < policy_pack.constraints.size() && i < config.max_constraints; ++i) {
+                common_memory_record record;
+                record.id = policy_pack.id.empty() ? "policy-constraint-" + std::to_string(i + 1) : policy_pack.id + ":constraint:" + std::to_string(i + 1);
+                record.kind = common_memory_kind::constraint;
+                record.content = policy_pack.constraints[i];
+                synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
+            }
+            return synthetic;
+        }(),
+        config.max_constraints,
+        config.per_item_char_budget);
+
+    append_symbolic_section(out, current_size, config.char_budget, "Decisions",
+        [&]() {
+            std::vector<common_memory_hit> synthetic;
+            for (size_t i = 0; i < policy_pack.decisions.size() && i < config.max_decisions; ++i) {
+                common_memory_record record;
+                record.id = policy_pack.id.empty() ? "policy-decision-" + std::to_string(i + 1) : policy_pack.id + ":decision:" + std::to_string(i + 1);
+                record.kind = common_memory_kind::decision;
+                record.content = policy_pack.decisions[i];
+                synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
+            }
+            return synthetic;
+        }(),
+        config.max_decisions,
+        config.per_item_char_budget);
+
+    append_symbolic_section(out, current_size, config.char_budget, "Preferred procedures",
+        [&]() {
+            std::vector<common_memory_hit> synthetic;
+            for (size_t i = 0; i < policy_pack.preferred_procedures.size() && i < config.max_preferred_procedures; ++i) {
+                common_memory_record record;
+                record.id = policy_pack.id.empty() ? "policy-procedure-" + std::to_string(i + 1) : policy_pack.id + ":procedure:" + std::to_string(i + 1);
+                record.kind = common_memory_kind::procedure;
+                record.content = policy_pack.preferred_procedures[i];
+                synthetic.push_back({record, 1.0f, 0.0f, 0.0f, 1.0f, "policy_pack"});
+            }
+            return synthetic;
+        }(),
+        config.max_preferred_procedures,
+        config.per_item_char_budget);
+
+    if (current_size + 15 <= config.char_budget) {
+        out << "</policy_pack>\n";
+    }
+
+    std::string rendered = out.str();
+    if (rendered.size() > config.char_budget) {
+        rendered.resize(config.char_budget);
+    }
+    return rendered;
+}
 
 std::string common_memory_render_symbolic_overlay(
         const std::vector<common_memory_hit> & hits,

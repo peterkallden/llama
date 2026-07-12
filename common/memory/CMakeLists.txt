@@ -7,6 +7,7 @@ add_library(${TARGET}
     memory-candidate.h
     memory-in-memory.cpp
     memory-in-memory.h
+    memory-policy-pack.h
     memory-policy.cpp
     memory-policy.h
     memory-retrieval.cpp

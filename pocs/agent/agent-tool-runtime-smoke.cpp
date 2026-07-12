@@ -126,6 +126,39 @@ int main() {
         std::fprintf(stderr, "symbolic overlay did not render the expected sections: %s\n", symbolic_overlay.c_str());
         return 1;
     }
+    common_memory_policy_pack policy_pack;
+    policy_pack.id = "runtime-smoke-policy";
+    policy_pack.purpose = "Keep host authority explicit while using resident runtime evidence.";
+    policy_pack.constraints = {
+        "Do not let the model choose scope or storage authority.",
+        "Keep runtime evidence host-owned and bounded.",
+    };
+    policy_pack.decisions = {
+        "Prefer resource references for larger tool payloads.",
+    };
+    const std::string rendered_policy_pack = common_memory_render_policy_pack(policy_pack);
+    if (rendered_policy_pack.find("<policy_pack>") == std::string::npos ||
+            rendered_policy_pack.find("Constraints:") == std::string::npos ||
+            rendered_policy_pack.find("Decisions:") == std::string::npos) {
+        std::fprintf(stderr, "policy pack did not render the expected sections: %s\n", rendered_policy_pack.c_str());
+        return 1;
+    }
+    const auto planning_overlay_hits = common_memory_select_symbolic_overlay_hits(
+        symbolic_hits,
+        common_memory_overlay_stage::planning,
+        3);
+    const auto reasoning_overlay_hits = common_memory_select_symbolic_overlay_hits(
+        symbolic_hits,
+        common_memory_overlay_stage::reasoning,
+        3);
+    if (planning_overlay_hits.empty() || planning_overlay_hits.front().memory.kind != common_memory_kind::constraint) {
+        std::fprintf(stderr, "planning overlay selection did not prioritize constraints\n");
+        return 1;
+    }
+    if (reasoning_overlay_hits.empty() || reasoning_overlay_hits.front().memory.kind != common_memory_kind::procedure) {
+        std::fprintf(stderr, "reasoning overlay selection did not prioritize procedures\n");
+        return 1;
+    }
 
     std::string error;
     common_tool_catalog catalog;
@@ -217,6 +250,7 @@ int main() {
     request.session_id = "runtime-smoke-session";
     request.turn_id = "runtime-smoke-turn";
     request.plan_scope = common_plan_scope::session;
+    request.policy_pack = policy_pack;
     request.memories = symbolic_hits;
     request.enable_planning = true;
     request.enable_reflection = false;

@@ -30,6 +30,7 @@ struct common_agent_runtime_resident_request_config {
     std::string session_id;
     std::string namespace_id;
     std::string project_id;
+    std::optional<common_memory_policy_pack> policy_pack;
     std::string model;
     int n_predict = 0;
     int n_gpu_layers = 0;

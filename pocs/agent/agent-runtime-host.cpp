@@ -172,6 +172,7 @@ bool run_agent_runtime_host(
                 *execution.current_plan_id,
                 execution.turn_request.scope,
                 blueprints,
+                execution.turn_request.request.policy_pack,
                 memories,
                 execution.turn_request.memory_scope,
                 execution.turn_request.memory_enabled,

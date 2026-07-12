@@ -221,6 +221,7 @@ int main(int argc, char ** argv) {
                     "resident-smoke-session",
                     "resident-smoke",
                     {},
+                    std::nullopt,
                     options.model,
                     options.n_predict,
                     options.n_gpu_layers,

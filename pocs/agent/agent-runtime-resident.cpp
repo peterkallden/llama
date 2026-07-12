@@ -25,6 +25,7 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.request.session_id = config.session_id;
     turn_request.request.namespace_id = config.namespace_id;
     turn_request.request.project_id = config.project_id;
+    turn_request.request.policy_pack = config.policy_pack;
     turn_request.scope.namespace_id = config.namespace_id;
     turn_request.scope.session_id = config.session_id;
     turn_request.scope.project_id = config.project_id;

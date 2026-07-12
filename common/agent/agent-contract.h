@@ -6,6 +6,7 @@
 #include "chat.h"
 #include "agent/tool-runtime-contract.h"
 #include "memory/memory-types.h"
+#include "memory/memory-policy-pack.h"
 #include "memory/memory-candidate.h"
 #include "plan/plan-types.h"
 #include "runtime-trace.h"
@@ -148,6 +149,7 @@ struct common_agent_request {
     // the caller-supplied registry.
     std::string prompt;
     std::optional<common_agent_objective> objective;
+    std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
     std::optional<common_agent_tool_call> tool_call;

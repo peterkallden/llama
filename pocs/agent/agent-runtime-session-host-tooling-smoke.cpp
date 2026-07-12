@@ -20,6 +20,7 @@ int main() {
             "",
             "",
             "",
+            std::nullopt,
             "fake.gguf",
             32,
             0,
