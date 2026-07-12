@@ -248,28 +248,32 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
 bool common_agent_daemon_dispatcher::populate_status_locked(
         common_agent_daemon_command_result & result,
         std::string & error) const {
-    const size_t queued_count = queue.size();
-    const std::string active_request = active_request_id;
-    const std::string active_turn = active_turn_id;
-
     if (!service.populate_status(result, error)) {
         return false;
     }
-
-    result.status.active_request_id = active_request;
-    result.status.active_turn_id = active_turn;
-    result.status.queued_command_count = queued_count;
-    result.status.worker_running = worker_running;
-    result.status.accepting_commands = accepting_commands;
-    result.status.shutdown_requested = service.shutdown_requested();
-    result.status.max_queue_size = max_queue_size;
-    result.status.queue_capacity_remaining =
-        max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
-    result.status.state = service.state();
+    fill_status_snapshot_locked(result.status);
     result.event = "status";
-    result.status.live = result.status.live && worker_running;
-    result.status.ready = result.status.ready && accepting_commands && worker_running;
     return true;
+}
+
+void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
+        common_agent_daemon_status & status) const {
+    const size_t queued_count = queue.size();
+    status.active_request_id = active_request_id;
+    status.active_turn_id = active_turn_id;
+    status.queued_command_count = queued_count;
+    status.worker_running = worker_running;
+    status.accepting_commands = accepting_commands;
+    status.shutdown_requested = service.shutdown_requested();
+    status.max_queue_size = max_queue_size;
+    status.queue_capacity_remaining =
+        max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
+    status.state = service.state();
+    status.session_count = status.sessions.size();
+    status.live = status.state != common_agent_daemon_state::stopped && worker_running;
+    status.ready = status.state == common_agent_daemon_state::ready &&
+        accepting_commands &&
+        worker_running;
 }
 
 void common_agent_daemon_dispatcher::worker_loop() {
@@ -327,8 +331,8 @@ void common_agent_daemon_dispatcher::worker_loop() {
             if (service.shutdown_requested()) {
                 accepting_commands = false;
                 stop_requested = true;
-                service.mark_stopping();
             }
+            fill_status_snapshot_locked(queued.result.status);
         }
 
         item->promise.set_value(std::move(queued));
@@ -337,6 +341,7 @@ void common_agent_daemon_dispatcher::worker_loop() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
+        service.mark_stopping();
         worker_running = false;
         service.mark_stopped();
     }

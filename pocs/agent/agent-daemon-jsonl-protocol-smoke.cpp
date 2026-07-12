@@ -1,3 +1,4 @@
+#include "agent-daemon-client-status.h"
 #include "agent-daemon-jsonl-protocol.h"
 
 #include <cstdio>
@@ -164,7 +165,8 @@ int main() {
         std::fprintf(stderr, "status response contract mismatch: %s\n", error.c_str());
         return 1;
     }
-    const std::string rendered_status = render_agent_daemon_jsonl_status_summary(status_response);
+    const auto summary = make_agent_daemon_client_status_summary(status_response);
+    const std::string rendered_status = render_agent_daemon_client_status_summary(summary);
     if (rendered_status.find("state=ready") == std::string::npos ||
             rendered_status.find("session_bindings=namespace-a/session-a@project-a#pack-a") == std::string::npos) {
         std::fprintf(stderr, "status render mismatch: %s\n", rendered_status.c_str());

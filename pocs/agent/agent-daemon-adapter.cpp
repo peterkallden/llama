@@ -29,6 +29,42 @@ bool emit_agent_daemon_jsonl_message(
     return write_agent_daemon_jsonl_message(output, message, error);
 }
 
+bool process_agent_daemon_jsonl_request(
+        const json & parsed,
+        const daemon_options & options,
+        common_agent_daemon_dispatcher & dispatcher,
+        json & response,
+        bool & shutdown_after,
+        std::string & error) {
+    response = json();
+    shutdown_after = false;
+
+    if (!parsed.is_object()) {
+        response = make_agent_daemon_error_response("invalid JSON request");
+        error.clear();
+        return true;
+    }
+
+    common_agent_daemon_command command;
+    error.clear();
+    if (!parse_agent_daemon_command(parsed, options, dispatcher.default_mode(), command, error)) {
+        response = make_agent_daemon_error_response(error);
+        error.clear();
+        return true;
+    }
+
+    common_agent_daemon_command_result result;
+    error.clear();
+    dispatcher.execute(command, result, error);
+    if (!error.empty() && result.error.empty()) {
+        result.error = error;
+    }
+    response = make_agent_daemon_command_response(result);
+    shutdown_after = dispatcher.shutdown_requested();
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 bool parse_mode(
@@ -234,41 +270,24 @@ bool run_agent_daemon_jsonl_adapter(
     std::string protocol_error;
     json parsed;
     while (read_agent_daemon_jsonl_message(input, parsed, protocol_error)) {
-        if (!parsed.is_object()) {
-            if (!emit_agent_daemon_jsonl_message(
-                        output,
-                        make_agent_daemon_error_response("invalid JSON request"),
-                        error)) {
-                return false;
-            }
-            continue;
-        }
-
-        common_agent_daemon_command command;
-        error.clear();
-        if (!parse_agent_daemon_command(parsed, options, dispatcher.default_mode(), command, error)) {
-            if (!emit_agent_daemon_jsonl_message(
-                        output,
-                        make_agent_daemon_error_response(error),
-                        error)) {
-                return false;
-            }
-            continue;
-        }
-
-        common_agent_daemon_command_result result;
-        error.clear();
-        dispatcher.execute(command, result, error);
-        if (!error.empty() && result.error.empty()) {
-            result.error = error;
-        }
-        if (!emit_agent_daemon_jsonl_message(
-                    output,
-                    make_agent_daemon_command_response(result),
+        json response;
+        bool shutdown_after = false;
+        if (!process_agent_daemon_jsonl_request(
+                    parsed,
+                    options,
+                    dispatcher,
+                    response,
+                    shutdown_after,
                     error)) {
             return false;
         }
-        if (dispatcher.shutdown_requested()) {
+        if (!emit_agent_daemon_jsonl_message(
+                    output,
+                    response,
+                    error)) {
+            return false;
+        }
+        if (shutdown_after) {
             break;
         }
     }

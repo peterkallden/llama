@@ -49,6 +49,9 @@ private:
         common_agent_daemon_command_result & result,
         std::string & error) const;
 
+    void fill_status_snapshot_locked(
+        common_agent_daemon_status & status) const;
+
     void worker_loop();
 
     mutable std::mutex mutex;

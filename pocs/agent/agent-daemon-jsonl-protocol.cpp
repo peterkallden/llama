@@ -12,10 +12,6 @@ const char * session_command_name(agent_daemon_jsonl_session_command command) {
     return "reset_session";
 }
 
-std::string bool_name(bool value) {
-    return value ? "yes" : "no";
-}
-
 bool parse_string_array_field(
         const json & value,
         std::vector<std::string> & output) {
@@ -293,42 +289,4 @@ bool parse_agent_daemon_jsonl_event_response(
     }
     error.clear();
     return true;
-}
-
-std::string render_agent_daemon_jsonl_status_summary(
-        const agent_daemon_jsonl_status_response & response) {
-    std::string rendered =
-        "state=" + response.state +
-        " live=" + bool_name(response.live) +
-        " ready=" + bool_name(response.ready) +
-        " worker=" + bool_name(response.worker_running) +
-        " accepting=" + bool_name(response.accepting_commands) +
-        " shutdown=" + bool_name(response.shutdown_requested) +
-        " queued=" + std::to_string(response.queued_commands) +
-        "/" + std::to_string(response.max_queue_size) +
-        " capacity=" + std::to_string(response.queue_capacity_remaining) +
-        " sessions=" + std::to_string(response.sessions);
-    if (!response.active_request_id.empty()) {
-        rendered += " active_request=" + response.active_request_id;
-    }
-    if (!response.active_turn_id.empty()) {
-        rendered += " active_turn=" + response.active_turn_id;
-    }
-    if (!response.session_keys.empty()) {
-        rendered += " session_bindings=";
-        for (size_t i = 0; i < response.session_keys.size(); ++i) {
-            const auto & session = response.session_keys[i];
-            if (i > 0) {
-                rendered += ",";
-            }
-            rendered += session.namespace_id + "/" + session.session_id;
-            if (!session.project_id.empty()) {
-                rendered += "@" + session.project_id;
-            }
-            if (!session.policy_pack_id.empty()) {
-                rendered += "#" + session.policy_pack_id;
-            }
-        }
-    }
-    return rendered;
 }

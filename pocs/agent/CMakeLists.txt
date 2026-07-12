@@ -2,6 +2,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-config.cpp
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
+    agent-daemon-client-status.cpp
     agent-daemon-client.cpp
     agent-daemon-jsonl-protocol.cpp
     agent-host-config.cpp
@@ -332,6 +333,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
     agent-daemon-jsonl-protocol-smoke.cpp
+    agent-daemon-client-status.cpp
     agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE

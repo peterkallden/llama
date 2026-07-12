@@ -2,6 +2,7 @@
 
 #include "agent-cli-config.h"
 #include "agent-cli-selection.h"
+#include "agent-daemon-client-status.h"
 #include "agent-daemon-jsonl-protocol.h"
 #include "agent-resource-store.h"
 
@@ -606,7 +607,8 @@ int run_daemon_session_command(const char * argv0, const args & a) {
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-status] %s\n", render_agent_daemon_jsonl_status_summary(response).c_str());
+            const auto summary = make_agent_daemon_client_status_summary(response);
+            std::printf("[daemon-status] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
             continue;
         }
         if (line == "/reset") {

@@ -219,6 +219,8 @@ The daemon now also routes requests through explicit daemon commands plus a smal
 
 The foreground JSONL transport loop is now also explicitly owned by the daemon adapter rather than living inline inside `agent-daemon.cpp`. That is still a small step, but it matters: `main` is now closer to pure process bootstrap plus environment wiring, while the JSONL request/response loop has a named adapter seam that later transports can mirror without reintroducing daemon lifecycle logic into the entrypoint.
 
+That adapter loop is now a little thinner too. The outer loop still owns stream framing and lifetime, but one small helper now owns the "parse one JSONL request, run one daemon command, serialize one response" path. It is still synchronous and intentionally modest, but later foreground/socket/pipe adapters now have a cleaner seam above raw stdio framing.
+
 The daemon adapter is now also slightly less CLI-shaped in its host construction path. It still uses the existing store-opening helpers, but it no longer has to synthesize a temporary full CLI `args` object just to build runtime policy, runtime config, orchestration config, or the resident session-host contract.
 
 That cleanup now extends one step further down the daemon path. The daemon runtime no longer synthesizes temporary CLI-style `args` just to open stores, build resource-store config, or resolve provider-backed tooling. Memory/plan store selection now follows the same host-owned backend/path values directly, including the old `auto` resolution rules, while tooling resolution receives a host-built tool-selection request instead of a CLI object.
@@ -236,6 +238,8 @@ That service layer now understands a slightly broader host-oriented command surf
 
 That lifecycle surface is now also enforced inside the service itself. Once shutdown or draining has been requested, `run_turn` is rejected with a host-owned lifecycle error instead of relying only on the dispatcher's outer acceptance window. That closes the small gap where a late turn could otherwise slip in after shutdown had conceptually started but before the queue had fully stopped accepting work.
 
+The dispatcher/protocol path now also carries a small status snapshot on non-status responses, including lifecycle replies such as `shutdown`. That means the current foreground/admin path can observe `draining` directly from the shutdown response instead of only inferring it later from booleans or stderr timing.
+
 `cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while attempts to cancel the currently active turn are rejected with a `turn.cancel_rejected` daemon event plus the active request/turn identity. That is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end cancellation token or safe active-turn abort semantics, and the current foreground JSONL transport is still request/response serial from one stdin stream.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
@@ -247,6 +251,8 @@ The CLI-side diagnostics seam is a little cleaner now too. The child-process ada
 That foreground client path is now also slightly less ad hoc internally. It has a tiny JSONL transport wrapper around the child-process stdio pipes, and the admin/test command handlers no longer peel turn/session/status results straight out of raw `ordered_json` with repeated `response.value(...)` calls. Instead they consume a few small protocol-shaped result parsers for turn, status, and lifecycle/session events while still speaking the same external JSONL wire format.
 
 The `daemon-session` admin/test surface is now a little friendlier too. Its `/status` command no longer echoes the raw daemon JSON object back to stdout; it renders one compact typed summary of lifecycle state, queue health, active work, and bound sessions while still relying on the same parsed JSONL status contract underneath.
+
+That rendering is now its own small CLI-facing seam rather than another helper hidden in the wire-protocol file. The JSONL parser still owns the transport/status DTOs, while the foreground client owns the tiny status-summary contract and rendering policy that turns those DTOs into a stable human-facing admin/test line.
 
 Those child-process adapters now also pass through the same daemon-owned tool configuration surface as the direct JSONL admin/test path: `--tool-profile`, `--repository-root`, and `--mcp-tool-command` all reach the foreground daemon when present. The chat-oriented daemon client path also now defaults its plan scope more conservatively when planning is off, so a simple session- or project-scoped admin/test chat turn does not accidentally force a synthetic turn-scoped contract.
 

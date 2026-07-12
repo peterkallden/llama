@@ -105,6 +105,13 @@ int main() {
     turn_result.response_kind = common_agent_daemon_response_kind::turn;
     turn_result.turn_result.response = "DONE";
     turn_result.turn_result.runtime_reused = true;
+    turn_result.status.state = common_agent_daemon_state::ready;
+    turn_result.status.live = true;
+    turn_result.status.ready = true;
+    turn_result.status.worker_running = true;
+    turn_result.status.accepting_commands = true;
+    turn_result.status.max_queue_size = 8;
+    turn_result.status.queue_capacity_remaining = 8;
     turn_result.turn_result.trace.push_back({
         common_runtime_trace_stage::tool,
         common_runtime_trace_kind::succeeded,
@@ -122,6 +129,7 @@ int main() {
     const json turn_response = make_agent_daemon_command_response(turn_result);
     if (!turn_response.value("ok", false) ||
             turn_response.value("response", "") != "DONE" ||
+            turn_response.value("state", "") != "ready" ||
             !turn_response.value("runtime_reused", false) ||
             !turn_response.contains("trace") ||
             !turn_response["trace"].is_array() ||
@@ -131,8 +139,33 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command_result shutdown_result;
+    shutdown_result.ok = true;
+    shutdown_result.request_id = "shutdown-1";
+    shutdown_result.response_kind = common_agent_daemon_response_kind::lifecycle;
+    shutdown_result.event = "shutdown";
+    shutdown_result.status.state = common_agent_daemon_state::draining;
+    shutdown_result.status.live = true;
+    shutdown_result.status.ready = false;
+    shutdown_result.status.worker_running = true;
+    shutdown_result.status.accepting_commands = false;
+    shutdown_result.status.shutdown_requested = true;
+    shutdown_result.status.queued_command_count = 0;
+    shutdown_result.status.max_queue_size = 8;
+    shutdown_result.status.queue_capacity_remaining = 8;
+    const json shutdown_response = make_agent_daemon_command_response(shutdown_result);
+    if (!shutdown_response.value("ok", false) ||
+            shutdown_response.value("event", "") != "shutdown" ||
+            shutdown_response.value("state", "") != "draining" ||
+            shutdown_response.value("shutdown_requested", false) != true ||
+            shutdown_response.value("accepting_commands", true) != false) {
+        std::fprintf(stderr, "shutdown lifecycle response mismatch\n");
+        return 1;
+    }
+
     std::printf("daemon_protocol_ready=%s\n", ready.dump().c_str());
     std::printf("daemon_protocol_status=%s\n", status_response.dump().c_str());
     std::printf("daemon_protocol_turn=%s\n", turn_response.dump().c_str());
+    std::printf("daemon_protocol_shutdown=%s\n", shutdown_response.dump().c_str());
     return 0;
 }

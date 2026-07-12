@@ -199,30 +199,40 @@ json make_agent_daemon_base_response(
     return response;
 }
 
-json make_agent_daemon_status_response(
-        const common_agent_daemon_command_result & result) {
-    json response = make_agent_daemon_base_response(result);
-    response["state"] = common_agent_daemon_state_name(result.status.state);
-    response["live"] = result.status.live;
-    response["ready"] = result.status.ready;
-    response["worker_running"] = result.status.worker_running;
-    response["accepting_commands"] = result.status.accepting_commands;
-    response["shutdown_requested"] = result.status.shutdown_requested;
-    response["sessions"] = result.status.session_count;
-    response["queued_commands"] = result.status.queued_command_count;
-    response["max_queue_size"] = result.status.max_queue_size;
-    response["queue_capacity_remaining"] = result.status.queue_capacity_remaining;
-    if (!result.status.active_request_id.empty()) {
-        response["active_request_id"] = result.status.active_request_id;
+void append_agent_daemon_status_snapshot(
+        json & response,
+        const common_agent_daemon_status & status,
+        bool include_sessions) {
+    response["state"] = common_agent_daemon_state_name(status.state);
+    response["live"] = status.live;
+    response["ready"] = status.ready;
+    response["worker_running"] = status.worker_running;
+    response["accepting_commands"] = status.accepting_commands;
+    response["shutdown_requested"] = status.shutdown_requested;
+    response["sessions"] = status.session_count;
+    response["queued_commands"] = status.queued_command_count;
+    response["max_queue_size"] = status.max_queue_size;
+    response["queue_capacity_remaining"] = status.queue_capacity_remaining;
+    if (!status.active_request_id.empty()) {
+        response["active_request_id"] = status.active_request_id;
     }
-    if (!result.status.active_turn_id.empty()) {
-        response["active_turn_id"] = result.status.active_turn_id;
+    if (!status.active_turn_id.empty()) {
+        response["active_turn_id"] = status.active_turn_id;
+    }
+    if (!include_sessions) {
+        return;
     }
     json session_array = json::array();
-    for (const auto & session : result.status.sessions) {
+    for (const auto & session : status.sessions) {
         session_array.push_back(serialize_agent_daemon_session_status(session));
     }
     response["session_keys"] = std::move(session_array);
+}
+
+json make_agent_daemon_status_response(
+        const common_agent_daemon_command_result & result) {
+    json response = make_agent_daemon_base_response(result);
+    append_agent_daemon_status_snapshot(response, result.status, true);
     if (!result.error.empty()) {
         response["error"] = result.error;
     }
@@ -232,17 +242,12 @@ json make_agent_daemon_status_response(
 json make_agent_daemon_lifecycle_response(
         const common_agent_daemon_command_result & result) {
     json response = make_agent_daemon_base_response(result);
+    append_agent_daemon_status_snapshot(response, result.status, false);
     if (!result.target_request_id.empty()) {
         response["target_request_id"] = result.target_request_id;
     }
     if (!result.target_turn_id.empty()) {
         response["target_turn_id"] = result.target_turn_id;
-    }
-    if (!result.status.active_request_id.empty()) {
-        response["active_request_id"] = result.status.active_request_id;
-    }
-    if (!result.status.active_turn_id.empty()) {
-        response["active_turn_id"] = result.status.active_turn_id;
     }
     if (!result.error.empty()) {
         response["error"] = result.error;
@@ -253,6 +258,7 @@ json make_agent_daemon_lifecycle_response(
 json make_agent_daemon_turn_response(
         const common_agent_daemon_command_result & result) {
     json response = make_agent_daemon_base_response(result);
+    append_agent_daemon_status_snapshot(response, result.status, false);
     const auto & turn = result.turn_result;
     response["cancelled"] = turn.cancelled;
     response["runtime_reused"] = turn.runtime_reused;

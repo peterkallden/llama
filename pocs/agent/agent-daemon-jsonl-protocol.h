@@ -144,6 +144,3 @@ bool parse_agent_daemon_jsonl_event_response(
     const nlohmann::ordered_json & message,
     const std::string & expected_event,
     std::string & error);
-
-std::string render_agent_daemon_jsonl_status_summary(
-    const agent_daemon_jsonl_status_response & response);

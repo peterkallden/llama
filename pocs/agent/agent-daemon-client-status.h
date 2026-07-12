@@ -1,0 +1,17 @@
+#pragma once
+
+#include "agent-daemon-jsonl-protocol.h"
+
+#include <string>
+#include <vector>
+
+struct agent_daemon_client_status_summary {
+    std::string headline;
+    std::vector<std::string> session_bindings;
+};
+
+agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
+    const agent_daemon_jsonl_status_response & response);
+
+std::string render_agent_daemon_client_status_summary(
+    const agent_daemon_client_status_summary & summary);
