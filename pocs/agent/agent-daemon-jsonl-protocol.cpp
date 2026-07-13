@@ -241,6 +241,14 @@ bool parse_agent_daemon_jsonl_status_response(
                 item.value("memory_scope", std::string()),
                 item.value("plan_scope", std::string()),
                 item.value("policy_pack_id", std::string()),
+                item.value("queued_turn_count", 0),
+                item.contains("active_turn_id"),
+                item.value("active_request_id", std::string()),
+                item.value("active_turn_id", std::string()),
+                item.value("active_turn_phase", std::string()),
+                item.value("active_cancel_requested", false),
+                item.value("last_turn_id", std::string()),
+                item.value("last_turn_phase", std::string()),
             });
         }
     }

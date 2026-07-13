@@ -23,7 +23,7 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
     }
-    return command.turn->request.turn_id;
+    return command.turn->request.turn.turn_id;
 }
 
 } // namespace
@@ -162,7 +162,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                 command.cancel.has_value() &&
                 !command.cancel->target_turn_id.empty() &&
                 queued->command.turn.has_value() &&
-                queued->command.turn->request.turn_id == command.cancel->target_turn_id;
+                queued->command.turn->request.turn.turn_id == command.cancel->target_turn_id;
             if (!request_match && !turn_match) {
                 continue;
             }
@@ -173,33 +173,30 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         }
 
         if (!cancelled_item) {
-            if ((command.cancel.has_value() &&
-                    !command.cancel->target_request_id.empty() &&
-                    command.cancel->target_request_id == active_request_id) ||
-                    (command.cancel.has_value() &&
-                    !command.cancel->target_turn_id.empty() &&
-                    command.cancel->target_turn_id == active_turn_id)) {
-                if (active_cancellation) {
-                    active_cancellation->request_cancel("turn cancelled by host");
-                }
+            common_agent_runtime_active_turn_descriptor active_turn;
+            if (service.request_cancel_active_turn(
+                    command.cancel.has_value() ? command.cancel->target_request_id : std::string(),
+                    command.cancel.has_value() ? command.cancel->target_turn_id : std::string(),
+                    active_turn,
+                    error)) {
                 result.ok = true;
                 result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "turn_cancel_requested";
-                result.status.active_request_id = active_request_id;
-                result.status.active_turn_id = active_turn_id;
-                result.status.active_cancel_requested =
-                    active_cancellation && active_cancellation->is_cancelled();
+                result.status.active_request_id = active_turn.request_id;
+                result.status.active_turn_id = active_turn.turn_id;
+                result.status.active_cancel_requested = active_turn.cancellation_requested;
                 append_daemon_event(
                     result,
                     "turn.cancel_requested",
                     command.request_id,
                     !command.cancel.has_value() || command.cancel->target_turn_id.empty()
-                        ? active_turn_id
+                        ? active_turn.turn_id
                         : command.cancel->target_turn_id,
                     "active turn cancellation requested");
                 error.clear();
                 return true;
             }
+            error.clear();
         }
     }
 
@@ -263,10 +260,15 @@ bool common_agent_daemon_dispatcher::populate_status_locked(
 void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         common_agent_daemon_status & status) const {
     const size_t queued_count = queue.size();
-    status.active_request_id = active_request_id;
-    status.active_turn_id = active_turn_id;
-    status.active_cancel_requested =
-        active_cancellation && active_cancellation->is_cancelled();
+    if (const auto active_turn = service.describe_active_turn()) {
+        status.active_request_id = active_turn->request_id;
+        status.active_turn_id = active_turn->turn_id;
+        status.active_cancel_requested = active_turn->cancellation_requested;
+    } else {
+        status.active_request_id.clear();
+        status.active_turn_id.clear();
+        status.active_cancel_requested = false;
+    }
     status.queued_command_count = queued_count;
     status.worker_running = worker_running;
     status.accepting_commands = accepting_commands;
@@ -300,21 +302,12 @@ void common_agent_daemon_dispatcher::worker_loop() {
             item = queue.front();
             queue.pop_front();
             if (item->command.type == common_agent_daemon_command_type::run_turn) {
-                if (!item->command.turn->request.execution_control.cancellation) {
-                    item->command.turn->request.execution_control =
+                if (!item->command.turn->request.turn.execution_control.cancellation) {
+                    item->command.turn->request.turn.execution_control =
                         make_common_agent_runtime_execution_control(
-                            item->command.turn->request.execution_control.timeout_policy);
+                            item->command.turn->request.turn.execution_control.timeout_policy);
                 }
-                active_request_id = item->command.request_id;
-                active_turn_id =
-                    item->command.turn.has_value()
-                        ? item->command.turn->request.turn_id
-                        : std::string();
-                active_cancellation = item->command.turn->request.execution_control.cancellation;
-            } else {
-                active_request_id.clear();
-                active_turn_id.clear();
-                active_cancellation.reset();
+                item->command.turn->request.request_id = item->command.request_id;
             }
         }
 
@@ -339,9 +332,6 @@ void common_agent_daemon_dispatcher::worker_loop() {
 
         {
             std::lock_guard<std::mutex> lock(mutex);
-            active_request_id.clear();
-            active_turn_id.clear();
-            active_cancellation.reset();
             if (service.shutdown_requested()) {
                 accepting_commands = false;
                 stop_requested = true;

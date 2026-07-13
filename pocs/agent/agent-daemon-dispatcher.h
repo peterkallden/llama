@@ -64,7 +64,4 @@ private:
     bool worker_running = false;
     bool accepting_commands = true;
     bool stop_requested = false;
-    std::string active_request_id;
-    std::string active_turn_id;
-    std::shared_ptr<common_agent_runtime_cancellation_state> active_cancellation;
 };

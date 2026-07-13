@@ -19,15 +19,16 @@ common_agent_daemon_command make_turn_command(
     command.request_id = std::move(request_id);
     command.type = common_agent_daemon_command_type::run_turn;
     command.turn = common_agent_daemon_turn_payload{};
-    command.turn->request.mode = common_agent_runtime_host_mode::chat;
-    command.turn->request.prompt = std::move(prompt);
-    command.turn->request.session_id = "dispatcher-smoke-session";
-    command.turn->request.namespace_id = "dispatcher-smoke";
-    command.turn->request.project_id = "dispatcher-smoke-project";
-    command.turn->request.turn_id = std::move(turn_id);
-    command.turn->request.memory_scope = common_memory_scope::project;
-    command.turn->request.plan_scope = common_plan_scope::project;
-    command.turn->request.n_predict = n_predict;
+    command.turn->request.request_id = command.request_id;
+    command.turn->request.turn.mode = common_agent_runtime_host_mode::chat;
+    command.turn->request.turn.prompt = std::move(prompt);
+    command.turn->request.turn.session_id = "dispatcher-smoke-session";
+    command.turn->request.turn.namespace_id = "dispatcher-smoke";
+    command.turn->request.turn.project_id = "dispatcher-smoke-project";
+    command.turn->request.turn.turn_id = std::move(turn_id);
+    command.turn->request.turn.memory_scope = common_memory_scope::project;
+    command.turn->request.turn.plan_scope = common_plan_scope::project;
+    command.turn->request.turn.n_predict = n_predict;
     return command;
 }
 

@@ -21,7 +21,7 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
     }
-    return command.turn->request.turn_id;
+    return command.turn->request.turn.turn_id;
 }
 
 } // namespace
@@ -67,6 +67,29 @@ bool common_agent_daemon_service::populate_status(
         common_agent_daemon_state_name(result.status.state));
     error.clear();
     return result.ok;
+}
+
+std::optional<common_agent_runtime_active_turn_descriptor> common_agent_daemon_service::describe_active_turn() const {
+    if (!runtime.host) {
+        return std::nullopt;
+    }
+    return runtime.host->describe_active_turn();
+}
+
+bool common_agent_daemon_service::request_cancel_active_turn(
+        const std::string & target_request_id,
+        const std::string & target_turn_id,
+        common_agent_runtime_active_turn_descriptor & active_turn,
+        std::string & error) {
+    if (!runtime.host) {
+        error = "daemon host is not initialized";
+        return false;
+    }
+    return runtime.host->request_cancel_active_turn(
+        target_request_id,
+        target_turn_id,
+        active_turn,
+        error);
 }
 
 bool common_agent_daemon_service::execute(

@@ -115,6 +115,14 @@ public:
         common_agent_daemon_command_result & result,
         std::string & error) const;
 
+    std::optional<common_agent_runtime_active_turn_descriptor> describe_active_turn() const;
+
+    bool request_cancel_active_turn(
+        const std::string & target_request_id,
+        const std::string & target_turn_id,
+        common_agent_runtime_active_turn_descriptor & active_turn,
+        std::string & error);
+
 private:
     common_agent_daemon_runtime runtime;
     common_agent_daemon_state state_value = common_agent_daemon_state::starting;

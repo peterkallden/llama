@@ -1,9 +1,11 @@
 #pragma once
 
 #include "agent-runtime-session-host.h"
+#include "agent-runtime-turn-execution.h"
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,12 +25,32 @@ struct common_agent_runtime_session_descriptor {
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
     std::string policy_pack_id;
+    size_t queued_turn_count = 0;
+    bool has_active_turn = false;
+    std::string active_request_id;
+    std::string active_turn_id;
+    std::string active_turn_phase;
+    bool active_cancel_requested = false;
+    std::string last_turn_id;
+    std::string last_turn_phase;
 };
 
-using common_agent_runtime_session_manager_turn_request = common_agent_runtime_session_host_turn_request;
+struct common_agent_runtime_session_manager_turn_request {
+    std::string request_id;
+    common_agent_runtime_session_host_turn_request turn;
+};
 using common_agent_runtime_session_manager_turn_result = common_agent_runtime_session_host_turn_result;
 using common_agent_runtime_session_manager_config = common_agent_runtime_session_host_config;
 using common_agent_runtime_session_manager_build_config = common_agent_runtime_session_host_build_config;
+
+struct common_agent_runtime_active_turn_descriptor {
+    common_agent_runtime_session_key key;
+    std::string project_id;
+    std::string request_id;
+    std::string turn_id;
+    std::string phase;
+    bool cancellation_requested = false;
+};
 
 inline common_agent_runtime_session_manager_config make_agent_runtime_session_manager_config(
         common_agent_runtime_session_manager_build_config config) {
@@ -52,17 +74,39 @@ public:
         const common_agent_runtime_session_key & key,
         std::string & error);
 
+    bool request_cancel_active_turn(
+        const std::string & target_request_id,
+        const std::string & target_turn_id,
+        common_agent_runtime_active_turn_descriptor & active_turn,
+        std::string & error);
+
+    std::optional<common_agent_runtime_active_turn_descriptor> describe_active_turn() const;
+
     std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
 
     void reset_all();
 
 private:
+    struct common_agent_runtime_session_lane {
+        std::unique_ptr<common_agent_runtime_session_host> host;
+        size_t queued_turn_count = 0;
+        std::optional<common_agent_runtime_turn_execution> active_turn;
+        std::string last_turn_id;
+        common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
+    };
+
     common_agent_runtime_session_key make_session_key(
         const common_agent_runtime_session_manager_turn_request & request) const;
 
-    common_agent_runtime_session_host & ensure_session_host(
+    common_agent_runtime_session_lane & ensure_session_lane(
         const common_agent_runtime_session_key & key);
 
+    bool run_lane_turn(
+        common_agent_runtime_session_lane & lane,
+        const common_agent_runtime_session_manager_turn_request & request,
+        common_agent_runtime_session_manager_turn_result & result,
+        std::string & error);
+
     common_agent_runtime_session_manager_config config;
-    std::map<common_agent_runtime_session_key, std::unique_ptr<common_agent_runtime_session_host>> hosts;
+    std::map<common_agent_runtime_session_key, common_agent_runtime_session_lane> lanes;
 };

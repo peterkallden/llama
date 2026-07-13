@@ -48,10 +48,11 @@ int main() {
     }
     if (turn_command.type != common_agent_daemon_command_type::run_turn ||
             !turn_command.turn.has_value() ||
-            turn_command.turn->request.mode != common_agent_runtime_host_mode::mini ||
-            turn_command.turn->request.memory_scope != common_memory_scope::project ||
-            turn_command.turn->request.plan_scope != common_plan_scope::project ||
-            turn_command.turn->request.n_predict != 42) {
+            turn_command.turn->request.request_id != "turn-1" ||
+            turn_command.turn->request.turn.mode != common_agent_runtime_host_mode::mini ||
+            turn_command.turn->request.turn.memory_scope != common_memory_scope::project ||
+            turn_command.turn->request.turn.plan_scope != common_plan_scope::project ||
+            turn_command.turn->request.turn.n_predict != 42) {
         std::fprintf(stderr, "run_turn command did not preserve expected fields\n");
         return 1;
     }
@@ -86,6 +87,15 @@ int main() {
         "project-a",
         common_memory_scope::project,
         common_plan_scope::project,
+        "",
+        0,
+        false,
+        "",
+        "",
+        "",
+        false,
+        "turn-a",
+        "completed",
     });
 
     const json status_response = make_agent_daemon_command_response(status_result);
@@ -94,7 +104,9 @@ int main() {
             status_response.value("sessions", 0) != 1 ||
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
-            status_response["session_keys"].size() != 1) {
+            status_response["session_keys"].size() != 1 ||
+            status_response["session_keys"][0].value("last_turn_id", "") != "turn-a" ||
+            status_response["session_keys"][0].value("last_turn_phase", "") != "completed") {
         std::fprintf(stderr, "status response mismatch\n");
         return 1;
     }

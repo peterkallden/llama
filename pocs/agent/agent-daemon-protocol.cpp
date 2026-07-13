@@ -154,9 +154,22 @@ json serialize_agent_daemon_session_status(
         {"project_id", session.project_id},
         {"memory_scope", common_memory_scope_name(session.memory_scope)},
         {"plan_scope", daemon_plan_scope_name(session.plan_scope)},
+        {"queued_turn_count", session.queued_turn_count},
     };
     if (!session.policy_pack_id.empty()) {
         session_json["policy_pack_id"] = session.policy_pack_id;
+    }
+    if (session.has_active_turn) {
+        session_json["active_request_id"] = session.active_request_id;
+        session_json["active_turn_id"] = session.active_turn_id;
+        session_json["active_turn_phase"] = session.active_turn_phase;
+        if (session.active_cancel_requested) {
+            session_json["active_cancel_requested"] = true;
+        }
+    }
+    if (!session.last_turn_id.empty()) {
+        session_json["last_turn_id"] = session.last_turn_id;
+        session_json["last_turn_phase"] = session.last_turn_phase;
     }
     return session_json;
 }
@@ -314,7 +327,8 @@ bool parse_agent_daemon_command(
     }
     if (command.type == common_agent_daemon_command_type::run_turn) {
         command.turn.emplace();
-        if (!parse_agent_daemon_turn_request(parsed, options, default_mode, command.turn->request, error)) {
+        command.turn->request.request_id = command.request_id;
+        if (!parse_agent_daemon_turn_request(parsed, options, default_mode, command.turn->request.turn, error)) {
             return false;
         }
     }

@@ -178,6 +178,9 @@ int main() {
                         {"memory_scope", "project"},
                         {"plan_scope", "project"},
                         {"policy_pack_id", "pack-a"},
+                        {"queued_turn_count", 0},
+                        {"last_turn_id", "turn-a"},
+                        {"last_turn_phase", "completed"},
                     }
                 })},
             },
@@ -186,7 +189,9 @@ int main() {
             status_response.state != "ready" ||
             status_response.sessions != 1 ||
             status_response.session_keys.size() != 1 ||
-            status_response.session_keys[0].policy_pack_id != "pack-a") {
+            status_response.session_keys[0].policy_pack_id != "pack-a" ||
+            status_response.session_keys[0].last_turn_id != "turn-a" ||
+            status_response.session_keys[0].last_turn_phase != "completed") {
         std::fprintf(stderr, "status response contract mismatch: %s\n", error.c_str());
         return 1;
     }

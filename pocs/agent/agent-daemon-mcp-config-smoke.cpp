@@ -220,14 +220,15 @@ int main(int argc, char ** argv) {
     rejected_turn.request_id = "turn-after-shutdown";
     rejected_turn.type = common_agent_daemon_command_type::run_turn;
     rejected_turn.turn = common_agent_daemon_turn_payload{};
-    rejected_turn.turn->request.mode = common_agent_runtime_host_mode::chat;
-    rejected_turn.turn->request.prompt = "hello";
-    rejected_turn.turn->request.session_id = "session-a";
-    rejected_turn.turn->request.namespace_id = "namespace-a";
-    rejected_turn.turn->request.project_id = "project-a";
-    rejected_turn.turn->request.turn_id = "turn-a";
-    rejected_turn.turn->request.memory_scope = common_memory_scope::session;
-    rejected_turn.turn->request.plan_scope = common_plan_scope::turn;
+    rejected_turn.turn->request.request_id = rejected_turn.request_id;
+    rejected_turn.turn->request.turn.mode = common_agent_runtime_host_mode::chat;
+    rejected_turn.turn->request.turn.prompt = "hello";
+    rejected_turn.turn->request.turn.session_id = "session-a";
+    rejected_turn.turn->request.turn.namespace_id = "namespace-a";
+    rejected_turn.turn->request.turn.project_id = "project-a";
+    rejected_turn.turn->request.turn.turn_id = "turn-a";
+    rejected_turn.turn->request.turn.memory_scope = common_memory_scope::session;
+    rejected_turn.turn->request.turn.plan_scope = common_plan_scope::turn;
     common_agent_daemon_command_result rejected_turn_result;
     error.clear();
     if (service.execute(rejected_turn, rejected_turn_result, error) ||
