@@ -352,6 +352,10 @@ bool agent_mcp_stdio_client::list_tools(
         std::vector<mcp_agent_tool_definition> & tools,
         std::string & error) {
     tools.clear();
+    if (context.execution_control.should_stop()) {
+        error = context.execution_control.stop_reason();
+        return false;
+    }
     if (!ensure_started(error)) {
         return false;
     }
@@ -389,6 +393,10 @@ bool agent_mcp_stdio_client::call_tool(
         mcp_agent_tool_call_result & result,
         std::string & error) {
     result = {};
+    if (context.execution_control.should_stop()) {
+        error = context.execution_control.stop_reason();
+        return false;
+    }
     if (!ensure_started(error)) {
         return false;
     }
@@ -420,7 +428,6 @@ bool agent_mcp_stdio_client::call_tool(
     }
 
     error.clear();
-    (void) context;
     return true;
 }
 

@@ -4,6 +4,7 @@
 #include "agent/tool-adapters.h"
 #include "agent/tool-catalog.h"
 #include "agent/tool-chat-bridge.h"
+#include "agent-runtime-control.h"
 #include "chat.h"
 #include "plan/plan-types.h"
 #include "runtime-resource.h"
@@ -39,6 +40,7 @@ struct agent_tool_context {
     size_t max_calls = 4;
     uint32_t default_timeout_ms = 1000;
     size_t default_max_result_bytes = 16 * 1024;
+    common_agent_runtime_execution_control execution_control;
 };
 
 class agent_embedding_provider {

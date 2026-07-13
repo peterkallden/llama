@@ -4,6 +4,7 @@
 #include "agent/tool-registry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <map>
 #include <nlohmann/json.hpp>
 
@@ -66,6 +67,36 @@ agent_tool_result make_failure_result(
         retryable,
         std::move(safe_summary),
         std::move(raw_diagnostic));
+}
+
+agent_tool_result make_execution_control_failure_result(
+        const agent_tool_context & context,
+        const agent_tool_call & call) {
+    if (context.execution_control.is_cancel_requested()) {
+        return make_failure_result(
+            call,
+            "tool_call_cancelled",
+            common_tool_failure_class::execution,
+            false,
+            "The tool call was cancelled by the host runtime.",
+            context.execution_control.stop_reason());
+    }
+    if (context.execution_control.is_deadline_exceeded()) {
+        return make_failure_result(
+            call,
+            "tool_call_deadline_exceeded",
+            common_tool_failure_class::timeout,
+            false,
+            "The tool call exceeded the host turn deadline.",
+            context.execution_control.stop_reason());
+    }
+    return {};
+}
+
+uint32_t effective_timeout_ms(
+        const agent_tool_context & context,
+        const common_tool_definition & definition) {
+    return definition.timeout_ms > 0 ? definition.timeout_ms : context.default_timeout_ms;
 }
 
 agent_tool_result normalize_execution_result(
@@ -205,6 +236,11 @@ public:
     agent_tool_result call(
             const agent_tool_call & call,
             std::string & error) override {
+        if (context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(context, call);
+            error = result.raw_diagnostic;
+            return result;
+        }
         if (call_count >= context.max_calls) {
             error = "tool call limit reached";
             return make_failure_result(
@@ -240,7 +276,26 @@ public:
         }
 
         ++call_count;
+        const auto started_at = std::chrono::steady_clock::now();
         const auto execution = registry.execute({call.name, call.arguments_json});
+        if (context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(context, call);
+            error = result.raw_diagnostic;
+            return result;
+        }
+        const uint32_t timeout_ms = effective_timeout_ms(context, definition_it->second);
+        const auto elapsed_ms = (uint32_t) std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started_at).count();
+        if (timeout_ms > 0 && elapsed_ms > timeout_ms) {
+            error = "tool execution exceeded timeout";
+            return make_failure_result(
+                call,
+                "tool_call_timeout",
+                common_tool_failure_class::timeout,
+                false,
+                "The tool call exceeded the configured timeout.",
+                error);
+        }
         auto result = normalize_execution_result(context, definition_it->second, call, execution);
         error = result.ok ? std::string() : result.raw_diagnostic;
         return result;
@@ -310,6 +365,11 @@ public:
     agent_tool_result call(
             const agent_tool_call & call,
             std::string & error) override {
+        if (context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(context, call);
+            error = result.raw_diagnostic;
+            return result;
+        }
         if (call_count >= context.max_calls) {
             error = "tool call limit reached";
             return make_failure_result(
@@ -345,6 +405,7 @@ public:
         }
 
         ++call_count;
+        const auto started_at = std::chrono::steady_clock::now();
         mcp_agent_tool_call_result execution;
         if (!client.call_tool(context, it->second, call.arguments_json, execution, error)) {
             return make_failure_result(
@@ -353,6 +414,23 @@ public:
                 common_tool_failure_class::execution,
                 false,
                 "The MCP tool client failed to execute the requested tool.",
+                error);
+        }
+        if (context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(context, call);
+            error = result.raw_diagnostic;
+            return result;
+        }
+        const auto elapsed_ms = (uint32_t) std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started_at).count();
+        if (context.default_timeout_ms > 0 && elapsed_ms > context.default_timeout_ms) {
+            error = "MCP tool execution exceeded timeout";
+            return make_failure_result(
+                call,
+                "mcp.tool_timeout",
+                common_tool_failure_class::timeout,
+                false,
+                "The MCP tool call exceeded the configured timeout.",
                 error);
         }
 

@@ -82,6 +82,25 @@ int main() {
         return 1;
     }
 
+    agent_tool_context cancelled_context = minimal_context;
+    cancelled_context.execution_control = make_common_agent_runtime_execution_control({});
+    cancelled_context.execution_control.cancellation->request_cancel("smoke cancelled");
+    std::unique_ptr<agent_tool_view> cancelled_view = minimal_provider.resolve_tools(cancelled_context, error);
+    if (!cancelled_view) {
+        std::fprintf(stderr, "cancelled provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto cancelled_result = cancelled_view->call({
+        "call-cancelled",
+        "calculator",
+        R"({"expression":"2 + 2"})",
+    }, error);
+    if (cancelled_result.ok ||
+            cancelled_result.failure_code != "tool_call_cancelled") {
+        std::fprintf(stderr, "cancelled tool call did not return the expected failure\n");
+        return 1;
+    }
+
     native_agent_tool_provider research_provider(
         catalog,
         [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {

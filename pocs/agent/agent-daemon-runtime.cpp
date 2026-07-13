@@ -193,6 +193,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.allow_plan_proposals =
         tool_request.tool_context.allow_policy_gated_writes;
     tool_request.tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    tool_request.tool_context.execution_control = request.execution_control;
     tool_request.tool_context.default_timeout_ms =
         options.tool_timeout_ms > 0
             ? options.tool_timeout_ms

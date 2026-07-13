@@ -103,6 +103,11 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
     if (turn_request.generation_options.n_predict == 0) {
         turn_request.generation_options.n_predict = resident_request.n_predict;
     }
+    if (!turn_request.generation_options.t_max_predict_ms &&
+            request.execution_control.timeout_policy.inference_step_timeout_ms > 0) {
+        turn_request.generation_options.t_max_predict_ms =
+            request.execution_control.timeout_policy.inference_step_timeout_ms;
+    }
     return turn_request;
 }
 

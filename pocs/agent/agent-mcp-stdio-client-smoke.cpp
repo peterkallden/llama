@@ -119,6 +119,25 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_tool_context cancelled_context = read_context;
+    cancelled_context.execution_control = make_common_agent_runtime_execution_control({});
+    std::unique_ptr<agent_tool_view> cancelled_view = provider.resolve_tools(cancelled_context, error);
+    if (!cancelled_view) {
+        std::fprintf(stderr, "failed to resolve cancelled MCP tool view: %s\n", error.c_str());
+        return 1;
+    }
+    cancelled_context.execution_control.cancellation->request_cancel("mcp smoke cancelled");
+    const auto cancelled_result = cancelled_view->call({
+        "call-cancelled",
+        "github_search_issues",
+        R"({"query":"resident inference"})",
+    }, error);
+    if (cancelled_result.ok ||
+            cancelled_result.failure_code != "tool_call_cancelled") {
+        std::fprintf(stderr, "cancelled MCP tool call did not return the expected failure\n");
+        return 1;
+    }
+
     agent_tool_context write_context;
     write_context.request_id = "mcp-stdio-smoke";
     write_context.turn_id = "turn-2";

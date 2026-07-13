@@ -567,6 +567,10 @@ The remaining CLI coupling around embeddings has also been narrowed further. The
 
 Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
 
+The cancellation/timeout seam now also reaches a little deeper into the runtime-owned tool and inference paths. Resolved `agent_tool_context` values now carry the shared execution-control contract, native and MCP-backed tool views fail early when a host cancellation or turn deadline has already fired, and the current runtime checks the same seam again immediately after synchronous tool execution. That is still cooperative rather than preemptive, but it means the provider-backed tool surface now has one host-owned place to report `tool_call_cancelled`, `tool_call_deadline_exceeded`, or timeout-class failures instead of only treating those conditions as outer daemon concerns.
+
+The runtime now also starts mapping inference-step budgets into the existing generation request contract. CLI and resident/session-host assembly set `t_max_predict_ms` from `inference_step_timeout_ms` when configured, so the `server-context` path can begin enforcing bounded generation time through the same generation-options seam it already uses for `n_predict`. This is still only a first slice: active cancellation does not yet safely interrupt every in-flight inference or native tool body, and MCP stdio transport timeouts are not yet enforced as a fully isolated subprocess lifecycle.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.

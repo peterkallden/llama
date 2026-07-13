@@ -49,6 +49,15 @@ agent_tool_context make_agent_cli_tool_context(
     tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
     tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
     tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    tool_context.default_timeout_ms = options.tool_timeout_ms > 0 ? options.tool_timeout_ms : tool_context.default_timeout_ms;
+    tool_context.execution_control = make_common_agent_runtime_execution_control({
+        options.turn_timeout_ms,
+        options.inference_step_timeout_ms,
+        options.tool_timeout_ms,
+        options.mcp_connect_timeout_ms,
+        options.mcp_request_timeout_ms,
+        options.mcp_shutdown_timeout_ms,
+    });
     return tool_context;
 }
 
@@ -334,6 +343,9 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     });
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;
+    if (!turn_request.generation_options.t_max_predict_ms && options.inference_step_timeout_ms > 0) {
+        turn_request.generation_options.t_max_predict_ms = options.inference_step_timeout_ms;
+    }
     turn_request.memory_scope = memory_scope;
     turn_request.memory_enabled = memory_enabled;
     turn_request.fallback_reason = fallback_reason;
