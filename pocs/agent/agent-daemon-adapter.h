@@ -9,6 +9,7 @@
 #include "agent-runtime-execution.h"
 #include "agent-plan-orchestration.h"
 
+#include <cstdint>
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
@@ -50,6 +51,12 @@ struct daemon_options {
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t max_turn_seconds = 0;
+    size_t turn_timeout_ms = 0;
+    uint32_t inference_step_timeout_ms = 0;
+    uint32_t tool_timeout_ms = 1000;
+    uint32_t mcp_connect_timeout_ms = 0;
+    uint32_t mcp_request_timeout_ms = 0;
+    uint32_t mcp_shutdown_timeout_ms = 0;
 };
 
 class common_agent_daemon_dispatcher;

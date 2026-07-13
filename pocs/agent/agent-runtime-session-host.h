@@ -2,6 +2,7 @@
 
 #include "agent-runtime-turn.h"
 #include "agent-runtime-tooling.h"
+#include "agent-runtime-control.h"
 #include "agent/agent-contract.h"
 
 #include <functional>
@@ -38,6 +39,7 @@ struct common_agent_runtime_session_host_turn_request {
     common_plan_scope plan_scope = common_plan_scope::turn;
     int n_predict = 0;
     std::optional<common_memory_policy_pack> policy_pack;
+    common_agent_runtime_execution_control execution_control;
 };
 
 struct common_agent_runtime_session_host_turn_result {

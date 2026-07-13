@@ -70,6 +70,7 @@ struct common_agent_daemon_status {
     size_t session_count = 0;
     std::string active_request_id;
     std::string active_turn_id;
+    bool active_cancel_requested = false;
     std::vector<common_agent_runtime_session_descriptor> sessions;
 };
 

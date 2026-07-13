@@ -242,7 +242,7 @@ That lifecycle surface is now also enforced inside the service itself. Once shut
 
 The dispatcher/protocol path now also carries a small status snapshot on non-status responses, including lifecycle replies such as `shutdown`. That means the current foreground/admin path can observe `draining` directly from the shutdown response instead of only inferring it later from booleans or stderr timing.
 
-`cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while attempts to cancel the currently active turn are rejected with a `turn.cancel_rejected` daemon event plus the active request/turn identity. That is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end cancellation token or safe active-turn abort semantics, and the current foreground JSONL transport is still request/response serial from one stdin stream.
+`cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while cancellation against the currently active turn now records a host-owned cancel request against that turn's execution-control state and returns `turn_cancel_requested` plus the active request/turn identity. That is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end safe abort path, but the daemon/session seam now has one shared place for cancellation identity, turn deadlines, and later timeout propagation.
 
 One concrete "full current functionality" foreground run looks like this on Windows/PowerShell:
 
@@ -298,7 +298,13 @@ One concrete "full current functionality" foreground run looks like this on Wind
   "limits": {
     "queue_capacity": 8,
     "max_tool_rounds": 2,
-    "max_turn_seconds": 120
+    "max_turn_seconds": 120,
+    "turn_timeout_ms": 120000,
+    "inference_step_timeout_ms": 30000,
+    "tool_timeout_ms": 5000,
+    "mcp_connect_timeout_ms": 3000,
+    "mcp_request_timeout_ms": 10000,
+    "mcp_shutdown_timeout_ms": 1000
   }
 }
 '@ | Set-Content .\work\agent-host.json -Encoding utf8
@@ -795,7 +801,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 5. Extend cancellation, timeout and event contracts before async tools.
 
-   Synchronous tools are acceptable for the current slice. The daemon now has a small internal event list and queued-turn cancellation contract, but workers should still wait until active-turn cancellation, timeout, retry, ordering and richer failure reporting semantics are explicit.
+   Synchronous tools are still acceptable for the current slice. The daemon/session seam now has a shared execution-control contract plus active-turn cancellation requests and configured timeout budgets, but workers should still wait until those controls propagate all the way into inference, tool execution, MCP requests, retry policy, ordering, and richer failure reporting.
 
 6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
 

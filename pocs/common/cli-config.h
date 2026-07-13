@@ -6,6 +6,7 @@
 #include "plan/plan-store.h"
 #endif
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,6 +77,12 @@ struct args {
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;
     std::string agent_inference_backend = "cli";
+    size_t turn_timeout_ms = 0;
+    uint32_t inference_step_timeout_ms = 0;
+    uint32_t tool_timeout_ms = 1000;
+    uint32_t mcp_connect_timeout_ms = 0;
+    uint32_t mcp_request_timeout_ms = 0;
+    uint32_t mcp_shutdown_timeout_ms = 0;
 };
 
 bool resolve_agent_profile(args & a, std::string & error);

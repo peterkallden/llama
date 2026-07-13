@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-daemon-service.h"
+#include "agent-runtime-control.h"
 
 #include <condition_variable>
 #include <deque>
@@ -65,4 +66,5 @@ private:
     bool stop_requested = false;
     std::string active_request_id;
     std::string active_turn_id;
+    std::shared_ptr<common_agent_runtime_cancellation_state> active_cancellation;
 };

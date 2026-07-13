@@ -179,22 +179,26 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                     (command.cancel.has_value() &&
                     !command.cancel->target_turn_id.empty() &&
                     command.cancel->target_turn_id == active_turn_id)) {
-                error = "active turn cancellation is not supported yet";
-                result.ok = false;
+                if (active_cancellation) {
+                    active_cancellation->request_cancel("turn cancelled by host");
+                }
+                result.ok = true;
                 result.response_kind = common_agent_daemon_response_kind::lifecycle;
-                result.event = "turn_cancel_rejected";
+                result.event = "turn_cancel_requested";
                 result.status.active_request_id = active_request_id;
                 result.status.active_turn_id = active_turn_id;
-                result.error = error;
+                result.status.active_cancel_requested =
+                    active_cancellation && active_cancellation->is_cancelled();
                 append_daemon_event(
                     result,
-                    "turn.cancel_rejected",
+                    "turn.cancel_requested",
                     command.request_id,
                     !command.cancel.has_value() || command.cancel->target_turn_id.empty()
                         ? active_turn_id
                         : command.cancel->target_turn_id,
-                    error);
-                return false;
+                    "active turn cancellation requested");
+                error.clear();
+                return true;
             }
         }
     }
@@ -261,6 +265,8 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     const size_t queued_count = queue.size();
     status.active_request_id = active_request_id;
     status.active_turn_id = active_turn_id;
+    status.active_cancel_requested =
+        active_cancellation && active_cancellation->is_cancelled();
     status.queued_command_count = queued_count;
     status.worker_running = worker_running;
     status.accepting_commands = accepting_commands;
@@ -294,14 +300,21 @@ void common_agent_daemon_dispatcher::worker_loop() {
             item = queue.front();
             queue.pop_front();
             if (item->command.type == common_agent_daemon_command_type::run_turn) {
+                if (!item->command.turn->request.execution_control.cancellation) {
+                    item->command.turn->request.execution_control =
+                        make_common_agent_runtime_execution_control(
+                            item->command.turn->request.execution_control.timeout_policy);
+                }
                 active_request_id = item->command.request_id;
                 active_turn_id =
                     item->command.turn.has_value()
                         ? item->command.turn->request.turn_id
                         : std::string();
+                active_cancellation = item->command.turn->request.execution_control.cancellation;
             } else {
                 active_request_id.clear();
                 active_turn_id.clear();
+                active_cancellation.reset();
             }
         }
 
@@ -328,6 +341,7 @@ void common_agent_daemon_dispatcher::worker_loop() {
             std::lock_guard<std::mutex> lock(mutex);
             active_request_id.clear();
             active_turn_id.clear();
+            active_cancellation.reset();
             if (service.shutdown_requested()) {
                 accepting_commands = false;
                 stop_requested = true;

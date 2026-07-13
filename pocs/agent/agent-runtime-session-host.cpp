@@ -215,6 +215,12 @@ bool common_agent_runtime_session_host::run_turn(
         result.error = error;
         return false;
     }
+    if (request.execution_control.should_stop()) {
+        result.cancelled = true;
+        result.error = request.execution_control.stop_reason();
+        error = result.error;
+        return false;
+    }
 
     bool runtime_reused = false;
     if (!ensure_runtime(request, runtime_reused, error)) {
@@ -225,6 +231,12 @@ bool common_agent_runtime_session_host::run_turn(
     common_agent_runtime_tooling resolved_tooling;
     if (!resolve_tooling(runtime.get(), request, resolved_tooling, error)) {
         result.error = error;
+        return false;
+    }
+    if (request.execution_control.should_stop()) {
+        result.cancelled = true;
+        result.error = request.execution_control.stop_reason();
+        error = result.error;
         return false;
     }
     runtime->set_tooling(std::move(resolved_tooling));
@@ -257,6 +269,10 @@ bool common_agent_runtime_session_host::run_turn(
     result.memory_learning_related_count = agent_result.memory_learning_related_count;
     result.memory_learning_summary = agent_result.memory_learning_summary;
     result.trace = std::move(agent_result.trace);
+    if (!result.ok && request.execution_control.should_stop()) {
+        result.cancelled = true;
+        error = request.execution_control.stop_reason();
+    }
     compact_session_policy_pack_after_reflection(agent_result, result);
     result.error = ok ? std::string() : error;
     return ok;

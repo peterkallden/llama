@@ -168,7 +168,17 @@ bool parse_agent_host_config_json(
         const auto & limits = parsed["limits"];
         read_optional(limits, "queue_capacity", config.queue_capacity);
         read_optional(limits, "max_turn_seconds", config.max_turn_seconds);
+        read_optional(limits, "turn_timeout_ms", config.turn_timeout_ms);
+        read_optional(limits, "inference_step_timeout_ms", config.inference_step_timeout_ms);
+        read_optional(limits, "tool_timeout_ms", config.tool_timeout_ms);
+        read_optional(limits, "mcp_connect_timeout_ms", config.mcp_connect_timeout_ms);
+        read_optional(limits, "mcp_request_timeout_ms", config.mcp_request_timeout_ms);
+        read_optional(limits, "mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms);
         read_optional(limits, "max_tool_rounds", config.max_tool_rounds);
+    }
+
+    if (config.turn_timeout_ms == 0 && config.max_turn_seconds > 0) {
+        config.turn_timeout_ms = config.max_turn_seconds * 1000;
     }
 
     if (!validate_agent_host_config(config, error)) {
@@ -258,6 +268,12 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"limits", {
             {"queue_capacity", config.queue_capacity},
             {"max_turn_seconds", config.max_turn_seconds},
+            {"turn_timeout_ms", config.turn_timeout_ms},
+            {"inference_step_timeout_ms", config.inference_step_timeout_ms},
+            {"tool_timeout_ms", config.tool_timeout_ms},
+            {"mcp_connect_timeout_ms", config.mcp_connect_timeout_ms},
+            {"mcp_request_timeout_ms", config.mcp_request_timeout_ms},
+            {"mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms},
             {"max_tool_rounds", config.max_tool_rounds},
         }},
     };
@@ -321,6 +337,12 @@ void apply_agent_host_config_to_daemon_options(
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.max_turn_seconds = config.max_turn_seconds;
+    options.turn_timeout_ms = config.turn_timeout_ms;
+    options.inference_step_timeout_ms = config.inference_step_timeout_ms;
+    options.tool_timeout_ms = config.tool_timeout_ms;
+    options.mcp_connect_timeout_ms = config.mcp_connect_timeout_ms;
+    options.mcp_request_timeout_ms = config.mcp_request_timeout_ms;
+    options.mcp_shutdown_timeout_ms = config.mcp_shutdown_timeout_ms;
 
     agent_host_mcp_provider_config provider;
     std::string ignored_error;
@@ -355,6 +377,12 @@ void apply_agent_host_config_to_args(
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
     options.max_tool_rounds = config.max_tool_rounds;
+    options.turn_timeout_ms = config.turn_timeout_ms;
+    options.inference_step_timeout_ms = config.inference_step_timeout_ms;
+    options.tool_timeout_ms = config.tool_timeout_ms;
+    options.mcp_connect_timeout_ms = config.mcp_connect_timeout_ms;
+    options.mcp_request_timeout_ms = config.mcp_request_timeout_ms;
+    options.mcp_shutdown_timeout_ms = config.mcp_shutdown_timeout_ms;
     options.memory_learn_show_candidate = config.memory_learn_show_candidate;
     options.memory_learn_min_confidence = config.memory_learn_min_confidence;
     options.memory_learn_min_reuse = config.memory_learn_min_reuse;

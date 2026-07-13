@@ -94,6 +94,16 @@ bool parse_agent_daemon_turn_request(
     request.mode = default_mode;
     request.memory_scope = common_memory_scope::session;
     request.plan_scope = common_plan_scope::turn;
+    request.execution_control = make_common_agent_runtime_execution_control({
+        options.turn_timeout_ms > 0
+            ? options.turn_timeout_ms
+            : (options.max_turn_seconds > 0 ? options.max_turn_seconds * 1000 : size_t(0)),
+        options.inference_step_timeout_ms,
+        options.tool_timeout_ms,
+        options.mcp_connect_timeout_ms,
+        options.mcp_request_timeout_ms,
+        options.mcp_shutdown_timeout_ms,
+    });
 
     const std::string mode_value = parsed.value("mode", options.default_mode);
     if (!parse_mode(mode_value, request.mode)) {
@@ -218,6 +228,9 @@ void append_agent_daemon_status_snapshot(
     }
     if (!status.active_turn_id.empty()) {
         response["active_turn_id"] = status.active_turn_id;
+    }
+    if (status.active_cancel_requested) {
+        response["active_cancel_requested"] = true;
     }
     if (!include_sessions) {
         return;
