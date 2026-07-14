@@ -309,6 +309,7 @@ bool common_agent_runtime_session_host::run_turn(
     result.trace_count = agent_result.trace.size();
     result.memory_learning_related_count = agent_result.memory_learning_related_count;
     result.memory_learning_summary = agent_result.memory_learning_summary;
+    result.events = std::move(agent_result.events);
     result.trace = std::move(agent_result.trace);
     if (!result.ok && request.execution_control.should_stop()) {
         result.cancelled = true;

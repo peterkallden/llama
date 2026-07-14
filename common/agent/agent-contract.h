@@ -27,6 +27,9 @@ enum class common_agent_event_type {
     tool_rejected,
     plan_created,
     plan_updated,
+    observation_recorded,
+    resource_created,
+    resource_attached,
     reflection_completed,
     response_revised,
 };
@@ -101,6 +104,10 @@ struct common_agent_event {
     std::string detail;
     std::string memory_id;
     std::optional<std::string> plan_id;
+    std::string step_id;
+    std::string observation_id;
+    std::string tool_name;
+    std::string resource_uri;
 };
 
 // Native, evidence-addressable events that may inform post-turn learning.

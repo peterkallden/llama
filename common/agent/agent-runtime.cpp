@@ -33,6 +33,71 @@ static void append_trace(
     });
 }
 
+static void append_event(
+        common_agent_result & result,
+        common_agent_event_type type,
+        std::string detail,
+        std::string memory_id = {},
+        std::optional<std::string> plan_id = std::nullopt,
+        std::string step_id = {},
+        std::string observation_id = {},
+        std::string tool_name = {},
+        std::string resource_uri = {}) {
+    result.events.push_back({
+        type,
+        std::move(detail),
+        std::move(memory_id),
+        std::move(plan_id),
+        std::move(step_id),
+        std::move(observation_id),
+        std::move(tool_name),
+        std::move(resource_uri),
+    });
+}
+
+static void append_observation_and_resource_events(
+        common_agent_result & result,
+        const std::string & detail,
+        const std::string & plan_id,
+        const std::string & step_id,
+        const std::string & observation_id,
+        const std::string & tool_name,
+        const std::vector<common_runtime_resource_ref> & resource_refs) {
+    append_event(
+        result,
+        common_agent_event_type::observation_recorded,
+        detail,
+        {},
+        plan_id,
+        step_id,
+        observation_id,
+        tool_name);
+    for (const auto & resource_ref : resource_refs) {
+        if (resource_ref.uri.rfind("agent-resource://", 0) == 0) {
+            append_event(
+                result,
+                common_agent_event_type::resource_created,
+                "host-owned resource recorded for observation",
+                {},
+                plan_id,
+                step_id,
+                observation_id,
+                tool_name,
+                resource_ref.uri);
+        }
+        append_event(
+            result,
+            common_agent_event_type::resource_attached,
+            "resource attached to observation",
+            {},
+            plan_id,
+            step_id,
+            observation_id,
+            tool_name,
+            resource_ref.uri);
+    }
+}
+
 static bool apply_request_objective(const common_agent_request & request, common_plan_state & plan, std::string & error) {
     const auto bounded = [](const std::string & value) { return value.size() <= 512; };
     const auto purpose = request.objective && !request.objective->purpose.empty() ? request.objective->purpose : request.prompt;
@@ -184,7 +249,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
     };
     for (const auto & hit : request.memories) {
         result.memory_ids.push_back(hit.memory.id);
-        result.events.push_back({common_agent_event_type::memory_retrieved, "memory supplied to agent runtime", hit.memory.id, std::nullopt});
+        append_event(result, common_agent_event_type::memory_retrieved, "memory supplied to agent runtime", hit.memory.id);
         append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
             "memory supplied to runtime", {}, {}, {}, hit.memory.id);
     }
@@ -198,7 +263,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 return result;
             }
             plan = *existing;
-            result.events.push_back({common_agent_event_type::plan_updated, "existing plan resumed", {}, plan.id});
+            append_event(result, common_agent_event_type::plan_updated, "existing plan resumed", {}, plan.id);
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "existing plan resumed", plan.id);
         }
@@ -242,7 +307,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         proposal.plan.turn_id = request.turn_id;
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
-        result.events.push_back({common_agent_event_type::plan_created, "plan created", {}, plan.id});
+        append_event(result, common_agent_event_type::plan_created, "plan created", {}, plan.id);
         append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::started,
             "plan created", plan.id);
         for (const auto & detail : initial_guardrail_events) {
@@ -255,7 +320,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             op.plan_id = plan.id;
             op.expected_version = plan.version;
             if (!store.apply(op, plan, error)) { result.error = error; return result; }
-            result.events.push_back({common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id});
+            append_event(result, common_agent_event_type::plan_updated, "initial plan operation applied", {}, plan.id);
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "initial plan operation applied", plan.id,
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
@@ -288,7 +353,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (!store.apply(observed, plan, error)) { result.error = error; return result; }
         result.learning_signals.push_back({common_learning_signal_type::user_correction, plan.id, {}, {}, observation_id,
             "explicit user correction supplied by the caller"});
-        result.events.push_back({common_agent_event_type::plan_updated, "explicit user correction recorded", {}, plan.id});
+        append_event(result, common_agent_event_type::plan_updated, "explicit user correction recorded", {}, plan.id);
+        append_observation_and_resource_events(
+            result,
+            "explicit user correction recorded",
+            plan.id,
+            {},
+            observation_id,
+            "user_correction",
+            {});
         append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
             "explicit user correction recorded", plan.id, {}, {}, observation_id);
     }
@@ -397,7 +470,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                 complete.reason_summary = "reasoning step completed";
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
                 executed_step_ids.insert(step.id);
-                result.events.push_back({common_agent_event_type::plan_updated, "reasoning observation recorded", {}, plan.id});
+                append_event(result, common_agent_event_type::plan_updated, "reasoning observation recorded", {}, plan.id);
+                append_observation_and_resource_events(
+                    result,
+                    "reasoning observation recorded",
+                    plan.id,
+                    step.id,
+                    "reasoning:" + step.id,
+                    "reasoning",
+                    {});
                 append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                     "reasoning observation recorded", plan.id, step.id, {}, "reasoning:" + step.id);
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
@@ -451,6 +532,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     tool_call->name, failure_observation_id, "registered tool validation failed"});
                 result.events.push_back({common_agent_event_type::tool_rejected, validation_error, {}, plan.id});
                 result.events.push_back({common_agent_event_type::plan_updated, "tool validation failure recorded for repair", {}, plan.id});
+                append_observation_and_resource_events(
+                    result,
+                    "tool validation failure recorded",
+                    plan.id,
+                    tool_step_id,
+                    failure_observation_id,
+                    tool_call->name,
+                    {});
                 append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
                     validation_error, plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
@@ -486,6 +575,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
                     tool_call->name, failure_observation_id, "registered tool failed"});
                 result.events.push_back({common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id});
                 result.events.push_back({common_agent_event_type::plan_updated, "tool failure recorded for repair", {}, plan.id});
+                append_observation_and_resource_events(
+                    result,
+                    "tool failure recorded",
+                    plan.id,
+                    tool_step_id,
+                    failure_observation_id,
+                    tool_call->name,
+                    execution.resource_refs);
                 append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
                     execution.safe_summary, plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
@@ -516,7 +613,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             }
             ++tool_batches;
             result.events.push_back({common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
-            result.events.push_back({common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id});
+            append_event(result, common_agent_event_type::plan_updated, "tool observation recorded", {}, plan.id);
+            append_observation_and_resource_events(
+                result,
+                "tool observation recorded",
+                plan.id,
+                tool_step_id,
+                observed.observation->id,
+                tool_call->name,
+                execution.resource_refs);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::succeeded,
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
@@ -573,6 +678,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
             if (store.apply(observed, plan, error)) {
                 result.learning_signals.push_back({common_learning_signal_type::reflection_hint, plan.id, {}, {}, observation_id,
                     "reflection supplied a bounded reusable learning hint"});
+                append_observation_and_resource_events(
+                    result,
+                    "reflection learning hint recorded",
+                    plan.id,
+                    {},
+                    observation_id,
+                    "reflection_hint",
+                    {});
                 append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                     "reflection learning hint recorded", plan.id, {}, {}, observation_id);
             } else {

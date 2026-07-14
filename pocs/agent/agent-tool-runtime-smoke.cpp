@@ -389,9 +389,33 @@ int main() {
         return 1;
     }
     bool saw_plan_create = false;
+    bool saw_plan_created_event = false;
+    bool saw_observation_event = false;
+    bool saw_resource_attached_event = false;
+    bool saw_resource_created_event = false;
     bool saw_tool_success = false;
     bool saw_response_complete = false;
     bool saw_observation_resource = false;
+    for (const auto & event : result.events) {
+        if (event.type == common_agent_event_type::plan_created &&
+                event.plan_id && *event.plan_id == "runtime-smoke-plan") {
+            saw_plan_created_event = true;
+        }
+        if (event.type == common_agent_event_type::observation_recorded &&
+                event.tool_name == "web_search" &&
+                !event.observation_id.empty()) {
+            saw_observation_event = true;
+        }
+        if (event.type == common_agent_event_type::resource_created &&
+                event.resource_uri.rfind("agent-resource://", 0) == 0) {
+            saw_resource_created_event = true;
+        }
+        if (event.type == common_agent_event_type::resource_attached &&
+                event.tool_name == "web_search" &&
+                event.resource_uri.rfind("agent-resource://", 0) == 0) {
+            saw_resource_attached_event = true;
+        }
+    }
     for (const auto & entry : result.trace) {
         if (entry.stage == common_runtime_trace_stage::plan &&
                 entry.kind == common_runtime_trace_kind::started &&
@@ -421,6 +445,13 @@ int main() {
     }
     if (!saw_plan_create || !saw_tool_success || !saw_response_complete || !saw_observation_resource) {
         std::fprintf(stderr, "runtime trace did not include expected plan/tool/response history\n");
+        return 1;
+    }
+    if (!saw_plan_created_event ||
+            !saw_observation_event ||
+            !saw_resource_created_event ||
+            !saw_resource_attached_event) {
+        std::fprintf(stderr, "runtime events did not include expected direct plan/observation/resource signals\n");
         return 1;
     }
 

@@ -59,6 +59,7 @@ struct common_agent_runtime_session_host_turn_result {
     size_t trace_count = 0;
     size_t memory_learning_related_count = 0;
     std::string memory_learning_summary;
+    std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
     std::string error;
 };
