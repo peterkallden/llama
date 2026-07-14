@@ -31,23 +31,17 @@ bool common_agent_runtime_session_manager::run_lane_turn(
         const common_agent_runtime_session_manager_turn_request & request,
         common_agent_runtime_session_manager_turn_result & result,
         std::string & error) {
-    lane.active_turn = common_agent_runtime_turn_execution{
-        request.request_id,
-        request.turn.turn_id,
-        request.turn.mode,
-        common_agent_runtime_turn_phase::queued,
-        common_agent_runtime_turn_disposition::continue_immediately,
-        request.turn.execution_control.is_cancel_requested(),
-        request.turn.execution_control.cancellation,
-    };
-
-    struct lane_guard {
-        common_agent_runtime_session_lane & lane;
-
-        ~lane_guard() {
-            lane.active_turn.reset();
-        }
-    } guard{lane};
+    if (!lane.active_turn.has_value()) {
+        lane.active_turn = common_agent_runtime_turn_execution{
+            request.request_id,
+            request.turn.turn_id,
+            request.turn.mode,
+            common_agent_runtime_turn_phase::queued,
+            common_agent_runtime_turn_disposition::continue_immediately,
+            request.turn.execution_control.is_cancel_requested(),
+            request.turn.execution_control.cancellation,
+        };
+    }
 
     const auto disposition = advance_lane_turn(lane, request, result, error);
 
@@ -57,6 +51,9 @@ bool common_agent_runtime_session_manager::run_lane_turn(
     if (disposition == common_agent_runtime_turn_disposition::completed) {
         lane.active_turn->phase = common_agent_runtime_turn_phase::completed;
         lane.last_turn_phase = lane.active_turn->phase;
+    }
+    if (disposition != common_agent_runtime_turn_disposition::continue_immediately) {
+        lane.active_turn.reset();
     }
 
     return disposition == common_agent_runtime_turn_disposition::completed;
@@ -138,6 +135,17 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
 bool common_agent_runtime_session_manager::drain_lane(
         common_agent_runtime_session_lane & lane,
         std::string & error) {
+    const auto resolve_lane_error = [](
+            const common_agent_runtime_session_lane_message & message) {
+        if (message.error != nullptr && !message.error->empty()) {
+            return *message.error;
+        }
+        if (message.result != nullptr && !message.result->error.empty()) {
+            return message.result->error;
+        }
+        return std::string();
+    };
+
     while (!lane.mailbox.empty()) {
         if (lane.active_turn.has_value()) {
             error = "session already has an active turn";
@@ -157,12 +165,12 @@ bool common_agent_runtime_session_manager::drain_lane(
                 break;
             }
             if (!lane.active_turn.has_value()) {
-                error = *message.error;
+                error = resolve_lane_error(message);
                 return false;
             }
             const auto disposition = lane.active_turn->disposition;
             if (disposition != common_agent_runtime_turn_disposition::continue_immediately) {
-                error = *message.error;
+                error = resolve_lane_error(message);
                 return false;
             }
         }
@@ -249,6 +257,7 @@ bool common_agent_runtime_session_manager::request_cancel_active_turn(
             lane.active_turn->request_id,
             lane.active_turn->turn_id,
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
+            common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
         };
 
@@ -282,6 +291,7 @@ std::optional<common_agent_runtime_active_turn_descriptor> common_agent_runtime_
             lane.active_turn->request_id,
             lane.active_turn->turn_id,
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
+            common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
         };
     }
@@ -306,6 +316,9 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
             entry.second.active_turn.has_value() ? entry.second.active_turn->turn_id : std::string(),
             entry.second.active_turn.has_value()
                 ? common_agent_runtime_turn_phase_name(entry.second.active_turn->phase)
+                : std::string(),
+            entry.second.active_turn.has_value()
+                ? common_agent_runtime_turn_disposition_name(entry.second.active_turn->disposition)
                 : std::string(),
             entry.second.active_turn.has_value() && entry.second.active_turn->cancellation_requested,
             entry.second.last_turn_id,

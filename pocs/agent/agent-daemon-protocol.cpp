@@ -163,6 +163,7 @@ json serialize_agent_daemon_session_status(
         session_json["active_request_id"] = session.active_request_id;
         session_json["active_turn_id"] = session.active_turn_id;
         session_json["active_turn_phase"] = session.active_turn_phase;
+        session_json["active_turn_disposition"] = session.active_turn_disposition;
         if (session.active_cancel_requested) {
             session_json["active_cancel_requested"] = true;
         }

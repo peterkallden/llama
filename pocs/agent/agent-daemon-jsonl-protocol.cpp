@@ -246,6 +246,7 @@ bool parse_agent_daemon_jsonl_status_response(
                 item.value("active_request_id", std::string()),
                 item.value("active_turn_id", std::string()),
                 item.value("active_turn_phase", std::string()),
+                item.value("active_turn_disposition", std::string()),
                 item.value("active_cancel_requested", false),
                 item.value("last_turn_id", std::string()),
                 item.value("last_turn_phase", std::string()),

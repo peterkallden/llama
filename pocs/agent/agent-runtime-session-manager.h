@@ -31,6 +31,7 @@ struct common_agent_runtime_session_descriptor {
     std::string active_request_id;
     std::string active_turn_id;
     std::string active_turn_phase;
+    std::string active_turn_disposition;
     bool active_cancel_requested = false;
     std::string last_turn_id;
     std::string last_turn_phase;
@@ -51,6 +52,7 @@ struct common_agent_runtime_active_turn_descriptor {
     std::string request_id;
     std::string turn_id;
     std::string phase;
+    std::string disposition;
     bool cancellation_requested = false;
 };
 

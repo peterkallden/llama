@@ -17,31 +17,27 @@ int main() {
     session_policy_pack.id = "session-policy-a";
     session_policy_pack.purpose = "Keep this session on the host-owned policy path.";
 
-    auto call_count = std::make_shared<int>(0);
-    common_agent_runtime_session_manager manager(make_agent_runtime_session_manager_config({
+    common_agent_runtime_session_manager_build_config manager_build_config = {
         memory_store,
         plan_store,
-        {
-            "",
-            "",
-            "",
-            "",
-            std::nullopt,
-            "fake.gguf",
-            32,
-            0,
-            false,
-            "server-context",
-            common_memory_scope::session,
-            common_plan_scope::turn,
-        },
-        {},
-        {},
-        {},
-        common_memory_scope::session,
+    };
+    manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
         false,
-        {},
-        {},
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+
+    auto call_count = std::make_shared<int>(0);
+    manager_build_config.tooling_resolver =
         [call_count](
                 const common_agent_runtime_resident_runtime *,
                 const common_agent_runtime_session_host_turn_request & request,
@@ -51,8 +47,13 @@ int main() {
             ++(*call_count);
             error = "resolver-call=" + std::to_string(*call_count) + " turn=" + request.turn_id;
             return false;
-        },
-    }));
+        };
+    auto manager_config = make_agent_runtime_session_manager_config(std::move(manager_build_config));
+    if (!manager_config.tooling_resolver) {
+        std::fprintf(stderr, "session manager smoke lost the tooling resolver while building config\n");
+        return 1;
+    }
+    common_agent_runtime_session_manager manager(std::move(manager_config));
 
     std::string error;
     common_agent_runtime_session_manager_turn_result first_result;
@@ -76,7 +77,12 @@ int main() {
         return 1;
     }
     if (error.find("resolver-call=1 turn=turn-1") == std::string::npos) {
-        std::fprintf(stderr, "first resolver failure did not preserve diagnostics: %s\n", error.c_str());
+        std::fprintf(
+            stderr,
+            "first resolver failure did not preserve diagnostics: error='%s' result.error='%s' call_count=%d\n",
+            error.c_str(),
+            first_result.error.c_str(),
+            *call_count);
         return 1;
     }
 
@@ -164,30 +170,25 @@ int main() {
     auto active_entered_future = active_entered->get_future();
     auto active_signal_sent = std::make_shared<bool>(false);
 
-    common_agent_runtime_session_manager active_manager(make_agent_runtime_session_manager_config({
+    common_agent_runtime_session_manager_build_config active_manager_build_config = {
         memory_store,
         plan_store,
-        {
-            "",
-            "",
-            "",
-            "",
-            std::nullopt,
-            "fake.gguf",
-            32,
-            0,
-            false,
-            "server-context",
-            common_memory_scope::session,
-            common_plan_scope::turn,
-        },
-        {},
-        {},
-        {},
-        common_memory_scope::session,
+    };
+    active_manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
         false,
-        {},
-        {},
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    active_manager_build_config.tooling_resolver =
         [active_entered, active_signal_sent](
                 const common_agent_runtime_resident_runtime *,
                 const common_agent_runtime_session_host_turn_request & request,
@@ -203,8 +204,13 @@ int main() {
             tooling = {};
             error.clear();
             return true;
-        },
-    }));
+        };
+    auto active_manager_config = make_agent_runtime_session_manager_config(std::move(active_manager_build_config));
+    if (!active_manager_config.tooling_resolver) {
+        std::fprintf(stderr, "session manager active-turn smoke lost the tooling resolver while building config\n");
+        return 1;
+    }
+    common_agent_runtime_session_manager active_manager(std::move(active_manager_config));
 
     auto active_control = make_common_agent_runtime_execution_control({});
     common_agent_runtime_session_manager_turn_result active_result;
@@ -237,8 +243,16 @@ int main() {
     if (!active_turn.has_value() ||
             active_turn->request_id != "request-3" ||
             active_turn->turn_id != "turn-3" ||
-            active_turn->phase != "preparing") {
-        std::fprintf(stderr, "session manager did not surface the active turn descriptor\n");
+            (active_turn->phase != "preparing" &&
+             active_turn->phase != "awaiting_inference") ||
+            active_turn->disposition != "continue_immediately") {
+        std::fprintf(
+            stderr,
+            "session manager did not surface the active turn descriptor: request='%s' turn='%s' phase='%s' disposition='%s'\n",
+            active_turn.has_value() ? active_turn->request_id.c_str() : "",
+            active_turn.has_value() ? active_turn->turn_id.c_str() : "",
+            active_turn.has_value() ? active_turn->phase.c_str() : "",
+            active_turn.has_value() ? active_turn->disposition.c_str() : "");
         return 1;
     }
 
@@ -267,8 +281,10 @@ int main() {
 
     const auto active_sessions = active_manager.list_sessions();
     if (active_sessions.size() != 1 ||
+            active_sessions[0].active_turn_disposition != "" ||
             active_sessions[0].last_turn_id != "turn-3" ||
-            active_sessions[0].last_turn_phase != "cancelled") {
+            active_sessions[0].last_turn_phase != "cancelled" ||
+            active_sessions[0].last_turn_disposition != "cancelled") {
         std::fprintf(stderr, "session manager active-turn smoke did not retain cancelled last-turn diagnostics\n");
         return 1;
     }
