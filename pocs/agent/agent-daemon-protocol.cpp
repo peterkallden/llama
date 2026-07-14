@@ -238,13 +238,22 @@ void append_agent_daemon_status_snapshot(
     response["queued_commands"] = status.queued_command_count;
     response["max_queue_size"] = status.max_queue_size;
     response["queue_capacity_remaining"] = status.queue_capacity_remaining;
-    if (!status.active_request_id.empty()) {
+    const auto * active_turn = status.active_turn.has_value()
+        ? &*status.active_turn
+        : nullptr;
+    if (active_turn != nullptr) {
+        response["active_request_id"] = active_turn->request_id;
+        response["active_turn_id"] = active_turn->turn_id;
+        response["active_turn_phase"] = active_turn->phase;
+        response["active_turn_disposition"] = active_turn->disposition;
+    } else if (!status.active_request_id.empty()) {
         response["active_request_id"] = status.active_request_id;
-    }
-    if (!status.active_turn_id.empty()) {
         response["active_turn_id"] = status.active_turn_id;
+        response["active_turn_phase"] = status.active_turn_phase;
+        response["active_turn_disposition"] = status.active_turn_disposition;
     }
-    if (status.active_cancel_requested) {
+    if ((active_turn != nullptr && active_turn->cancellation_requested) ||
+            status.active_cancel_requested) {
         response["active_cancel_requested"] = true;
     }
     if (!include_sessions) {

@@ -170,6 +170,10 @@ int main() {
                 {"queued_commands", 0},
                 {"max_queue_size", 8},
                 {"queue_capacity_remaining", 8},
+                {"active_request_id", "request-a"},
+                {"active_turn_id", "turn-active"},
+                {"active_turn_phase", "awaiting_inference"},
+                {"active_turn_disposition", "continue_immediately"},
                 {"session_keys", json::array({
                     {
                         {"namespace_id", "namespace-a"},
@@ -193,6 +197,10 @@ int main() {
             error) ||
             status_response.state != "ready" ||
             status_response.sessions != 1 ||
+            status_response.active_request_id != "request-a" ||
+            status_response.active_turn_id != "turn-active" ||
+            status_response.active_turn_phase != "awaiting_inference" ||
+            status_response.active_turn_disposition != "continue_immediately" ||
             status_response.session_keys.size() != 1 ||
             status_response.session_keys[0].policy_pack_id != "pack-a" ||
             status_response.session_keys[0].active_request_id != "request-a" ||

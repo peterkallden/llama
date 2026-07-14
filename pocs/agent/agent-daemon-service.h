@@ -57,6 +57,14 @@ struct common_agent_daemon_event {
     std::string detail;
 };
 
+struct common_agent_daemon_active_turn_status {
+    std::string request_id;
+    std::string turn_id;
+    std::string phase;
+    std::string disposition;
+    bool cancellation_requested = false;
+};
+
 struct common_agent_daemon_status {
     common_agent_daemon_state state = common_agent_daemon_state::starting;
     bool live = false;
@@ -68,8 +76,11 @@ struct common_agent_daemon_status {
     size_t max_queue_size = 0;
     size_t queue_capacity_remaining = 0;
     size_t session_count = 0;
+    std::optional<common_agent_daemon_active_turn_status> active_turn;
     std::string active_request_id;
     std::string active_turn_id;
+    std::string active_turn_phase;
+    std::string active_turn_disposition;
     bool active_cancel_requested = false;
     std::vector<common_agent_runtime_session_descriptor> sessions;
 };

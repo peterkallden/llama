@@ -82,6 +82,10 @@ int main() {
     status_result.status.queued_command_count = 0;
     status_result.status.max_queue_size = 8;
     status_result.status.queue_capacity_remaining = 8;
+    status_result.status.active_request_id = "request-a";
+    status_result.status.active_turn_id = "turn-active";
+    status_result.status.active_turn_phase = "awaiting_inference";
+    status_result.status.active_turn_disposition = "continue_immediately";
     common_agent_runtime_session_descriptor session_descriptor;
     session_descriptor.key = {"namespace-a", "session-a"};
     session_descriptor.project_id = "project-a";
@@ -102,6 +106,10 @@ int main() {
     if (!status_response.value("ok", false) ||
             status_response.value("event", "") != "status" ||
             status_response.value("sessions", 0) != 1 ||
+            status_response.value("active_request_id", "") != "request-a" ||
+            status_response.value("active_turn_id", "") != "turn-active" ||
+            status_response.value("active_turn_phase", "") != "awaiting_inference" ||
+            status_response.value("active_turn_disposition", "") != "continue_immediately" ||
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||

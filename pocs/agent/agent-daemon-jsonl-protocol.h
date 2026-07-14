@@ -86,6 +86,8 @@ struct agent_daemon_jsonl_status_response {
     int queue_capacity_remaining = 0;
     std::string active_request_id;
     std::string active_turn_id;
+    std::string active_turn_phase;
+    std::string active_turn_disposition;
     std::vector<agent_daemon_jsonl_session_status> session_keys;
     nlohmann::ordered_json payload;
     std::string error;

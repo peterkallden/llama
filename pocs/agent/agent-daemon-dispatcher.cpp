@@ -4,6 +4,23 @@
 
 namespace {
 
+void assign_active_turn_status(
+        common_agent_daemon_status & status,
+        const common_agent_runtime_active_turn_descriptor & active_turn) {
+    status.active_turn = common_agent_daemon_active_turn_status{
+        active_turn.request_id,
+        active_turn.turn_id,
+        active_turn.phase,
+        active_turn.disposition,
+        active_turn.cancellation_requested,
+    };
+    status.active_request_id = active_turn.request_id;
+    status.active_turn_id = active_turn.turn_id;
+    status.active_turn_phase = active_turn.phase;
+    status.active_turn_disposition = active_turn.disposition;
+    status.active_cancel_requested = active_turn.cancellation_requested;
+}
+
 void append_daemon_event(
         common_agent_daemon_command_result & result,
         std::string type,
@@ -182,9 +199,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                 result.ok = true;
                 result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "turn_cancel_requested";
-                result.status.active_request_id = active_turn.request_id;
-                result.status.active_turn_id = active_turn.turn_id;
-                result.status.active_cancel_requested = active_turn.cancellation_requested;
+                assign_active_turn_status(result.status, active_turn);
                 append_daemon_event(
                     result,
                     "turn.cancel_requested",
@@ -261,12 +276,13 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         common_agent_daemon_status & status) const {
     const size_t queued_count = queue.size();
     if (const auto active_turn = service.describe_active_turn()) {
-        status.active_request_id = active_turn->request_id;
-        status.active_turn_id = active_turn->turn_id;
-        status.active_cancel_requested = active_turn->cancellation_requested;
+        assign_active_turn_status(status, *active_turn);
     } else {
+        status.active_turn.reset();
         status.active_request_id.clear();
         status.active_turn_id.clear();
+        status.active_turn_phase.clear();
+        status.active_turn_disposition.clear();
         status.active_cancel_requested = false;
     }
     status.queued_command_count = queued_count;

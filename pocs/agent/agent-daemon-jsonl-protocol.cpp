@@ -226,6 +226,8 @@ bool parse_agent_daemon_jsonl_status_response(
     response.queue_capacity_remaining = message.value("queue_capacity_remaining", 0);
     response.active_request_id = message.value("active_request_id", std::string());
     response.active_turn_id = message.value("active_turn_id", std::string());
+    response.active_turn_phase = message.value("active_turn_phase", std::string());
+    response.active_turn_disposition = message.value("active_turn_disposition", std::string());
     response.payload = message;
     response.error = message.value("error", std::string());
 
