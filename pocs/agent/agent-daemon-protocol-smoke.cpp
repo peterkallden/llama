@@ -88,6 +88,11 @@ int main() {
     session_descriptor.memory_scope = common_memory_scope::project;
     session_descriptor.plan_scope = common_plan_scope::project;
     session_descriptor.queued_turn_count = 0;
+    session_descriptor.has_active_turn = true;
+    session_descriptor.active_request_id = "request-a";
+    session_descriptor.active_turn_id = "turn-active";
+    session_descriptor.active_turn_phase = "awaiting_inference";
+    session_descriptor.active_turn_disposition = "continue_immediately";
     session_descriptor.last_turn_id = "turn-a";
     session_descriptor.last_turn_phase = "completed";
     session_descriptor.last_turn_disposition = "completed";
@@ -100,6 +105,10 @@ int main() {
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||
+            status_response["session_keys"][0].value("active_request_id", "") != "request-a" ||
+            status_response["session_keys"][0].value("active_turn_id", "") != "turn-active" ||
+            status_response["session_keys"][0].value("active_turn_phase", "") != "awaiting_inference" ||
+            status_response["session_keys"][0].value("active_turn_disposition", "") != "continue_immediately" ||
             status_response["session_keys"][0].value("last_turn_id", "") != "turn-a" ||
             status_response["session_keys"][0].value("last_turn_phase", "") != "completed" ||
             status_response["session_keys"][0].value("last_turn_disposition", "") != "completed") {

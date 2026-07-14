@@ -179,6 +179,10 @@ int main() {
                         {"plan_scope", "project"},
                         {"policy_pack_id", "pack-a"},
                         {"queued_turn_count", 0},
+                        {"active_request_id", "request-a"},
+                        {"active_turn_id", "turn-active"},
+                        {"active_turn_phase", "awaiting_inference"},
+                        {"active_turn_disposition", "continue_immediately"},
                         {"last_turn_id", "turn-a"},
                         {"last_turn_phase", "completed"},
                         {"last_turn_disposition", "completed"},
@@ -191,6 +195,10 @@ int main() {
             status_response.sessions != 1 ||
             status_response.session_keys.size() != 1 ||
             status_response.session_keys[0].policy_pack_id != "pack-a" ||
+            status_response.session_keys[0].active_request_id != "request-a" ||
+            status_response.session_keys[0].active_turn_id != "turn-active" ||
+            status_response.session_keys[0].active_turn_phase != "awaiting_inference" ||
+            status_response.session_keys[0].active_turn_disposition != "continue_immediately" ||
             status_response.session_keys[0].last_turn_id != "turn-a" ||
             status_response.session_keys[0].last_turn_phase != "completed" ||
             status_response.session_keys[0].last_turn_disposition != "completed") {
