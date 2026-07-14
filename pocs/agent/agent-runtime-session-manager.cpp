@@ -19,9 +19,9 @@ common_agent_runtime_session_manager::ensure_session_lane(
         const common_agent_runtime_session_key & key) {
     auto it = lanes.find(key);
     if (it == lanes.end()) {
-        common_agent_runtime_session_lane lane;
-        lane.host = std::make_unique<common_agent_runtime_session_host>(config);
-        it = lanes.emplace(key, std::move(lane)).first;
+        auto inserted = lanes.try_emplace(key);
+        it = inserted.first;
+        it->second.host = std::make_unique<common_agent_runtime_session_host>(config);
     }
     return it->second;
 }
@@ -37,8 +37,29 @@ common_agent_runtime_session_manager::enqueue_lane_turn(
     message->request = request;
     message->result = &result;
     message->error = &error;
+    std::lock_guard<std::mutex> lock(lane.mutex);
     lane.mailbox.push_back(message);
     return message;
+}
+
+bool common_agent_runtime_session_manager::wait_for_message_completion(
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        std::string & error) const {
+    if (message == nullptr) {
+        error = "lane message is missing";
+        return false;
+    }
+
+    std::unique_lock<std::mutex> lock(message->mutex);
+    message->condition.wait(lock, [&]() {
+        return message->completed;
+    });
+    if (message->error != nullptr) {
+        error = *message->error;
+    } else {
+        error.clear();
+    }
+    return message->ok;
 }
 
 bool common_agent_runtime_session_manager::run_lane_turn(
@@ -46,19 +67,27 @@ bool common_agent_runtime_session_manager::run_lane_turn(
         const common_agent_runtime_session_manager_turn_request & request,
         common_agent_runtime_session_manager_turn_result & result,
         std::string & error) {
-    if (!lane.active_turn.has_value()) {
-        lane.active_turn = common_agent_runtime_turn_execution{
-            request.request_id,
-            request.turn.turn_id,
-            request.turn.mode,
-            common_agent_runtime_turn_phase::queued,
-            common_agent_runtime_turn_disposition::continue_immediately,
-            request.turn.execution_control.is_cancel_requested(),
-            request.turn.execution_control.cancellation,
-        };
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (!lane.active_turn.has_value()) {
+            lane.active_turn = common_agent_runtime_turn_execution{
+                request.request_id,
+                request.turn.turn_id,
+                request.turn.mode,
+                common_agent_runtime_turn_phase::queued,
+                common_agent_runtime_turn_disposition::continue_immediately,
+                request.turn.execution_control.is_cancel_requested(),
+                request.turn.execution_control.cancellation,
+            };
+        }
     }
 
     const auto disposition = advance_lane_turn(lane, request, result, error);
+
+    std::lock_guard<std::mutex> lock(lane.mutex);
+    if (!lane.active_turn.has_value()) {
+        return disposition == common_agent_runtime_turn_disposition::completed;
+    }
 
     lane.last_turn_id = lane.active_turn->turn_id;
     lane.last_turn_phase = lane.active_turn->phase;
@@ -79,68 +108,118 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
         const common_agent_runtime_session_manager_turn_request & request,
         common_agent_runtime_session_manager_turn_result & result,
         std::string & error) {
-    if (!lane.active_turn.has_value()) {
-        error = "lane does not have an active turn";
-        return common_agent_runtime_turn_disposition::failed;
+    common_agent_runtime_turn_phase phase;
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (!lane.active_turn.has_value()) {
+            error = "lane does not have an active turn";
+            return common_agent_runtime_turn_disposition::failed;
+        }
+        phase = lane.active_turn->phase;
     }
 
-    auto & turn = *lane.active_turn;
-    switch (turn.phase) {
+    switch (phase) {
         case common_agent_runtime_turn_phase::queued:
             if (request.turn.execution_control.should_stop()) {
-                turn.cancellation_requested = true;
-                turn.disposition = common_agent_runtime_turn_disposition::cancelled;
-                turn.phase = common_agent_runtime_turn_phase::cancelled;
+                {
+                    std::lock_guard<std::mutex> lock(lane.mutex);
+                    if (lane.active_turn.has_value()) {
+                        lane.active_turn->cancellation_requested = true;
+                        lane.active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                        lane.active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+                    }
+                }
                 result = {};
                 result.cancelled = true;
                 result.error = request.turn.execution_control.stop_reason();
                 error = result.error;
-                return turn.disposition;
+                return common_agent_runtime_turn_disposition::cancelled;
             }
-            turn.phase = common_agent_runtime_turn_phase::preparing;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->phase = common_agent_runtime_turn_phase::preparing;
+                }
+            }
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::preparing:
-            turn.phase = common_agent_runtime_turn_phase::awaiting_inference;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->phase = common_agent_runtime_turn_phase::awaiting_inference;
+                }
+            }
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::awaiting_inference: {
             const bool ok = lane.host->run_turn(request.turn, result, error);
-            turn.cancellation_requested = request.turn.execution_control.is_cancel_requested();
-            turn.disposition = ok
+            const auto disposition = ok
                 ? common_agent_runtime_turn_disposition::completed
                 : (result.cancelled
                     ? common_agent_runtime_turn_disposition::cancelled
                     : common_agent_runtime_turn_disposition::failed);
-            turn.phase = ok
-                ? common_agent_runtime_turn_phase::completing
-                : (result.cancelled
-                    ? common_agent_runtime_turn_phase::cancelled
-                    : common_agent_runtime_turn_phase::failed);
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->cancellation_requested = request.turn.execution_control.is_cancel_requested();
+                    lane.active_turn->disposition = disposition;
+                    lane.active_turn->phase = ok
+                        ? common_agent_runtime_turn_phase::completing
+                        : (result.cancelled
+                            ? common_agent_runtime_turn_phase::cancelled
+                            : common_agent_runtime_turn_phase::failed);
+                }
+            }
+            return disposition;
         }
 
         case common_agent_runtime_turn_phase::awaiting_tool:
             error = "awaiting_tool advancement is not implemented yet";
-            turn.disposition = common_agent_runtime_turn_disposition::failed;
-            turn.phase = common_agent_runtime_turn_phase::failed;
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                    lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
+                }
+            }
+            return common_agent_runtime_turn_disposition::failed;
 
         case common_agent_runtime_turn_phase::completing:
-            turn.disposition = common_agent_runtime_turn_disposition::completed;
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::completed;
+                }
+            }
+            return common_agent_runtime_turn_disposition::completed;
 
         case common_agent_runtime_turn_phase::completed:
-            turn.disposition = common_agent_runtime_turn_disposition::completed;
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::completed;
+                }
+            }
+            return common_agent_runtime_turn_disposition::completed;
 
         case common_agent_runtime_turn_phase::failed:
-            turn.disposition = common_agent_runtime_turn_disposition::failed;
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                }
+            }
+            return common_agent_runtime_turn_disposition::failed;
 
         case common_agent_runtime_turn_phase::cancelled:
-            turn.disposition = common_agent_runtime_turn_disposition::cancelled;
-            return turn.disposition;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                if (lane.active_turn.has_value()) {
+                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                }
+            }
+            return common_agent_runtime_turn_disposition::cancelled;
     }
 
     error = "unsupported lane turn phase";
@@ -162,22 +241,39 @@ bool common_agent_runtime_session_manager::drain_lane(
         return std::string();
     };
 
-    if (lane.draining) {
-        error = "session lane is already draining";
-        return false;
+    bool already_draining = false;
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (lane.draining) {
+            already_draining = true;
+        } else {
+            lane.draining = true;
+        }
     }
-
-    lane.draining = true;
-    while (!lane.mailbox.empty()) {
-        if (lane.active_turn.has_value()) {
-            lane.draining = false;
-            error = "session already has an active turn";
-            return false;
+    if (already_draining) {
+        return wait_for_message_completion(target_message, error);
+    }
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(lane.mutex);
+            if (lane.active_turn.has_value()) {
+                lane.draining = false;
+                error = "session already has an active turn";
+                return false;
+            }
         }
 
-        auto message = std::move(lane.mailbox.front());
-        lane.mailbox.pop_front();
+        std::shared_ptr<common_agent_runtime_session_lane_message> message;
+        {
+            std::lock_guard<std::mutex> lock(lane.mutex);
+            if (lane.mailbox.empty()) {
+                break;
+            }
+            message = std::move(lane.mailbox.front());
+            lane.mailbox.pop_front();
+        }
         if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+            std::lock_guard<std::mutex> lock(lane.mutex);
             lane.draining = false;
             error = "lane mailbox message is missing result/error storage";
             return false;
@@ -186,35 +282,64 @@ bool common_agent_runtime_session_manager::drain_lane(
         while (true) {
             const bool completed = run_lane_turn(lane, message->request, *message->result, *message->error);
             if (completed) {
+                std::lock_guard<std::mutex> message_lock(message->mutex);
                 message->ok = true;
                 message->completed = true;
                 break;
             }
-            if (!lane.active_turn.has_value()) {
-                message->ok = false;
-                message->completed = true;
-                lane.draining = false;
-                error = resolve_lane_error(*message);
-                return false;
+            bool has_active_turn = false;
+            common_agent_runtime_turn_disposition disposition = common_agent_runtime_turn_disposition::failed;
+            {
+                std::lock_guard<std::mutex> lock(lane.mutex);
+                has_active_turn = lane.active_turn.has_value();
+                if (has_active_turn) {
+                    disposition = lane.active_turn->disposition;
+                }
             }
-            const auto disposition = lane.active_turn->disposition;
+            if (!has_active_turn) {
+                {
+                    std::lock_guard<std::mutex> message_lock(message->mutex);
+                    message->ok = false;
+                    message->completed = true;
+                }
+                message->condition.notify_all();
+                if (message == target_message) {
+                    error = resolve_lane_error(*message);
+                }
+                break;
+            }
             if (disposition != common_agent_runtime_turn_disposition::continue_immediately) {
-                message->ok = false;
-                message->completed = true;
-                lane.draining = false;
-                error = resolve_lane_error(*message);
-                return false;
+                {
+                    std::lock_guard<std::mutex> message_lock(message->mutex);
+                    message->ok = false;
+                    message->completed = true;
+                }
+                message->condition.notify_all();
+                if (message == target_message) {
+                    error = resolve_lane_error(*message);
+                }
+                break;
             }
         }
 
-        if (message == target_message && message->completed) {
-            lane.draining = false;
+        {
+            std::lock_guard<std::mutex> message_lock(message->mutex);
+            message->completed = true;
+        }
+        message->condition.notify_all();
+
+        if (message == target_message) {
             error = resolve_lane_error(*message);
-            return message->ok;
         }
     }
 
-    lane.draining = false;
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        lane.draining = false;
+    }
+    if (target_message != nullptr) {
+        return wait_for_message_completion(target_message, error);
+    }
     error.clear();
     return true;
 }
@@ -238,11 +363,15 @@ bool common_agent_runtime_session_manager::reset_session(
     }
 
     it->second.host->reset();
-    it->second.mailbox.clear();
-    it->second.active_turn.reset();
-    it->second.last_turn_id.clear();
-    it->second.last_turn_phase = common_agent_runtime_turn_phase::queued;
-    it->second.last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
+    {
+        std::lock_guard<std::mutex> lock(it->second.mutex);
+        it->second.mailbox.clear();
+        it->second.active_turn.reset();
+        it->second.last_turn_id.clear();
+        it->second.last_turn_phase = common_agent_runtime_turn_phase::queued;
+        it->second.last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
+        it->second.draining = false;
+    }
     error.clear();
     return true;
 }
@@ -269,6 +398,7 @@ bool common_agent_runtime_session_manager::request_cancel_active_turn(
     active_turn = {};
     for (auto & entry : lanes) {
         auto & lane = entry.second;
+        std::lock_guard<std::mutex> lock(lane.mutex);
         if (!lane.active_turn.has_value()) {
             continue;
         }
@@ -313,6 +443,7 @@ bool common_agent_runtime_session_manager::request_cancel_active_turn(
 std::optional<common_agent_runtime_active_turn_descriptor> common_agent_runtime_session_manager::describe_active_turn() const {
     for (const auto & entry : lanes) {
         const auto & lane = entry.second;
+        std::lock_guard<std::mutex> lock(lane.mutex);
         if (!lane.active_turn.has_value()) {
             continue;
         }
@@ -337,6 +468,7 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
     sessions.reserve(lanes.size());
     for (const auto & entry : lanes) {
         const auto descriptor = entry.second.host->describe_session();
+        std::lock_guard<std::mutex> lock(entry.second.mutex);
         sessions.push_back({
             entry.first,
             descriptor.project_id,

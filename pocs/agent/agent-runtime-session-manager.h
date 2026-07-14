@@ -6,8 +6,10 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <condition_variable>
 #include <vector>
 
 struct common_agent_runtime_session_key {
@@ -98,6 +100,8 @@ private:
         std::string * error = nullptr;
         bool ok = false;
         bool completed = false;
+        mutable std::mutex mutex;
+        std::condition_variable condition;
     };
 
     struct common_agent_runtime_session_lane {
@@ -109,6 +113,7 @@ private:
         common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
         size_t next_message_id = 1;
         bool draining = false;
+        mutable std::mutex mutex;
     };
 
     common_agent_runtime_session_key make_session_key(
@@ -122,6 +127,10 @@ private:
         const common_agent_runtime_session_manager_turn_request & request,
         common_agent_runtime_session_manager_turn_result & result,
         std::string & error);
+
+    bool wait_for_message_completion(
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        std::string & error) const;
 
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
