@@ -54,6 +54,32 @@ private:
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result) const;
 
+    void initialize_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const;
+
+    bool fail_lifecycle_result_locked(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
+        std::string event,
+        std::string daemon_event_type,
+        std::string turn_id = {}) const;
+
+    bool succeed_lifecycle_result_locked(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
+        std::string event,
+        std::string daemon_event_type,
+        std::string detail = {},
+        std::string turn_id = {}) const;
+
+    void cancel_queued_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string error) const;
+
     void finalize_lifecycle_result_locked(
         common_agent_daemon_command_result & result) const;
 

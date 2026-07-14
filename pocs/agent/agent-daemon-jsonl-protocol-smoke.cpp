@@ -8,22 +8,34 @@ using json = nlohmann::ordered_json;
 int main() {
     std::string error;
 
-    const auto turn_request = make_agent_daemon_jsonl_turn_request({
-        "hello",
-        "session-a",
-        "namespace-a",
-        "project-a",
-        "turn-a",
-        "project",
-        "project",
-        42,
-        "mini",
-    });
+    agent_daemon_jsonl_turn_request turn_request_spec;
+    turn_request_spec.prompt = "hello";
+    turn_request_spec.session_id = "session-a";
+    turn_request_spec.namespace_id = "namespace-a";
+    turn_request_spec.project_id = "project-a";
+    turn_request_spec.turn_id = "turn-a";
+    turn_request_spec.memory_scope = "project";
+    turn_request_spec.plan_scope = "project";
+    turn_request_spec.n_predict = 42;
+    turn_request_spec.mode = "mini";
+    turn_request_spec.turn_timeout_ms = 12000;
+    turn_request_spec.inference_step_timeout_ms = 345;
+    turn_request_spec.tool_timeout_ms = 678;
+    turn_request_spec.mcp_connect_timeout_ms = 901;
+    turn_request_spec.mcp_request_timeout_ms = 2345;
+    turn_request_spec.mcp_shutdown_timeout_ms = 456;
+    const auto turn_request = make_agent_daemon_jsonl_turn_request(turn_request_spec);
     if (!turn_request.is_object() ||
             turn_request.value("command", "") != "run_turn" ||
             turn_request.value("prompt", "") != "hello" ||
             turn_request.value("mode", "") != "mini" ||
-            turn_request.value("n_predict", 0) != 42) {
+            turn_request.value("n_predict", 0) != 42 ||
+            turn_request.value("turn_timeout_ms", 0) != 12000 ||
+            turn_request.value("inference_step_timeout_ms", 0) != 345 ||
+            turn_request.value("tool_timeout_ms", 0) != 678 ||
+            turn_request.value("mcp_connect_timeout_ms", 0) != 901 ||
+            turn_request.value("mcp_request_timeout_ms", 0) != 2345 ||
+            turn_request.value("mcp_shutdown_timeout_ms", 0) != 456) {
         std::fprintf(stderr, "turn request contract mismatch\n");
         return 1;
     }

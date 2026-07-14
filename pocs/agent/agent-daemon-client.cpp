@@ -529,17 +529,23 @@ agent_daemon_jsonl_turn_request make_daemon_client_request(
         const args & a,
         const std::string & prompt,
         const std::string & turn_id = {}) {
-    return {
-        prompt,
-        a.memory_session,
-        a.memory_namespace,
-        a.memory_project,
-        turn_id.empty() ? a.memory_turn : turn_id,
-        a.memory_scope,
-        effective_plan_scope_for_daemon_request(a),
-        a.n_predict,
-        a.planning_mode == "mini" ? "mini" : "chat",
-    };
+    agent_daemon_jsonl_turn_request request;
+    request.prompt = prompt;
+    request.session_id = a.memory_session;
+    request.namespace_id = a.memory_namespace;
+    request.project_id = a.memory_project;
+    request.turn_id = turn_id.empty() ? a.memory_turn : turn_id;
+    request.memory_scope = a.memory_scope;
+    request.plan_scope = effective_plan_scope_for_daemon_request(a);
+    request.n_predict = a.n_predict;
+    request.mode = a.planning_mode == "mini" ? "mini" : "chat";
+    request.turn_timeout_ms = a.turn_timeout_ms;
+    request.inference_step_timeout_ms = a.inference_step_timeout_ms;
+    request.tool_timeout_ms = a.tool_timeout_ms;
+    request.mcp_connect_timeout_ms = a.mcp_connect_timeout_ms;
+    request.mcp_request_timeout_ms = a.mcp_request_timeout_ms;
+    request.mcp_shutdown_timeout_ms = a.mcp_shutdown_timeout_ms;
+    return request;
 }
 
 } // namespace

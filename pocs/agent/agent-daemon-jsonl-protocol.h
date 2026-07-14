@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,12 @@ struct agent_daemon_jsonl_turn_request {
     std::string plan_scope;
     int n_predict = 0;
     std::string mode = "chat";
+    std::optional<size_t> turn_timeout_ms;
+    std::optional<uint32_t> inference_step_timeout_ms;
+    std::optional<uint32_t> tool_timeout_ms;
+    std::optional<uint32_t> mcp_connect_timeout_ms;
+    std::optional<uint32_t> mcp_request_timeout_ms;
+    std::optional<uint32_t> mcp_shutdown_timeout_ms;
 };
 
 struct agent_daemon_jsonl_status_request {};

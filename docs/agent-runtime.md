@@ -44,6 +44,8 @@ The response side is now slightly less string-shaped too. The daemon command res
 
 The command side is now also a little less ad hoc. The transport still speaks the same JSONL command fields, but the host-owned daemon command contract now carries small typed payloads for turn execution, session actions and queued-turn cancellation instead of relying only on a flat bag of optional top-level fields.
 
+That command contract now also carries one shared execution-control seam end to end. Host config and daemon defaults still define the baseline timeout policy, but a JSONL/admin caller can now override turn timeout, inference-step timeout, native-tool timeout, and MCP connect/request/shutdown timeouts per turn without introducing a second cancellation/deadline mechanism. The same host-owned execution-control object continues to carry both the cancellation token and the resolved deadline.
+
 The JSONL client/transport seam is now moving in the same direction. It no longer only has a special turn-request helper plus an ad hoc shutdown helper; it now has named request builders for ordinary turn execution, `status`, queued-turn cancellation, session actions and shutdown, so the current stdio/JSONL adapter is a little less likely to grow one-off inline command JSON as the service surface expands.
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
@@ -809,7 +811,7 @@ The current code should remain useful without any of these. The next steps shoul
 
 5. Extend cancellation, timeout and event contracts before async tools.
 
-   Synchronous tools are still acceptable for the current slice. The daemon/session seam now has a shared execution-control contract plus active-turn cancellation requests and configured timeout budgets, but workers should still wait until those controls propagate all the way into inference, tool execution, MCP requests, retry policy, ordering, and richer failure reporting.
+   Synchronous tools are still acceptable for the current slice. The daemon/session seam now has a shared execution-control contract plus active-turn cancellation requests, configured timeout budgets, and per-turn daemon request overrides, but workers should still wait until those controls propagate all the way into inference, tool execution, MCP requests, retry policy, ordering, and richer failure reporting.
 
 6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
 

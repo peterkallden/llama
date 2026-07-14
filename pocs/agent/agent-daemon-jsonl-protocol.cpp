@@ -80,7 +80,7 @@ bool write_agent_daemon_jsonl_message(
 
 json make_agent_daemon_jsonl_turn_request(
         const agent_daemon_jsonl_turn_request & request) {
-    return {
+    json turn_request = {
         {"command", "run_turn"},
         {"prompt", request.prompt},
         {"session_id", request.session_id},
@@ -92,6 +92,25 @@ json make_agent_daemon_jsonl_turn_request(
         {"n_predict", request.n_predict},
         {"mode", request.mode},
     };
+    if (request.turn_timeout_ms.has_value()) {
+        turn_request["turn_timeout_ms"] = *request.turn_timeout_ms;
+    }
+    if (request.inference_step_timeout_ms.has_value()) {
+        turn_request["inference_step_timeout_ms"] = *request.inference_step_timeout_ms;
+    }
+    if (request.tool_timeout_ms.has_value()) {
+        turn_request["tool_timeout_ms"] = *request.tool_timeout_ms;
+    }
+    if (request.mcp_connect_timeout_ms.has_value()) {
+        turn_request["mcp_connect_timeout_ms"] = *request.mcp_connect_timeout_ms;
+    }
+    if (request.mcp_request_timeout_ms.has_value()) {
+        turn_request["mcp_request_timeout_ms"] = *request.mcp_request_timeout_ms;
+    }
+    if (request.mcp_shutdown_timeout_ms.has_value()) {
+        turn_request["mcp_shutdown_timeout_ms"] = *request.mcp_shutdown_timeout_ms;
+    }
+    return turn_request;
 }
 
 json make_agent_daemon_jsonl_status_request(

@@ -7,6 +7,12 @@ using json = nlohmann::ordered_json;
 int main() {
     daemon_options options;
     options.default_mode = "chat";
+    options.turn_timeout_ms = 7000;
+    options.inference_step_timeout_ms = 222;
+    options.tool_timeout_ms = 333;
+    options.mcp_connect_timeout_ms = 444;
+    options.mcp_request_timeout_ms = 555;
+    options.mcp_shutdown_timeout_ms = 666;
 
     std::string error;
     common_agent_daemon_command status_command;
@@ -38,6 +44,12 @@ int main() {
                 {"memory_scope", "project"},
                 {"plan_scope", "project"},
                 {"n_predict", 42},
+                {"turn_timeout_ms", 12000},
+                {"inference_step_timeout_ms", 777},
+                {"tool_timeout_ms", 888},
+                {"mcp_connect_timeout_ms", 999},
+                {"mcp_request_timeout_ms", 1111},
+                {"mcp_shutdown_timeout_ms", 2222},
             },
             options,
             common_agent_runtime_host_mode::chat,
@@ -52,8 +64,40 @@ int main() {
             turn_command.turn->request.turn.mode != common_agent_runtime_host_mode::mini ||
             turn_command.turn->request.turn.memory_scope != common_memory_scope::project ||
             turn_command.turn->request.turn.plan_scope != common_plan_scope::project ||
-            turn_command.turn->request.turn.n_predict != 42) {
+            turn_command.turn->request.turn.n_predict != 42 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.turn_timeout_ms != 12000 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.inference_step_timeout_ms != 777 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.tool_timeout_ms != 888 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.mcp_connect_timeout_ms != 999 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.mcp_request_timeout_ms != 1111 ||
+            turn_command.turn->request.turn.execution_control.timeout_policy.mcp_shutdown_timeout_ms != 2222 ||
+            !turn_command.turn->request.turn.execution_control.has_deadline()) {
         std::fprintf(stderr, "run_turn command did not preserve expected fields\n");
+        return 1;
+    }
+
+    common_agent_daemon_command default_timeout_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "turn-2"},
+                {"command", "run_turn"},
+                {"prompt", "hello again"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            default_timeout_command,
+            error)) {
+        std::fprintf(stderr, "failed to parse default-timeout run_turn command: %s\n", error.c_str());
+        return 1;
+    }
+    if (!default_timeout_command.turn.has_value() ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.turn_timeout_ms != 7000 ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.inference_step_timeout_ms != 222 ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.tool_timeout_ms != 333 ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.mcp_connect_timeout_ms != 444 ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.mcp_request_timeout_ms != 555 ||
+            default_timeout_command.turn->request.turn.execution_control.timeout_policy.mcp_shutdown_timeout_ms != 666) {
+        std::fprintf(stderr, "default daemon timeout policy was not preserved\n");
         return 1;
     }
 

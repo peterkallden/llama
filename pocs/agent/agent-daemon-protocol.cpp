@@ -2,11 +2,55 @@
 
 #include "agent-cli-selection.h"
 
+#include <limits>
+
 using json = nlohmann::ordered_json;
 
 namespace {
 
 constexpr int agent_daemon_protocol_version = 1;
+
+template<typename T>
+bool read_optional_timeout_ms(
+        const json & parsed,
+        const char * field,
+        T & value,
+        std::string & error) {
+    if (!parsed.contains(field)) {
+        return true;
+    }
+    const auto & timeout_value = parsed.at(field);
+    if (!timeout_value.is_number_integer()) {
+        error = std::string(field) + " must be an integer";
+        return false;
+    }
+    const auto parsed_value = timeout_value.get<long long>();
+    if (parsed_value < 0) {
+        error = std::string(field) + " must be non-negative";
+        return false;
+    }
+    if (static_cast<unsigned long long>(parsed_value) >
+            static_cast<unsigned long long>(std::numeric_limits<T>::max())) {
+        error = std::string(field) + " is too large";
+        return false;
+    }
+    value = static_cast<T>(parsed_value);
+    return true;
+}
+
+common_agent_runtime_timeout_policy make_daemon_timeout_policy(
+        const daemon_options & options) {
+    return {
+        options.turn_timeout_ms > 0
+            ? options.turn_timeout_ms
+            : (options.max_turn_seconds > 0 ? options.max_turn_seconds * 1000 : size_t(0)),
+        options.inference_step_timeout_ms,
+        options.tool_timeout_ms,
+        options.mcp_connect_timeout_ms,
+        options.mcp_request_timeout_ms,
+        options.mcp_shutdown_timeout_ms,
+    };
+}
 
 std::string default_plan_scope_for_memory_scope(common_memory_scope memory_scope) {
     switch (memory_scope) {
@@ -94,16 +138,16 @@ bool parse_agent_daemon_turn_request(
     request.mode = default_mode;
     request.memory_scope = common_memory_scope::session;
     request.plan_scope = common_plan_scope::turn;
-    request.execution_control = make_common_agent_runtime_execution_control({
-        options.turn_timeout_ms > 0
-            ? options.turn_timeout_ms
-            : (options.max_turn_seconds > 0 ? options.max_turn_seconds * 1000 : size_t(0)),
-        options.inference_step_timeout_ms,
-        options.tool_timeout_ms,
-        options.mcp_connect_timeout_ms,
-        options.mcp_request_timeout_ms,
-        options.mcp_shutdown_timeout_ms,
-    });
+    auto timeout_policy = make_daemon_timeout_policy(options);
+    if (!read_optional_timeout_ms(parsed, "turn_timeout_ms", timeout_policy.turn_timeout_ms, error) ||
+            !read_optional_timeout_ms(parsed, "inference_step_timeout_ms", timeout_policy.inference_step_timeout_ms, error) ||
+            !read_optional_timeout_ms(parsed, "tool_timeout_ms", timeout_policy.tool_timeout_ms, error) ||
+            !read_optional_timeout_ms(parsed, "mcp_connect_timeout_ms", timeout_policy.mcp_connect_timeout_ms, error) ||
+            !read_optional_timeout_ms(parsed, "mcp_request_timeout_ms", timeout_policy.mcp_request_timeout_ms, error) ||
+            !read_optional_timeout_ms(parsed, "mcp_shutdown_timeout_ms", timeout_policy.mcp_shutdown_timeout_ms, error)) {
+        return false;
+    }
+    request.execution_control = make_common_agent_runtime_execution_control(timeout_policy);
 
     const std::string mode_value = parsed.value("mode", options.default_mode);
     if (!parse_mode(mode_value, request.mode)) {
