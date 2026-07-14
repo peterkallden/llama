@@ -170,6 +170,7 @@ json serialize_agent_daemon_session_status(
     if (!session.last_turn_id.empty()) {
         session_json["last_turn_id"] = session.last_turn_id;
         session_json["last_turn_phase"] = session.last_turn_phase;
+        session_json["last_turn_disposition"] = session.last_turn_disposition;
     }
     return session_json;
 }

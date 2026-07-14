@@ -67,6 +67,7 @@ struct agent_daemon_jsonl_session_status {
     bool active_cancel_requested = false;
     std::string last_turn_id;
     std::string last_turn_phase;
+    std::string last_turn_disposition;
 };
 
 struct agent_daemon_jsonl_status_response {

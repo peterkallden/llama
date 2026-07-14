@@ -3,6 +3,7 @@
 #include "agent-runtime-session-host.h"
 #include "agent-runtime-turn-execution.h"
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -33,6 +34,7 @@ struct common_agent_runtime_session_descriptor {
     bool active_cancel_requested = false;
     std::string last_turn_id;
     std::string last_turn_phase;
+    std::string last_turn_disposition;
 };
 
 struct common_agent_runtime_session_manager_turn_request {
@@ -87,12 +89,19 @@ public:
     void reset_all();
 
 private:
+    struct common_agent_runtime_session_lane_message {
+        common_agent_runtime_session_manager_turn_request request;
+        common_agent_runtime_session_manager_turn_result * result = nullptr;
+        std::string * error = nullptr;
+    };
+
     struct common_agent_runtime_session_lane {
         std::unique_ptr<common_agent_runtime_session_host> host;
-        size_t queued_turn_count = 0;
+        std::deque<common_agent_runtime_session_lane_message> mailbox;
         std::optional<common_agent_runtime_turn_execution> active_turn;
         std::string last_turn_id;
         common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
+        common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
     };
 
     common_agent_runtime_session_key make_session_key(
@@ -105,6 +114,16 @@ private:
         common_agent_runtime_session_lane & lane,
         const common_agent_runtime_session_manager_turn_request & request,
         common_agent_runtime_session_manager_turn_result & result,
+        std::string & error);
+
+    common_agent_runtime_turn_disposition advance_lane_turn(
+        common_agent_runtime_session_lane & lane,
+        const common_agent_runtime_session_manager_turn_request & request,
+        common_agent_runtime_session_manager_turn_result & result,
+        std::string & error);
+
+    bool drain_lane(
+        common_agent_runtime_session_lane & lane,
         std::string & error);
 
     common_agent_runtime_session_manager_config config;

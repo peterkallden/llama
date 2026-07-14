@@ -82,21 +82,16 @@ int main() {
     status_result.status.queued_command_count = 0;
     status_result.status.max_queue_size = 8;
     status_result.status.queue_capacity_remaining = 8;
-    status_result.status.sessions.push_back({
-        {"namespace-a", "session-a"},
-        "project-a",
-        common_memory_scope::project,
-        common_plan_scope::project,
-        "",
-        0,
-        false,
-        "",
-        "",
-        "",
-        false,
-        "turn-a",
-        "completed",
-    });
+    common_agent_runtime_session_descriptor session_descriptor;
+    session_descriptor.key = {"namespace-a", "session-a"};
+    session_descriptor.project_id = "project-a";
+    session_descriptor.memory_scope = common_memory_scope::project;
+    session_descriptor.plan_scope = common_plan_scope::project;
+    session_descriptor.queued_turn_count = 0;
+    session_descriptor.last_turn_id = "turn-a";
+    session_descriptor.last_turn_phase = "completed";
+    session_descriptor.last_turn_disposition = "completed";
+    status_result.status.sessions.push_back(std::move(session_descriptor));
 
     const json status_response = make_agent_daemon_command_response(status_result);
     if (!status_response.value("ok", false) ||
@@ -106,7 +101,8 @@ int main() {
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||
             status_response["session_keys"][0].value("last_turn_id", "") != "turn-a" ||
-            status_response["session_keys"][0].value("last_turn_phase", "") != "completed") {
+            status_response["session_keys"][0].value("last_turn_phase", "") != "completed" ||
+            status_response["session_keys"][0].value("last_turn_disposition", "") != "completed") {
         std::fprintf(stderr, "status response mismatch\n");
         return 1;
     }

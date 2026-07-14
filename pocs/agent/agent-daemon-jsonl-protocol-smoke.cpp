@@ -181,6 +181,7 @@ int main() {
                         {"queued_turn_count", 0},
                         {"last_turn_id", "turn-a"},
                         {"last_turn_phase", "completed"},
+                        {"last_turn_disposition", "completed"},
                     }
                 })},
             },
@@ -191,7 +192,8 @@ int main() {
             status_response.session_keys.size() != 1 ||
             status_response.session_keys[0].policy_pack_id != "pack-a" ||
             status_response.session_keys[0].last_turn_id != "turn-a" ||
-            status_response.session_keys[0].last_turn_phase != "completed") {
+            status_response.session_keys[0].last_turn_phase != "completed" ||
+            status_response.session_keys[0].last_turn_disposition != "completed") {
         std::fprintf(stderr, "status response contract mismatch: %s\n", error.c_str());
         return 1;
     }
