@@ -48,6 +48,13 @@ void common_agent_daemon_service::initialize_lifecycle_result(
     result.response_kind = common_agent_daemon_response_kind::lifecycle;
 }
 
+void common_agent_daemon_service::initialize_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const {
+    initialize_command_result(command, result);
+    result.response_kind = common_agent_daemon_response_kind::turn;
+}
+
 bool common_agent_daemon_service::fail_lifecycle_result(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
@@ -59,6 +66,24 @@ bool common_agent_daemon_service::fail_lifecycle_result(
     result.event = std::move(event);
     result.error = error;
     append_daemon_event(result, std::move(daemon_event_type), command.request_id, {}, error);
+    return false;
+}
+
+bool common_agent_daemon_service::fail_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
+        std::string daemon_event_type) const {
+    initialize_turn_result(command, result);
+    result.ok = false;
+    result.error = error;
+    result.turn_result.error = error;
+    append_daemon_event(
+        result,
+        std::move(daemon_event_type),
+        command.request_id,
+        command_turn_id(command),
+        error);
     return false;
 }
 
@@ -248,34 +273,27 @@ bool common_agent_daemon_service::execute(
         case common_agent_daemon_command_type::run_turn:
             if (!command.turn.has_value()) {
                 error = "run_turn command missing turn payload";
-                result.error = error;
-                result.response_kind = common_agent_daemon_response_kind::turn;
-                append_daemon_event(result, "turn.failed", command.request_id, {}, error);
-                return false;
+                return fail_turn_result(
+                    command,
+                    result,
+                    error,
+                    "turn.failed");
             }
             if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
                 error = "daemon is not accepting new turns";
-                result.error = error;
-                result.response_kind = common_agent_daemon_response_kind::turn;
-                append_daemon_event(
+                return fail_turn_result(
+                    command,
                     result,
-                    "turn.rejected",
-                    command.request_id,
-                    command_turn_id(command),
-                    error);
-                return false;
+                    error,
+                    "turn.rejected");
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
-                result.error = error;
-                result.response_kind = common_agent_daemon_response_kind::turn;
-                append_daemon_event(
+                return fail_turn_result(
+                    command,
                     result,
-                    "turn.failed",
-                    command.request_id,
-                    command_turn_id(command),
-                    error);
-                return false;
+                    error,
+                    "turn.failed");
             }
 
             error.clear();

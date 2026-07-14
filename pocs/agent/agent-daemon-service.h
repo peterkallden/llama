@@ -143,11 +143,21 @@ private:
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result) const;
 
+    void initialize_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const;
+
     bool fail_lifecycle_result(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string & error,
         std::string event,
+        std::string daemon_event_type) const;
+
+    bool fail_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
         std::string daemon_event_type) const;
 
     bool succeed_lifecycle_result(
