@@ -56,7 +56,12 @@ bool export_agent_package(
         return false;
     }
     common_memory_query query;
-    common_agent_scope_apply(scope, query);
+    query.scope = scope.project_id.empty() ? common_memory_scope::session : common_memory_scope::project;
+    query.namespace_id = scope.namespace_id;
+    query.session_id = scope.session_id;
+    query.project_id = scope.project_id;
+    query.turn_id = scope.turn_id;
+    query.global_opt_in = false;
     const auto memories = memory_store.list(query, error);
     if (!error.empty()) {
         return false;
