@@ -135,6 +135,29 @@ public:
         std::string & error);
 
 private:
+    void initialize_command_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const;
+
+    void initialize_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const;
+
+    bool fail_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
+        std::string event,
+        std::string daemon_event_type) const;
+
+    bool succeed_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error,
+        std::string event,
+        std::string daemon_event_type,
+        std::string detail = {}) const;
+
     common_agent_daemon_runtime runtime;
     common_agent_daemon_state state_value = common_agent_daemon_state::starting;
     common_agent_daemon_shutdown_mode shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
