@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../common/runtime-resource.h"
+
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
@@ -26,6 +28,37 @@ struct agent_daemon_jsonl_turn_request {
 };
 
 struct agent_daemon_jsonl_status_request {};
+
+struct agent_daemon_jsonl_list_sessions_request {};
+
+struct agent_daemon_jsonl_get_session_request {
+    std::string session_id;
+    std::string namespace_id;
+};
+
+struct agent_daemon_jsonl_scope_request {
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string turn_id;
+};
+
+struct agent_daemon_jsonl_list_resources_request : agent_daemon_jsonl_scope_request {};
+
+struct agent_daemon_jsonl_list_memories_request : agent_daemon_jsonl_scope_request {};
+
+struct agent_daemon_jsonl_list_plans_request : agent_daemon_jsonl_scope_request {};
+
+struct agent_daemon_jsonl_read_resource_request {
+    std::string uri;
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string turn_id;
+    size_t max_bytes = 8192;
+};
+
+struct agent_daemon_jsonl_drain_request {};
 
 struct agent_daemon_jsonl_shutdown_request {};
 
@@ -121,6 +154,24 @@ struct agent_daemon_jsonl_lifecycle_response {
     std::string error;
 };
 
+struct agent_daemon_jsonl_resource_response {
+    bool ok = false;
+    std::string event;
+    agent_resource_descriptor resource;
+    std::string content;
+    agent_daemon_jsonl_status_response status;
+    nlohmann::ordered_json payload;
+    std::string error;
+};
+
+struct agent_daemon_jsonl_listing_response {
+    bool ok = false;
+    std::string event;
+    agent_daemon_jsonl_status_response status;
+    nlohmann::ordered_json payload;
+    std::string error;
+};
+
 bool read_agent_daemon_jsonl_message(
     FILE * stream,
     nlohmann::ordered_json & out,
@@ -136,6 +187,27 @@ nlohmann::ordered_json make_agent_daemon_jsonl_turn_request(
 
 nlohmann::ordered_json make_agent_daemon_jsonl_status_request(
     const agent_daemon_jsonl_status_request & request = {});
+
+nlohmann::ordered_json make_agent_daemon_jsonl_list_sessions_request(
+    const agent_daemon_jsonl_list_sessions_request & request = {});
+
+nlohmann::ordered_json make_agent_daemon_jsonl_get_session_request(
+    const agent_daemon_jsonl_get_session_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_list_resources_request(
+    const agent_daemon_jsonl_list_resources_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_list_memories_request(
+    const agent_daemon_jsonl_list_memories_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_list_plans_request(
+    const agent_daemon_jsonl_list_plans_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_read_resource_request(
+    const agent_daemon_jsonl_read_resource_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_drain_request(
+    const agent_daemon_jsonl_drain_request & request = {});
 
 nlohmann::ordered_json make_agent_daemon_jsonl_shutdown_request(
     const agent_daemon_jsonl_shutdown_request & request = {});
@@ -162,6 +234,16 @@ bool parse_agent_daemon_jsonl_ready_response(
 bool parse_agent_daemon_jsonl_turn_response(
     const nlohmann::ordered_json & message,
     agent_daemon_jsonl_turn_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_resource_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_resource_response & response,
+    std::string & error);
+
+bool parse_agent_daemon_jsonl_listing_response(
+    const nlohmann::ordered_json & message,
+    agent_daemon_jsonl_listing_response & response,
     std::string & error);
 
 bool parse_agent_daemon_jsonl_status_response(

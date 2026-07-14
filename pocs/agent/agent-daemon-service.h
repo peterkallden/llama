@@ -15,9 +15,16 @@
 enum class common_agent_daemon_command_type {
     run_turn,
     cancel_turn,
+    list_sessions,
+    get_session,
+    list_resources,
+    list_memories,
+    list_plans,
     reset_session,
     close_session,
+    read_resource,
     get_status,
+    drain,
     shutdown,
 };
 
@@ -42,12 +49,24 @@ struct common_agent_daemon_cancel_payload {
     std::string target_turn_id;
 };
 
+struct common_agent_daemon_resource_payload {
+    std::string uri;
+    agent_resource_read_authority authority;
+    size_t max_bytes = 8192;
+};
+
+struct common_agent_daemon_scope_payload {
+    agent_resource_read_authority authority;
+};
+
 struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
     std::optional<common_agent_daemon_turn_payload> turn;
     std::optional<common_agent_daemon_session_payload> session;
     std::optional<common_agent_daemon_cancel_payload> cancel;
+    std::optional<common_agent_daemon_resource_payload> resource;
+    std::optional<common_agent_daemon_scope_payload> scope;
 };
 
 struct common_agent_daemon_event {
@@ -83,12 +102,53 @@ struct common_agent_daemon_status {
     std::string active_turn_disposition;
     bool active_cancel_requested = false;
     std::vector<common_agent_runtime_session_descriptor> sessions;
+    bool session_snapshot_populated = false;
 };
 
 enum class common_agent_daemon_response_kind {
     turn,
     status,
     lifecycle,
+    resource,
+    listing,
+};
+
+struct common_agent_daemon_resource_read_result {
+    agent_resource_descriptor resource;
+    std::string content;
+};
+
+struct common_agent_daemon_memory_summary {
+    std::string id;
+    std::string kind;
+    std::string scope;
+    std::string summary;
+    std::string session_id;
+    std::string project_id;
+    std::string turn_id;
+    int64_t created_at = 0;
+};
+
+struct common_agent_daemon_plan_summary {
+    std::string plan_id;
+    std::string purpose;
+    std::string goal;
+    std::string status;
+    std::string scope;
+    std::string session_id;
+    std::string project_id;
+    std::string turn_id;
+    std::string active_step_id;
+    std::string next_action;
+    uint64_t version = 0;
+    size_t step_count = 0;
+    size_t observation_count = 0;
+};
+
+struct common_agent_daemon_listing_result {
+    std::vector<agent_resource_descriptor> resources;
+    std::vector<common_agent_daemon_memory_summary> memories;
+    std::vector<common_agent_daemon_plan_summary> plans;
 };
 
 struct common_agent_daemon_command_result {
@@ -102,6 +162,8 @@ struct common_agent_daemon_command_result {
     size_t daemon_event_count = 0;
     std::vector<common_agent_daemon_event> events;
     common_agent_runtime_session_manager_turn_result turn_result;
+    common_agent_daemon_resource_read_result resource_result;
+    common_agent_daemon_listing_result listing_result;
     std::string error;
 };
 

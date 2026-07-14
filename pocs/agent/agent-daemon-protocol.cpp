@@ -1,5 +1,6 @@
 #include "agent-daemon-adapter.h"
 
+#include "agent/tool-result-contracts.h"
 #include "agent-cli-selection.h"
 
 #include <limits>
@@ -87,6 +88,40 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "list_sessions") {
+        command.type = common_agent_daemon_command_type::list_sessions;
+        error.clear();
+        return true;
+    }
+    if (command_name == "get_session") {
+        command.type = common_agent_daemon_command_type::get_session;
+        command.session = common_agent_daemon_session_payload{
+            {
+                parsed.value("namespace_id", "default-namespace"),
+                parsed.value("session_id", "default-session"),
+            }
+        };
+        error.clear();
+        return true;
+    }
+    if (command_name == "list_resources" ||
+            command_name == "list_memories" ||
+            command_name == "list_plans") {
+        if (command_name == "list_resources") {
+            command.type = common_agent_daemon_command_type::list_resources;
+        } else if (command_name == "list_memories") {
+            command.type = common_agent_daemon_command_type::list_memories;
+        } else {
+            command.type = common_agent_daemon_command_type::list_plans;
+        }
+        command.scope = common_agent_daemon_scope_payload{};
+        command.scope->authority.namespace_id = parsed.value("namespace_id", "default-namespace");
+        command.scope->authority.session_id = parsed.value("session_id", "default-session");
+        command.scope->authority.project_id = parsed.value("project_id", "");
+        command.scope->authority.turn_id = parsed.value("turn_id", "");
+        error.clear();
+        return true;
+    }
     if (command_name == "cancel_turn") {
         command.type = common_agent_daemon_command_type::cancel_turn;
         command.cancel = common_agent_daemon_cancel_payload{
@@ -110,6 +145,32 @@ bool parse_agent_daemon_command_name(
                 parsed.value("session_id", "default-session"),
             }
         };
+        error.clear();
+        return true;
+    }
+    if (command_name == "read_resource") {
+        command.type = common_agent_daemon_command_type::read_resource;
+        command.resource = common_agent_daemon_resource_payload{};
+        command.resource->uri = parsed.value("uri", "");
+        command.resource->authority.namespace_id = parsed.value("namespace_id", "default-namespace");
+        command.resource->authority.session_id = parsed.value("session_id", "default-session");
+        command.resource->authority.project_id = parsed.value("project_id", "");
+        command.resource->authority.turn_id = parsed.value("turn_id", "");
+        const auto max_bytes = parsed.value("max_bytes", 8192);
+        if (max_bytes <= 0) {
+            error = "read_resource max_bytes must be positive";
+            return false;
+        }
+        command.resource->max_bytes = static_cast<size_t>(max_bytes);
+        if (command.resource->uri.empty()) {
+            error = "read_resource requires uri";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    if (command_name == "drain") {
+        command.type = common_agent_daemon_command_type::drain;
         error.clear();
         return true;
     }
@@ -324,12 +385,82 @@ json make_agent_daemon_status_response(
 json make_agent_daemon_lifecycle_response(
         const common_agent_daemon_command_result & result) {
     json response = make_agent_daemon_base_response(result);
-    append_agent_daemon_status_snapshot(response, result.status, false);
+    append_agent_daemon_status_snapshot(
+        response,
+        result.status,
+        result.status.session_snapshot_populated);
     if (!result.target_request_id.empty()) {
         response["target_request_id"] = result.target_request_id;
     }
     if (!result.target_turn_id.empty()) {
         response["target_turn_id"] = result.target_turn_id;
+    }
+    if (!result.error.empty()) {
+        response["error"] = result.error;
+    }
+    return response;
+}
+
+json make_agent_daemon_resource_response(
+        const common_agent_daemon_command_result & result) {
+    json response = make_agent_daemon_base_response(result);
+    append_agent_daemon_status_snapshot(response, result.status, false);
+    response["resource"] =
+        common_tool_resource_descriptor_to_json(result.resource_result.resource);
+    response["content"] = result.resource_result.content;
+    if (!result.error.empty()) {
+        response["error"] = result.error;
+    }
+    return response;
+}
+
+json make_agent_daemon_listing_response(
+        const common_agent_daemon_command_result & result) {
+    json response = make_agent_daemon_base_response(result);
+    append_agent_daemon_status_snapshot(response, result.status, false);
+    if (!result.listing_result.resources.empty()) {
+        json resources = json::array();
+        for (const auto & resource : result.listing_result.resources) {
+            resources.push_back(common_tool_resource_descriptor_to_json(resource));
+        }
+        response["resources"] = std::move(resources);
+    }
+    if (!result.listing_result.memories.empty()) {
+        json memories = json::array();
+        for (const auto & memory : result.listing_result.memories) {
+            memories.push_back({
+                {"id", memory.id},
+                {"kind", memory.kind},
+                {"scope", memory.scope},
+                {"summary", memory.summary},
+                {"session_id", memory.session_id},
+                {"project_id", memory.project_id},
+                {"turn_id", memory.turn_id},
+                {"created_at", memory.created_at},
+            });
+        }
+        response["memories"] = std::move(memories);
+    }
+    if (!result.listing_result.plans.empty()) {
+        json plans = json::array();
+        for (const auto & plan : result.listing_result.plans) {
+            plans.push_back({
+                {"plan_id", plan.plan_id},
+                {"purpose", plan.purpose},
+                {"goal", plan.goal},
+                {"status", plan.status},
+                {"scope", plan.scope},
+                {"session_id", plan.session_id},
+                {"project_id", plan.project_id},
+                {"turn_id", plan.turn_id},
+                {"active_step_id", plan.active_step_id},
+                {"next_action", plan.next_action},
+                {"version", plan.version},
+                {"step_count", plan.step_count},
+                {"observation_count", plan.observation_count},
+            });
+        }
+        response["plans"] = std::move(plans);
     }
     if (!result.error.empty()) {
         response["error"] = result.error;
@@ -425,6 +556,10 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
             return make_agent_daemon_status_response(result);
         case common_agent_daemon_response_kind::lifecycle:
             return make_agent_daemon_lifecycle_response(result);
+        case common_agent_daemon_response_kind::resource:
+            return make_agent_daemon_resource_response(result);
+        case common_agent_daemon_response_kind::listing:
+            return make_agent_daemon_listing_response(result);
         case common_agent_daemon_response_kind::turn:
             return make_agent_daemon_turn_response(result);
     }

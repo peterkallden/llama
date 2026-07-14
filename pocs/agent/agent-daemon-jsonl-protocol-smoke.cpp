@@ -80,6 +80,89 @@ int main() {
         return 1;
     }
 
+    const auto list_sessions_request = make_agent_daemon_jsonl_list_sessions_request({});
+    if (!list_sessions_request.is_object() ||
+            list_sessions_request.value("command", "") != "list_sessions") {
+        std::fprintf(stderr, "list sessions request contract mismatch\n");
+        return 1;
+    }
+
+    const auto get_session_request = make_agent_daemon_jsonl_get_session_request({
+        "session-a",
+        "namespace-a",
+    });
+    if (!get_session_request.is_object() ||
+            get_session_request.value("command", "") != "get_session" ||
+            get_session_request.value("session_id", "") != "session-a" ||
+            get_session_request.value("namespace_id", "") != "namespace-a") {
+        std::fprintf(stderr, "get session request contract mismatch\n");
+        return 1;
+    }
+
+    const auto list_resources_request = make_agent_daemon_jsonl_list_resources_request({
+        "session-a",
+        "namespace-a",
+        "project-a",
+        "turn-a",
+    });
+    if (!list_resources_request.is_object() ||
+            list_resources_request.value("command", "") != "list_resources" ||
+            list_resources_request.value("project_id", "") != "project-a") {
+        std::fprintf(stderr, "list resources request contract mismatch\n");
+        return 1;
+    }
+
+    const auto list_memories_request = make_agent_daemon_jsonl_list_memories_request({
+        "session-a",
+        "namespace-a",
+        "project-a",
+        "turn-a",
+    });
+    if (!list_memories_request.is_object() ||
+            list_memories_request.value("command", "") != "list_memories" ||
+            list_memories_request.value("turn_id", "") != "turn-a") {
+        std::fprintf(stderr, "list memories request contract mismatch\n");
+        return 1;
+    }
+
+    const auto list_plans_request = make_agent_daemon_jsonl_list_plans_request({
+        "session-a",
+        "namespace-a",
+        "project-a",
+        "turn-a",
+    });
+    if (!list_plans_request.is_object() ||
+            list_plans_request.value("command", "") != "list_plans" ||
+            list_plans_request.value("namespace_id", "") != "namespace-a") {
+        std::fprintf(stderr, "list plans request contract mismatch\n");
+        return 1;
+    }
+
+    const auto read_resource_request = make_agent_daemon_jsonl_read_resource_request({
+        "agent-resource://resource/r-1",
+        "session-a",
+        "namespace-a",
+        "project-a",
+        "turn-a",
+        2048,
+    });
+    if (!read_resource_request.is_object() ||
+            read_resource_request.value("command", "") != "read_resource" ||
+            read_resource_request.value("uri", "") != "agent-resource://resource/r-1" ||
+            read_resource_request.value("project_id", "") != "project-a" ||
+            read_resource_request.value("turn_id", "") != "turn-a" ||
+            read_resource_request.value("max_bytes", 0) != 2048) {
+        std::fprintf(stderr, "read resource request contract mismatch\n");
+        return 1;
+    }
+
+    const auto drain_request = make_agent_daemon_jsonl_drain_request({});
+    if (!drain_request.is_object() ||
+            drain_request.value("command", "") != "drain") {
+        std::fprintf(stderr, "drain request contract mismatch\n");
+        return 1;
+    }
+
     const auto shutdown_request = make_agent_daemon_jsonl_shutdown_request({});
     if (!shutdown_request.is_object() ||
             shutdown_request.value("command", "") != "shutdown") {
@@ -164,6 +247,31 @@ int main() {
             lifecycle_response.status.state != "draining" ||
             !lifecycle_response.status.shutdown_requested) {
         std::fprintf(stderr, "lifecycle response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
+    agent_daemon_jsonl_lifecycle_response drain_response;
+    if (!parse_agent_daemon_jsonl_lifecycle_response(
+            {
+                {"ok", true},
+                {"event", "drain"},
+                {"state", "draining"},
+                {"live", true},
+                {"ready", false},
+                {"worker_running", true},
+                {"accepting_commands", true},
+                {"shutdown_requested", false},
+                {"sessions", 1},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+            },
+            drain_response,
+            error) ||
+            drain_response.event != "drain" ||
+            drain_response.status.state != "draining" ||
+            drain_response.status.shutdown_requested) {
+        std::fprintf(stderr, "drain response contract mismatch: %s\n", error.c_str());
         return 1;
     }
 
@@ -286,10 +394,106 @@ int main() {
         return 1;
     }
 
+    agent_daemon_jsonl_resource_response resource_response;
+    if (!parse_agent_daemon_jsonl_resource_response(
+            {
+                {"ok", true},
+                {"event", "resource_read"},
+                {"content", "{\"results\":[\"stub\"]}"},
+                {"resource", {
+                    {"resource_id", "r-1"},
+                    {"uri", "agent-resource://resource/r-1"},
+                    {"name", "search-results.json"},
+                    {"description", "Stored search payload"},
+                    {"mime_type", "application/json"},
+                    {"size_bytes", 21},
+                    {"metadata", {
+                        {"purpose", "Preserve full payload beyond inline summary."},
+                        {"content_summary", "Full search results payload."},
+                        {"usage_hint", "Read when the top inline hits are insufficient."},
+                        {"limitations", "May be truncated by max_bytes."},
+                        {"keywords", json::array({"search", "results"})},
+                        {"entities", json::array({"repository_search"})},
+                    }},
+                }},
+                {"state", "ready"},
+                {"live", true},
+                {"ready", true},
+                {"worker_running", true},
+                {"accepting_commands", true},
+                {"shutdown_requested", false},
+                {"sessions", 1},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+            },
+            resource_response,
+            error) ||
+            resource_response.event != "resource_read" ||
+            resource_response.resource.uri != "agent-resource://resource/r-1" ||
+            resource_response.resource.metadata.usage_hint !=
+                "Read when the top inline hits are insufficient." ||
+            resource_response.content != "{\"results\":[\"stub\"]}" ||
+            resource_response.status.state != "ready") {
+        std::fprintf(stderr, "resource response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
+    agent_daemon_jsonl_listing_response listing_response;
+    if (!parse_agent_daemon_jsonl_listing_response(
+            {
+                {"ok", true},
+                {"event", "resources_listed"},
+                {"state", "ready"},
+                {"live", true},
+                {"ready", true},
+                {"worker_running", true},
+                {"accepting_commands", true},
+                {"shutdown_requested", false},
+                {"sessions", 1},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+                {"resources", json::array({
+                    {
+                        {"uri", "agent-resource://resource/r-1"},
+                        {"name", "search-results.json"},
+                        {"description", "Stored search payload"},
+                        {"mime_type", "application/json"},
+                        {"size_bytes", 21},
+                        {"metadata", {
+                            {"purpose", "Preserve full payload beyond inline summary."},
+                            {"content_summary", "Full search results payload."},
+                            {"usage_hint", "Read when the top inline hits are insufficient."},
+                            {"limitations", "May be truncated by max_bytes."},
+                            {"keywords", json::array({"search", "results"})},
+                            {"entities", json::array({"repository_search"})},
+                        }},
+                    }
+                })},
+            },
+            listing_response,
+            error) ||
+            listing_response.event != "resources_listed" ||
+            !listing_response.payload.contains("resources") ||
+            !listing_response.payload["resources"].is_array() ||
+            listing_response.payload["resources"].size() != 1 ||
+            listing_response.status.state != "ready") {
+        std::fprintf(stderr, "listing response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
     std::printf("daemon_jsonl_status=%s\n", status_request.value("command", "").c_str());
     std::printf("daemon_jsonl_cancel=%s\n", cancel_request.value("command", "").c_str());
     std::printf("daemon_jsonl_close=%s\n", close_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_list_sessions=%s\n", list_sessions_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_get_session=%s\n", get_session_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_list_resources=%s\n", list_resources_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_list_memories=%s\n", list_memories_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_list_plans=%s\n", list_plans_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_read_resource=%s\n", read_resource_request.value("command", "").c_str());
+    std::printf("daemon_jsonl_drain=%s\n", drain_request.value("command", "").c_str());
     std::printf("daemon_jsonl_status_summary=%s\n", rendered_status.c_str());
     std::printf("daemon_jsonl_turn_failure=%s\n", rendered_turn_failure.c_str());
     std::printf("daemon_jsonl_shutdown=%s\n", shutdown_request.value("command", "").c_str());

@@ -1,5 +1,6 @@
 #include "agent-daemon-client.h"
 
+#include "agent-daemon-client-admin.h"
 #include "agent-cli-config.h"
 #include "agent-cli-selection.h"
 #include "agent-daemon-client-status.h"
@@ -76,6 +77,31 @@ std::string normalize_daemon_session_line(std::string line) {
         line.pop_back();
     }
     return line;
+}
+
+bool split_daemon_session_command_argument(
+        const std::string & line,
+        const std::string & command,
+        std::string & argument) {
+    if (line == command) {
+        argument.clear();
+        return true;
+    }
+    const std::string prefix = command + " ";
+    if (line.rfind(prefix, 0) != 0) {
+        return false;
+    }
+    argument = line.substr(prefix.size());
+    return true;
+}
+
+size_t count_listing_items(
+        const agent_daemon_jsonl_listing_response & response,
+        const char * field) {
+    if (!response.payload.contains(field) || !response.payload[field].is_array()) {
+        return 0;
+    }
+    return response.payload[field].size();
 }
 
 void print_daemon_turn_failure(
@@ -317,11 +343,51 @@ public:
     }
 
     bool status(agent_daemon_jsonl_status_response & response, std::string & error) {
-        json message;
-        if (!send_request(make_agent_daemon_jsonl_status_request({}), message, error)) {
-            return false;
-        }
-        return parse_agent_daemon_jsonl_status_response(message, response, error);
+        return make_admin_client().status(response, error);
+    }
+
+    bool list_sessions(agent_daemon_jsonl_status_response & response, std::string & error) {
+        return make_admin_client().list_sessions(response, error);
+    }
+
+    bool get_session(
+            const std::string & session_id,
+            const std::string & namespace_id,
+            agent_daemon_jsonl_status_response & response,
+            std::string & error) {
+        return make_admin_client().get_session(session_id, namespace_id, response, error);
+    }
+
+    bool list_resources(
+            const agent_daemon_jsonl_list_resources_request & request,
+            agent_daemon_jsonl_listing_response & response,
+            std::string & error) {
+        return make_admin_client().list_resources(request, response, error);
+    }
+
+    bool list_memories(
+            const agent_daemon_jsonl_list_memories_request & request,
+            agent_daemon_jsonl_listing_response & response,
+            std::string & error) {
+        return make_admin_client().list_memories(request, response, error);
+    }
+
+    bool list_plans(
+            const agent_daemon_jsonl_list_plans_request & request,
+            agent_daemon_jsonl_listing_response & response,
+            std::string & error) {
+        return make_admin_client().list_plans(request, response, error);
+    }
+
+    bool read_resource(
+            const agent_daemon_jsonl_read_resource_request & request,
+            agent_daemon_jsonl_resource_response & response,
+            std::string & error) {
+        return make_admin_client().read_resource(request, response, error);
+    }
+
+    bool drain(agent_daemon_jsonl_lifecycle_response & response, std::string & error) {
+        return make_admin_client().drain(response, error);
     }
 
     bool reset_session(
@@ -329,22 +395,7 @@ public:
             const std::string & namespace_id,
             agent_daemon_jsonl_lifecycle_response & response,
             std::string & error) {
-        json message;
-        const bool ok = send_request(
-            make_agent_daemon_jsonl_reset_session_request(
-                session_id,
-                namespace_id),
-            message,
-            error);
-        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
-            error += ": " + message.dump();
-            return false;
-        }
-        if (ok && response.event != "session_reset") {
-            error = "unexpected daemon session_reset response: " + message.dump();
-            return false;
-        }
-        return ok;
+        return make_admin_client().reset_session(session_id, namespace_id, response, error);
     }
 
     bool close_session(
@@ -352,22 +403,7 @@ public:
             const std::string & namespace_id,
             agent_daemon_jsonl_lifecycle_response & response,
             std::string & error) {
-        json message;
-        const bool ok = send_request(
-            make_agent_daemon_jsonl_close_session_request(
-                session_id,
-                namespace_id),
-            message,
-            error);
-        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
-            error += ": " + message.dump();
-            return false;
-        }
-        if (ok && response.event != "session_closed") {
-            error = "unexpected daemon session_closed response: " + message.dump();
-            return false;
-        }
-        return ok;
+        return make_admin_client().close_session(session_id, namespace_id, response, error);
     }
 
     bool shutdown(std::string & error) {
@@ -376,19 +412,9 @@ public:
             return true;
         }
 
-        json message;
-        bool ok = send_request(
-                      make_agent_daemon_jsonl_shutdown_request({}),
-                      message,
-                      error);
         agent_daemon_jsonl_lifecycle_response response;
-        if (ok && !parse_agent_daemon_jsonl_lifecycle_response(message, response, error)) {
-            error += ": " + message.dump();
-            ok = false;
-        } else if (ok && response.event != "shutdown") {
-            error = "unexpected daemon shutdown response: " + message.dump();
-            ok = false;
-        } else if (ok &&
+        bool ok = make_admin_client().shutdown(response, error);
+        if (ok &&
                 response.status.state != "draining" &&
                 response.status.state != "stopping" &&
                 response.status.state != "stopped") {
@@ -462,6 +488,14 @@ private:
         }
         return transport.read(response, error);
     }
+
+    agent_daemon_client_admin make_admin_client() {
+        return agent_daemon_client_admin(
+            [this](const json & request, json & response, std::string & error) {
+                return send_request(request, response, error);
+            });
+    }
+
     void terminate_if_running() {
         if (!daemon_in && !daemon_out && !running) {
             return;
@@ -638,6 +672,79 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             std::printf("[daemon-status] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
             continue;
         }
+        if (line == "/sessions") {
+            agent_daemon_jsonl_status_response response;
+            if (!session.list_sessions(response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            const auto summary = make_agent_daemon_client_status_summary(response);
+            std::printf("[daemon-sessions] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
+            continue;
+        }
+        if (line == "/session") {
+            agent_daemon_jsonl_status_response response;
+            if (!session.get_session(a.memory_session, a.memory_namespace, response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            const auto summary = make_agent_daemon_client_status_summary(response);
+            std::printf("[daemon-session] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
+            continue;
+        }
+        if (line == "/resources") {
+            agent_daemon_jsonl_listing_response response;
+            if (!session.list_resources({
+                        a.memory_session,
+                        a.memory_namespace,
+                        a.memory_project,
+                        a.memory_turn,
+                    },
+                    response,
+                    error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-resources] count=%zu\n", count_listing_items(response, "resources"));
+            continue;
+        }
+        if (line == "/memories") {
+            agent_daemon_jsonl_listing_response response;
+            if (!session.list_memories({
+                        a.memory_session,
+                        a.memory_namespace,
+                        a.memory_project,
+                        a.memory_turn,
+                    },
+                    response,
+                    error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-memories] count=%zu\n", count_listing_items(response, "memories"));
+            continue;
+        }
+        if (line == "/plans") {
+            agent_daemon_jsonl_listing_response response;
+            if (!session.list_plans({
+                        a.memory_session,
+                        a.memory_namespace,
+                        a.memory_project,
+                        a.memory_turn,
+                    },
+                    response,
+                    error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf("[daemon-plans] count=%zu\n", count_listing_items(response, "plans"));
+            continue;
+        }
         if (line == "/reset") {
             agent_daemon_jsonl_lifecycle_response response;
             if (!session.reset_session(a.memory_session, a.memory_namespace, response, error)) {
@@ -660,13 +767,53 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             std::printf("[daemon-close] %s\n", render_agent_daemon_client_lifecycle_summary(summary).c_str());
             continue;
         }
+        if (line == "/drain") {
+            agent_daemon_jsonl_lifecycle_response response;
+            if (!session.drain(response, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            const auto summary = make_agent_daemon_client_lifecycle_summary(response);
+            std::printf("[daemon-drain] %s\n", render_agent_daemon_client_lifecycle_summary(summary).c_str());
+            continue;
+        }
+        std::string resource_uri;
+        if (split_daemon_session_command_argument(line, "/resource", resource_uri)) {
+            if (resource_uri.empty()) {
+                std::fprintf(stderr, "daemon-session /resource requires a URI\n");
+                continue;
+            }
+            agent_daemon_jsonl_resource_response response;
+            if (!session.read_resource({
+                        resource_uri,
+                        a.memory_session,
+                        a.memory_namespace,
+                        a.memory_project,
+                        a.memory_turn,
+                        8192,
+                    },
+                    response,
+                    error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf(
+                "[daemon-resource] uri=%s mime=%s bytes=%zu content=%s\n",
+                response.resource.uri.c_str(),
+                response.resource.mime_type.c_str(),
+                response.resource.size_bytes,
+                response.content.c_str());
+            continue;
+        }
         if (line == "/help") {
-            std::printf("[daemon-help] /status /reset /close /quit\n");
+            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!line.empty() && line.front() == '/') {
             std::fprintf(stderr, "unknown daemon-session command: %s\n", line.c_str());
-            std::printf("[daemon-help] /status /reset /close /quit\n");
+            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!run_one(line)) {

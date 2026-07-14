@@ -486,8 +486,10 @@ void common_agent_daemon_dispatcher::finalize_lifecycle_result_locked(
 void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         common_agent_daemon_status & status) const {
     const size_t queued_count = queue.size();
-    status.sessions = service.list_sessions();
-    status.session_count = status.sessions.size();
+    if (!status.session_snapshot_populated) {
+        status.sessions = service.list_sessions();
+        status.session_count = status.sessions.size();
+    }
     if (const auto active_turn = service.describe_active_turn()) {
         assign_active_turn_status(status, *active_turn);
     } else {

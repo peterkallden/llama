@@ -28,6 +28,31 @@ bool parse_string_array_field(
     return true;
 }
 
+bool parse_resource_descriptor_field(
+        const json & value,
+        agent_resource_descriptor & descriptor) {
+    if (!value.is_object()) {
+        return false;
+    }
+    descriptor = {};
+    descriptor.uri = value.value("uri", std::string());
+    descriptor.name = value.value("name", std::string());
+    descriptor.description = value.value("description", std::string());
+    descriptor.mime_type = value.value("mime_type", std::string());
+    descriptor.size_bytes = value.value("size_bytes", size_t(0));
+    descriptor.resource_id = value.value("resource_id", std::string());
+    if (value.contains("metadata") && value["metadata"].is_object()) {
+        const auto & metadata = value["metadata"];
+        descriptor.metadata.purpose = metadata.value("purpose", std::string());
+        descriptor.metadata.content_summary = metadata.value("content_summary", std::string());
+        descriptor.metadata.usage_hint = metadata.value("usage_hint", std::string());
+        descriptor.metadata.limitations = metadata.value("limitations", std::string());
+        descriptor.metadata.keywords = metadata.value("keywords", std::vector<std::string>{});
+        descriptor.metadata.entities = metadata.value("entities", std::vector<std::string>{});
+    }
+    return !descriptor.uri.empty();
+}
+
 } // namespace
 
 bool read_agent_daemon_jsonl_message(
@@ -117,6 +142,75 @@ json make_agent_daemon_jsonl_status_request(
         const agent_daemon_jsonl_status_request &) {
     return {
         {"command", "status"},
+    };
+}
+
+json make_agent_daemon_jsonl_list_sessions_request(
+        const agent_daemon_jsonl_list_sessions_request &) {
+    return {
+        {"command", "list_sessions"},
+    };
+}
+
+json make_agent_daemon_jsonl_get_session_request(
+        const agent_daemon_jsonl_get_session_request & request) {
+    return {
+        {"command", "get_session"},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+    };
+}
+
+json make_agent_daemon_jsonl_list_resources_request(
+        const agent_daemon_jsonl_list_resources_request & request) {
+    return {
+        {"command", "list_resources"},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+        {"project_id", request.project_id},
+        {"turn_id", request.turn_id},
+    };
+}
+
+json make_agent_daemon_jsonl_list_memories_request(
+        const agent_daemon_jsonl_list_memories_request & request) {
+    return {
+        {"command", "list_memories"},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+        {"project_id", request.project_id},
+        {"turn_id", request.turn_id},
+    };
+}
+
+json make_agent_daemon_jsonl_list_plans_request(
+        const agent_daemon_jsonl_list_plans_request & request) {
+    return {
+        {"command", "list_plans"},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+        {"project_id", request.project_id},
+        {"turn_id", request.turn_id},
+    };
+}
+
+json make_agent_daemon_jsonl_read_resource_request(
+        const agent_daemon_jsonl_read_resource_request & request) {
+    return {
+        {"command", "read_resource"},
+        {"uri", request.uri},
+        {"session_id", request.session_id},
+        {"namespace_id", request.namespace_id},
+        {"project_id", request.project_id},
+        {"turn_id", request.turn_id},
+        {"max_bytes", request.max_bytes},
+    };
+}
+
+json make_agent_daemon_jsonl_drain_request(
+        const agent_daemon_jsonl_drain_request &) {
+    return {
+        {"command", "drain"},
     };
 }
 
@@ -321,6 +415,77 @@ bool parse_agent_daemon_jsonl_lifecycle_response(
     }
 
     error = response.error.empty() ? "daemon lifecycle failed" : response.error;
+    return false;
+}
+
+bool parse_agent_daemon_jsonl_resource_response(
+        const json & message,
+        agent_daemon_jsonl_resource_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon resource response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
+    response.content = message.value("content", std::string());
+    response.payload = message;
+    response.error = message.value("error", std::string());
+    if (message.contains("resource")) {
+        if (!parse_resource_descriptor_field(message["resource"], response.resource)) {
+            error = "daemon resource response is missing resource descriptor";
+            return false;
+        }
+    }
+
+    std::string status_error;
+    if (!parse_agent_daemon_jsonl_status_response(message, response.status, status_error)) {
+        if (response.ok) {
+            error = status_error.empty() ? "daemon resource response missing status snapshot" : status_error;
+            return false;
+        }
+    }
+
+    if (response.ok) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon resource read failed" : response.error;
+    return false;
+}
+
+bool parse_agent_daemon_jsonl_listing_response(
+        const json & message,
+        agent_daemon_jsonl_listing_response & response,
+        std::string & error) {
+    response = {};
+    if (!message.is_object()) {
+        error = "unexpected daemon listing response";
+        return false;
+    }
+
+    response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
+    response.payload = message;
+    response.error = message.value("error", std::string());
+
+    std::string status_error;
+    if (!parse_agent_daemon_jsonl_status_response(message, response.status, status_error)) {
+        if (response.ok) {
+            error = status_error.empty() ? "daemon listing response missing status snapshot" : status_error;
+            return false;
+        }
+    }
+
+    if (response.ok) {
+        error.clear();
+        return true;
+    }
+
+    error = response.error.empty() ? "daemon listing failed" : response.error;
     return false;
 }
 

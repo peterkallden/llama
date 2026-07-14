@@ -31,6 +31,131 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command list_sessions_command;
+    if (!parse_agent_daemon_command(
+            json{{"request_id", "sessions-1"}, {"command", "list_sessions"}},
+            options,
+            common_agent_runtime_host_mode::chat,
+            list_sessions_command,
+            error) ||
+            list_sessions_command.type != common_agent_daemon_command_type::list_sessions) {
+        std::fprintf(stderr, "failed to parse list_sessions command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command get_session_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "session-1"},
+                {"command", "get_session"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            get_session_command,
+            error) ||
+            get_session_command.type != common_agent_daemon_command_type::get_session ||
+            !get_session_command.session.has_value() ||
+            get_session_command.session->key.session_id != "session-a") {
+        std::fprintf(stderr, "failed to parse get_session command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command list_resources_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "resources-1"},
+                {"command", "list_resources"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+                {"project_id", "project-a"},
+                {"turn_id", "turn-a"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            list_resources_command,
+            error) ||
+            list_resources_command.type != common_agent_daemon_command_type::list_resources ||
+            !list_resources_command.scope.has_value() ||
+            list_resources_command.scope->authority.project_id != "project-a") {
+        std::fprintf(stderr, "failed to parse list_resources command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command list_memories_command = list_resources_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "memories-1"},
+                {"command", "list_memories"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            list_memories_command,
+            error) ||
+            list_memories_command.type != common_agent_daemon_command_type::list_memories ||
+            !list_memories_command.scope.has_value()) {
+        std::fprintf(stderr, "failed to parse list_memories command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command list_plans_command = list_resources_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "plans-1"},
+                {"command", "list_plans"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            list_plans_command,
+            error) ||
+            list_plans_command.type != common_agent_daemon_command_type::list_plans ||
+            !list_plans_command.scope.has_value()) {
+        std::fprintf(stderr, "failed to parse list_plans command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command read_resource_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "resource-1"},
+                {"command", "read_resource"},
+                {"uri", "agent-resource://resource/r-1"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+                {"project_id", "project-a"},
+                {"turn_id", "turn-a"},
+                {"max_bytes", 2048},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            read_resource_command,
+            error) ||
+            read_resource_command.type != common_agent_daemon_command_type::read_resource ||
+            !read_resource_command.resource.has_value() ||
+            read_resource_command.resource->uri != "agent-resource://resource/r-1" ||
+            read_resource_command.resource->authority.project_id != "project-a" ||
+            read_resource_command.resource->max_bytes != 2048) {
+        std::fprintf(stderr, "failed to parse read_resource command: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command drain_command;
+    if (!parse_agent_daemon_command(
+            json{{"request_id", "drain-1"}, {"command", "drain"}},
+            options,
+            common_agent_runtime_host_mode::chat,
+            drain_command,
+            error) ||
+            drain_command.type != common_agent_daemon_command_type::drain) {
+        std::fprintf(stderr, "failed to parse drain command: %s\n", error.c_str());
+        return 1;
+    }
+
     common_agent_daemon_command turn_command;
     if (!parse_agent_daemon_command(
             json{
@@ -205,6 +330,140 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command_result list_sessions_result = status_result;
+    list_sessions_result.request_id = "sessions-1";
+    list_sessions_result.event = "sessions_listed";
+    const json list_sessions_response = make_agent_daemon_command_response(list_sessions_result);
+    if (!list_sessions_response.value("ok", false) ||
+            list_sessions_response.value("event", "") != "sessions_listed" ||
+            !list_sessions_response.contains("session_keys") ||
+            list_sessions_response["session_keys"].size() != 1) {
+        std::fprintf(stderr, "list_sessions response mismatch\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result get_session_result = status_result;
+    get_session_result.request_id = "session-1";
+    get_session_result.event = "session_found";
+    get_session_result.status.sessions = {status_result.status.sessions.front()};
+    get_session_result.status.session_count = 1;
+    get_session_result.status.session_snapshot_populated = true;
+    const json get_session_response = make_agent_daemon_command_response(get_session_result);
+    if (!get_session_response.value("ok", false) ||
+            get_session_response.value("event", "") != "session_found" ||
+            !get_session_response.contains("session_keys") ||
+            get_session_response["session_keys"].size() != 1 ||
+            get_session_response["session_keys"][0].value("session_id", "") != "session-a") {
+        std::fprintf(stderr, "get_session response mismatch\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result resources_result;
+    resources_result.ok = true;
+    resources_result.request_id = "resources-1";
+    resources_result.response_kind = common_agent_daemon_response_kind::listing;
+    resources_result.event = "resources_listed";
+    resources_result.status.state = common_agent_daemon_state::ready;
+    resources_result.status.live = true;
+    resources_result.status.ready = true;
+    resources_result.listing_result.resources.push_back({
+        "agent-resource://resource/r-1",
+        "search-results.json",
+        "Stored search payload",
+        "application/json",
+        21,
+        common_runtime_resource_scope::session,
+        {
+            "Preserve full payload beyond inline summary.",
+            "Full search results payload.",
+            "Read when the top inline hits are insufficient.",
+            "May be truncated by max_bytes.",
+            {"search", "results"},
+            {"repository_search"},
+        },
+        "r-1",
+        "",
+        "namespace-a",
+        "session-a",
+        "project-a",
+        "turn-a",
+        "",
+        "",
+        "",
+        0,
+        0,
+    });
+    const json resources_response = make_agent_daemon_command_response(resources_result);
+    if (!resources_response.value("ok", false) ||
+            resources_response.value("event", "") != "resources_listed" ||
+            !resources_response.contains("resources") ||
+            !resources_response["resources"].is_array() ||
+            resources_response["resources"].size() != 1) {
+        std::fprintf(stderr, "list_resources response mismatch\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result memories_result;
+    memories_result.ok = true;
+    memories_result.request_id = "memories-1";
+    memories_result.response_kind = common_agent_daemon_response_kind::listing;
+    memories_result.event = "memories_listed";
+    memories_result.status.state = common_agent_daemon_state::ready;
+    memories_result.status.live = true;
+    memories_result.status.ready = true;
+    memories_result.listing_result.memories.push_back({
+        "mem-1",
+        "decision",
+        "session",
+        "Tool results should stay host-owned.",
+        "session-a",
+        "project-a",
+        "turn-a",
+        1,
+    });
+    const json memories_response = make_agent_daemon_command_response(memories_result);
+    if (!memories_response.value("ok", false) ||
+            memories_response.value("event", "") != "memories_listed" ||
+            !memories_response.contains("memories") ||
+            memories_response["memories"].size() != 1 ||
+            memories_response["memories"][0].value("id", "") != "mem-1") {
+        std::fprintf(stderr, "list_memories response mismatch\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result plans_result;
+    plans_result.ok = true;
+    plans_result.request_id = "plans-1";
+    plans_result.response_kind = common_agent_daemon_response_kind::listing;
+    plans_result.event = "plans_listed";
+    plans_result.status.state = common_agent_daemon_state::ready;
+    plans_result.status.live = true;
+    plans_result.status.ready = true;
+    plans_result.listing_result.plans.push_back({
+        "plan-1",
+        "Verify daemon session flow.",
+        "Run one admin smoke.",
+        "active",
+        "session",
+        "session-a",
+        "project-a",
+        "turn-a",
+        "step-1",
+        "Inspect resource output.",
+        2,
+        3,
+        1,
+    });
+    const json plans_response = make_agent_daemon_command_response(plans_result);
+    if (!plans_response.value("ok", false) ||
+            plans_response.value("event", "") != "plans_listed" ||
+            !plans_response.contains("plans") ||
+            plans_response["plans"].size() != 1 ||
+            plans_response["plans"][0].value("plan_id", "") != "plan-1") {
+        std::fprintf(stderr, "list_plans response mismatch\n");
+        return 1;
+    }
+
     common_agent_daemon_command_result turn_result;
     turn_result.ok = true;
     turn_result.request_id = "turn-1";
@@ -253,6 +512,35 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command_result resource_result;
+    resource_result.ok = true;
+    resource_result.request_id = "resource-1";
+    resource_result.response_kind = common_agent_daemon_response_kind::resource;
+    resource_result.event = "resource_read";
+    resource_result.status.state = common_agent_daemon_state::ready;
+    resource_result.status.live = true;
+    resource_result.status.ready = true;
+    resource_result.status.worker_running = true;
+    resource_result.status.accepting_commands = true;
+    resource_result.status.max_queue_size = 8;
+    resource_result.status.queue_capacity_remaining = 8;
+    resource_result.resource_result.resource.uri = "agent-resource://resource/r-1";
+    resource_result.resource_result.resource.name = "search-results.json";
+    resource_result.resource_result.resource.description = "Stored search payload";
+    resource_result.resource_result.resource.mime_type = "application/json";
+    resource_result.resource_result.resource.size_bytes = 21;
+    resource_result.resource_result.resource.metadata.usage_hint = "Read the full payload when inline summary is insufficient.";
+    resource_result.resource_result.content = "{\"results\":[\"stub\"]}";
+    const json resource_response = make_agent_daemon_command_response(resource_result);
+    if (!resource_response.value("ok", false) ||
+            resource_response.value("event", "") != "resource_read" ||
+            !resource_response.contains("resource") ||
+            resource_response["resource"].value("uri", "") != "agent-resource://resource/r-1" ||
+            resource_response.value("content", "") != "{\"results\":[\"stub\"]}") {
+        std::fprintf(stderr, "resource response mismatch\n");
+        return 1;
+    }
+
     common_agent_daemon_command_result shutdown_result;
     shutdown_result.ok = true;
     shutdown_result.request_id = "shutdown-1";
@@ -274,6 +562,29 @@ int main() {
             shutdown_response.value("shutdown_requested", false) != true ||
             shutdown_response.value("accepting_commands", true) != false) {
         std::fprintf(stderr, "shutdown lifecycle response mismatch\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result drain_result;
+    drain_result.ok = true;
+    drain_result.request_id = "drain-1";
+    drain_result.response_kind = common_agent_daemon_response_kind::lifecycle;
+    drain_result.event = "drain";
+    drain_result.status.state = common_agent_daemon_state::draining;
+    drain_result.status.live = true;
+    drain_result.status.ready = false;
+    drain_result.status.worker_running = true;
+    drain_result.status.accepting_commands = true;
+    drain_result.status.shutdown_requested = false;
+    drain_result.status.queued_command_count = 0;
+    drain_result.status.max_queue_size = 8;
+    drain_result.status.queue_capacity_remaining = 8;
+    const json drain_response = make_agent_daemon_command_response(drain_result);
+    if (!drain_response.value("ok", false) ||
+            drain_response.value("event", "") != "drain" ||
+            drain_response.value("state", "") != "draining" ||
+            drain_response.value("shutdown_requested", true) != false) {
+        std::fprintf(stderr, "drain lifecycle response mismatch\n");
         return 1;
     }
 
