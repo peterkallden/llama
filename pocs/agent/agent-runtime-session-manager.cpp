@@ -254,10 +254,10 @@ bool common_agent_runtime_session_manager::drain_lane(
     bool already_draining = false;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
-        if (lane.draining) {
+        if (lane.state != common_agent_runtime_session_lane_state::idle) {
             already_draining = true;
         } else {
-            lane.draining = true;
+            lane.state = common_agent_runtime_session_lane_state::running;
         }
     }
     if (already_draining) {
@@ -267,7 +267,7 @@ bool common_agent_runtime_session_manager::drain_lane(
         {
             std::lock_guard<std::mutex> lock(lane.mutex);
             if (lane.active_turn.has_value()) {
-                lane.draining = false;
+                lane.state = common_agent_runtime_session_lane_state::idle;
                 error = "session already has an active turn";
                 return false;
             }
@@ -286,7 +286,7 @@ bool common_agent_runtime_session_manager::drain_lane(
         if (message == nullptr || message->result == nullptr || message->error == nullptr) {
             std::lock_guard<std::mutex> lock(lane.mutex);
             lane.current_message.reset();
-            lane.draining = false;
+            lane.state = common_agent_runtime_session_lane_state::idle;
             error = "lane mailbox message is missing result/error storage";
             return false;
         }
@@ -354,7 +354,7 @@ bool common_agent_runtime_session_manager::drain_lane(
 
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
-        lane.draining = false;
+        lane.state = common_agent_runtime_session_lane_state::idle;
     }
     if (target_message != nullptr) {
         return wait_for_message_completion(target_message, error);
@@ -390,7 +390,7 @@ bool common_agent_runtime_session_manager::reset_session(
         it->second.last_turn_id.clear();
         it->second.last_turn_phase = common_agent_runtime_turn_phase::queued;
         it->second.last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
-        it->second.draining = false;
+        it->second.state = common_agent_runtime_session_lane_state::idle;
     }
     error.clear();
     return true;

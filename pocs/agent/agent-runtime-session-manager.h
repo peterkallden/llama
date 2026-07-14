@@ -63,6 +63,20 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
     return make_agent_runtime_session_host_config(std::move(config));
 }
 
+enum class common_agent_runtime_session_lane_state {
+    idle,
+    running,
+};
+
+inline const char * common_agent_runtime_session_lane_state_name(
+        common_agent_runtime_session_lane_state state) {
+    switch (state) {
+        case common_agent_runtime_session_lane_state::idle:    return "idle";
+        case common_agent_runtime_session_lane_state::running: return "running";
+    }
+    return "idle";
+}
+
 class common_agent_runtime_session_manager {
 public:
     explicit common_agent_runtime_session_manager(common_agent_runtime_session_manager_config config);
@@ -113,7 +127,7 @@ private:
         common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
         common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
         size_t next_message_id = 1;
-        bool draining = false;
+        common_agent_runtime_session_lane_state state = common_agent_runtime_session_lane_state::idle;
         mutable std::mutex mutex;
     };
 
