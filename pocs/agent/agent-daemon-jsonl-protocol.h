@@ -53,6 +53,7 @@ struct agent_daemon_jsonl_ready_response {
 
 struct agent_daemon_jsonl_turn_response {
     bool ok = false;
+    std::string event;
     bool cancelled = false;
     std::string response;
     std::string error;

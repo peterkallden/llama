@@ -250,6 +250,7 @@ int main() {
         turn_response,
         error);
     if (error != "turn deadline exceeded" ||
+            turn_response.event != "" ||
             !turn_response.cancelled ||
             turn_response.failure_class != "timeout" ||
             turn_response.response_generation_status != "cancelled" ||
@@ -258,11 +259,37 @@ int main() {
         return 1;
     }
 
+    const auto turn_failure_summary = make_agent_daemon_client_turn_failure_summary(
+        {
+            false,
+            "turn_rejected",
+            true,
+            {},
+            "daemon is not accepting new turns",
+            "timeout",
+            "cancelled",
+            "cancelled",
+            false,
+            0,
+        },
+        {});
+    const std::string rendered_turn_failure =
+        render_agent_daemon_client_turn_failure_summary(turn_failure_summary);
+    if (rendered_turn_failure.find("turn_rejected") == std::string::npos ||
+            rendered_turn_failure.find("class=timeout") == std::string::npos ||
+            rendered_turn_failure.find("status=cancelled") == std::string::npos ||
+            rendered_turn_failure.find("stop=cancelled") == std::string::npos ||
+            rendered_turn_failure.find("cancelled=yes") == std::string::npos) {
+        std::fprintf(stderr, "turn failure summary mismatch: %s\n", rendered_turn_failure.c_str());
+        return 1;
+    }
+
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
     std::printf("daemon_jsonl_status=%s\n", status_request.value("command", "").c_str());
     std::printf("daemon_jsonl_cancel=%s\n", cancel_request.value("command", "").c_str());
     std::printf("daemon_jsonl_close=%s\n", close_request.value("command", "").c_str());
     std::printf("daemon_jsonl_status_summary=%s\n", rendered_status.c_str());
+    std::printf("daemon_jsonl_turn_failure=%s\n", rendered_turn_failure.c_str());
     std::printf("daemon_jsonl_shutdown=%s\n", shutdown_request.value("command", "").c_str());
     return 0;
 }

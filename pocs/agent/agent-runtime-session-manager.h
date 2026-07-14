@@ -92,18 +92,23 @@ public:
 
 private:
     struct common_agent_runtime_session_lane_message {
+        size_t id = 0;
         common_agent_runtime_session_manager_turn_request request;
         common_agent_runtime_session_manager_turn_result * result = nullptr;
         std::string * error = nullptr;
+        bool ok = false;
+        bool completed = false;
     };
 
     struct common_agent_runtime_session_lane {
         std::unique_ptr<common_agent_runtime_session_host> host;
-        std::deque<common_agent_runtime_session_lane_message> mailbox;
+        std::deque<std::shared_ptr<common_agent_runtime_session_lane_message>> mailbox;
         std::optional<common_agent_runtime_turn_execution> active_turn;
         std::string last_turn_id;
         common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
         common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
+        size_t next_message_id = 1;
+        bool draining = false;
     };
 
     common_agent_runtime_session_key make_session_key(
@@ -111,6 +116,12 @@ private:
 
     common_agent_runtime_session_lane & ensure_session_lane(
         const common_agent_runtime_session_key & key);
+
+    std::shared_ptr<common_agent_runtime_session_lane_message> enqueue_lane_turn(
+        common_agent_runtime_session_lane & lane,
+        const common_agent_runtime_session_manager_turn_request & request,
+        common_agent_runtime_session_manager_turn_result & result,
+        std::string & error);
 
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
@@ -126,6 +137,7 @@ private:
 
     bool drain_lane(
         common_agent_runtime_session_lane & lane,
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & target_message,
         std::string & error);
 
     common_agent_runtime_session_manager_config config;

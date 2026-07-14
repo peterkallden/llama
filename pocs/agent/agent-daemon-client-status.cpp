@@ -89,3 +89,34 @@ std::string render_agent_daemon_client_lifecycle_summary(
         const agent_daemon_client_lifecycle_summary & summary) {
     return summary.event + " " + render_agent_daemon_client_status_summary(summary.status);
 }
+
+agent_daemon_client_turn_failure_summary make_agent_daemon_client_turn_failure_summary(
+        const agent_daemon_jsonl_turn_response & response,
+        const std::string & fallback_error) {
+    agent_daemon_client_turn_failure_summary summary;
+    summary.headline = response.event.empty() ? "turn_failed" : response.event;
+
+    const std::string error =
+        !response.error.empty() ? response.error : fallback_error;
+    if (!response.failure_class.empty()) {
+        summary.headline += " class=" + response.failure_class;
+    }
+    if (!response.response_generation_status.empty()) {
+        summary.headline += " status=" + response.response_generation_status;
+    }
+    if (!response.response_stop_reason.empty()) {
+        summary.headline += " stop=" + response.response_stop_reason;
+    }
+    if (response.cancelled) {
+        summary.headline += " cancelled=yes";
+    }
+    if (!error.empty()) {
+        summary.headline += " error=" + error;
+    }
+    return summary;
+}
+
+std::string render_agent_daemon_client_turn_failure_summary(
+        const agent_daemon_client_turn_failure_summary & summary) {
+    return summary.headline;
+}

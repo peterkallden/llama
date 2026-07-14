@@ -26,6 +26,21 @@ common_agent_runtime_session_manager::ensure_session_lane(
     return it->second;
 }
 
+std::shared_ptr<common_agent_runtime_session_manager::common_agent_runtime_session_lane_message>
+common_agent_runtime_session_manager::enqueue_lane_turn(
+        common_agent_runtime_session_lane & lane,
+        const common_agent_runtime_session_manager_turn_request & request,
+        common_agent_runtime_session_manager_turn_result & result,
+        std::string & error) {
+    auto message = std::make_shared<common_agent_runtime_session_lane_message>();
+    message->id = lane.next_message_id++;
+    message->request = request;
+    message->result = &result;
+    message->error = &error;
+    lane.mailbox.push_back(message);
+    return message;
+}
+
 bool common_agent_runtime_session_manager::run_lane_turn(
         common_agent_runtime_session_lane & lane,
         const common_agent_runtime_session_manager_turn_request & request,
@@ -134,6 +149,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
 
 bool common_agent_runtime_session_manager::drain_lane(
         common_agent_runtime_session_lane & lane,
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & target_message,
         std::string & error) {
     const auto resolve_lane_error = [](
             const common_agent_runtime_session_lane_message & message) {
@@ -146,36 +162,59 @@ bool common_agent_runtime_session_manager::drain_lane(
         return std::string();
     };
 
+    if (lane.draining) {
+        error = "session lane is already draining";
+        return false;
+    }
+
+    lane.draining = true;
     while (!lane.mailbox.empty()) {
         if (lane.active_turn.has_value()) {
+            lane.draining = false;
             error = "session already has an active turn";
             return false;
         }
 
         auto message = std::move(lane.mailbox.front());
         lane.mailbox.pop_front();
-        if (message.result == nullptr || message.error == nullptr) {
+        if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+            lane.draining = false;
             error = "lane mailbox message is missing result/error storage";
             return false;
         }
 
         while (true) {
-            const bool completed = run_lane_turn(lane, message.request, *message.result, *message.error);
+            const bool completed = run_lane_turn(lane, message->request, *message->result, *message->error);
             if (completed) {
+                message->ok = true;
+                message->completed = true;
                 break;
             }
             if (!lane.active_turn.has_value()) {
-                error = resolve_lane_error(message);
+                message->ok = false;
+                message->completed = true;
+                lane.draining = false;
+                error = resolve_lane_error(*message);
                 return false;
             }
             const auto disposition = lane.active_turn->disposition;
             if (disposition != common_agent_runtime_turn_disposition::continue_immediately) {
-                error = resolve_lane_error(message);
+                message->ok = false;
+                message->completed = true;
+                lane.draining = false;
+                error = resolve_lane_error(*message);
                 return false;
             }
         }
+
+        if (message == target_message && message->completed) {
+            lane.draining = false;
+            error = resolve_lane_error(*message);
+            return message->ok;
+        }
     }
 
+    lane.draining = false;
     error.clear();
     return true;
 }
@@ -185,14 +224,8 @@ bool common_agent_runtime_session_manager::run_turn(
         common_agent_runtime_session_manager_turn_result & result,
         std::string & error) {
     auto & lane = ensure_session_lane(make_session_key(request));
-    if (lane.active_turn.has_value()) {
-        result = {};
-        result.error = "session already has an active turn";
-        error = result.error;
-        return false;
-    }
-    lane.mailbox.push_back({request, &result, &error});
-    return drain_lane(lane, error);
+    auto message = enqueue_lane_turn(lane, request, result, error);
+    return drain_lane(lane, message, error);
 }
 
 bool common_agent_runtime_session_manager::reset_session(

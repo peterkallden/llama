@@ -207,6 +207,7 @@ bool parse_agent_daemon_jsonl_turn_response(
     }
 
     response.ok = message.value("ok", false);
+    response.event = message.value("event", std::string());
     response.cancelled = message.value("cancelled", false);
     response.response = message.value("response", std::string());
     response.error = message.value("error", std::string());

@@ -78,6 +78,17 @@ std::string normalize_daemon_session_line(std::string line) {
     return line;
 }
 
+void print_daemon_turn_failure(
+        const agent_daemon_jsonl_turn_response & response,
+        const std::string & fallback_error) {
+    const auto summary =
+        make_agent_daemon_client_turn_failure_summary(response, fallback_error);
+    std::fprintf(
+        stderr,
+        "%s\n",
+        render_agent_daemon_client_turn_failure_summary(summary).c_str());
+}
+
 bool daemon_diagnostic_has_prefix(
         std::string_view line,
         std::string_view prefix) {
@@ -564,7 +575,7 @@ int run_daemon_chat_command(const char * argv0, const args & a) {
 
     agent_daemon_jsonl_turn_response response;
     if (!session.run_turn(make_daemon_client_request(a, a.prompt), response, error)) {
-        std::fprintf(stderr, "%s\n", error.c_str());
+        print_daemon_turn_failure(response, error);
         session.shutdown(error);
         return 1;
     }
@@ -594,7 +605,7 @@ int run_daemon_session_command(const char * argv0, const args & a) {
     auto run_one = [&](const std::string & prompt, const std::string & turn_id = std::string()) -> bool {
         agent_daemon_jsonl_turn_response response;
         if (!session.run_turn(make_daemon_client_request(a, prompt, turn_id), response, error)) {
-            std::fprintf(stderr, "%s\n", error.c_str());
+            print_daemon_turn_failure(response, error);
             return false;
         }
         std::printf("%s\n", response.response.c_str());
