@@ -64,9 +64,14 @@ bool common_agent_runtime_session_manager::wait_for_message_completion(
 
 bool common_agent_runtime_session_manager::run_lane_turn(
         common_agent_runtime_session_lane & lane,
-        const common_agent_runtime_session_manager_turn_request & request,
-        common_agent_runtime_session_manager_turn_result & result,
-        std::string & error) {
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message) {
+    if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+        return false;
+    }
+
+    auto & request = message->request;
+    auto & result = *message->result;
+    auto & error = *message->error;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
         if (!lane.active_turn.has_value()) {
@@ -82,7 +87,7 @@ bool common_agent_runtime_session_manager::run_lane_turn(
         }
     }
 
-    const auto disposition = advance_lane_turn(lane, request, result, error);
+    const auto disposition = advance_lane_turn(lane, message);
 
     std::lock_guard<std::mutex> lock(lane.mutex);
     if (!lane.active_turn.has_value()) {
@@ -105,9 +110,14 @@ bool common_agent_runtime_session_manager::run_lane_turn(
 
 common_agent_runtime_turn_disposition common_agent_runtime_session_manager::advance_lane_turn(
         common_agent_runtime_session_lane & lane,
-        const common_agent_runtime_session_manager_turn_request & request,
-        common_agent_runtime_session_manager_turn_result & result,
-        std::string & error) {
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message) {
+    if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+        return common_agent_runtime_turn_disposition::failed;
+    }
+
+    auto & request = message->request;
+    auto & result = *message->result;
+    auto & error = *message->error;
     common_agent_runtime_turn_phase phase;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
@@ -271,16 +281,18 @@ bool common_agent_runtime_session_manager::drain_lane(
             }
             message = std::move(lane.mailbox.front());
             lane.mailbox.pop_front();
+            lane.current_message = message;
         }
         if (message == nullptr || message->result == nullptr || message->error == nullptr) {
             std::lock_guard<std::mutex> lock(lane.mutex);
+            lane.current_message.reset();
             lane.draining = false;
             error = "lane mailbox message is missing result/error storage";
             return false;
         }
 
         while (true) {
-            const bool completed = run_lane_turn(lane, message->request, *message->result, *message->error);
+            const bool completed = run_lane_turn(lane, message);
             if (completed) {
                 std::lock_guard<std::mutex> message_lock(message->mutex);
                 message->ok = true;
@@ -331,6 +343,13 @@ bool common_agent_runtime_session_manager::drain_lane(
         if (message == target_message) {
             error = resolve_lane_error(*message);
         }
+
+        {
+            std::lock_guard<std::mutex> lock(lane.mutex);
+            if (lane.current_message == message) {
+                lane.current_message.reset();
+            }
+        }
     }
 
     {
@@ -366,6 +385,7 @@ bool common_agent_runtime_session_manager::reset_session(
     {
         std::lock_guard<std::mutex> lock(it->second.mutex);
         it->second.mailbox.clear();
+        it->second.current_message.reset();
         it->second.active_turn.reset();
         it->second.last_turn_id.clear();
         it->second.last_turn_phase = common_agent_runtime_turn_phase::queued;
@@ -417,8 +437,8 @@ bool common_agent_runtime_session_manager::request_cancel_active_turn(
         active_turn = {
             entry.first,
             descriptor.project_id,
-            lane.active_turn->request_id,
-            lane.active_turn->turn_id,
+            lane.current_message ? lane.current_message->request.request_id : lane.active_turn->request_id,
+            lane.current_message ? lane.current_message->request.turn.turn_id : lane.active_turn->turn_id,
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
             common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
@@ -452,8 +472,8 @@ std::optional<common_agent_runtime_active_turn_descriptor> common_agent_runtime_
         return common_agent_runtime_active_turn_descriptor{
             entry.first,
             descriptor.project_id,
-            lane.active_turn->request_id,
-            lane.active_turn->turn_id,
+            lane.current_message ? lane.current_message->request.request_id : lane.active_turn->request_id,
+            lane.current_message ? lane.current_message->request.turn.turn_id : lane.active_turn->turn_id,
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
             common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
@@ -477,8 +497,16 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
             descriptor.policy_pack_id,
             entry.second.mailbox.size(),
             entry.second.active_turn.has_value(),
-            entry.second.active_turn.has_value() ? entry.second.active_turn->request_id : std::string(),
-            entry.second.active_turn.has_value() ? entry.second.active_turn->turn_id : std::string(),
+            entry.second.active_turn.has_value()
+                ? (entry.second.current_message
+                    ? entry.second.current_message->request.request_id
+                    : entry.second.active_turn->request_id)
+                : std::string(),
+            entry.second.active_turn.has_value()
+                ? (entry.second.current_message
+                    ? entry.second.current_message->request.turn.turn_id
+                    : entry.second.active_turn->turn_id)
+                : std::string(),
             entry.second.active_turn.has_value()
                 ? common_agent_runtime_turn_phase_name(entry.second.active_turn->phase)
                 : std::string(),

@@ -387,7 +387,9 @@ int main() {
     const auto queued_sessions = queued_manager.list_sessions();
     if (queued_sessions.size() != 1 ||
             !queued_sessions[0].has_active_turn ||
-            queued_sessions[0].queued_turn_count < 1) {
+            queued_sessions[0].queued_turn_count < 1 ||
+            queued_sessions[0].active_request_id != "request-4" ||
+            queued_sessions[0].active_turn_id != "turn-4") {
         std::fprintf(stderr, "queued session smoke did not expose active+queued lane state\n");
         return 1;
     }
