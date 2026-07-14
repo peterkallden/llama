@@ -2,6 +2,8 @@
 
 #include "../../common/runtime-resource.h"
 
+#include "agent-daemon-events.h"
+
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
@@ -84,9 +86,20 @@ struct agent_daemon_jsonl_ready_response {
     std::vector<std::string> capabilities;
 };
 
+struct agent_daemon_jsonl_event_entry {
+    std::string type;
+    std::string request_id;
+    std::string turn_id;
+    std::string detail;
+    std::string event_type;
+    uint64_t sequence = 0;
+};
+
 struct agent_daemon_jsonl_turn_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     bool cancelled = false;
     std::string response;
     std::string error;
@@ -120,6 +133,8 @@ struct agent_daemon_jsonl_session_status {
 struct agent_daemon_jsonl_status_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     std::string state;
     bool live = false;
     bool ready = false;
@@ -142,12 +157,16 @@ struct agent_daemon_jsonl_status_response {
 struct agent_daemon_jsonl_event_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     std::string error;
 };
 
 struct agent_daemon_jsonl_lifecycle_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     std::string target_request_id;
     std::string target_turn_id;
     agent_daemon_jsonl_status_response status;
@@ -157,6 +176,8 @@ struct agent_daemon_jsonl_lifecycle_response {
 struct agent_daemon_jsonl_resource_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     agent_resource_descriptor resource;
     std::string content;
     agent_daemon_jsonl_status_response status;
@@ -167,6 +188,8 @@ struct agent_daemon_jsonl_resource_response {
 struct agent_daemon_jsonl_listing_response {
     bool ok = false;
     std::string event;
+    int daemon_event_count = 0;
+    std::vector<agent_daemon_jsonl_event_entry> events;
     agent_daemon_jsonl_status_response status;
     nlohmann::ordered_json payload;
     std::string error;

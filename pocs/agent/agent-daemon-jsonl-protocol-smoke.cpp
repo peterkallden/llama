@@ -218,6 +218,16 @@ int main() {
             {
                 {"ok", true},
                 {"event", "shutdown"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "daemon.shutdown_requested"},
+                        {"event_type", "daemon.shutdown_requested"},
+                        {"sequence", 3},
+                        {"request_id", "shutdown-1"},
+                        {"detail", "shutdown requested"},
+                    }
+                })},
             },
             "shutdown",
             error)) {
@@ -230,6 +240,15 @@ int main() {
             {
                 {"ok", true},
                 {"event", "shutdown"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "daemon.shutdown_requested"},
+                        {"event_type", "daemon.shutdown_requested"},
+                        {"sequence", 4},
+                        {"request_id", "shutdown-1"},
+                    }
+                })},
                 {"state", "draining"},
                 {"live", true},
                 {"ready", false},
@@ -244,6 +263,9 @@ int main() {
             lifecycle_response,
             error) ||
             lifecycle_response.event != "shutdown" ||
+            lifecycle_response.daemon_event_count != 1 ||
+            lifecycle_response.events.size() != 1 ||
+            lifecycle_response.events[0].event_type != "daemon.shutdown_requested" ||
             lifecycle_response.status.state != "draining" ||
             !lifecycle_response.status.shutdown_requested) {
         std::fprintf(stderr, "lifecycle response contract mismatch: %s\n", error.c_str());
@@ -255,6 +277,14 @@ int main() {
             {
                 {"ok", true},
                 {"event", "drain"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "daemon.drain_requested"},
+                        {"event_type", "daemon.drain_requested"},
+                        {"sequence", 5},
+                    }
+                })},
                 {"state", "draining"},
                 {"live", true},
                 {"ready", false},
@@ -280,6 +310,16 @@ int main() {
             {
                 {"ok", true},
                 {"event", "status"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "status.reported"},
+                        {"event_type", "status.reported"},
+                        {"sequence", 6},
+                        {"request_id", "status-1"},
+                        {"detail", "ready"},
+                    }
+                })},
                 {"state", "ready"},
                 {"live", true},
                 {"ready", true},
@@ -322,6 +362,9 @@ int main() {
             status_response.active_turn_id != "turn-active" ||
             status_response.active_turn_phase != "awaiting_inference" ||
             status_response.active_turn_disposition != "continue_immediately" ||
+            status_response.daemon_event_count != 1 ||
+            status_response.events.size() != 1 ||
+            status_response.events[0].event_type != "status.reported" ||
             status_response.session_keys.size() != 1 ||
             status_response.session_keys[0].policy_pack_id != "pack-a" ||
             status_response.session_keys[0].lane_state != "running" ||
@@ -349,6 +392,15 @@ int main() {
     parse_agent_daemon_jsonl_turn_response(
         {
             {"ok", false},
+            {"daemon_event_count", 1},
+            {"events", json::array({
+                {
+                    {"type", "turn.rejected"},
+                    {"event_type", "turn.rejected"},
+                    {"sequence", 8},
+                    {"request_id", "turn-1"},
+                }
+            })},
             {"cancelled", true},
             {"failure_class", "timeout"},
             {"response_generation_status", "cancelled"},
@@ -368,21 +420,25 @@ int main() {
         std::fprintf(stderr, "turn response contract mismatch: %s\n", error.c_str());
         return 1;
     }
+    if (turn_response.daemon_event_count != 1 ||
+            turn_response.events.size() != 1 ||
+            turn_response.events[0].type != "turn.rejected") {
+        std::fprintf(stderr, "turn response event parsing mismatch\n");
+        return 1;
+    }
 
-    const auto turn_failure_summary = make_agent_daemon_client_turn_failure_summary(
-        {
-            false,
-            "turn_rejected",
-            true,
-            {},
-            "daemon is not accepting new turns",
-            "timeout",
-            "cancelled",
-            "cancelled",
-            false,
-            0,
-        },
-        {});
+    agent_daemon_jsonl_turn_response turn_failure_response;
+    turn_failure_response.ok = false;
+    turn_failure_response.event = "turn_rejected";
+    turn_failure_response.cancelled = true;
+    turn_failure_response.error = "daemon is not accepting new turns";
+    turn_failure_response.failure_class = "timeout";
+    turn_failure_response.response_generation_status = "cancelled";
+    turn_failure_response.response_stop_reason = "cancelled";
+    turn_failure_response.runtime_reused = false;
+    turn_failure_response.event_count = 0;
+    const auto turn_failure_summary =
+        make_agent_daemon_client_turn_failure_summary(turn_failure_response, {});
     const std::string rendered_turn_failure =
         render_agent_daemon_client_turn_failure_summary(turn_failure_summary);
     if (rendered_turn_failure.find("turn_rejected") == std::string::npos ||
@@ -399,6 +455,14 @@ int main() {
             {
                 {"ok", true},
                 {"event", "resource_read"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "resource.read"},
+                        {"event_type", "resource.read"},
+                        {"sequence", 9},
+                    }
+                })},
                 {"content", "{\"results\":[\"stub\"]}"},
                 {"resource", {
                     {"resource_id", "r-1"},
@@ -433,6 +497,9 @@ int main() {
             resource_response.resource.uri != "agent-resource://resource/r-1" ||
             resource_response.resource.metadata.usage_hint !=
                 "Read when the top inline hits are insufficient." ||
+            resource_response.daemon_event_count != 1 ||
+            resource_response.events.size() != 1 ||
+            resource_response.events[0].event_type != "resource.read" ||
             resource_response.content != "{\"results\":[\"stub\"]}" ||
             resource_response.status.state != "ready") {
         std::fprintf(stderr, "resource response contract mismatch: %s\n", error.c_str());
@@ -444,6 +511,14 @@ int main() {
             {
                 {"ok", true},
                 {"event", "resources_listed"},
+                {"daemon_event_count", 1},
+                {"events", json::array({
+                    {
+                        {"type", "resources.listed"},
+                        {"event_type", "resources.listed"},
+                        {"sequence", 10},
+                    }
+                })},
                 {"state", "ready"},
                 {"live", true},
                 {"ready", true},
@@ -478,6 +553,9 @@ int main() {
             !listing_response.payload.contains("resources") ||
             !listing_response.payload["resources"].is_array() ||
             listing_response.payload["resources"].size() != 1 ||
+            listing_response.daemon_event_count != 1 ||
+            listing_response.events.size() != 1 ||
+            listing_response.events[0].event_type != "resources.listed" ||
             listing_response.status.state != "ready") {
         std::fprintf(stderr, "listing response contract mismatch: %s\n", error.c_str());
         return 1;

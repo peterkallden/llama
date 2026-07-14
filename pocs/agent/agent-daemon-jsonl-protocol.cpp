@@ -53,6 +53,45 @@ bool parse_resource_descriptor_field(
     return !descriptor.uri.empty();
 }
 
+bool parse_event_entry_field(
+        const json & value,
+        agent_daemon_jsonl_event_entry & entry) {
+    if (!value.is_object()) {
+        return false;
+    }
+    entry = {};
+    entry.type = value.value("type", std::string());
+    entry.request_id = value.value("request_id", std::string());
+    entry.turn_id = value.value("turn_id", std::string());
+    entry.detail = value.value("detail", std::string());
+    entry.event_type = value.value("event_type", std::string());
+    entry.sequence = value.value("sequence", uint64_t(0));
+    return !entry.type.empty();
+}
+
+bool parse_common_response_event_fields(
+        const json & message,
+        int & daemon_event_count,
+        std::vector<agent_daemon_jsonl_event_entry> & events) {
+    daemon_event_count = message.value("daemon_event_count", 0);
+    events.clear();
+    if (!message.contains("events")) {
+        return true;
+    }
+    const auto & value = message["events"];
+    if (!value.is_array()) {
+        return false;
+    }
+    for (const auto & item : value) {
+        agent_daemon_jsonl_event_entry entry;
+        if (!parse_event_entry_field(item, entry)) {
+            return false;
+        }
+        events.push_back(std::move(entry));
+    }
+    return true;
+}
+
 } // namespace
 
 bool read_agent_daemon_jsonl_message(
@@ -302,6 +341,10 @@ bool parse_agent_daemon_jsonl_turn_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon turn event payload";
+        return false;
+    }
     response.cancelled = message.value("cancelled", false);
     response.response = message.value("response", std::string());
     response.error = message.value("error", std::string());
@@ -332,6 +375,10 @@ bool parse_agent_daemon_jsonl_status_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon status event payload";
+        return false;
+    }
     response.state = message.value("state", std::string());
     response.live = message.value("live", false);
     response.ready = message.value("ready", false);
@@ -397,6 +444,10 @@ bool parse_agent_daemon_jsonl_lifecycle_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon lifecycle event payload";
+        return false;
+    }
     response.target_request_id = message.value("target_request_id", std::string());
     response.target_turn_id = message.value("target_turn_id", std::string());
     response.error = message.value("error", std::string());
@@ -430,6 +481,10 @@ bool parse_agent_daemon_jsonl_resource_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon resource event payload";
+        return false;
+    }
     response.content = message.value("content", std::string());
     response.payload = message;
     response.error = message.value("error", std::string());
@@ -469,6 +524,10 @@ bool parse_agent_daemon_jsonl_listing_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon listing event payload";
+        return false;
+    }
     response.payload = message;
     response.error = message.value("error", std::string());
 
@@ -501,6 +560,10 @@ bool parse_agent_daemon_jsonl_event_response(
 
     response.ok = message.value("ok", false);
     response.event = message.value("event", std::string());
+    if (!parse_common_response_event_fields(message, response.daemon_event_count, response.events)) {
+        error = "unexpected daemon event payload";
+        return false;
+    }
     response.error = message.value("error", std::string());
 
     if (response.ok && !response.event.empty()) {
