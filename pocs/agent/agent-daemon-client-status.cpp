@@ -40,6 +40,16 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
         if (!session.policy_pack_id.empty()) {
             binding += "#" + session.policy_pack_id;
         }
+        if (session.has_active_turn) {
+            binding += "[active=" + session.active_turn_id;
+            if (!session.active_turn_phase.empty()) {
+                binding += "/" + session.active_turn_phase;
+            }
+            if (!session.active_turn_disposition.empty()) {
+                binding += ":" + session.active_turn_disposition;
+            }
+            binding += "]";
+        }
         summary.session_bindings.push_back(std::move(binding));
     }
 
