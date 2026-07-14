@@ -38,6 +38,14 @@ common_agent_runtime_session_manager::enqueue_lane_turn(
     message->result = &result;
     message->error = &error;
     std::lock_guard<std::mutex> lock(lane.mutex);
+    if (lane.state == common_agent_runtime_session_lane_state::resetting) {
+        error = "session lane is resetting";
+        return nullptr;
+    }
+    if (lane.state == common_agent_runtime_session_lane_state::closing) {
+        error = "session lane is closing";
+        return nullptr;
+    }
     lane.mailbox.push_back(message);
     return message;
 }
@@ -60,6 +68,31 @@ bool common_agent_runtime_session_manager::wait_for_message_completion(
         error.clear();
     }
     return message->ok;
+}
+
+void common_agent_runtime_session_manager::complete_lane_message(
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        bool ok,
+        const std::string & error,
+        bool cancelled) const {
+    if (message == nullptr) {
+        return;
+    }
+
+    if (message->result != nullptr) {
+        message->result->error = error;
+        message->result->cancelled = cancelled;
+    }
+    if (message->error != nullptr) {
+        *message->error = error;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(message->mutex);
+        message->ok = ok;
+        message->completed = true;
+    }
+    message->condition.notify_all();
 }
 
 bool common_agent_runtime_session_manager::run_lane_turn(
@@ -354,11 +387,45 @@ bool common_agent_runtime_session_manager::drain_lane(
 
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
-        lane.state = common_agent_runtime_session_lane_state::idle;
+        if (lane.state == common_agent_runtime_session_lane_state::running) {
+            lane.state = common_agent_runtime_session_lane_state::idle;
+        }
     }
     if (target_message != nullptr) {
         return wait_for_message_completion(target_message, error);
     }
+    error.clear();
+    return true;
+}
+
+bool common_agent_runtime_session_manager::prepare_lane_transition(
+        common_agent_runtime_session_lane & lane,
+        common_agent_runtime_session_lane_state target_state,
+        const char * pending_error,
+        std::shared_ptr<common_agent_runtime_session_lane_message> & current_message,
+        std::string & error) {
+    std::deque<std::shared_ptr<common_agent_runtime_session_lane_message>> dropped_messages;
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (lane.state == common_agent_runtime_session_lane_state::resetting) {
+            error = "session lane is already resetting";
+            return false;
+        }
+        if (lane.state == common_agent_runtime_session_lane_state::closing) {
+            error = "session lane is already closing";
+            return false;
+        }
+
+        lane.state = target_state;
+        current_message = lane.current_message;
+        dropped_messages = std::move(lane.mailbox);
+        lane.mailbox.clear();
+    }
+
+    for (const auto & message : dropped_messages) {
+        complete_lane_message(message, false, pending_error);
+    }
+
     error.clear();
     return true;
 }
@@ -369,6 +436,11 @@ bool common_agent_runtime_session_manager::run_turn(
         std::string & error) {
     auto & lane = ensure_session_lane(make_session_key(request));
     auto message = enqueue_lane_turn(lane, request, result, error);
+    if (message == nullptr) {
+        result = {};
+        result.error = error;
+        return false;
+    }
     return drain_lane(lane, message, error);
 }
 
@@ -379,6 +451,21 @@ bool common_agent_runtime_session_manager::reset_session(
     if (it == lanes.end()) {
         error = "session is not active";
         return false;
+    }
+
+    std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
+    if (!prepare_lane_transition(
+                it->second,
+                common_agent_runtime_session_lane_state::resetting,
+                "session lane reset before turn execution",
+                current_message,
+                error)) {
+        return false;
+    }
+
+    std::string wait_error;
+    if (current_message != nullptr && !wait_for_message_completion(current_message, wait_error)) {
+        wait_error.clear();
     }
 
     it->second.host->reset();
@@ -405,6 +492,22 @@ bool common_agent_runtime_session_manager::close_session(
         return false;
     }
 
+    std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
+    if (!prepare_lane_transition(
+                it->second,
+                common_agent_runtime_session_lane_state::closing,
+                "session lane closed before turn execution",
+                current_message,
+                error)) {
+        return false;
+    }
+
+    std::string wait_error;
+    if (current_message != nullptr && !wait_for_message_completion(current_message, wait_error)) {
+        wait_error.clear();
+    }
+
+    it->second.host->reset();
     lanes.erase(it);
     error.clear();
     return true;

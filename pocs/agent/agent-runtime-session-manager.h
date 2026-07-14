@@ -67,13 +67,17 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
 enum class common_agent_runtime_session_lane_state {
     idle,
     running,
+    resetting,
+    closing,
 };
 
 inline const char * common_agent_runtime_session_lane_state_name(
         common_agent_runtime_session_lane_state state) {
     switch (state) {
-        case common_agent_runtime_session_lane_state::idle:    return "idle";
-        case common_agent_runtime_session_lane_state::running: return "running";
+        case common_agent_runtime_session_lane_state::idle:      return "idle";
+        case common_agent_runtime_session_lane_state::running:   return "running";
+        case common_agent_runtime_session_lane_state::resetting: return "resetting";
+        case common_agent_runtime_session_lane_state::closing:   return "closing";
     }
     return "idle";
 }
@@ -148,6 +152,12 @@ private:
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
         std::string & error) const;
 
+    void complete_lane_message(
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        bool ok,
+        const std::string & error,
+        bool cancelled = false) const;
+
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message);
@@ -159,6 +169,13 @@ private:
     bool drain_lane(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & target_message,
+        std::string & error);
+
+    bool prepare_lane_transition(
+        common_agent_runtime_session_lane & lane,
+        common_agent_runtime_session_lane_state target_state,
+        const char * pending_error,
+        std::shared_ptr<common_agent_runtime_session_lane_message> & current_message,
         std::string & error);
 
     common_agent_runtime_session_manager_config config;

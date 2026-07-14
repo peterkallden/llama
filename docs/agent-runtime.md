@@ -227,21 +227,23 @@ The lane also now owns one explicit current-message pointer alongside the active
 
 That lane-state is now visible in the session diagnostics path as well. Session descriptors and daemon status snapshots can report the lane's processing state directly, so operators and later scheduler code do not have to infer "idle versus running" only from a mix of queue length and active-turn fields.
 
-The current lane-state list is intentionally conservative:
+The current lane-state list is still intentionally small, but it is no longer only a passive idle-versus-running flag:
 
 - `idle`
   The lane has no current message in flight. It may still retain session/runtime state and last-turn diagnostics.
 - `running`
   The lane currently owns one active mailbox message and is advancing its turn state machine. There may also be queued waiters behind it.
+- `resetting`
+  A host-side reset has taken ownership of the lane. New turns are rejected, queued waiters are completed with a reset error, and the current message is allowed to drain before the host reset clears lane-local runtime state.
+- `closing`
+  A host-side close has taken ownership of the lane. New turns are rejected, queued waiters are completed with a close error, and the current message is allowed to drain before the resident host is released and the lane is erased.
 
-There are a few obvious future candidates, but they are being deferred on purpose for now:
+That means `reset_session` and `close_session` now go through the same lane-owned lifecycle surface as ordinary turns instead of directly clearing or erasing session state from the side. The implementation is still synchronous and intentionally narrow, but the ownership boundary is now much cleaner: lifecycle actions first claim the lane state, then deal with queued work, then wait for any current message to finish, and only then mutate or remove the resident session.
+
+There are still a few obvious future candidates, but they are being deferred on purpose for now:
 
 - `stopping`
-  Worth adding once `reset_session`, `close_session`, or daemon shutdown stop going through a richer lane-owned lifecycle rather than immediate clear/erase behavior. Right now it would mostly be a transient label without durable semantics.
-- `resetting`
-  Also reasonable later, but only when reset becomes a lane-visible operation with its own mailbox or waitable lifecycle. In the current synchronous path it would be hard to observe and easy to overstate.
-- `closing`
-  Same reason as `resetting`: once close is a stateful lane transition, not just erase-from-map, the name becomes meaningful.
+  Still worth adding once daemon-wide drain/stop behavior starts flowing through the same lane/session model instead of staying mostly above it at service level.
 - `failed`
   Deferred because terminal failure is currently better modeled as last-turn diagnostics plus lane return to `idle`. Making failure a lane-state now would blur "lane health" with "most recent turn outcome".
 - `waiting_for_tool` / `waiting_for_inference` / `cancelling`

@@ -418,7 +418,276 @@ int main() {
         return 1;
     }
 
+    auto lifecycle_entered = std::make_shared<std::promise<void>>();
+    auto lifecycle_entered_future = lifecycle_entered->get_future();
+    auto lifecycle_release = std::make_shared<std::promise<void>>();
+    auto lifecycle_release_future = lifecycle_release->get_future().share();
+    auto lifecycle_call_count = std::make_shared<int>(0);
+
+    common_agent_runtime_session_manager_build_config lifecycle_manager_build_config = {
+        memory_store,
+        plan_store,
+    };
+    lifecycle_manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    lifecycle_manager_build_config.tooling_resolver =
+        [lifecycle_entered, lifecycle_release_future, lifecycle_call_count](
+                const common_agent_runtime_resident_runtime *,
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            ++(*lifecycle_call_count);
+            if (*lifecycle_call_count == 1) {
+                lifecycle_entered->set_value();
+                lifecycle_release_future.wait();
+            }
+            tooling = {};
+            error = "lifecycle-resolver turn=" + request.turn_id;
+            return false;
+        };
+    auto lifecycle_manager_config = make_agent_runtime_session_manager_config(std::move(lifecycle_manager_build_config));
+    common_agent_runtime_session_manager lifecycle_manager(std::move(lifecycle_manager_config));
+
+    common_agent_runtime_session_manager_turn_result reset_first_result;
+    std::string reset_first_error;
+    auto reset_first_future = std::async(std::launch::async, [&]() {
+        return lifecycle_manager.run_turn({
+            "request-6",
+            {
+                common_agent_runtime_host_mode::chat,
+                "reset-first",
+                "session-d",
+                "namespace-d",
+                "",
+                "turn-6",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, reset_first_result, reset_first_error);
+    });
+
+    if (lifecycle_entered_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        std::fprintf(stderr, "lifecycle reset smoke did not enter the first resolver in time\n");
+        return 1;
+    }
+
+    common_agent_runtime_session_manager_turn_result reset_second_result;
+    std::string reset_second_error;
+    auto reset_second_future = std::async(std::launch::async, [&]() {
+        return lifecycle_manager.run_turn({
+            "request-7",
+            {
+                common_agent_runtime_host_mode::chat,
+                "reset-second",
+                "session-d",
+                "namespace-d",
+                "",
+                "turn-7",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, reset_second_result, reset_second_error);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::string reset_error;
+    auto reset_future = std::async(std::launch::async, [&]() {
+        return lifecycle_manager.reset_session({"namespace-d", "session-d"}, reset_error);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto resetting_sessions = lifecycle_manager.list_sessions();
+    if (resetting_sessions.size() != 1 ||
+            resetting_sessions[0].lane_state != "resetting" ||
+            !resetting_sessions[0].has_active_turn ||
+            resetting_sessions[0].queued_turn_count != 0) {
+        std::fprintf(stderr, "session manager did not expose resetting lane state while reset was pending\n");
+        return 1;
+    }
+
+    if (reset_second_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready ||
+            reset_second_future.get() ||
+            reset_second_error != "session lane reset before turn execution") {
+        std::fprintf(stderr, "session manager reset did not fail queued turn through lane transition\n");
+        return 1;
+    }
+
+    lifecycle_release->set_value();
+
+    if (reset_first_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready ||
+            reset_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager reset smoke did not finish after release\n");
+        return 1;
+    }
+    if (reset_first_future.get()) {
+        std::fprintf(stderr, "session manager reset smoke unexpectedly succeeded first turn\n");
+        return 1;
+    }
+    if (!reset_future.get() || !reset_error.empty()) {
+        std::fprintf(stderr, "session manager reset did not complete after active turn drained: %s\n", reset_error.c_str());
+        return 1;
+    }
+    const auto reset_sessions = lifecycle_manager.list_sessions();
+    if (reset_sessions.size() != 1 ||
+            reset_sessions[0].lane_state != "idle" ||
+            !reset_sessions[0].last_turn_id.empty() ||
+            reset_sessions[0].has_active_turn) {
+        std::fprintf(stderr, "session manager reset did not clear lane state after reset lifecycle\n");
+        return 1;
+    }
+
+    auto close_entered = std::make_shared<std::promise<void>>();
+    auto close_entered_future = close_entered->get_future();
+    auto close_release = std::make_shared<std::promise<void>>();
+    auto close_release_future = close_release->get_future().share();
+    auto close_call_count = std::make_shared<int>(0);
+
+    common_agent_runtime_session_manager_build_config close_manager_build_config = {
+        memory_store,
+        plan_store,
+    };
+    close_manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    close_manager_build_config.tooling_resolver =
+        [close_entered, close_release_future, close_call_count](
+                const common_agent_runtime_resident_runtime *,
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            ++(*close_call_count);
+            if (*close_call_count == 1) {
+                close_entered->set_value();
+                close_release_future.wait();
+            }
+            tooling = {};
+            error = "close-resolver turn=" + request.turn_id;
+            return false;
+        };
+    auto close_manager_config = make_agent_runtime_session_manager_config(std::move(close_manager_build_config));
+    common_agent_runtime_session_manager close_manager(std::move(close_manager_config));
+
+    common_agent_runtime_session_manager_turn_result close_first_result;
+    std::string close_first_error;
+    auto close_first_future = std::async(std::launch::async, [&]() {
+        return close_manager.run_turn({
+            "request-8",
+            {
+                common_agent_runtime_host_mode::chat,
+                "close-first",
+                "session-e",
+                "namespace-e",
+                "",
+                "turn-8",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, close_first_result, close_first_error);
+    });
+
+    if (close_entered_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        std::fprintf(stderr, "lifecycle close smoke did not enter the first resolver in time\n");
+        return 1;
+    }
+
+    common_agent_runtime_session_manager_turn_result close_second_result;
+    std::string close_second_error;
+    auto close_second_future = std::async(std::launch::async, [&]() {
+        return close_manager.run_turn({
+            "request-9",
+            {
+                common_agent_runtime_host_mode::chat,
+                "close-second",
+                "session-e",
+                "namespace-e",
+                "",
+                "turn-9",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, close_second_result, close_second_error);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::string close_error;
+    auto close_future = std::async(std::launch::async, [&]() {
+        return close_manager.close_session({"namespace-e", "session-e"}, close_error);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto closing_sessions = close_manager.list_sessions();
+    if (closing_sessions.size() != 1 ||
+            closing_sessions[0].lane_state != "closing" ||
+            !closing_sessions[0].has_active_turn ||
+            closing_sessions[0].queued_turn_count != 0) {
+        std::fprintf(stderr, "session manager did not expose closing lane state while close was pending\n");
+        return 1;
+    }
+
+    if (close_second_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready ||
+            close_second_future.get() ||
+            close_second_error != "session lane closed before turn execution") {
+        std::fprintf(stderr, "session manager close did not fail queued turn through lane transition\n");
+        return 1;
+    }
+
+    close_release->set_value();
+
+    if (close_first_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready ||
+            close_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager close smoke did not finish after release\n");
+        return 1;
+    }
+    if (close_first_future.get()) {
+        std::fprintf(stderr, "session manager close smoke unexpectedly succeeded first turn\n");
+        return 1;
+    }
+    if (!close_future.get() || !close_error.empty()) {
+        std::fprintf(stderr, "session manager close did not complete after active turn drained: %s\n", close_error.c_str());
+        return 1;
+    }
+    if (!close_manager.list_sessions().empty()) {
+        std::fprintf(stderr, "session manager close did not remove the lane after lifecycle transition\n");
+        return 1;
+    }
+
     std::printf("session_manager_tooling_calls=%d\n", *call_count);
     std::printf("session_manager_queued_calls=%d\n", *queued_call_count);
+    std::printf("session_manager_lifecycle_calls=%d\n", *lifecycle_call_count + *close_call_count);
     return 0;
 }
