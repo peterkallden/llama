@@ -113,6 +113,14 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "unexpected cancel result\n");
         return 1;
     }
+    if (cancel_result.status.active_request_id != "turn-1" ||
+            cancel_result.status.active_turn_id != "dispatcher-turn-1" ||
+            cancel_result.status.active_turn_phase.empty() ||
+            cancel_result.status.active_turn_disposition.empty() ||
+            cancel_result.status.queued_command_count != 0) {
+        std::fprintf(stderr, "cancel result missing consistent status snapshot\n");
+        return 1;
+    }
     if (cancel_result.daemon_event_count < 1 ||
             cancel_result.events.empty() ||
             cancel_result.events.back().type != "turn.cancelled") {
@@ -144,6 +152,10 @@ int main(int argc, char ** argv) {
     }
 
     std::printf("dispatcher_cancelled_request=%s\n", cancel_result.target_request_id.c_str());
+    std::printf("dispatcher_active_turn=%s/%s:%s\n",
+        cancel_result.status.active_turn_id.c_str(),
+        cancel_result.status.active_turn_phase.c_str(),
+        cancel_result.status.active_turn_disposition.c_str());
     std::printf("first_turn_response=%s\n", first_result.turn_result.response.c_str());
     std::printf("second_turn_cancelled=%s\n", second_result.turn_result.cancelled ? "yes" : "no");
     std::printf("second_turn_error=%s\n", second_result.turn_result.error.c_str());

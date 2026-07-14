@@ -199,7 +199,6 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                 result.ok = true;
                 result.response_kind = common_agent_daemon_response_kind::lifecycle;
                 result.event = "turn_cancel_requested";
-                assign_active_turn_status(result.status, active_turn);
                 append_daemon_event(
                     result,
                     "turn.cancel_requested",
@@ -209,6 +208,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                         : command.cancel->target_turn_id,
                     "active turn cancellation requested");
                 error.clear();
+                fill_status_snapshot_locked(result.status);
                 return true;
             }
             error.clear();
@@ -227,6 +227,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             command.request_id,
             command.cancel.has_value() ? command.cancel->target_turn_id : std::string(),
             error);
+        fill_status_snapshot_locked(result.status);
         return false;
     }
 
@@ -257,6 +258,10 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             ? command_turn_id(cancelled_item->command)
             : command.cancel->target_turn_id,
         "queued turn cancelled");
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        fill_status_snapshot_locked(result.status);
+    }
     error.clear();
     return true;
 }

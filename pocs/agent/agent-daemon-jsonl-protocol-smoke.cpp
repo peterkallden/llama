@@ -216,6 +216,7 @@ int main() {
     const auto summary = make_agent_daemon_client_status_summary(status_response);
     const std::string rendered_status = render_agent_daemon_client_status_summary(summary);
     if (rendered_status.find("state=ready") == std::string::npos ||
+            rendered_status.find("active_turn=turn-active/awaiting_inference:continue_immediately") == std::string::npos ||
             rendered_status.find(
                 "session_bindings=namespace-a/session-a@project-a#pack-a[active=turn-active/awaiting_inference:continue_immediately]") == std::string::npos) {
         std::fprintf(stderr, "status render mismatch: %s\n", rendered_status.c_str());

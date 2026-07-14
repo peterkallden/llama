@@ -29,6 +29,12 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
     }
     if (!response.active_turn_id.empty()) {
         summary.headline += " active_turn=" + response.active_turn_id;
+        if (!response.active_turn_phase.empty()) {
+            summary.headline += "/" + response.active_turn_phase;
+        }
+        if (!response.active_turn_disposition.empty()) {
+            summary.headline += ":" + response.active_turn_disposition;
+        }
     }
 
     summary.session_bindings.reserve(response.session_keys.size());
