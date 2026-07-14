@@ -227,6 +227,26 @@ The lane also now owns one explicit current-message pointer alongside the active
 
 That lane-state is now visible in the session diagnostics path as well. Session descriptors and daemon status snapshots can report the lane's processing state directly, so operators and later scheduler code do not have to infer "idle versus running" only from a mix of queue length and active-turn fields.
 
+The current lane-state list is intentionally conservative:
+
+- `idle`
+  The lane has no current message in flight. It may still retain session/runtime state and last-turn diagnostics.
+- `running`
+  The lane currently owns one active mailbox message and is advancing its turn state machine. There may also be queued waiters behind it.
+
+There are a few obvious future candidates, but they are being deferred on purpose for now:
+
+- `stopping`
+  Worth adding once `reset_session`, `close_session`, or daemon shutdown stop going through a richer lane-owned lifecycle rather than immediate clear/erase behavior. Right now it would mostly be a transient label without durable semantics.
+- `resetting`
+  Also reasonable later, but only when reset becomes a lane-visible operation with its own mailbox or waitable lifecycle. In the current synchronous path it would be hard to observe and easy to overstate.
+- `closing`
+  Same reason as `resetting`: once close is a stateful lane transition, not just erase-from-map, the name becomes meaningful.
+- `failed`
+  Deferred because terminal failure is currently better modeled as last-turn diagnostics plus lane return to `idle`. Making failure a lane-state now would blur "lane health" with "most recent turn outcome".
+- `waiting_for_tool` / `waiting_for_inference` / `cancelling`
+  These are better treated as turn phases or turn dispositions, not lane-states. The lane can remain `running` while the active turn moves through those finer-grained sub-states.
+
 The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
 
 The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a very small dispatcher: stdin/JSON parsing still happens on the transport thread, but command execution now runs through one worker thread and a small bounded in-process queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol, streaming events, cancellation, or multiple workers. The important cleanup in the latest slice is ownership: the dispatcher no longer keeps its own parallel active-turn identity and cancellation handle. It now asks the service/session layer for the active request/turn descriptor and forwards active-turn cancellation back through that same session-owned seam.

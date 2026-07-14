@@ -91,6 +91,11 @@ int main() {
         std::fprintf(stderr, "session manager did not retain the failed session lane\n");
         return 1;
     }
+    if (sessions[0].lane_state != "idle") {
+        std::fprintf(stderr, "session manager did not report idle lane state after failed turn: %s\n",
+            sessions[0].lane_state.c_str());
+        return 1;
+    }
     if (sessions[0].policy_pack_id != "session-policy-a") {
         std::fprintf(stderr, "session manager did not retain session policy pack id: %s\n",
             sessions[0].policy_pack_id.c_str());
@@ -281,6 +286,7 @@ int main() {
 
     const auto active_sessions = active_manager.list_sessions();
     if (active_sessions.size() != 1 ||
+            active_sessions[0].lane_state != "idle" ||
             active_sessions[0].active_turn_disposition != "" ||
             active_sessions[0].last_turn_id != "turn-3" ||
             active_sessions[0].last_turn_phase != "cancelled" ||
@@ -386,6 +392,7 @@ int main() {
 
     const auto queued_sessions = queued_manager.list_sessions();
     if (queued_sessions.size() != 1 ||
+            queued_sessions[0].lane_state != "running" ||
             !queued_sessions[0].has_active_turn ||
             queued_sessions[0].queued_turn_count < 1 ||
             queued_sessions[0].active_request_id != "request-4" ||
