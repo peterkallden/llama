@@ -46,6 +46,11 @@ private:
         common_agent_daemon_command_result & result,
         std::string & error);
 
+    bool execute_session_lifecycle(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error);
+
     bool populate_status_locked(
         common_agent_daemon_command_result & result,
         std::string & error) const;
@@ -78,6 +83,13 @@ private:
     void cancel_queued_turn_result(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
+        std::string error) const;
+
+    void reject_queued_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string event,
+        std::string daemon_event_type,
         std::string error) const;
 
     void finalize_lifecycle_result_locked(

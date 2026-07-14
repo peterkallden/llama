@@ -43,6 +43,56 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     return command.turn->request.turn.turn_id;
 }
 
+bool is_session_lifecycle_command(const common_agent_daemon_command & command) {
+    return command.type == common_agent_daemon_command_type::reset_session ||
+        command.type == common_agent_daemon_command_type::close_session;
+}
+
+bool queued_turn_matches_session(
+        const common_agent_daemon_command & queued_command,
+        const common_agent_runtime_session_key & key) {
+    return queued_command.type == common_agent_daemon_command_type::run_turn &&
+        queued_command.turn.has_value() &&
+        queued_command.turn->request.turn.namespace_id == key.namespace_id &&
+        queued_command.turn->request.turn.session_id == key.session_id;
+}
+
+const char * queued_turn_rejection_error(
+        common_agent_daemon_command_type type) {
+    switch (type) {
+        case common_agent_daemon_command_type::reset_session:
+            return "session reset before queued turn reached session lane";
+        case common_agent_daemon_command_type::close_session:
+            return "session closed before queued turn reached session lane";
+        default:
+            return "session lifecycle rejected queued turn";
+    }
+}
+
+const char * queued_turn_rejection_event(
+        common_agent_daemon_command_type type) {
+    switch (type) {
+        case common_agent_daemon_command_type::reset_session:
+            return "turn_rejected";
+        case common_agent_daemon_command_type::close_session:
+            return "turn_rejected";
+        default:
+            return "turn_rejected";
+    }
+}
+
+const char * queued_turn_rejection_daemon_event(
+        common_agent_daemon_command_type type) {
+    switch (type) {
+        case common_agent_daemon_command_type::reset_session:
+            return "turn.rejected";
+        case common_agent_daemon_command_type::close_session:
+            return "turn.rejected";
+        default:
+            return "turn.rejected";
+    }
+}
+
 } // namespace
 
 common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
@@ -80,6 +130,9 @@ bool common_agent_daemon_dispatcher::execute(
         std::string & error) {
     if (command.type == common_agent_daemon_command_type::cancel_turn) {
         return execute_cancel_turn(command, result, error);
+    }
+    if (is_session_lifecycle_command(command)) {
+        return execute_session_lifecycle(command, result, error);
     }
 
     auto item = std::make_shared<queued_command>();
@@ -137,6 +190,82 @@ common_agent_runtime_host_mode common_agent_daemon_dispatcher::default_mode() co
 size_t common_agent_daemon_dispatcher::queued_command_count() const {
     std::lock_guard<std::mutex> lock(mutex);
     return queue.size();
+}
+
+bool common_agent_daemon_dispatcher::execute_session_lifecycle(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error) {
+    auto item = std::make_shared<queued_command>();
+    item->command = command;
+    auto future = item->promise.get_future();
+
+    std::vector<std::shared_ptr<queued_command>> rejected_items;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!accepting_commands) {
+            error = "daemon dispatcher is not accepting new commands";
+            return fail_lifecycle_result_locked(
+                command,
+                result,
+                error,
+                "command_rejected",
+                "command.rejected",
+                command_turn_id(command));
+        }
+        if (queue.size() >= max_queue_size) {
+            error = "daemon command queue is full";
+            return fail_lifecycle_result_locked(
+                command,
+                result,
+                error,
+                "command_rejected",
+                "command.rejected",
+                command_turn_id(command));
+        }
+        if (command.session.has_value()) {
+            auto it = queue.begin();
+            while (it != queue.end()) {
+                if (queued_turn_matches_session((*it)->command, command.session->key)) {
+                    rejected_items.push_back(*it);
+                    it = queue.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+        }
+        item->events.push_back(common_agent_daemon_event{
+            "command.queued",
+            command.request_id,
+            command_turn_id(command),
+            {},
+        });
+        queue.push_back(item);
+    }
+
+    for (const auto & rejected_item : rejected_items) {
+        queued_result rejected;
+        rejected.ok = false;
+        reject_queued_turn_result(
+            rejected_item->command,
+            rejected.result,
+            queued_turn_rejection_event(command.type),
+            queued_turn_rejection_daemon_event(command.type),
+            queued_turn_rejection_error(command.type));
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            fill_status_snapshot_locked(rejected.result.status);
+        }
+        rejected.error = rejected.result.error;
+        rejected_item->promise.set_value(std::move(rejected));
+    }
+
+    condition.notify_one();
+
+    auto queued = future.get();
+    result = std::move(queued.result);
+    error = std::move(queued.error);
+    return queued.ok;
 }
 
 bool common_agent_daemon_dispatcher::execute_cancel_turn(
@@ -315,18 +444,35 @@ void common_agent_daemon_dispatcher::cancel_queued_turn_result(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string error) const {
-    initialize_turn_result(command, result);
-    result.ok = false;
-    result.event = "turn_cancelled";
+    reject_queued_turn_result(
+        command,
+        result,
+        "turn_cancelled",
+        "turn.cancelled",
+        std::move(error));
     result.turn_result.cancelled = true;
-    result.turn_result.failure_class = common_agent_failure_class::execution;
     result.turn_result.response_generation_status = common_agent_generation_status::cancelled;
     result.turn_result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
+}
+
+void common_agent_daemon_dispatcher::reject_queued_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string event,
+        std::string daemon_event_type,
+        std::string error) const {
+    initialize_turn_result(command, result);
+    result.ok = false;
+    result.event = std::move(event);
+    result.turn_result.cancelled = false;
+    result.turn_result.failure_class = common_agent_failure_class::execution;
+    result.turn_result.response_generation_status = common_agent_generation_status::errored;
+    result.turn_result.response_stop_reason = common_agent_generation_stop_reason::error;
     result.turn_result.error = error;
     result.error = std::move(error);
     append_daemon_event(
         result,
-        "turn.cancelled",
+        std::move(daemon_event_type),
         command.request_id,
         command_turn_id(command),
         result.turn_result.error);
@@ -340,6 +486,8 @@ void common_agent_daemon_dispatcher::finalize_lifecycle_result_locked(
 void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         common_agent_daemon_status & status) const {
     const size_t queued_count = queue.size();
+    status.sessions = service.list_sessions();
+    status.session_count = status.sessions.size();
     if (const auto active_turn = service.describe_active_turn()) {
         assign_active_turn_status(status, *active_turn);
     } else {
@@ -358,7 +506,6 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     status.queue_capacity_remaining =
         max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
     status.state = service.state();
-    status.session_count = status.sessions.size();
     status.live = status.state != common_agent_daemon_state::stopped && worker_running;
     status.ready = status.state == common_agent_daemon_state::ready &&
         accepting_commands &&

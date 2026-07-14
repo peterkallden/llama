@@ -926,7 +926,7 @@ The resident-inference branch has been validated with:
 - Cozo-backed foreground daemon smoke, verifying the same daemon path can open persistent memory/plan stores through the existing Cozo store factories
 - daemon multi-session smoke, verifying keyed resident-lane reuse across `session A`, `session B`, `session A again`
 - daemon `n_predict` reuse smoke, verifying a resident session still reports runtime reuse when only the per-turn decode limit changes
-- `llama-agent-daemon-dispatcher-smoke` with a local Qwen model, verifying queued-turn cancellation still works after active-turn identity moved into the session/service layer
+- `llama-agent-daemon-dispatcher-smoke` with a local Qwen model, verifying both queued-turn cancellation and session-lifecycle pruning of dispatcher-queued work for the same session, so `reset_session` no longer leaves a same-session queued turn waiting behind the global daemon queue
 - CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
 - multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
 - multi-turn CLI-to-daemon tooling smoke with `daemon-session`, verifying the child-process adapter can carry `--tool-profile`, `--repository-root`, and MCP stdio tool wiring through to the same resident daemon session
@@ -937,6 +937,10 @@ The resident-inference branch has been validated with:
 The foreground daemon `mini` path is now part of the smoke baseline as well. One stabilization issue in this layer was contract drift across wrappers: the daemon request builder was correctly seeded with `server-context`, but a later policy overwrite silently fell back to the default CLI backend, and a second host-execution scope duplication made resident `mini` fragile. The current shape keeps the daemon/backend wiring explicit and reuses `turn_request.scope` as the single host-execution scope source for mini turns.
 
 Another small runtime stabilization in the current slice is around incomplete `memory_get` planning/repair steps. The model still sometimes proposes `memory_get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
+
+The daemon/session seam also took another small actor-shaped step in the same sweep. Session lanes already owned their own mailbox and lifecycle once a turn had reached the keyed session manager, but the foreground daemon still had a global dispatcher queue in front of that seam. `cancel_turn` already knew how to remove a queued turn there; `reset_session` and `close_session` now do the equivalent for queued turns that belong to the same session before those turns ever reach the lane. That keeps session lifecycle actions from racing with stale same-session work that was still parked in the transport-side queue.
+
+The daemon status surface is now a little more consistent as a result. Lifecycle responses already carried a status snapshot, but that snapshot now includes the current session descriptors as well instead of leaving populated `sessions` only to the dedicated `status` command. That keeps lane state, queued count, and active/last-turn diagnostics visible through the same host-owned status shape on both explicit status requests and lifecycle/admin replies.
 
 This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.
 

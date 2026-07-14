@@ -118,6 +118,7 @@ public:
     common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
     common_agent_daemon_state state() const { return state_value; }
     common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value; }
+    std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
 
     void mark_stopping();
     void mark_stopped();

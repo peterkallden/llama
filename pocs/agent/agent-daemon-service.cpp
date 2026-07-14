@@ -182,6 +182,13 @@ std::optional<common_agent_runtime_active_turn_descriptor> common_agent_daemon_s
     return runtime.host->describe_active_turn();
 }
 
+std::vector<common_agent_runtime_session_descriptor> common_agent_daemon_service::list_sessions() const {
+    if (!runtime.host) {
+        return {};
+    }
+    return runtime.host->list_sessions();
+}
+
 bool common_agent_daemon_service::request_cancel_active_turn(
         const std::string & target_request_id,
         const std::string & target_turn_id,
