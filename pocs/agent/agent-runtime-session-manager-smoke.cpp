@@ -171,6 +171,63 @@ int main() {
         return 1;
     }
 
+    common_agent_runtime_session_manager_build_config reset_all_build_config = {
+        memory_store,
+        plan_store,
+    };
+    reset_all_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    reset_all_build_config.tooling_resolver =
+        [call_count](
+                const common_agent_runtime_resident_runtime *,
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            tooling = {};
+            ++(*call_count);
+            error = "resolver-call=" + std::to_string(*call_count) + " turn=" + request.turn_id;
+            return false;
+        };
+    common_agent_runtime_session_manager reset_all_manager(
+        make_agent_runtime_session_manager_config(std::move(reset_all_build_config)));
+    common_agent_runtime_session_manager_turn_result reset_all_result;
+    if (reset_all_manager.run_turn({
+            "request-reset-all",
+            {
+                common_agent_runtime_host_mode::chat,
+                "hello again",
+                "session-reset-all",
+                "namespace-reset-all",
+                "",
+                "turn-reset-all",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, reset_all_result, error)) {
+        std::fprintf(stderr, "reset_all manager unexpectedly succeeded on resolver failure\n");
+        return 1;
+    }
+    reset_all_manager.reset_all();
+    if (!reset_all_manager.list_sessions().empty()) {
+        std::fprintf(stderr, "session manager reset_all did not route through lane cleanup\n");
+        return 1;
+    }
+
     auto active_entered = std::make_shared<std::promise<void>>();
     auto active_entered_future = active_entered->get_future();
     auto active_signal_sent = std::make_shared<bool>(false);

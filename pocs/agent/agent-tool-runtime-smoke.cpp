@@ -109,6 +109,79 @@ public:
     }
 };
 
+class reflection_memory_get_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        common_plan_proposal proposal;
+        proposal.plan.id = "runtime-reflection-memory-get";
+        proposal.plan.namespace_id = request.namespace_id;
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.project_id = request.project_id;
+        proposal.plan.turn_id = request.turn_id;
+        proposal.plan.scope = request.plan_scope;
+        proposal.plan.status = common_plan_status::active;
+        proposal.plan.purpose = request.prompt;
+        proposal.plan.goal = "Draft an answer before reflection.";
+        proposal.plan.success_criteria = "Reach reflection with a bounded answer draft.";
+
+        common_plan_step final_step;
+        final_step.id = "answer";
+        final_step.title = "Answer";
+        final_step.objective = "Return a short draft answer.";
+        final_step.intended_contribution = final_step.objective;
+        final_step.status = common_plan_step_status::active;
+        final_step.mode = common_plan_step_mode::final_response;
+
+        proposal.plan.active_step_id = final_step.id;
+        proposal.plan.steps.push_back(std::move(final_step));
+        error.clear();
+        return proposal;
+    }
+};
+
+class reflection_memory_get_executor final : public common_action_executor {
+public:
+    std::string generate_draft(
+            const common_agent_request &,
+            const common_plan_state &,
+            const std::vector<std::string> &,
+            std::string & error) override {
+        error.clear();
+        return "Draft answer before reflection.";
+    }
+};
+
+class reflection_memory_get_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(
+            const common_agent_request &,
+            const common_plan_state &,
+            const std::string &,
+            std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        result.confidence = 1.0f;
+
+        common_plan_step step;
+        step.id = "repair-memory";
+        step.title = "Read selected memory";
+        step.objective = "Fetch the already selected memory.";
+        step.intended_contribution = step.objective;
+        step.mode = common_plan_step_mode::tool;
+        step.selected_tool = "memory_get";
+        step.tool_call = common_plan_tool_call{"memory_get", "{}"};
+
+        common_plan_operation op;
+        op.kind = common_plan_operation_kind::add_step;
+        op.reason_summary = "Reflection wants to inspect a specific memory.";
+        op.step = std::move(step);
+        result.proposed_plan_operations.push_back(std::move(op));
+        return result;
+    }
+};
+
 } // namespace
 
 int main() {
@@ -348,6 +421,51 @@ int main() {
     }
     if (!saw_plan_create || !saw_tool_success || !saw_response_complete || !saw_observation_resource) {
         std::fprintf(stderr, "runtime trace did not include expected plan/tool/response history\n");
+        return 1;
+    }
+
+    reflection_memory_get_planner reflection_planner;
+    reflection_memory_get_executor reflection_executor;
+    reflection_memory_get_reflector reflection_reflector;
+    common_plan_in_memory_store reflection_plan_store;
+    if (!reflection_plan_store.open("", error)) {
+        std::fprintf(stderr, "failed to open reflection plan store: %s\n", error.c_str());
+        return 1;
+    }
+    common_agent_runtime reflection_runtime(
+        reflection_plan_store,
+        reflection_planner,
+        reflection_executor,
+        reflection_reflector,
+        tool_runtime.get(),
+        nullptr);
+
+    common_agent_request reflection_request;
+    reflection_request.prompt = "Use reflection to repair the plan if needed.";
+    reflection_request.namespace_id = "runtime-smoke";
+    reflection_request.session_id = "runtime-smoke-session";
+    reflection_request.turn_id = "runtime-smoke-turn-reflection";
+    reflection_request.plan_scope = common_plan_scope::session;
+    reflection_request.enable_planning = true;
+    reflection_request.enable_reflection = true;
+    reflection_request.max_iterations = 1;
+    reflection_request.max_tool_batches = 1;
+
+    const auto reflection_result = reflection_runtime.run(reflection_request);
+    if (!reflection_result.error.empty()) {
+        std::fprintf(stderr, "reflection runtime run failed: %s\n", reflection_result.error.c_str());
+        return 1;
+    }
+    bool saw_memory_get_guardrail = false;
+    for (const auto & event : reflection_result.events) {
+        if (event.type == common_agent_event_type::tool_rejected &&
+                event.detail.find("reflection-added tool step degraded to reasoning: memory_get requires an id from a prior memory_search or recorded memory reference") != std::string::npos) {
+            saw_memory_get_guardrail = true;
+            break;
+        }
+    }
+    if (!saw_memory_get_guardrail) {
+        std::fprintf(stderr, "reflection runtime did not emit the expected memory_get guardrail detail\n");
         return 1;
     }
 

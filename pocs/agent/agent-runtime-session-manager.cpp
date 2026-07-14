@@ -631,5 +631,15 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
 }
 
 void common_agent_runtime_session_manager::reset_all() {
-    lanes.clear();
+    std::vector<common_agent_runtime_session_key> keys;
+    keys.reserve(lanes.size());
+    for (const auto & entry : lanes) {
+        keys.push_back(entry.first);
+    }
+
+    std::string error;
+    for (const auto & key : keys) {
+        close_session(key, error);
+        error.clear();
+    }
 }

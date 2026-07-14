@@ -118,6 +118,29 @@ static std::string next_tool_observation_id(const common_plan_state & plan, cons
     return seen_base ? attempt_prefix + std::to_string(next_attempt) : base;
 }
 
+static bool is_incomplete_tool_call(
+        const std::string & tool_name,
+        const json & arguments,
+        std::string & validation_error) {
+    if (!arguments.is_object()) {
+        return false;
+    }
+
+    if (validation_error == "required contract field is missing" && arguments.empty()) {
+        if (tool_name == "memory_get") {
+            validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
+        }
+        return true;
+    }
+
+    if (tool_name == "memory_get" && !arguments.contains("id")) {
+        validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
+        return true;
+    }
+
+    return false;
+}
+
 common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & request) {
@@ -147,8 +170,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & reque
         if (valid_tool_call) return false;
         if (validation_error.empty()) validation_error = "tool is not approved by policy";
         const auto arguments = json::parse(call.arguments_json, nullptr, false);
-        const bool empty_arguments = arguments.is_object() && arguments.empty();
-        const bool incomplete_tool_call = validation_error == "required contract field is missing" && empty_arguments;
+        const bool incomplete_tool_call = is_incomplete_tool_call(
+            call.name,
+            arguments,
+            validation_error);
         if (!degrade_on_any_invalid && !incomplete_tool_call) return false;
         step.selected_tool.reset();
         step.tool_call.reset();
