@@ -341,6 +341,67 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command_result event_result;
+    event_result.ok = true;
+    event_result.request_id = "turn-events-1";
+    event_result.response_kind = common_agent_daemon_response_kind::turn;
+    event_result.event = "turn_completed";
+    event_result.events = {
+        {
+            "plan.created",
+            "turn-events-1",
+            "turn-a",
+            "plan-a",
+            common_agent_daemon_event_type::plan_created,
+            11,
+        },
+        {
+            "plan.step_started",
+            "turn-events-1",
+            "turn-a",
+            "step-a",
+            common_agent_daemon_event_type::plan_step_started,
+            12,
+        },
+        {
+            "observation.recorded",
+            "turn-events-1",
+            "turn-a",
+            "obs-a",
+            common_agent_daemon_event_type::observation_recorded,
+            13,
+        },
+        {
+            "resource.created",
+            "turn-events-1",
+            "turn-a",
+            "agent-resource://resource/r-1",
+            common_agent_daemon_event_type::resource_created,
+            14,
+        },
+        {
+            "resource.attached",
+            "turn-events-1",
+            "turn-a",
+            "agent-resource://resource/r-1",
+            common_agent_daemon_event_type::resource_attached,
+            15,
+        },
+    };
+    const json event_response = make_agent_daemon_command_response(event_result);
+    if (!event_response.contains("events") ||
+            !event_response["events"].is_array() ||
+            event_response["events"].size() != 5 ||
+            event_response["events"][0].value("event_type", "") != "plan.created" ||
+            event_response["events"][1].value("event_type", "") != "plan.step_started" ||
+            event_response["events"][2].value("event_type", "") != "observation.recorded" ||
+            event_response["events"][3].value("event_type", "") != "resource.created" ||
+            event_response["events"][4].value("event_type", "") != "resource.attached" ||
+            event_response["events"][4].value("detail", "") != "agent-resource://resource/r-1") {
+        std::fprintf(stderr, "event response mismatch\n");
+        return 1;
+    }
+
     common_agent_daemon_command_result list_sessions_result = status_result;
     list_sessions_result.request_id = "sessions-1";
     list_sessions_result.event = "sessions_listed";

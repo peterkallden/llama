@@ -16,6 +16,13 @@ enum class common_agent_daemon_event_type {
     tool_started,
     tool_completed,
     memory_learned,
+    plan_created,
+    plan_updated,
+    plan_step_started,
+    plan_step_completed,
+    observation_recorded,
+    resource_created,
+    resource_attached,
     session_reset_requested,
     session_reset,
     session_close_requested,
@@ -44,6 +51,13 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::tool_started:            return "tool.started";
         case common_agent_daemon_event_type::tool_completed:          return "tool.completed";
         case common_agent_daemon_event_type::memory_learned:          return "memory.learned";
+        case common_agent_daemon_event_type::plan_created:           return "plan.created";
+        case common_agent_daemon_event_type::plan_updated:           return "plan.updated";
+        case common_agent_daemon_event_type::plan_step_started:      return "plan.step_started";
+        case common_agent_daemon_event_type::plan_step_completed:    return "plan.step_completed";
+        case common_agent_daemon_event_type::observation_recorded:   return "observation.recorded";
+        case common_agent_daemon_event_type::resource_created:       return "resource.created";
+        case common_agent_daemon_event_type::resource_attached:      return "resource.attached";
         case common_agent_daemon_event_type::session_reset_requested: return "session.reset_requested";
         case common_agent_daemon_event_type::session_reset:           return "session.reset";
         case common_agent_daemon_event_type::session_close_requested: return "session.close_requested";

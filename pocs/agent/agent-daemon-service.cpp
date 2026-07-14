@@ -1,5 +1,7 @@
 #include "agent-daemon-service.h"
 
+#include <set>
+
 namespace {
 
 std::string command_turn_id(const common_agent_daemon_command & command) {
@@ -35,6 +37,114 @@ void populate_daemon_failed_turn_result(
         turn_result.cancelled
             ? common_agent_generation_stop_reason::cancelled
             : common_agent_generation_stop_reason::error;
+}
+
+const common_plan_observation * find_plan_observation(
+        const common_plan_state & plan,
+        const std::string & observation_id) {
+    for (const auto & observation : plan.observations) {
+        if (observation.id == observation_id) {
+            return &observation;
+        }
+    }
+    return nullptr;
+}
+
+bool is_host_owned_resource_uri(const std::string & uri) {
+    return uri.rfind("agent-resource://", 0) == 0;
+}
+
+void emit_plan_and_resource_events_from_turn(
+        common_agent_daemon_service & service,
+        const common_agent_daemon_runtime & runtime,
+        const common_agent_daemon_command & command,
+        const common_agent_runtime_session_manager_turn_result & turn_result) {
+    const std::string turn_id = command.turn.has_value()
+        ? command.turn->request.turn.turn_id
+        : std::string();
+
+    for (const auto & trace : turn_result.trace) {
+        if (trace.stage == common_runtime_trace_stage::plan) {
+            if (trace.kind == common_runtime_trace_kind::started) {
+                service.emit_internal_event(
+                    common_agent_daemon_event_type::plan_created,
+                    command.request_id,
+                    turn_id,
+                    !trace.plan_id.empty() ? trace.plan_id : trace.detail);
+            } else if (trace.kind == common_runtime_trace_kind::updated) {
+                service.emit_internal_event(
+                    common_agent_daemon_event_type::plan_updated,
+                    command.request_id,
+                    turn_id,
+                    !trace.plan_id.empty() ? trace.plan_id : trace.detail);
+            }
+        }
+        if (trace.stage == common_runtime_trace_stage::step) {
+            if (trace.kind == common_runtime_trace_kind::started) {
+                service.emit_internal_event(
+                    common_agent_daemon_event_type::plan_step_started,
+                    command.request_id,
+                    turn_id,
+                    !trace.step_id.empty() ? trace.step_id : trace.detail);
+            } else if (trace.kind == common_runtime_trace_kind::completed) {
+                service.emit_internal_event(
+                    common_agent_daemon_event_type::plan_step_completed,
+                    command.request_id,
+                    turn_id,
+                    !trace.step_id.empty() ? trace.step_id : trace.detail);
+            }
+        }
+        if (trace.stage == common_runtime_trace_stage::observation &&
+                trace.kind == common_runtime_trace_kind::recorded) {
+            service.emit_internal_event(
+                common_agent_daemon_event_type::observation_recorded,
+                command.request_id,
+                turn_id,
+                !trace.observation_id.empty() ? trace.observation_id : trace.detail);
+        }
+    }
+
+    if (turn_result.plan_id.empty() || !runtime.plan_store) {
+        return;
+    }
+
+    std::string plan_error;
+    const auto plan = runtime.plan_store->get(turn_result.plan_id, plan_error);
+    if (!plan || !plan_error.empty()) {
+        return;
+    }
+
+    std::set<std::string> emitted_uris;
+    for (const auto & trace : turn_result.trace) {
+        if (trace.stage != common_runtime_trace_stage::observation ||
+                trace.kind != common_runtime_trace_kind::recorded ||
+                trace.observation_id.empty()) {
+            continue;
+        }
+
+        const auto * observation = find_plan_observation(*plan, trace.observation_id);
+        if (observation == nullptr) {
+            continue;
+        }
+
+        for (const auto & resource : observation->resource_refs) {
+            if (!emitted_uris.insert(resource.uri).second) {
+                continue;
+            }
+            if (is_host_owned_resource_uri(resource.uri)) {
+                service.emit_internal_event(
+                    common_agent_daemon_event_type::resource_created,
+                    command.request_id,
+                    turn_id,
+                    resource.uri);
+            }
+            service.emit_internal_event(
+                common_agent_daemon_event_type::resource_attached,
+                command.request_id,
+                turn_id,
+                resource.uri);
+        }
+    }
 }
 
 } // namespace
@@ -689,6 +799,7 @@ bool common_agent_daemon_service::execute_outcome(
                     emit_internal_event(common_agent_daemon_event_type::tool_completed, command.request_id, command_turn_id(command), trace.tool_name + ":" + common_runtime_trace_kind_name(trace.kind));
                 }
             }
+            emit_plan_and_resource_events_from_turn(*this, runtime, command, outcome.turn_result);
             if (outcome.turn_result.memory_learning_related_count > 0 ||
                     (!outcome.turn_result.memory_learning_summary.empty() &&
                         outcome.turn_result.memory_learning_summary != "none")) {
