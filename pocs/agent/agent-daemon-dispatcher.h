@@ -50,6 +50,13 @@ private:
         common_agent_daemon_command_result & result,
         std::string & error) const;
 
+    void initialize_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const;
+
+    void finalize_lifecycle_result_locked(
+        common_agent_daemon_command_result & result) const;
+
     void fill_status_snapshot_locked(
         common_agent_daemon_status & status) const;
 

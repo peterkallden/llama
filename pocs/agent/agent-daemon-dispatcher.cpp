@@ -90,10 +90,8 @@ bool common_agent_daemon_dispatcher::execute(
         std::lock_guard<std::mutex> lock(mutex);
         if (!accepting_commands) {
             error = "daemon dispatcher is not accepting new commands";
-            result = {};
+            initialize_lifecycle_result(command, result);
             result.ok = false;
-            result.request_id = command.request_id;
-            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = "command_rejected";
             result.error = error;
             append_daemon_event(
@@ -102,14 +100,13 @@ bool common_agent_daemon_dispatcher::execute(
                 command.request_id,
                 command_turn_id(command),
                 error);
+            finalize_lifecycle_result_locked(result);
             return false;
         }
         if (queue.size() >= max_queue_size) {
             error = "daemon command queue is full";
-            result = {};
+            initialize_lifecycle_result(command, result);
             result.ok = false;
-            result.request_id = command.request_id;
-            result.response_kind = common_agent_daemon_response_kind::lifecycle;
             result.event = "command_rejected";
             result.error = error;
             append_daemon_event(
@@ -118,6 +115,7 @@ bool common_agent_daemon_dispatcher::execute(
                 command.request_id,
                 command_turn_id(command),
                 error);
+            finalize_lifecycle_result_locked(result);
             return false;
         }
         item->events.push_back(common_agent_daemon_event{
@@ -155,9 +153,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string & error) {
-    result = {};
-    result.request_id = command.request_id;
-    result.response_kind = common_agent_daemon_response_kind::lifecycle;
+    initialize_lifecycle_result(command, result);
     result.target_request_id = command.cancel.has_value() ? command.cancel->target_request_id : std::string();
     result.target_turn_id = command.cancel.has_value() ? command.cancel->target_turn_id : std::string();
 
@@ -208,7 +204,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                         : command.cancel->target_turn_id,
                     "active turn cancellation requested");
                 error.clear();
-                fill_status_snapshot_locked(result.status);
+                finalize_lifecycle_result_locked(result);
                 return true;
             }
             error.clear();
@@ -227,7 +223,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             command.request_id,
             command.cancel.has_value() ? command.cancel->target_turn_id : std::string(),
             error);
-        fill_status_snapshot_locked(result.status);
+        finalize_lifecycle_result_locked(result);
         return false;
     }
 
@@ -260,7 +256,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
         "queued turn cancelled");
     {
         std::lock_guard<std::mutex> lock(mutex);
-        fill_status_snapshot_locked(result.status);
+        finalize_lifecycle_result_locked(result);
     }
     error.clear();
     return true;
@@ -275,6 +271,19 @@ bool common_agent_daemon_dispatcher::populate_status_locked(
     fill_status_snapshot_locked(result.status);
     result.event = "status";
     return true;
+}
+
+void common_agent_daemon_dispatcher::initialize_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result) const {
+    result = {};
+    result.request_id = command.request_id;
+    result.response_kind = common_agent_daemon_response_kind::lifecycle;
+}
+
+void common_agent_daemon_dispatcher::finalize_lifecycle_result_locked(
+        common_agent_daemon_command_result & result) const {
+    fill_status_snapshot_locked(result.status);
 }
 
 void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
