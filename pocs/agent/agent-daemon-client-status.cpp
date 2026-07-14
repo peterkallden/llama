@@ -46,6 +46,9 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
         if (!session.policy_pack_id.empty()) {
             binding += "#" + session.policy_pack_id;
         }
+        if (!session.lane_state.empty()) {
+            binding += "{state=" + session.lane_state + "}";
+        }
         if (session.has_active_turn) {
             binding += "[active=" + session.active_turn_id;
             if (!session.active_turn_phase.empty()) {

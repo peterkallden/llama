@@ -495,6 +495,7 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
             descriptor.memory_scope,
             descriptor.plan_scope,
             descriptor.policy_pack_id,
+            common_agent_runtime_session_lane_state_name(entry.second.state),
             entry.second.mailbox.size(),
             entry.second.active_turn.has_value(),
             entry.second.active_turn.has_value()

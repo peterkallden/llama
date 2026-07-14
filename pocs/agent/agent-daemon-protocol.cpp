@@ -198,6 +198,7 @@ json serialize_agent_daemon_session_status(
         {"project_id", session.project_id},
         {"memory_scope", common_memory_scope_name(session.memory_scope)},
         {"plan_scope", daemon_plan_scope_name(session.plan_scope)},
+        {"lane_state", session.lane_state},
         {"queued_turn_count", session.queued_turn_count},
     };
     if (!session.policy_pack_id.empty()) {

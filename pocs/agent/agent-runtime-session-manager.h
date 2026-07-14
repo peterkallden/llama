@@ -28,6 +28,7 @@ struct common_agent_runtime_session_descriptor {
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
     std::string policy_pack_id;
+    std::string lane_state;
     size_t queued_turn_count = 0;
     bool has_active_turn = false;
     std::string active_request_id;

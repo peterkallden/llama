@@ -194,6 +194,7 @@ int main() {
                         {"memory_scope", "project"},
                         {"plan_scope", "project"},
                         {"policy_pack_id", "pack-a"},
+                        {"lane_state", "running"},
                         {"queued_turn_count", 0},
                         {"active_request_id", "request-a"},
                         {"active_turn_id", "turn-active"},
@@ -215,6 +216,7 @@ int main() {
             status_response.active_turn_disposition != "continue_immediately" ||
             status_response.session_keys.size() != 1 ||
             status_response.session_keys[0].policy_pack_id != "pack-a" ||
+            status_response.session_keys[0].lane_state != "running" ||
             status_response.session_keys[0].active_request_id != "request-a" ||
             status_response.session_keys[0].active_turn_id != "turn-active" ||
             status_response.session_keys[0].active_turn_phase != "awaiting_inference" ||
@@ -230,7 +232,7 @@ int main() {
     if (rendered_status.find("state=ready") == std::string::npos ||
             rendered_status.find("active_turn=turn-active/awaiting_inference:continue_immediately") == std::string::npos ||
             rendered_status.find(
-                "session_bindings=namespace-a/session-a@project-a#pack-a[active=turn-active/awaiting_inference:continue_immediately]") == std::string::npos) {
+                "session_bindings=namespace-a/session-a@project-a#pack-a{state=running}[active=turn-active/awaiting_inference:continue_immediately]") == std::string::npos) {
         std::fprintf(stderr, "status render mismatch: %s\n", rendered_status.c_str());
         return 1;
     }

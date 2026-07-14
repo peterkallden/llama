@@ -170,6 +170,7 @@ int main() {
     session_descriptor.project_id = "project-a";
     session_descriptor.memory_scope = common_memory_scope::project;
     session_descriptor.plan_scope = common_plan_scope::project;
+    session_descriptor.lane_state = "running";
     session_descriptor.queued_turn_count = 0;
     session_descriptor.has_active_turn = true;
     session_descriptor.active_request_id = "request-a";
@@ -192,6 +193,7 @@ int main() {
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||
+            status_response["session_keys"][0].value("lane_state", "") != "running" ||
             status_response["session_keys"][0].value("active_request_id", "") != "request-a" ||
             status_response["session_keys"][0].value("active_turn_id", "") != "turn-active" ||
             status_response["session_keys"][0].value("active_turn_phase", "") != "awaiting_inference" ||

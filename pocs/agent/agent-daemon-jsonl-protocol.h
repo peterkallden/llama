@@ -71,6 +71,7 @@ struct agent_daemon_jsonl_session_status {
     std::string memory_scope;
     std::string plan_scope;
     std::string policy_pack_id;
+    std::string lane_state;
     int queued_turn_count = 0;
     bool has_active_turn = false;
     std::string active_request_id;
