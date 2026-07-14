@@ -449,7 +449,7 @@ int main() {
 
     const auto queued_sessions = queued_manager.list_sessions();
     if (queued_sessions.size() != 1 ||
-            queued_sessions[0].lane_state != "running" ||
+            queued_sessions[0].lane_state != "running_with_waiters" ||
             !queued_sessions[0].has_active_turn ||
             queued_sessions[0].queued_turn_count < 1 ||
             queued_sessions[0].active_request_id != "request-4" ||

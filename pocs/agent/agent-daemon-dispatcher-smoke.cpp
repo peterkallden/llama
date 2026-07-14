@@ -52,6 +52,17 @@ common_agent_daemon_command make_close_command() {
     return command;
 }
 
+bool has_event_type(
+        const common_agent_daemon_command_result & result,
+        const char * event_type) {
+    for (const auto & event : result.events) {
+        if (event.type == event_type) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -155,6 +166,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "first turn missing daemon lifecycle events\n");
         return 1;
     }
+    if (!has_event_type(first_result, "turn.accepted") ||
+            !has_event_type(first_result, "turn.started") ||
+            !has_event_type(first_result, "lane.drained")) {
+        std::fprintf(stderr, "first turn missing internal session/lane events\n");
+        return 1;
+    }
     if (second_ok) {
         std::fprintf(stderr, "second queued turn unexpectedly ran to completion\n");
         return 1;
@@ -238,6 +255,11 @@ int main(int argc, char ** argv) {
 
     if (!reset_ok || reset_command_result.event != "session_reset") {
         std::fprintf(stderr, "reset command failed: %s\n", reset_error.c_str());
+        return 1;
+    }
+    if (!has_event_type(reset_command_result, "session.reset_requested") ||
+            !has_event_type(reset_command_result, "session.reset")) {
+        std::fprintf(stderr, "reset command missing internal session reset events\n");
         return 1;
     }
     if (!reset_first_ok || reset_first_result.turn_result.response.empty()) {
@@ -324,6 +346,11 @@ int main(int argc, char ** argv) {
 
     if (!close_ok || close_command_result.event != "session_closed") {
         std::fprintf(stderr, "close command failed: %s\n", close_error.c_str());
+        return 1;
+    }
+    if (!has_event_type(close_command_result, "session.close_requested") ||
+            !has_event_type(close_command_result, "session.closed")) {
+        std::fprintf(stderr, "close command missing internal session close events\n");
         return 1;
     }
     if (!close_first_ok || close_first_result.turn_result.response.empty()) {

@@ -239,6 +239,12 @@ json serialize_agent_daemon_event(
     json event_json = {
         {"type", event.type},
     };
+    if (event.sequence != 0) {
+        event_json["sequence"] = event.sequence;
+    }
+    if (event.event_type != common_agent_daemon_event_type::unknown) {
+        event_json["event_type"] = common_agent_daemon_event_type_name(event.event_type);
+    }
     if (!event.request_id.empty()) {
         event_json["request_id"] = event.request_id;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-daemon-lifecycle.h"
+#include "agent-daemon-events.h"
 #include "agent-runtime-session-manager.h"
 #include "agent-resource-store.h"
 
@@ -8,6 +9,7 @@
 #include "plan/plan-store.h"
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -67,13 +69,6 @@ struct common_agent_daemon_command {
     std::optional<common_agent_daemon_cancel_payload> cancel;
     std::optional<common_agent_daemon_resource_payload> resource;
     std::optional<common_agent_daemon_scope_payload> scope;
-};
-
-struct common_agent_daemon_event {
-    std::string type;
-    std::string request_id;
-    std::string turn_id;
-    std::string detail;
 };
 
 struct common_agent_daemon_active_turn_status {
@@ -197,6 +192,14 @@ public:
         common_agent_runtime_active_turn_descriptor & active_turn,
         std::string & error);
 
+    void emit_internal_event(
+        common_agent_daemon_event_type type,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & detail);
+
+    std::vector<common_agent_daemon_event> take_internal_events();
+
 private:
     void initialize_command_result(
         const common_agent_daemon_command & command,
@@ -236,4 +239,7 @@ private:
     common_agent_daemon_state state_value = common_agent_daemon_state::starting;
     common_agent_daemon_shutdown_mode shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
     bool shutdown_requested_flag = false;
+    mutable std::mutex event_mutex;
+    std::vector<common_agent_daemon_event> pending_events;
+    uint64_t next_event_sequence = 1;
 };

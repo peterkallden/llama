@@ -1,5 +1,6 @@
 #include "agent-daemon-dispatcher.h"
 
+#include <iterator>
 #include <utility>
 
 namespace {
@@ -558,6 +559,14 @@ void common_agent_daemon_dispatcher::worker_loop() {
         }
         if (!queued.error.empty() && queued.result.error.empty()) {
             queued.result.error = queued.error;
+        }
+        auto internal_events = service.take_internal_events();
+        if (!internal_events.empty()) {
+            queued.result.events.insert(
+                queued.result.events.end(),
+                std::make_move_iterator(internal_events.begin()),
+                std::make_move_iterator(internal_events.end()));
+            queued.result.daemon_event_count = queued.result.events.size();
         }
 
         {

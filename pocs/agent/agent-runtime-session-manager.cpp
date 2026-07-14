@@ -6,6 +6,11 @@ common_agent_runtime_session_manager::common_agent_runtime_session_manager(
         common_agent_runtime_session_manager_config config)
     : config(std::move(config)) {}
 
+void common_agent_runtime_session_manager::set_event_sink(
+        common_agent_daemon_event_sink sink) {
+    event_sink = std::move(sink);
+}
+
 common_agent_runtime_session_key common_agent_runtime_session_manager::make_session_key(
         const common_agent_runtime_session_manager_turn_request & request) const {
     return {
@@ -24,6 +29,16 @@ common_agent_runtime_session_manager::ensure_session_lane(
         it->second.host = std::make_unique<common_agent_runtime_session_host>(config);
     }
     return it->second;
+}
+
+void common_agent_runtime_session_manager::emit_event(
+        common_agent_daemon_event_type type,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & detail) const {
+    if (event_sink) {
+        event_sink(type, request_id, turn_id, detail);
+    }
 }
 
 std::shared_ptr<common_agent_runtime_session_manager::common_agent_runtime_session_lane_message>
@@ -47,6 +62,15 @@ common_agent_runtime_session_manager::enqueue_lane_turn(
         return nullptr;
     }
     lane.mailbox.push_back(message);
+    if (lane.state == common_agent_runtime_session_lane_state::running ||
+            lane.state == common_agent_runtime_session_lane_state::running_with_waiters) {
+        lane.state = common_agent_runtime_session_lane_state::running_with_waiters;
+    }
+    emit_event(
+        common_agent_daemon_event_type::turn_accepted,
+        request.request_id,
+        request.turn.turn_id,
+        "turn accepted into session lane mailbox");
     return message;
 }
 
@@ -93,6 +117,24 @@ void common_agent_runtime_session_manager::complete_lane_message(
         message->completed = true;
     }
     message->condition.notify_all();
+}
+
+void common_agent_runtime_session_manager::reconcile_lane_state(
+        common_agent_runtime_session_lane & lane) const {
+    std::lock_guard<std::mutex> lock(lane.mutex);
+    if (lane.state == common_agent_runtime_session_lane_state::resetting ||
+            lane.state == common_agent_runtime_session_lane_state::closing) {
+        return;
+    }
+    if (lane.current_message != nullptr || lane.active_turn.has_value()) {
+        lane.state = lane.mailbox.empty()
+            ? common_agent_runtime_session_lane_state::running
+            : common_agent_runtime_session_lane_state::running_with_waiters;
+        return;
+    }
+    lane.state = lane.mailbox.empty()
+        ? common_agent_runtime_session_lane_state::idle
+        : common_agent_runtime_session_lane_state::running_with_waiters;
 }
 
 bool common_agent_runtime_session_manager::run_lane_turn(
@@ -176,6 +218,11 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                 result.cancelled = true;
                 result.error = request.turn.execution_control.stop_reason();
                 error = result.error;
+                emit_event(
+                    common_agent_daemon_event_type::turn_cancelled,
+                    request.request_id,
+                    request.turn.turn_id,
+                    result.error);
                 return common_agent_runtime_turn_disposition::cancelled;
             }
             {
@@ -193,6 +240,11 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                     lane.active_turn->phase = common_agent_runtime_turn_phase::awaiting_inference;
                 }
             }
+            emit_event(
+                common_agent_daemon_event_type::turn_started,
+                request.request_id,
+                request.turn.turn_id,
+                "turn entered inference execution");
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::awaiting_inference: {
@@ -214,6 +266,15 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                             : common_agent_runtime_turn_phase::failed);
                 }
             }
+            emit_event(
+                ok
+                    ? common_agent_daemon_event_type::turn_completed
+                    : (result.cancelled
+                        ? common_agent_daemon_event_type::turn_cancelled
+                        : common_agent_daemon_event_type::turn_failed),
+                request.request_id,
+                request.turn.turn_id,
+                ok ? "turn execution returned" : error);
             return disposition;
         }
 
@@ -316,6 +377,7 @@ bool common_agent_runtime_session_manager::drain_lane(
             lane.mailbox.pop_front();
             lane.current_message = message;
         }
+        reconcile_lane_state(lane);
         if (message == nullptr || message->result == nullptr || message->error == nullptr) {
             std::lock_guard<std::mutex> lock(lane.mutex);
             lane.current_message.reset();
@@ -383,14 +445,15 @@ bool common_agent_runtime_session_manager::drain_lane(
                 lane.current_message.reset();
             }
         }
+        reconcile_lane_state(lane);
     }
 
-    {
-        std::lock_guard<std::mutex> lock(lane.mutex);
-        if (lane.state == common_agent_runtime_session_lane_state::running) {
-            lane.state = common_agent_runtime_session_lane_state::idle;
-        }
-    }
+    reconcile_lane_state(lane);
+    emit_event(
+        common_agent_daemon_event_type::lane_drained,
+        target_message ? target_message->request.request_id : std::string(),
+        target_message ? target_message->request.turn.turn_id : std::string(),
+        "session lane mailbox drained");
     if (target_message != nullptr) {
         return wait_for_message_completion(target_message, error);
     }
@@ -452,6 +515,11 @@ bool common_agent_runtime_session_manager::reset_session(
         error = "session is not active";
         return false;
     }
+    emit_event(
+        common_agent_daemon_event_type::session_reset_requested,
+        {},
+        {},
+        key.namespace_id + "/" + key.session_id);
 
     std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
     if (!prepare_lane_transition(
@@ -480,6 +548,11 @@ bool common_agent_runtime_session_manager::reset_session(
         it->second.state = common_agent_runtime_session_lane_state::idle;
     }
     error.clear();
+    emit_event(
+        common_agent_daemon_event_type::session_reset,
+        {},
+        {},
+        key.namespace_id + "/" + key.session_id);
     return true;
 }
 
@@ -491,6 +564,11 @@ bool common_agent_runtime_session_manager::close_session(
         error = "session is not active";
         return false;
     }
+    emit_event(
+        common_agent_daemon_event_type::session_close_requested,
+        {},
+        {},
+        key.namespace_id + "/" + key.session_id);
 
     std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
     if (!prepare_lane_transition(
@@ -510,6 +588,11 @@ bool common_agent_runtime_session_manager::close_session(
     it->second.host->reset();
     lanes.erase(it);
     error.clear();
+    emit_event(
+        common_agent_daemon_event_type::session_closed,
+        {},
+        {},
+        key.namespace_id + "/" + key.session_id);
     return true;
 }
 

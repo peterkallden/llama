@@ -56,7 +56,40 @@ void populate_daemon_failed_turn_result(
 
 common_agent_daemon_service::common_agent_daemon_service(common_agent_daemon_runtime runtime)
     : runtime(std::move(runtime)) {
+    if (this->runtime.host) {
+        this->runtime.host->set_event_sink(
+            [this](
+                    common_agent_daemon_event_type type,
+                    const std::string & request_id,
+                    const std::string & turn_id,
+                    const std::string & detail) {
+                emit_internal_event(type, request_id, turn_id, detail);
+            });
+    }
     state_value = this->runtime.host ? common_agent_daemon_state::ready : common_agent_daemon_state::failed;
+}
+
+void common_agent_daemon_service::emit_internal_event(
+        common_agent_daemon_event_type type,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & detail) {
+    std::lock_guard<std::mutex> lock(event_mutex);
+    pending_events.push_back({
+        common_agent_daemon_event_type_name(type),
+        request_id,
+        turn_id,
+        detail,
+        type,
+        next_event_sequence++,
+    });
+}
+
+std::vector<common_agent_daemon_event> common_agent_daemon_service::take_internal_events() {
+    std::lock_guard<std::mutex> lock(event_mutex);
+    auto out = std::move(pending_events);
+    pending_events.clear();
+    return out;
 }
 
 void common_agent_daemon_service::initialize_command_result(
@@ -421,6 +454,11 @@ bool common_agent_daemon_service::execute(
                 command.request_id,
                 {},
                 std::to_string(result.listing_result.resources.size()));
+            emit_internal_event(
+                common_agent_daemon_event_type::resources_listed,
+                command.request_id,
+                {},
+                std::to_string(result.listing_result.resources.size()));
             error.clear();
             return true;
 
@@ -495,6 +533,11 @@ bool common_agent_daemon_service::execute(
                 command.request_id,
                 {},
                 std::to_string(result.listing_result.memories.size()));
+            emit_internal_event(
+                common_agent_daemon_event_type::memories_listed,
+                command.request_id,
+                {},
+                std::to_string(result.listing_result.memories.size()));
             error.clear();
             return true;
 
@@ -559,6 +602,11 @@ bool common_agent_daemon_service::execute(
             append_daemon_event(
                 result,
                 "plans.listed",
+                command.request_id,
+                {},
+                std::to_string(result.listing_result.plans.size()));
+            emit_internal_event(
+                common_agent_daemon_event_type::plans_listed,
                 command.request_id,
                 {},
                 std::to_string(result.listing_result.plans.size()));
@@ -700,11 +748,21 @@ bool common_agent_daemon_service::execute(
                 command.request_id,
                 {},
                 result.resource_result.resource.uri);
+            emit_internal_event(
+                common_agent_daemon_event_type::resource_read,
+                command.request_id,
+                {},
+                result.resource_result.resource.uri);
             error.clear();
             return true;
 
         case common_agent_daemon_command_type::drain:
             state_value = common_agent_daemon_state::draining;
+            emit_internal_event(
+                common_agent_daemon_event_type::drain_requested,
+                command.request_id,
+                {},
+                "drain requested");
             return succeed_lifecycle_result(
                 command,
                 result,
@@ -717,6 +775,11 @@ bool common_agent_daemon_service::execute(
             shutdown_requested_flag = true;
             shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
             state_value = common_agent_daemon_state::draining;
+            emit_internal_event(
+                common_agent_daemon_event_type::shutdown_requested,
+                command.request_id,
+                {},
+                "shutdown requested");
             return succeed_lifecycle_result(
                 command,
                 result,
@@ -768,6 +831,29 @@ bool common_agent_daemon_service::execute(
                 result.turn_result.cancelled
                     ? "turn_cancelled"
                     : (result.turn_result.ok ? "turn_completed" : "turn_failed");
+            for (const auto & trace : result.turn_result.trace) {
+                if (trace.stage == common_runtime_trace_stage::tool && !trace.tool_name.empty()) {
+                    emit_internal_event(
+                        common_agent_daemon_event_type::tool_started,
+                        command.request_id,
+                        command_turn_id(command),
+                        trace.tool_name);
+                    emit_internal_event(
+                        common_agent_daemon_event_type::tool_completed,
+                        command.request_id,
+                        command_turn_id(command),
+                        trace.tool_name + ":" + common_runtime_trace_kind_name(trace.kind));
+                }
+            }
+            if (result.turn_result.memory_learning_related_count > 0 ||
+                    (!result.turn_result.memory_learning_summary.empty() &&
+                        result.turn_result.memory_learning_summary != "none")) {
+                emit_internal_event(
+                    common_agent_daemon_event_type::memory_learned,
+                    command.request_id,
+                    command_turn_id(command),
+                    result.turn_result.memory_learning_summary);
+            }
             append_daemon_event(
                 result,
                 result.turn_result.cancelled

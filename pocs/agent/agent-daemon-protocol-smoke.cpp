@@ -275,7 +275,14 @@ int main() {
     status_result.response_kind = common_agent_daemon_response_kind::status;
     status_result.event = "status";
     status_result.daemon_event_count = 1;
-    status_result.events.push_back({"status.reported", "status-1", "", "ready"});
+    status_result.events.push_back({
+        "status.reported",
+        "status-1",
+        "",
+        "ready",
+        common_agent_daemon_event_type::status_reported,
+        7,
+    });
     status_result.status.state = common_agent_daemon_state::ready;
     status_result.status.live = true;
     status_result.status.ready = true;
@@ -325,7 +332,11 @@ int main() {
             status_response["session_keys"][0].value("active_turn_disposition", "") != "continue_immediately" ||
             status_response["session_keys"][0].value("last_turn_id", "") != "turn-a" ||
             status_response["session_keys"][0].value("last_turn_phase", "") != "completed" ||
-            status_response["session_keys"][0].value("last_turn_disposition", "") != "completed") {
+            status_response["session_keys"][0].value("last_turn_disposition", "") != "completed" ||
+            !status_response.contains("events") ||
+            !status_response["events"].is_array() ||
+            status_response["events"][0].value("event_type", "") != "status.reported" ||
+            status_response["events"][0].value("sequence", 0) != 7) {
         std::fprintf(stderr, "status response mismatch\n");
         return 1;
     }

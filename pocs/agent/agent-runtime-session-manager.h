@@ -2,6 +2,7 @@
 
 #include "agent-runtime-session-host.h"
 #include "agent-runtime-turn-execution.h"
+#include "agent-daemon-events.h"
 
 #include <deque>
 #include <map>
@@ -67,6 +68,7 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
 enum class common_agent_runtime_session_lane_state {
     idle,
     running,
+    running_with_waiters,
     resetting,
     closing,
 };
@@ -74,10 +76,11 @@ enum class common_agent_runtime_session_lane_state {
 inline const char * common_agent_runtime_session_lane_state_name(
         common_agent_runtime_session_lane_state state) {
     switch (state) {
-        case common_agent_runtime_session_lane_state::idle:      return "idle";
-        case common_agent_runtime_session_lane_state::running:   return "running";
-        case common_agent_runtime_session_lane_state::resetting: return "resetting";
-        case common_agent_runtime_session_lane_state::closing:   return "closing";
+        case common_agent_runtime_session_lane_state::idle:                 return "idle";
+        case common_agent_runtime_session_lane_state::running:              return "running";
+        case common_agent_runtime_session_lane_state::running_with_waiters: return "running_with_waiters";
+        case common_agent_runtime_session_lane_state::resetting:            return "resetting";
+        case common_agent_runtime_session_lane_state::closing:              return "closing";
     }
     return "idle";
 }
@@ -104,6 +107,8 @@ public:
         const std::string & target_turn_id,
         common_agent_runtime_active_turn_descriptor & active_turn,
         std::string & error);
+
+    void set_event_sink(common_agent_daemon_event_sink sink);
 
     std::optional<common_agent_runtime_active_turn_descriptor> describe_active_turn() const;
 
@@ -158,6 +163,9 @@ private:
         const std::string & error,
         bool cancelled = false) const;
 
+    void reconcile_lane_state(
+        common_agent_runtime_session_lane & lane) const;
+
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message);
@@ -178,6 +186,13 @@ private:
         std::shared_ptr<common_agent_runtime_session_lane_message> & current_message,
         std::string & error);
 
+    void emit_event(
+        common_agent_daemon_event_type type,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & detail) const;
+
     common_agent_runtime_session_manager_config config;
     std::map<common_agent_runtime_session_key, common_agent_runtime_session_lane> lanes;
+    common_agent_daemon_event_sink event_sink;
 };
