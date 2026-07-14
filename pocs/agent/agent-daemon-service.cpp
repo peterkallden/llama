@@ -24,6 +24,34 @@ std::string command_turn_id(const common_agent_daemon_command & command) {
     return command.turn->request.turn.turn_id;
 }
 
+common_agent_failure_class classify_daemon_turn_failure(
+        const common_agent_daemon_command & command) {
+    if (command.turn.has_value() &&
+            command.turn->request.turn.execution_control.is_deadline_exceeded()) {
+        return common_agent_failure_class::timeout;
+    }
+    return common_agent_failure_class::execution;
+}
+
+void populate_daemon_failed_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_runtime_session_manager_turn_result & turn_result,
+        const std::string & error) {
+    turn_result.error = error;
+    turn_result.cancelled =
+        command.turn.has_value() &&
+        command.turn->request.turn.execution_control.should_stop();
+    turn_result.failure_class = classify_daemon_turn_failure(command);
+    turn_result.response_generation_status =
+        turn_result.cancelled
+            ? common_agent_generation_status::cancelled
+            : common_agent_generation_status::errored;
+    turn_result.response_stop_reason =
+        turn_result.cancelled
+            ? common_agent_generation_stop_reason::cancelled
+            : common_agent_generation_stop_reason::error;
+}
+
 } // namespace
 
 common_agent_daemon_service::common_agent_daemon_service(common_agent_daemon_runtime runtime)
@@ -73,11 +101,13 @@ bool common_agent_daemon_service::fail_turn_result(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string & error,
+        std::string event,
         std::string daemon_event_type) const {
     initialize_turn_result(command, result);
     result.ok = false;
+    result.event = std::move(event);
     result.error = error;
-    result.turn_result.error = error;
+    populate_daemon_failed_turn_result(command, result.turn_result, error);
     append_daemon_event(
         result,
         std::move(daemon_event_type),
@@ -277,6 +307,7 @@ bool common_agent_daemon_service::execute(
                     command,
                     result,
                     error,
+                    "turn_failed",
                     "turn.failed");
             }
             if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
@@ -285,6 +316,7 @@ bool common_agent_daemon_service::execute(
                     command,
                     result,
                     error,
+                    "turn_rejected",
                     "turn.rejected");
             }
             if (!runtime.host) {
@@ -293,6 +325,7 @@ bool common_agent_daemon_service::execute(
                     command,
                     result,
                     error,
+                    "turn_failed",
                     "turn.failed");
             }
 
@@ -306,6 +339,10 @@ bool common_agent_daemon_service::execute(
             if (!result.turn_result.error.empty()) {
                 result.error = result.turn_result.error;
             }
+            result.event =
+                result.turn_result.cancelled
+                    ? "turn_cancelled"
+                    : (result.turn_result.ok ? "turn_completed" : "turn_failed");
             append_daemon_event(
                 result,
                 result.turn_result.cancelled

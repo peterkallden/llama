@@ -158,6 +158,7 @@ private:
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
         std::string & error,
+        std::string event,
         std::string daemon_event_type) const;
 
     bool succeed_lifecycle_result(
