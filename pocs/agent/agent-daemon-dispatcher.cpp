@@ -370,9 +370,13 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
 bool common_agent_daemon_dispatcher::populate_status_locked(
         common_agent_daemon_command_result & result,
         std::string & error) const {
-    if (!service.populate_status(result, error)) {
+    common_agent_daemon_command_execution execution;
+    execution.outcome.request_id = result.request_id;
+    if (!service.populate_status_outcome(execution.outcome, execution.events, error)) {
+        result = project_agent_daemon_command_execution(std::move(execution));
         return false;
     }
+    result = project_agent_daemon_command_execution(std::move(execution));
     fill_status_snapshot_locked(result.status);
     result.event = "status";
     return true;
@@ -543,30 +547,33 @@ void common_agent_daemon_dispatcher::worker_loop() {
         }
 
         queued_result queued;
-        queued.result.request_id = item->command.request_id;
-        queued.result.events = item->events;
-        queued.result.daemon_event_count = queued.result.events.size();
-        append_daemon_event(
-            queued.result,
+        common_agent_daemon_command_execution execution;
+        execution.outcome.request_id = item->command.request_id;
+        execution.events = item->events;
+        append_agent_daemon_execution_event(
+            execution,
             "command.started",
             item->command.request_id,
             command_turn_id(item->command));
         if (item->command.type == common_agent_daemon_command_type::get_status) {
             std::lock_guard<std::mutex> lock(mutex);
-            queued.ok = populate_status_locked(queued.result, queued.error);
+            queued.ok = service.populate_status_outcome(execution.outcome, execution.events, queued.error);
         } else {
-            queued.ok = service.execute(item->command, queued.result, queued.error);
-        }
-        if (!queued.error.empty() && queued.result.error.empty()) {
-            queued.result.error = queued.error;
+            queued.ok = service.execute_outcome(item->command, execution.outcome, execution.events, queued.error);
         }
         auto internal_events = service.take_internal_events();
         if (!internal_events.empty()) {
-            queued.result.events.insert(
-                queued.result.events.end(),
+            execution.events.insert(
+                execution.events.end(),
                 std::make_move_iterator(internal_events.begin()),
                 std::make_move_iterator(internal_events.end()));
-            queued.result.daemon_event_count = queued.result.events.size();
+        }
+        queued.result = project_agent_daemon_command_execution(common_agent_daemon_command_execution{
+            std::move(execution.outcome),
+            std::move(execution.events),
+        });
+        if (!queued.error.empty() && queued.result.error.empty()) {
+            queued.result.error = queued.error;
         }
 
         {

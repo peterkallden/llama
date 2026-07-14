@@ -146,7 +146,7 @@ struct common_agent_daemon_listing_result {
     std::vector<common_agent_daemon_plan_summary> plans;
 };
 
-struct common_agent_daemon_command_result {
+struct common_agent_daemon_command_outcome {
     bool ok = false;
     std::string request_id;
     common_agent_daemon_response_kind response_kind = common_agent_daemon_response_kind::turn;
@@ -154,17 +154,41 @@ struct common_agent_daemon_command_result {
     std::string target_request_id;
     std::string target_turn_id;
     common_agent_daemon_status status;
-    size_t daemon_event_count = 0;
-    std::vector<common_agent_daemon_event> events;
     common_agent_runtime_session_manager_turn_result turn_result;
     common_agent_daemon_resource_read_result resource_result;
     common_agent_daemon_listing_result listing_result;
     std::string error;
 };
 
+struct common_agent_daemon_command_execution {
+    common_agent_daemon_command_outcome outcome;
+    std::vector<common_agent_daemon_event> events;
+};
+
+struct common_agent_daemon_command_result : common_agent_daemon_command_outcome {
+    size_t daemon_event_count = 0;
+    std::vector<common_agent_daemon_event> events;
+};
+
+common_agent_daemon_command_result project_agent_daemon_command_execution(
+    common_agent_daemon_command_execution execution);
+
+void append_agent_daemon_execution_event(
+    common_agent_daemon_command_execution & execution,
+    std::string type,
+    std::string request_id,
+    std::string turn_id,
+    std::string detail = {});
+
 class common_agent_daemon_service {
 public:
     explicit common_agent_daemon_service(common_agent_daemon_runtime runtime);
+
+    bool execute_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error);
 
     bool execute(
         const common_agent_daemon_command & command,
@@ -179,6 +203,11 @@ public:
 
     void mark_stopping();
     void mark_stopped();
+
+    bool populate_status_outcome(
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error) const;
 
     bool populate_status(
         common_agent_daemon_command_result & result,
@@ -201,35 +230,38 @@ public:
     std::vector<common_agent_daemon_event> take_internal_events();
 
 private:
-    void initialize_command_result(
+    void initialize_command_outcome(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result) const;
+        common_agent_daemon_command_outcome & outcome) const;
 
-    void initialize_lifecycle_result(
+    void initialize_lifecycle_outcome(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result) const;
+        common_agent_daemon_command_outcome & outcome) const;
 
-    void initialize_turn_result(
+    void initialize_turn_outcome(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result) const;
+        common_agent_daemon_command_outcome & outcome) const;
 
     bool fail_lifecycle_result(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
         std::string daemon_event_type) const;
 
     bool fail_turn_result(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
         std::string daemon_event_type) const;
 
     bool succeed_lifecycle_result(
         const common_agent_daemon_command & command,
-        common_agent_daemon_command_result & result,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
         std::string daemon_event_type,
