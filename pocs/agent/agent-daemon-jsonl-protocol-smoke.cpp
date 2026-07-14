@@ -235,6 +235,29 @@ int main() {
         return 1;
     }
 
+    agent_daemon_jsonl_turn_response turn_response;
+    parse_agent_daemon_jsonl_turn_response(
+        {
+            {"ok", false},
+            {"cancelled", true},
+            {"failure_class", "timeout"},
+            {"response_generation_status", "cancelled"},
+            {"response_stop_reason", "cancelled"},
+            {"error", "turn deadline exceeded"},
+            {"runtime_reused", true},
+            {"event_count", 2},
+        },
+        turn_response,
+        error);
+    if (error != "turn deadline exceeded" ||
+            !turn_response.cancelled ||
+            turn_response.failure_class != "timeout" ||
+            turn_response.response_generation_status != "cancelled" ||
+            turn_response.response_stop_reason != "cancelled") {
+        std::fprintf(stderr, "turn response contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
     std::printf("daemon_jsonl_mode=%s\n", parsed.value("mode", "").c_str());
     std::printf("daemon_jsonl_status=%s\n", status_request.value("command", "").c_str());
     std::printf("daemon_jsonl_cancel=%s\n", cancel_request.value("command", "").c_str());

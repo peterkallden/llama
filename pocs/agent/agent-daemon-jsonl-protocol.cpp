@@ -207,8 +207,12 @@ bool parse_agent_daemon_jsonl_turn_response(
     }
 
     response.ok = message.value("ok", false);
+    response.cancelled = message.value("cancelled", false);
     response.response = message.value("response", std::string());
     response.error = message.value("error", std::string());
+    response.failure_class = message.value("failure_class", std::string());
+    response.response_generation_status = message.value("response_generation_status", std::string());
+    response.response_stop_reason = message.value("response_stop_reason", std::string());
     response.runtime_reused = message.value("runtime_reused", false);
     response.event_count = message.value("event_count", 0);
 

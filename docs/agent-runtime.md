@@ -50,6 +50,8 @@ The JSONL client/transport seam is now moving in the same direction. It no longe
 
 The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
 
+That turn surface now also carries a slightly clearer failure/result contract. A failed or cancelled turn no longer only has `error` plus a boolean cancel flag; the session/daemon path now preserves a stable `failure_class` together with generation `status` and `stop_reason`, so timeout-versus-cancel-versus-generic execution failure is visible at the host boundary before any later async worker or richer event streaming work lands.
+
 Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
 
 Daemon command results now also carry a small internal daemon event list plus `daemon_event_count`. The current JSONL path is still request/response rather than streamed, but admin/test callers can now distinguish queueing, dispatch start, status reporting, session lifecycle actions, shutdown requests, queued-turn cancellation, and active-turn cancellation rejection without scraping diagnostics.

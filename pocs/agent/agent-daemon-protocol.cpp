@@ -346,7 +346,10 @@ json make_agent_daemon_turn_response(
     response["limit_reached"] = turn.limit_reached;
     response["reflected"] = turn.reflected;
     response["revised"] = turn.revised;
+    response["failure_class"] = common_agent_failure_class_name(turn.failure_class);
     response["response"] = turn.response;
+    response["response_generation_status"] = common_agent_generation_status_name(turn.response_generation_status);
+    response["response_stop_reason"] = common_agent_generation_stop_reason_name(turn.response_stop_reason);
     response["total_decoded_tokens"] = turn.total_decoded_tokens;
     response["event_count"] = turn.event_count;
     response["trace_count"] = turn.trace_count;

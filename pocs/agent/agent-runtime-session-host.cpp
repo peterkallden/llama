@@ -6,6 +6,36 @@
 
 namespace {
 
+common_agent_failure_class classify_execution_control_failure(
+        const common_agent_runtime_execution_control & execution_control) {
+    if (execution_control.is_deadline_exceeded()) {
+        return common_agent_failure_class::timeout;
+    }
+    return common_agent_failure_class::execution;
+}
+
+common_agent_failure_class classify_turn_failure(
+        const common_agent_result & agent_result,
+        const common_agent_runtime_execution_control & execution_control) {
+    if (execution_control.should_stop()) {
+        return classify_execution_control_failure(execution_control);
+    }
+    if (agent_result.response_generation_status == common_agent_generation_status::cancelled ||
+            agent_result.response_stop_reason == common_agent_generation_stop_reason::cancelled) {
+        return common_agent_failure_class::execution;
+    }
+    if (agent_result.response_stop_reason == common_agent_generation_stop_reason::limit) {
+        return common_agent_failure_class::limit;
+    }
+    if (agent_result.response_stop_reason == common_agent_generation_stop_reason::json_schema) {
+        return common_agent_failure_class::model_format;
+    }
+    if (!agent_result.failures.empty()) {
+        return agent_result.failures.back().classification;
+    }
+    return common_agent_failure_class::execution;
+}
+
 bool validate_session_host_turn_request(
         const common_agent_runtime_session_host_turn_request & request,
         std::string & error) {
@@ -222,6 +252,9 @@ bool common_agent_runtime_session_host::run_turn(
     }
     if (request.execution_control.should_stop()) {
         result.cancelled = true;
+        result.failure_class = classify_execution_control_failure(request.execution_control);
+        result.response_generation_status = common_agent_generation_status::cancelled;
+        result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
         result.error = request.execution_control.stop_reason();
         error = result.error;
         return false;
@@ -266,9 +299,12 @@ bool common_agent_runtime_session_host::run_turn(
     result.limit_reached = agent_result.limit_reached;
     result.reflected = agent_result.reflected;
     result.revised = agent_result.revised;
+    result.failure_class = classify_turn_failure(agent_result, request.execution_control);
     result.response = agent_result.response;
     result.plan_id = agent_result.plan_id ? *agent_result.plan_id : "";
     result.total_decoded_tokens = agent_result.total_decoded_tokens;
+    result.response_generation_status = agent_result.response_generation_status;
+    result.response_stop_reason = agent_result.response_stop_reason;
     result.event_count = agent_result.events.size();
     result.trace_count = agent_result.trace.size();
     result.memory_learning_related_count = agent_result.memory_learning_related_count;
@@ -276,6 +312,9 @@ bool common_agent_runtime_session_host::run_turn(
     result.trace = std::move(agent_result.trace);
     if (!result.ok && request.execution_control.should_stop()) {
         result.cancelled = true;
+        result.failure_class = classify_execution_control_failure(request.execution_control);
+        result.response_generation_status = common_agent_generation_status::cancelled;
+        result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
         error = request.execution_control.stop_reason();
     }
     compact_session_policy_pack_after_reflection(agent_result, result);

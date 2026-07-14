@@ -49,9 +49,12 @@ struct common_agent_runtime_session_host_turn_result {
     bool limit_reached = false;
     bool reflected = false;
     bool revised = false;
+    common_agent_failure_class failure_class = common_agent_failure_class::execution;
     std::string response;
     std::string plan_id;
     int total_decoded_tokens = 0;
+    common_agent_generation_status response_generation_status = common_agent_generation_status::errored;
+    common_agent_generation_stop_reason response_stop_reason = common_agent_generation_stop_reason::error;
     size_t event_count = 0;
     size_t trace_count = 0;
     size_t memory_learning_related_count = 0;

@@ -174,6 +174,9 @@ int main() {
     turn_result.response_kind = common_agent_daemon_response_kind::turn;
     turn_result.turn_result.response = "DONE";
     turn_result.turn_result.runtime_reused = true;
+    turn_result.turn_result.failure_class = common_agent_failure_class::execution;
+    turn_result.turn_result.response_generation_status = common_agent_generation_status::completed;
+    turn_result.turn_result.response_stop_reason = common_agent_generation_stop_reason::eos;
     turn_result.status.state = common_agent_daemon_state::ready;
     turn_result.status.live = true;
     turn_result.status.ready = true;
@@ -200,6 +203,9 @@ int main() {
             turn_response.value("response", "") != "DONE" ||
             turn_response.value("state", "") != "ready" ||
             !turn_response.value("runtime_reused", false) ||
+            turn_response.value("failure_class", "") != "execution" ||
+            turn_response.value("response_generation_status", "") != "completed" ||
+            turn_response.value("response_stop_reason", "") != "eos" ||
             !turn_response.contains("trace") ||
             !turn_response["trace"].is_array() ||
             turn_response["trace"].size() != 1 ||

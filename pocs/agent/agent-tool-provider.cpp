@@ -408,6 +408,11 @@ public:
         const auto started_at = std::chrono::steady_clock::now();
         mcp_agent_tool_call_result execution;
         if (!client.call_tool(context, it->second, call.arguments_json, execution, error)) {
+            if (context.execution_control.should_stop()) {
+                auto result = make_execution_control_failure_result(context, call);
+                error = result.raw_diagnostic;
+                return result;
+            }
             return make_failure_result(
                 call,
                 "mcp.call_failed",

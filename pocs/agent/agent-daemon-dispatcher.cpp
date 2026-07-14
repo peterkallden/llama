@@ -319,6 +319,9 @@ void common_agent_daemon_dispatcher::cancel_queued_turn_result(
     result.ok = false;
     result.event = "turn_cancelled";
     result.turn_result.cancelled = true;
+    result.turn_result.failure_class = common_agent_failure_class::execution;
+    result.turn_result.response_generation_status = common_agent_generation_status::cancelled;
+    result.turn_result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
     result.turn_result.error = error;
     result.error = std::move(error);
     append_daemon_event(
