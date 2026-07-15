@@ -35,6 +35,12 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
         if (!response.active_turn_disposition.empty()) {
             summary.headline += ":" + response.active_turn_disposition;
         }
+        if (!response.active_pending_operation_kind.empty()) {
+            summary.headline += " pending=" + response.active_pending_operation_kind;
+            if (!response.active_pending_operation_detail.empty()) {
+                summary.headline += "(" + response.active_pending_operation_detail + ")";
+            }
+        }
     }
 
     summary.session_bindings.reserve(response.session_keys.size());
@@ -56,6 +62,12 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
             }
             if (!session.active_turn_disposition.empty()) {
                 binding += ":" + session.active_turn_disposition;
+            }
+            if (!session.pending_operation_kind.empty()) {
+                binding += " pending=" + session.pending_operation_kind;
+                if (!session.pending_operation_detail.empty()) {
+                    binding += "(" + session.pending_operation_detail + ")";
+                }
             }
             binding += "]";
         }

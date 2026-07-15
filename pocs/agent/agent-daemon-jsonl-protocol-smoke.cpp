@@ -334,6 +334,8 @@ int main() {
                 {"active_turn_id", "turn-active"},
                 {"active_turn_phase", "awaiting_inference"},
                 {"active_turn_disposition", "continue_immediately"},
+                {"active_pending_operation_kind", "inference"},
+                {"active_pending_operation_detail", "session host turn execution"},
                 {"session_keys", json::array({
                     {
                         {"namespace_id", "namespace-a"},
@@ -348,6 +350,8 @@ int main() {
                         {"active_turn_id", "turn-active"},
                         {"active_turn_phase", "awaiting_inference"},
                         {"active_turn_disposition", "continue_immediately"},
+                        {"pending_operation_kind", "inference"},
+                        {"pending_operation_detail", "session host turn execution"},
                         {"last_turn_id", "turn-a"},
                         {"last_turn_phase", "completed"},
                         {"last_turn_disposition", "completed"},
@@ -362,6 +366,8 @@ int main() {
             status_response.active_turn_id != "turn-active" ||
             status_response.active_turn_phase != "awaiting_inference" ||
             status_response.active_turn_disposition != "continue_immediately" ||
+            status_response.active_pending_operation_kind != "inference" ||
+            status_response.active_pending_operation_detail != "session host turn execution" ||
             status_response.daemon_event_count != 1 ||
             status_response.events.size() != 1 ||
             status_response.events[0].event_type != "status.reported" ||
@@ -372,6 +378,8 @@ int main() {
             status_response.session_keys[0].active_turn_id != "turn-active" ||
             status_response.session_keys[0].active_turn_phase != "awaiting_inference" ||
             status_response.session_keys[0].active_turn_disposition != "continue_immediately" ||
+            status_response.session_keys[0].pending_operation_kind != "inference" ||
+            status_response.session_keys[0].pending_operation_detail != "session host turn execution" ||
             status_response.session_keys[0].last_turn_id != "turn-a" ||
             status_response.session_keys[0].last_turn_phase != "completed" ||
             status_response.session_keys[0].last_turn_disposition != "completed") {
@@ -381,9 +389,9 @@ int main() {
     const auto summary = make_agent_daemon_client_status_summary(status_response);
     const std::string rendered_status = render_agent_daemon_client_status_summary(summary);
     if (rendered_status.find("state=ready") == std::string::npos ||
-            rendered_status.find("active_turn=turn-active/awaiting_inference:continue_immediately") == std::string::npos ||
+            rendered_status.find("active_turn=turn-active/awaiting_inference:continue_immediately pending=inference(session host turn execution)") == std::string::npos ||
             rendered_status.find(
-                "session_bindings=namespace-a/session-a@project-a#pack-a{state=running}[active=turn-active/awaiting_inference:continue_immediately]") == std::string::npos) {
+                "session_bindings=namespace-a/session-a@project-a#pack-a{state=running}[active=turn-active/awaiting_inference:continue_immediately pending=inference(session host turn execution)]") == std::string::npos) {
         std::fprintf(stderr, "status render mismatch: %s\n", rendered_status.c_str());
         return 1;
     }

@@ -38,6 +38,8 @@ struct common_agent_runtime_session_descriptor {
     std::string active_turn_phase;
     std::string active_turn_disposition;
     bool active_cancel_requested = false;
+    std::string pending_operation_kind;
+    std::string pending_operation_detail;
     std::string last_turn_id;
     std::string last_turn_phase;
     std::string last_turn_disposition;
@@ -95,6 +97,8 @@ struct common_agent_runtime_active_turn_descriptor {
     std::string phase;
     std::string disposition;
     bool cancellation_requested = false;
+    std::string pending_operation_kind;
+    std::string pending_operation_detail;
 };
 
 inline common_agent_runtime_session_manager_config make_agent_runtime_session_manager_config(

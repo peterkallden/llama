@@ -77,6 +77,8 @@ struct common_agent_daemon_active_turn_status {
     std::string phase;
     std::string disposition;
     bool cancellation_requested = false;
+    std::string pending_operation_kind;
+    std::string pending_operation_detail;
 };
 
 struct common_agent_daemon_status {
@@ -96,6 +98,8 @@ struct common_agent_daemon_status {
     std::string active_turn_phase;
     std::string active_turn_disposition;
     bool active_cancel_requested = false;
+    std::string active_pending_operation_kind;
+    std::string active_pending_operation_detail;
     std::vector<common_agent_runtime_session_descriptor> sessions;
     bool session_snapshot_populated = false;
 };

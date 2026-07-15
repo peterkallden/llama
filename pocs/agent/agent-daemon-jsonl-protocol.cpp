@@ -393,6 +393,8 @@ bool parse_agent_daemon_jsonl_status_response(
     response.active_turn_id = message.value("active_turn_id", std::string());
     response.active_turn_phase = message.value("active_turn_phase", std::string());
     response.active_turn_disposition = message.value("active_turn_disposition", std::string());
+    response.active_pending_operation_kind = message.value("active_pending_operation_kind", std::string());
+    response.active_pending_operation_detail = message.value("active_pending_operation_detail", std::string());
     response.payload = message;
     response.error = message.value("error", std::string());
 
@@ -416,6 +418,8 @@ bool parse_agent_daemon_jsonl_status_response(
                 item.value("active_turn_phase", std::string()),
                 item.value("active_turn_disposition", std::string()),
                 item.value("active_cancel_requested", false),
+                item.value("pending_operation_kind", std::string()),
+                item.value("pending_operation_detail", std::string()),
                 item.value("last_turn_id", std::string()),
                 item.value("last_turn_phase", std::string()),
                 item.value("last_turn_disposition", std::string()),

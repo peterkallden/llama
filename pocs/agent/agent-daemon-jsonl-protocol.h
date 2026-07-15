@@ -125,6 +125,8 @@ struct agent_daemon_jsonl_session_status {
     std::string active_turn_phase;
     std::string active_turn_disposition;
     bool active_cancel_requested = false;
+    std::string pending_operation_kind;
+    std::string pending_operation_detail;
     std::string last_turn_id;
     std::string last_turn_phase;
     std::string last_turn_disposition;
@@ -149,6 +151,8 @@ struct agent_daemon_jsonl_status_response {
     std::string active_turn_id;
     std::string active_turn_phase;
     std::string active_turn_disposition;
+    std::string active_pending_operation_kind;
+    std::string active_pending_operation_detail;
     std::vector<agent_daemon_jsonl_session_status> session_keys;
     nlohmann::ordered_json payload;
     std::string error;

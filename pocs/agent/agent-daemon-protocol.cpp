@@ -276,6 +276,12 @@ json serialize_agent_daemon_session_status(
         session_json["active_turn_id"] = session.active_turn_id;
         session_json["active_turn_phase"] = session.active_turn_phase;
         session_json["active_turn_disposition"] = session.active_turn_disposition;
+        if (!session.pending_operation_kind.empty()) {
+            session_json["pending_operation_kind"] = session.pending_operation_kind;
+        }
+        if (!session.pending_operation_detail.empty()) {
+            session_json["pending_operation_detail"] = session.pending_operation_detail;
+        }
         if (session.active_cancel_requested) {
             session_json["active_cancel_requested"] = true;
         }
@@ -358,11 +364,23 @@ void append_agent_daemon_status_snapshot(
         response["active_turn_id"] = active_turn->turn_id;
         response["active_turn_phase"] = active_turn->phase;
         response["active_turn_disposition"] = active_turn->disposition;
+        if (!active_turn->pending_operation_kind.empty()) {
+            response["active_pending_operation_kind"] = active_turn->pending_operation_kind;
+        }
+        if (!active_turn->pending_operation_detail.empty()) {
+            response["active_pending_operation_detail"] = active_turn->pending_operation_detail;
+        }
     } else if (!status.active_request_id.empty()) {
         response["active_request_id"] = status.active_request_id;
         response["active_turn_id"] = status.active_turn_id;
         response["active_turn_phase"] = status.active_turn_phase;
         response["active_turn_disposition"] = status.active_turn_disposition;
+        if (!status.active_pending_operation_kind.empty()) {
+            response["active_pending_operation_kind"] = status.active_pending_operation_kind;
+        }
+        if (!status.active_pending_operation_detail.empty()) {
+            response["active_pending_operation_detail"] = status.active_pending_operation_detail;
+        }
     }
     if ((active_turn != nullptr && active_turn->cancellation_requested) ||
             status.active_cancel_requested) {

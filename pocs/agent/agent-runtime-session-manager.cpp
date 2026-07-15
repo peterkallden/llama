@@ -815,6 +815,13 @@ bool common_agent_runtime_session_manager::request_cancel_active_turn(
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
             common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
+            lane.active_turn->pending_operation.has_value()
+                ? common_agent_runtime_pending_operation_kind_name(
+                    lane.active_turn->pending_operation->kind)
+                : std::string(),
+            lane.active_turn->pending_operation.has_value()
+                ? lane.active_turn->pending_operation->detail
+                : std::string(),
         };
 
         if (!lane.active_turn->cancellation) {
@@ -850,6 +857,13 @@ std::optional<common_agent_runtime_active_turn_descriptor> common_agent_runtime_
             common_agent_runtime_turn_phase_name(lane.active_turn->phase),
             common_agent_runtime_turn_disposition_name(lane.active_turn->disposition),
             lane.active_turn->cancellation_requested,
+            lane.active_turn->pending_operation.has_value()
+                ? common_agent_runtime_pending_operation_kind_name(
+                    lane.active_turn->pending_operation->kind)
+                : std::string(),
+            lane.active_turn->pending_operation.has_value()
+                ? lane.active_turn->pending_operation->detail
+                : std::string(),
         };
     }
 
@@ -888,6 +902,13 @@ std::vector<common_agent_runtime_session_descriptor> common_agent_runtime_sessio
                 ? common_agent_runtime_turn_disposition_name(entry.second.active_turn->disposition)
                 : std::string(),
             entry.second.active_turn.has_value() && entry.second.active_turn->cancellation_requested,
+            entry.second.active_turn.has_value() && entry.second.active_turn->pending_operation.has_value()
+                ? common_agent_runtime_pending_operation_kind_name(
+                    entry.second.active_turn->pending_operation->kind)
+                : std::string(),
+            entry.second.active_turn.has_value() && entry.second.active_turn->pending_operation.has_value()
+                ? entry.second.active_turn->pending_operation->detail
+                : std::string(),
             entry.second.last_turn_id,
             entry.second.last_turn_id.empty()
                 ? std::string()

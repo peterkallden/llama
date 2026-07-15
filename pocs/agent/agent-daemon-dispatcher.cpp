@@ -14,12 +14,16 @@ void assign_active_turn_status(
         active_turn.phase,
         active_turn.disposition,
         active_turn.cancellation_requested,
+        active_turn.pending_operation_kind,
+        active_turn.pending_operation_detail,
     };
     status.active_request_id = active_turn.request_id;
     status.active_turn_id = active_turn.turn_id;
     status.active_turn_phase = active_turn.phase;
     status.active_turn_disposition = active_turn.disposition;
     status.active_cancel_requested = active_turn.cancellation_requested;
+    status.active_pending_operation_kind = active_turn.pending_operation_kind;
+    status.active_pending_operation_detail = active_turn.pending_operation_detail;
 }
 
 void append_daemon_event(
@@ -504,6 +508,8 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
         status.active_turn_phase.clear();
         status.active_turn_disposition.clear();
         status.active_cancel_requested = false;
+        status.active_pending_operation_kind.clear();
+        status.active_pending_operation_detail.clear();
     }
     status.queued_command_count = queued_count;
     status.worker_running = worker_running;
