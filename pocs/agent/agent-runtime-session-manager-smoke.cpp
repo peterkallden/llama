@@ -818,20 +818,9 @@ int main() {
     auto waiting_events = std::make_shared<std::vector<common_agent_daemon_event>>();
     auto waiting_events_mutex = std::make_shared<std::mutex>();
     waiting_manager.set_event_sink(
-        [waiting_events, waiting_events_mutex](
-                common_agent_daemon_event_type type,
-                const std::string & request_id,
-                const std::string & turn_id,
-                const std::string & detail) {
+        [waiting_events, waiting_events_mutex](common_agent_daemon_event event) {
             std::lock_guard<std::mutex> lock(*waiting_events_mutex);
-            waiting_events->push_back({
-                common_agent_daemon_event_type_name(type),
-                request_id,
-                turn_id,
-                detail,
-                type,
-                0,
-            });
+            waiting_events->push_back(std::move(event));
         });
 
     auto waiting_control = make_common_agent_runtime_execution_control({});
@@ -991,20 +980,9 @@ int main() {
     auto inference_wait_events = std::make_shared<std::vector<common_agent_daemon_event>>();
     auto inference_wait_events_mutex = std::make_shared<std::mutex>();
     inference_wait_manager.set_event_sink(
-        [inference_wait_events, inference_wait_events_mutex](
-                common_agent_daemon_event_type type,
-                const std::string & request_id,
-                const std::string & turn_id,
-                const std::string & detail) {
+        [inference_wait_events, inference_wait_events_mutex](common_agent_daemon_event event) {
             std::lock_guard<std::mutex> lock(*inference_wait_events_mutex);
-            inference_wait_events->push_back({
-                common_agent_daemon_event_type_name(type),
-                request_id,
-                turn_id,
-                detail,
-                type,
-                0,
-            });
+            inference_wait_events->push_back(std::move(event));
         });
 
     common_agent_runtime_session_manager_turn_result inference_wait_result;

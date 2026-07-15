@@ -255,6 +255,13 @@ private:
         const std::string & turn_id,
         const std::string & detail) const;
 
+    common_agent_event_emitter make_lane_emitter(
+        const common_agent_runtime_session_key & key,
+        const std::string & project_id,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & operation_id = {}) const;
+
     common_agent_runtime_session_manager_config config;
     std::map<common_agent_runtime_session_key, common_agent_runtime_session_lane> lanes;
     common_agent_daemon_event_sink event_sink;

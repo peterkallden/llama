@@ -5,6 +5,7 @@ set(AGENT_RUNTIME_SOURCES
     agent-daemon-client-admin.cpp
     agent-daemon-client-status.cpp
     agent-daemon-client.cpp
+    agent-daemon-event-collector.cpp
     agent-daemon-jsonl-protocol.cpp
     agent-host-config.cpp
     agent-mcp-protocol.cpp

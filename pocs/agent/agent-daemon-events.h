@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
+#include <utility>
 
 enum class common_agent_daemon_event_type {
     unknown,
@@ -114,21 +116,41 @@ struct common_agent_daemon_event {
     std::string type;
     std::string request_id;
     std::string turn_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string session_id;
+    std::string operation_id;
     std::string detail;
     common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown;
     uint64_t sequence = 0;
 };
+
+struct common_agent_event_context {
+    std::string namespace_id;
+    std::string project_id;
+    std::string session_id;
+    std::string request_id;
+    std::string turn_id;
+    std::string operation_id;
+};
+
+using common_agent_event_attributes = std::map<std::string, std::string>;
 
 inline common_agent_daemon_event make_common_agent_daemon_event(
         common_agent_daemon_event_type type,
         std::string request_id,
         std::string turn_id,
         std::string detail = {},
-        uint64_t sequence = 0) {
+        uint64_t sequence = 0,
+        common_agent_event_context context = {}) {
     return {
         common_agent_daemon_event_type_name(type),
         std::move(request_id),
         std::move(turn_id),
+        std::move(context.namespace_id),
+        std::move(context.project_id),
+        std::move(context.session_id),
+        std::move(context.operation_id),
         std::move(detail),
         type,
         sequence,
@@ -136,8 +158,92 @@ inline common_agent_daemon_event make_common_agent_daemon_event(
 }
 
 using common_agent_daemon_event_sink =
-    std::function<void(
-        common_agent_daemon_event_type type,
-        const std::string & request_id,
-        const std::string & turn_id,
-        const std::string & detail)>;
+    std::function<void(common_agent_daemon_event event)>;
+
+class common_agent_event_emitter {
+public:
+    common_agent_event_emitter() = default;
+
+    explicit common_agent_event_emitter(
+            common_agent_daemon_event_sink sink,
+            common_agent_event_context context = {})
+        : sink(std::move(sink))
+        , context(std::move(context)) {}
+
+    void set_sink(common_agent_daemon_event_sink new_sink) {
+        sink = std::move(new_sink);
+    }
+
+    void set_context(common_agent_event_context new_context) {
+        context = std::move(new_context);
+    }
+
+    [[nodiscard]]
+    common_agent_event_emitter with_context(
+            common_agent_event_context child_context) const {
+        return common_agent_event_emitter(
+            sink,
+            std::move(child_context));
+    }
+
+    [[nodiscard]]
+    common_agent_event_emitter with_request(
+            std::string request_id) const {
+        auto child = context;
+        child.request_id = std::move(request_id);
+        return common_agent_event_emitter(
+            sink,
+            std::move(child));
+    }
+
+    [[nodiscard]]
+    common_agent_event_emitter with_turn(
+            std::string request_id,
+            std::string turn_id) const {
+        auto child = context;
+        child.request_id = std::move(request_id);
+        child.turn_id = std::move(turn_id);
+        return common_agent_event_emitter(
+            sink,
+            std::move(child));
+    }
+
+    [[nodiscard]]
+    common_agent_event_emitter with_operation(
+            std::string operation_id) const {
+        auto child = context;
+        child.operation_id = std::move(operation_id);
+        return common_agent_event_emitter(
+            sink,
+            std::move(child));
+    }
+
+    void emit(
+            common_agent_daemon_event_type type,
+            std::string detail = {}) const {
+        if (!sink) {
+            return;
+        }
+
+        sink(common_agent_daemon_event{
+            common_agent_daemon_event_type_name(type),
+            context.request_id,
+            context.turn_id,
+            context.namespace_id,
+            context.project_id,
+            context.session_id,
+            context.operation_id,
+            std::move(detail),
+            type,
+            0,
+        });
+    }
+
+    explicit operator bool() const {
+        return static_cast<bool>(sink);
+    }
+
+private:
+    common_agent_daemon_event_sink sink;
+    common_agent_event_context context;
+};

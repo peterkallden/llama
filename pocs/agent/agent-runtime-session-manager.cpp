@@ -33,13 +33,32 @@ common_agent_runtime_session_manager::ensure_session_lane(
     return it->second;
 }
 
+common_agent_event_emitter common_agent_runtime_session_manager::make_lane_emitter(
+        const common_agent_runtime_session_key & key,
+        const std::string & project_id,
+        const std::string & request_id,
+        const std::string & turn_id,
+        const std::string & operation_id) const {
+    return common_agent_event_emitter(
+        event_sink,
+        {
+            key.namespace_id,
+            project_id,
+            key.session_id,
+            request_id,
+            turn_id,
+            operation_id,
+        });
+}
+
 void common_agent_runtime_session_manager::emit_event(
         common_agent_daemon_event_type type,
         const std::string & request_id,
         const std::string & turn_id,
         const std::string & detail) const {
     if (event_sink) {
-        event_sink(type, request_id, turn_id, detail);
+        common_agent_event_emitter(event_sink, {{}, {}, {}, request_id, turn_id, {}})
+            .emit(type, detail);
     }
 }
 
@@ -66,11 +85,14 @@ common_agent_runtime_session_manager::enqueue_lane_turn(
             lane.state == common_agent_runtime_session_lane_state::running_with_waiters) {
         lane.state = common_agent_runtime_session_lane_state::running_with_waiters;
     }
-    emit_event(
-        common_agent_daemon_event_type::turn_accepted,
+    make_lane_emitter(
+        make_session_key(request),
+        request.turn.project_id,
         request.request_id,
-        request.turn.turn_id,
-        "turn accepted into session lane mailbox");
+        request.turn.turn_id)
+        .emit(
+            common_agent_daemon_event_type::turn_accepted,
+            "turn accepted into session lane mailbox");
     return message;
 }
 
@@ -209,6 +231,11 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
     auto & request = message->request;
     auto & result = message->result;
     auto & error = message->error;
+    const auto turn_events = make_lane_emitter(
+        make_session_key(request),
+        request.turn.project_id,
+        request.request_id,
+        request.turn.turn_id);
 
     if (request.turn.execution_control.should_stop()) {
         {
@@ -225,11 +252,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
         result.cancelled = true;
         result.error = request.turn.execution_control.stop_reason();
         error = result.error;
-        emit_event(
-            common_agent_daemon_event_type::turn_cancelled,
-            request.request_id,
-            request.turn.turn_id,
-            result.error);
+        turn_events.emit(common_agent_daemon_event_type::turn_cancelled, result.error);
         return common_agent_runtime_turn_disposition::cancelled;
     }
 
@@ -243,11 +266,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
                 lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
             }
         }
-        emit_event(
-            common_agent_daemon_event_type::turn_failed,
-            request.request_id,
-            request.turn.turn_id,
-            error);
+        turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
         return common_agent_runtime_turn_disposition::failed;
     }
 
@@ -260,11 +279,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
             lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
             lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
         }
-        emit_event(
-            common_agent_daemon_event_type::turn_failed,
-            request.request_id,
-            request.turn.turn_id,
-            error);
+        turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
         return common_agent_runtime_turn_disposition::failed;
     }
     if (!ready) {
@@ -285,18 +300,14 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
         }
         lane.pending_operation.reset();
     }
-    emit_event(
+    turn_events.emit(
         completed_event_for_operation_kind(operation_kind),
-        request.request_id,
-        request.turn.turn_id,
         operation_kind == common_agent_runtime_pending_operation_kind::tool
             ? "manager-owned pending tool operation completed"
             : "manager-owned pending inference operation completed");
     if (operation_kind == common_agent_runtime_pending_operation_kind::tool) {
-        emit_event(
+        turn_events.emit(
             common_agent_daemon_event_type::turn_started,
-            request.request_id,
-            request.turn.turn_id,
             "turn resumed after pending tool operation");
     }
     return common_agent_runtime_turn_disposition::continue_immediately;
@@ -312,6 +323,11 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
     auto & request = message->request;
     auto & result = message->result;
     auto & error = message->error;
+    const auto turn_events = make_lane_emitter(
+        make_session_key(request),
+        request.turn.project_id,
+        request.request_id,
+        request.turn.turn_id);
     common_agent_runtime_turn_phase phase;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
@@ -337,11 +353,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                 result.cancelled = true;
                 result.error = request.turn.execution_control.stop_reason();
                 error = result.error;
-                emit_event(
-                    common_agent_daemon_event_type::turn_cancelled,
-                    request.request_id,
-                    request.turn.turn_id,
-                    result.error);
+                turn_events.emit(common_agent_daemon_event_type::turn_cancelled, result.error);
                 return common_agent_runtime_turn_disposition::cancelled;
             }
             {
@@ -365,11 +377,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                             lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
                         }
                     }
-                    emit_event(
-                        common_agent_daemon_event_type::turn_failed,
-                        request.request_id,
-                        request.turn.turn_id,
-                        error);
+                    turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
                     return common_agent_runtime_turn_disposition::failed;
                 }
                 if (pending_operation.has_value()) {
@@ -382,13 +390,13 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                             lane.active_turn->pending_operation = lane.pending_operation->pending_operation;
                         }
                     }
-                    emit_event(
+                    auto operation_events = turn_events.with_operation(
+                        lane.pending_operation->pending_operation.operation_id);
+                    operation_events.emit(
                         lane.pending_operation->pending_operation.kind ==
                             common_agent_runtime_pending_operation_kind::tool
                             ? common_agent_daemon_event_type::turn_waiting_for_tool
                             : common_agent_daemon_event_type::turn_waiting_for_inference,
-                        request.request_id,
-                        request.turn.turn_id,
                         lane.pending_operation->pending_operation.detail.empty()
                             ? "lane entered manager-owned pending operation"
                             : lane.pending_operation->pending_operation.detail);
@@ -409,11 +417,11 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                     lane.active_turn->pending_operation = std::move(pending);
                 }
             }
-            emit_event(
-                common_agent_daemon_event_type::turn_waiting_for_inference,
-                request.request_id,
-                request.turn.turn_id,
-                "turn entered inference execution");
+            turn_events
+                .with_operation("inference:" + request.request_id)
+                .emit(
+                    common_agent_daemon_event_type::turn_waiting_for_inference,
+                    "turn entered inference execution");
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::awaiting_inference: {
@@ -445,14 +453,12 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                             : common_agent_runtime_turn_phase::failed);
                 }
             }
-            emit_event(
+            turn_events.emit(
                 ok
                     ? common_agent_daemon_event_type::turn_completed
                     : (result.cancelled
                         ? common_agent_daemon_event_type::turn_cancelled
                         : common_agent_daemon_event_type::turn_failed),
-                request.request_id,
-                request.turn.turn_id,
                 ok ? "turn execution returned" : error);
             return disposition;
         }
@@ -627,11 +633,22 @@ bool common_agent_runtime_session_manager::drain_lane(
     }
 
     reconcile_lane_state(lane);
-    emit_event(
-        common_agent_daemon_event_type::lane_drained,
-        target_message ? target_message->request.request_id : std::string(),
-        target_message ? target_message->request.turn.turn_id : std::string(),
-        "session lane mailbox drained");
+    if (target_message != nullptr) {
+        make_lane_emitter(
+            make_session_key(target_message->request),
+            target_message->request.turn.project_id,
+            target_message->request.request_id,
+            target_message->request.turn.turn_id)
+            .emit(
+                common_agent_daemon_event_type::lane_drained,
+                "session lane mailbox drained");
+    } else {
+        emit_event(
+            common_agent_daemon_event_type::lane_drained,
+            {},
+            {},
+            "session lane mailbox drained");
+    }
     if (target_message != nullptr) {
         return wait_for_message_completion(target_message, error);
     }
@@ -701,11 +718,10 @@ bool common_agent_runtime_session_manager::reset_session(
         error = "session is not active";
         return false;
     }
-    emit_event(
-        common_agent_daemon_event_type::session_reset_requested,
-        {},
-        {},
-        key.namespace_id + "/" + key.session_id);
+    make_lane_emitter(key, {}, {}, {})
+        .emit(
+            common_agent_daemon_event_type::session_reset_requested,
+            key.namespace_id + "/" + key.session_id);
 
     std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
     if (!prepare_lane_transition(
@@ -735,11 +751,10 @@ bool common_agent_runtime_session_manager::reset_session(
         it->second.state = common_agent_runtime_session_lane_state::idle;
     }
     error.clear();
-    emit_event(
-        common_agent_daemon_event_type::session_reset,
-        {},
-        {},
-        key.namespace_id + "/" + key.session_id);
+    make_lane_emitter(key, {}, {}, {})
+        .emit(
+            common_agent_daemon_event_type::session_reset,
+            key.namespace_id + "/" + key.session_id);
     return true;
 }
 
@@ -751,11 +766,10 @@ bool common_agent_runtime_session_manager::close_session(
         error = "session is not active";
         return false;
     }
-    emit_event(
-        common_agent_daemon_event_type::session_close_requested,
-        {},
-        {},
-        key.namespace_id + "/" + key.session_id);
+    make_lane_emitter(key, {}, {}, {})
+        .emit(
+            common_agent_daemon_event_type::session_close_requested,
+            key.namespace_id + "/" + key.session_id);
 
     std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
     if (!prepare_lane_transition(
@@ -775,11 +789,10 @@ bool common_agent_runtime_session_manager::close_session(
     it->second.host->reset();
     lanes.erase(it);
     error.clear();
-    emit_event(
-        common_agent_daemon_event_type::session_closed,
-        {},
-        {},
-        key.namespace_id + "/" + key.session_id);
+    make_lane_emitter(key, {}, {}, {})
+        .emit(
+            common_agent_daemon_event_type::session_closed,
+            key.namespace_id + "/" + key.session_id);
     return true;
 }
 

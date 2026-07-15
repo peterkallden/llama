@@ -63,6 +63,10 @@ bool parse_event_entry_field(
     entry.type = value.value("type", std::string());
     entry.request_id = value.value("request_id", std::string());
     entry.turn_id = value.value("turn_id", std::string());
+    entry.namespace_id = value.value("namespace_id", std::string());
+    entry.project_id = value.value("project_id", std::string());
+    entry.session_id = value.value("session_id", std::string());
+    entry.operation_id = value.value("operation_id", std::string());
     entry.detail = value.value("detail", std::string());
     entry.event_type = value.value("event_type", std::string());
     entry.sequence = value.value("sequence", uint64_t(0));

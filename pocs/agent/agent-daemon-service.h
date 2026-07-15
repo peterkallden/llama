@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent-daemon-event-collector.h"
 #include "agent-daemon-lifecycle.h"
 #include "agent-daemon-events.h"
 #include "agent-runtime-session-manager.h"
@@ -9,7 +10,6 @@
 #include "plan/plan-store.h"
 
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -179,21 +179,13 @@ common_agent_daemon_command_result project_agent_daemon_command_execution(
 
 void append_agent_daemon_execution_event(
     common_agent_daemon_command_execution & execution,
-    std::string type,
-    std::string request_id,
-    std::string turn_id,
-    std::string detail = {});
-
-void append_agent_daemon_execution_typed_event(
-    common_agent_daemon_command_execution & execution,
-    common_agent_daemon_event_type type,
-    std::string request_id,
-    std::string turn_id,
-    std::string detail = {});
+    common_agent_daemon_event event);
 
 class common_agent_daemon_service {
 public:
-    explicit common_agent_daemon_service(common_agent_daemon_runtime runtime);
+    explicit common_agent_daemon_service(
+        common_agent_daemon_runtime runtime,
+        std::unique_ptr<common_agent_daemon_event_collector> event_collector = nullptr);
 
     bool execute_outcome(
         const common_agent_daemon_command & command,
@@ -232,6 +224,8 @@ public:
         common_agent_runtime_active_turn_descriptor & active_turn,
         std::string & error);
 
+    void emit_internal_event(common_agent_daemon_event event);
+
     void emit_internal_event(
         common_agent_daemon_event_type type,
         const std::string & request_id,
@@ -259,8 +253,7 @@ private:
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
-        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown) const;
+        common_agent_daemon_event_type event_type) const;
 
     bool fail_turn_result(
         const common_agent_daemon_command & command,
@@ -268,8 +261,7 @@ private:
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
-        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown) const;
+        common_agent_daemon_event_type event_type) const;
 
     bool succeed_lifecycle_result(
         const common_agent_daemon_command & command,
@@ -277,15 +269,12 @@ private:
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
-        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown,
+        common_agent_daemon_event_type event_type,
         std::string detail = {}) const;
 
     common_agent_daemon_runtime runtime;
+    std::unique_ptr<common_agent_daemon_event_collector> event_collector;
     common_agent_daemon_state state_value = common_agent_daemon_state::starting;
     common_agent_daemon_shutdown_mode shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
     bool shutdown_requested_flag = false;
-    mutable std::mutex event_mutex;
-    std::vector<common_agent_daemon_event> pending_events;
-    uint64_t next_event_sequence = 1;
 };

@@ -251,6 +251,18 @@ json serialize_agent_daemon_event(
     if (!event.turn_id.empty()) {
         event_json["turn_id"] = event.turn_id;
     }
+    if (!event.namespace_id.empty()) {
+        event_json["namespace_id"] = event.namespace_id;
+    }
+    if (!event.project_id.empty()) {
+        event_json["project_id"] = event.project_id;
+    }
+    if (!event.session_id.empty()) {
+        event_json["session_id"] = event.session_id;
+    }
+    if (!event.operation_id.empty()) {
+        event_json["operation_id"] = event.operation_id;
+    }
     if (!event.detail.empty()) {
         event_json["detail"] = event.detail;
     }

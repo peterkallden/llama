@@ -2,6 +2,39 @@
 
 namespace {
 
+common_agent_event_context make_command_event_context(
+        const common_agent_daemon_command & command) {
+    common_agent_event_context context;
+    context.request_id = command.request_id;
+    if (command.turn.has_value()) {
+        context.namespace_id = command.turn->request.turn.namespace_id;
+        context.project_id = command.turn->request.turn.project_id;
+        context.session_id = command.turn->request.turn.session_id;
+        context.turn_id = command.turn->request.turn.turn_id;
+        return context;
+    }
+    if (command.session.has_value()) {
+        context.namespace_id = command.session->key.namespace_id;
+        context.session_id = command.session->key.session_id;
+        return context;
+    }
+    if (command.scope.has_value()) {
+        context.namespace_id = command.scope->authority.namespace_id;
+        context.project_id = command.scope->authority.project_id;
+        context.session_id = command.scope->authority.session_id;
+        context.turn_id = command.scope->authority.turn_id;
+        return context;
+    }
+    if (command.resource.has_value()) {
+        context.namespace_id = command.resource->authority.namespace_id;
+        context.project_id = command.resource->authority.project_id;
+        context.session_id = command.resource->authority.session_id;
+        context.turn_id = command.resource->authority.turn_id;
+        return context;
+    }
+    return context;
+}
+
 std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
@@ -127,42 +160,36 @@ common_agent_daemon_command_result project_agent_daemon_command_execution(
 
 void append_agent_daemon_execution_event(
         common_agent_daemon_command_execution & execution,
-        std::string type,
-        std::string request_id,
-        std::string turn_id,
-        std::string detail) {
-    execution.events.push_back(common_agent_daemon_event{
-        std::move(type),
-        std::move(request_id),
-        std::move(turn_id),
-        std::move(detail),
-    });
+        common_agent_daemon_event event) {
+    execution.events.push_back(std::move(event));
 }
 
-void append_agent_daemon_execution_typed_event(
+void emit_agent_daemon_execution_typed_event(
         common_agent_daemon_command_execution & execution,
         common_agent_daemon_event_type type,
-        std::string request_id,
-        std::string turn_id,
+        common_agent_event_context context,
         std::string detail) {
     execution.events.push_back(make_common_agent_daemon_event(
         type,
-        std::move(request_id),
-        std::move(turn_id),
-        std::move(detail)));
+        std::move(context.request_id),
+        std::move(context.turn_id),
+        std::move(detail),
+        0,
+        std::move(context)));
 }
 
-common_agent_daemon_service::common_agent_daemon_service(common_agent_daemon_runtime runtime)
-    : runtime(std::move(runtime)) {
+common_agent_daemon_service::common_agent_daemon_service(
+        common_agent_daemon_runtime runtime,
+        std::unique_ptr<common_agent_daemon_event_collector> event_collector)
+    : runtime(std::move(runtime))
+    , event_collector(std::move(event_collector)) {
+    if (!this->event_collector) {
+        this->event_collector = std::make_unique<common_agent_daemon_event_collector>();
+    }
     if (this->runtime.host) {
-        this->runtime.host->set_event_sink(
-            [this](
-                    common_agent_daemon_event_type type,
-                    const std::string & request_id,
-                    const std::string & turn_id,
-                    const std::string & detail) {
-                emit_internal_event(type, request_id, turn_id, detail);
-            });
+        this->runtime.host->set_event_sink([this](common_agent_daemon_event event) {
+            emit_internal_event(std::move(event));
+        });
     }
     state_value = this->runtime.host ? common_agent_daemon_state::ready : common_agent_daemon_state::failed;
 }
@@ -178,24 +205,30 @@ bool common_agent_daemon_service::execute(
 }
 
 void common_agent_daemon_service::emit_internal_event(
+        common_agent_daemon_event event) {
+    if (!event_collector) {
+        return;
+    }
+    event_collector->append(std::move(event));
+}
+
+void common_agent_daemon_service::emit_internal_event(
         common_agent_daemon_event_type type,
         const std::string & request_id,
         const std::string & turn_id,
         const std::string & detail) {
-    std::lock_guard<std::mutex> lock(event_mutex);
-    pending_events.push_back(make_common_agent_daemon_event(
+    emit_internal_event(make_common_agent_daemon_event(
         type,
         request_id,
         turn_id,
-        detail,
-        next_event_sequence++));
+        detail));
 }
 
 std::vector<common_agent_daemon_event> common_agent_daemon_service::take_internal_events() {
-    std::lock_guard<std::mutex> lock(event_mutex);
-    auto out = std::move(pending_events);
-    pending_events.clear();
-    return out;
+    if (!event_collector) {
+        return {};
+    }
+    return event_collector->take();
 }
 
 void common_agent_daemon_service::initialize_command_outcome(
@@ -229,23 +262,19 @@ bool common_agent_daemon_service::fail_lifecycle_result(
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
         common_agent_daemon_event_type event_type) const {
     initialize_lifecycle_outcome(command, outcome);
     outcome.ok = false;
     outcome.event = std::move(event);
     outcome.error = error;
     common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
-    if (event_type != common_agent_daemon_event_type::unknown) {
-        append_agent_daemon_execution_typed_event(
-            execution,
-            event_type,
-            command.request_id,
-            {},
-            error);
-    } else {
-        append_agent_daemon_execution_event(execution, std::move(daemon_event_type), command.request_id, {}, error);
-    }
+    auto context = make_command_event_context(command);
+    context.turn_id.clear();
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        std::move(context),
+        error);
     outcome = std::move(execution.outcome);
     events = std::move(execution.events);
     return false;
@@ -257,7 +286,6 @@ bool common_agent_daemon_service::fail_turn_result(
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
         common_agent_daemon_event_type event_type) const {
     initialize_turn_outcome(command, outcome);
     outcome.ok = false;
@@ -265,21 +293,11 @@ bool common_agent_daemon_service::fail_turn_result(
     outcome.error = error;
     populate_daemon_failed_turn_result(command, outcome.turn_result, error);
     common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
-    if (event_type != common_agent_daemon_event_type::unknown) {
-        append_agent_daemon_execution_typed_event(
-            execution,
-            event_type,
-            command.request_id,
-            command_turn_id(command),
-            error);
-    } else {
-        append_agent_daemon_execution_event(
-            execution,
-            std::move(daemon_event_type),
-            command.request_id,
-            command_turn_id(command),
-            error);
-    }
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        make_command_event_context(command),
+        error);
     outcome = std::move(execution.outcome);
     events = std::move(execution.events);
     return false;
@@ -291,28 +309,19 @@ bool common_agent_daemon_service::succeed_lifecycle_result(
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type,
         common_agent_daemon_event_type event_type,
         std::string detail) const {
     initialize_lifecycle_outcome(command, outcome);
     outcome.ok = true;
     outcome.event = std::move(event);
     common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
-    if (event_type != common_agent_daemon_event_type::unknown) {
-        append_agent_daemon_execution_typed_event(
-            execution,
-            event_type,
-            command.request_id,
-            {},
-            std::move(detail));
-    } else {
-        append_agent_daemon_execution_event(
-            execution,
-            std::move(daemon_event_type),
-            command.request_id,
-            {},
-            std::move(detail));
-    }
+    auto context = make_command_event_context(command);
+    context.turn_id.clear();
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        std::move(context),
+        std::move(detail));
     outcome = std::move(execution.outcome);
     events = std::move(execution.events);
     error.clear();
@@ -359,11 +368,10 @@ bool common_agent_daemon_service::populate_status_outcome(
         outcome.status.session_count = outcome.status.sessions.size();
     }
     common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
-    append_agent_daemon_execution_typed_event(
+    emit_agent_daemon_execution_typed_event(
         execution,
         common_agent_daemon_event_type::status_reported,
-        execution.outcome.request_id,
-        {},
+        common_agent_event_context{{}, {}, {}, execution.outcome.request_id, {}, {}},
         common_agent_daemon_state_name(execution.outcome.status.state));
     outcome = std::move(execution.outcome);
     events = std::move(execution.events);
@@ -486,19 +494,12 @@ bool common_agent_daemon_service::execute_outcome(
         std::vector<common_agent_daemon_event> & events,
         std::string & error) {
     initialize_command_outcome(command, outcome);
-
-    auto append_event = [&](
-            std::string type,
-            std::string request_id,
-            std::string turn_id,
-            std::string detail = {}) {
-        events.push_back(common_agent_daemon_event{
-            std::move(type),
-            std::move(request_id),
-            std::move(turn_id),
-            std::move(detail),
-        });
-    };
+    const auto command_context = make_command_event_context(command);
+    common_agent_event_emitter command_events(
+        [&events](common_agent_daemon_event event) {
+            events.push_back(std::move(event));
+        },
+        command_context);
 
     switch (command.type) {
         case common_agent_daemon_command_type::get_status:
@@ -507,8 +508,7 @@ bool common_agent_daemon_service::execute_outcome(
         case common_agent_daemon_command_type::cancel_turn:
             error = "cancel_turn is handled by the daemon dispatcher";
             outcome.error = error;
-            append_event("turn.cancel_rejected", command.request_id, {}, error);
-            events.back().event_type = common_agent_daemon_event_type::turn_cancel_rejected;
+            command_events.emit(common_agent_daemon_event_type::turn_cancel_rejected, error);
             return false;
 
         case common_agent_daemon_command_type::list_sessions:
@@ -525,8 +525,7 @@ bool common_agent_daemon_service::execute_outcome(
             } else {
                 outcome.error = "daemon host is not initialized";
             }
-            append_event("sessions.listed", command.request_id, {}, std::to_string(outcome.status.session_count));
-            events.back().event_type = common_agent_daemon_event_type::sessions_listed;
+            command_events.emit(common_agent_daemon_event_type::sessions_listed, std::to_string(outcome.status.session_count));
             error = outcome.error;
             return outcome.ok;
 
@@ -539,7 +538,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_lookup_failed",
-                    "session.lookup_failed",
                     common_agent_daemon_event_type::session_lookup_failed);
             }
             if (!runtime.host) {
@@ -550,7 +548,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_lookup_failed",
-                    "session.lookup_failed",
                     common_agent_daemon_event_type::session_lookup_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::status;
@@ -570,24 +567,34 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.error = error;
                 outcome.event = "session_not_found";
                 outcome.ok = false;
-                append_event("session.not_found", command.request_id, {}, error);
-                events.back().event_type = common_agent_daemon_event_type::session_not_found;
+                command_events.emit(common_agent_daemon_event_type::session_not_found, error);
                 return false;
             }
             outcome.ok = true;
-            append_event("session.found", command.request_id, {}, outcome.status.sessions.front().key.session_id);
-            events.back().event_type = common_agent_daemon_event_type::session_found;
+            command_events.emit(common_agent_daemon_event_type::session_found, outcome.status.sessions.front().key.session_id);
             error.clear();
             return true;
 
         case common_agent_daemon_command_type::list_resources:
             if (!command.scope.has_value()) {
                 error = "list_resources command missing scope payload";
-                return fail_lifecycle_result(command, outcome, events, error, "resources_list_failed", "resources.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resources_list_failed",
+                    common_agent_daemon_event_type::resources_list_failed);
             }
             if (!runtime.resource_store) {
                 error = "daemon resource store is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "resources_list_failed", "resources.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resources_list_failed",
+                    common_agent_daemon_event_type::resources_list_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::listing;
             outcome.event = "resources_listed";
@@ -597,23 +604,33 @@ bool common_agent_daemon_service::execute_outcome(
             outcome.ok = runtime.resource_store->list(command.scope->authority, outcome.listing_result.resources, error);
             if (!outcome.ok) {
                 outcome.error = error;
-                append_event("resources.list_failed", command.request_id, {}, error);
-                events.back().event_type = common_agent_daemon_event_type::resources_list_failed;
+                command_events.emit(common_agent_daemon_event_type::resources_list_failed, error);
                 return false;
             }
-            append_event("resources.listed", command.request_id, {}, std::to_string(outcome.listing_result.resources.size()));
-            events.back().event_type = common_agent_daemon_event_type::resources_listed;
+            command_events.emit(common_agent_daemon_event_type::resources_listed, std::to_string(outcome.listing_result.resources.size()));
             error.clear();
             return true;
 
         case common_agent_daemon_command_type::list_memories:
             if (!command.scope.has_value()) {
                 error = "list_memories command missing scope payload";
-                return fail_lifecycle_result(command, outcome, events, error, "memories_list_failed", "memories.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "memories_list_failed",
+                    common_agent_daemon_event_type::memories_list_failed);
             }
             if (!runtime.memory_store) {
                 error = "daemon memory store is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "memories_list_failed", "memories.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "memories_list_failed",
+                    common_agent_daemon_event_type::memories_list_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::listing;
             outcome.event = "memories_listed";
@@ -635,8 +652,7 @@ bool common_agent_daemon_service::execute_outcome(
                 auto session_memories = runtime.memory_store->list(query, error);
                 if (!error.empty()) {
                     outcome.error = error;
-                    append_event("memories.list_failed", command.request_id, {}, error);
-                    events.back().event_type = common_agent_daemon_event_type::memories_list_failed;
+                    command_events.emit(common_agent_daemon_event_type::memories_list_failed, error);
                     return false;
                 }
                 collected.insert(collected.end(), session_memories.begin(), session_memories.end());
@@ -651,8 +667,7 @@ bool common_agent_daemon_service::execute_outcome(
                     auto project_memories = runtime.memory_store->list(query, error);
                     if (!error.empty()) {
                         outcome.error = error;
-                        append_event("memories.list_failed", command.request_id, {}, error);
-                        events.back().event_type = common_agent_daemon_event_type::memories_list_failed;
+                        command_events.emit(common_agent_daemon_event_type::memories_list_failed, error);
                         return false;
                     }
                     collected.insert(collected.end(), project_memories.begin(), project_memories.end());
@@ -663,19 +678,30 @@ bool common_agent_daemon_service::execute_outcome(
                 }
                 outcome.ok = true;
             }
-            append_event("memories.listed", command.request_id, {}, std::to_string(outcome.listing_result.memories.size()));
-            events.back().event_type = common_agent_daemon_event_type::memories_listed;
+            command_events.emit(common_agent_daemon_event_type::memories_listed, std::to_string(outcome.listing_result.memories.size()));
             error.clear();
             return true;
 
         case common_agent_daemon_command_type::list_plans:
             if (!command.scope.has_value()) {
                 error = "list_plans command missing scope payload";
-                return fail_lifecycle_result(command, outcome, events, error, "plans_list_failed", "plans.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "plans_list_failed",
+                    common_agent_daemon_event_type::plans_list_failed);
             }
             if (!runtime.plan_store) {
                 error = "daemon plan store is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "plans_list_failed", "plans.list_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "plans_list_failed",
+                    common_agent_daemon_event_type::plans_list_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::listing;
             outcome.event = "plans_listed";
@@ -691,8 +717,7 @@ bool common_agent_daemon_service::execute_outcome(
                 auto plans = runtime.plan_store->list(error);
                 if (!error.empty()) {
                     outcome.error = error;
-                    append_event("plans.list_failed", command.request_id, {}, error);
-                    events.back().event_type = common_agent_daemon_event_type::plans_list_failed;
+                    command_events.emit(common_agent_daemon_event_type::plans_list_failed, error);
                     return false;
                 }
                 for (const auto & plan : plans) {
@@ -717,8 +742,7 @@ bool common_agent_daemon_service::execute_outcome(
                 }
                 outcome.ok = true;
             }
-            append_event("plans.listed", command.request_id, {}, std::to_string(outcome.listing_result.plans.size()));
-            events.back().event_type = common_agent_daemon_event_type::plans_listed;
+            command_events.emit(common_agent_daemon_event_type::plans_listed, std::to_string(outcome.listing_result.plans.size()));
             error.clear();
             return true;
 
@@ -731,7 +755,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_reset_failed",
-                    "session.reset_failed",
                     common_agent_daemon_event_type::session_reset_failed);
             }
             if (!runtime.host) {
@@ -742,7 +765,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_reset_failed",
-                    "session.reset_failed",
                     common_agent_daemon_event_type::session_reset_failed);
             }
             outcome.ok = runtime.host->reset_session(command.session->key, error);
@@ -753,7 +775,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_reset_failed",
-                    "session.reset_failed",
                     common_agent_daemon_event_type::session_reset_failed);
             }
             return succeed_lifecycle_result(
@@ -762,7 +783,6 @@ bool common_agent_daemon_service::execute_outcome(
                 events,
                 error,
                 "session_reset",
-                "session.reset",
                 common_agent_daemon_event_type::session_reset,
                 "session reset");
 
@@ -775,7 +795,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_close_failed",
-                    "session.close_failed",
                     common_agent_daemon_event_type::session_close_failed);
             }
             if (!runtime.host) {
@@ -786,7 +805,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_close_failed",
-                    "session.close_failed",
                     common_agent_daemon_event_type::session_close_failed);
             }
             outcome.ok = runtime.host->close_session(command.session->key, error);
@@ -797,7 +815,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "session_close_failed",
-                    "session.close_failed",
                     common_agent_daemon_event_type::session_close_failed);
             }
             return succeed_lifecycle_result(
@@ -806,40 +823,48 @@ bool common_agent_daemon_service::execute_outcome(
                 events,
                 error,
                 "session_closed",
-                "session.closed",
                 common_agent_daemon_event_type::session_closed,
                 "session closed");
 
         case common_agent_daemon_command_type::read_resource:
             if (!command.resource.has_value()) {
                 error = "read_resource command missing resource payload";
-                return fail_lifecycle_result(command, outcome, events, error, "resource_read_failed", "resource.read_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_read_failed",
+                    common_agent_daemon_event_type::resource_read_failed);
             }
             if (!runtime.resource_store) {
                 error = "daemon resource store is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "resource_read_failed", "resource.read_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_read_failed",
+                    common_agent_daemon_event_type::resource_read_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::resource;
             if (!runtime.resource_store->stat(command.resource->uri, command.resource->authority, outcome.resource_result.resource, error)) {
                 outcome.ok = false;
                 outcome.event = "resource_not_found";
                 outcome.error = error;
-                append_event("resource.not_found", command.request_id, {}, error);
-                events.back().event_type = common_agent_daemon_event_type::resource_not_found;
+                command_events.emit(common_agent_daemon_event_type::resource_not_found, error);
                 return false;
             }
             if (!runtime.resource_store->read_text(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error)) {
                 outcome.ok = false;
                 outcome.event = "resource_read_failed";
                 outcome.error = error;
-                append_event("resource.read_failed", command.request_id, {}, error);
-                events.back().event_type = common_agent_daemon_event_type::resource_read_failed;
+                command_events.emit(common_agent_daemon_event_type::resource_read_failed, error);
                 return false;
             }
             outcome.ok = true;
             outcome.event = "resource_read";
-            append_event("resource.read", command.request_id, {}, outcome.resource_result.resource.uri);
-            events.back().event_type = common_agent_daemon_event_type::resource_read;
+            command_events.emit(common_agent_daemon_event_type::resource_read, outcome.resource_result.resource.uri);
             error.clear();
             return true;
 
@@ -851,7 +876,6 @@ bool common_agent_daemon_service::execute_outcome(
                 events,
                 error,
                 "drain",
-                "daemon.drain_requested",
                 common_agent_daemon_event_type::drain_requested,
                 "drain requested");
 
@@ -865,7 +889,6 @@ bool common_agent_daemon_service::execute_outcome(
                 events,
                 error,
                 "shutdown",
-                "daemon.shutdown_requested",
                 common_agent_daemon_event_type::shutdown_requested,
                 "shutdown requested");
 
@@ -878,12 +901,17 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "turn_failed",
-                    "turn.failed",
                     common_agent_daemon_event_type::turn_failed);
             }
             if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
                 error = "daemon is not accepting new turns";
-                return fail_turn_result(command, outcome, events, error, "turn_rejected", "turn.rejected");
+                return fail_turn_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "turn_rejected",
+                    common_agent_daemon_event_type::turn_rejected);
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
@@ -893,7 +921,6 @@ bool common_agent_daemon_service::execute_outcome(
                     events,
                     error,
                     "turn_failed",
-                    "turn.failed",
                     common_agent_daemon_event_type::turn_failed);
             }
 
@@ -923,19 +950,13 @@ bool common_agent_daemon_service::execute_outcome(
                         outcome.turn_result.memory_learning_summary != "none")) {
                 emit_internal_event(common_agent_daemon_event_type::memory_learned, command.request_id, command_turn_id(command), outcome.turn_result.memory_learning_summary);
             }
-            append_event(
-                outcome.turn_result.cancelled
-                    ? "turn.cancelled"
-                    : (outcome.turn_result.ok ? "turn.completed" : "turn.failed"),
-                command.request_id,
-                command_turn_id(command),
-                outcome.error);
-            events.back().event_type =
+            command_events.emit(
                 outcome.turn_result.cancelled
                     ? common_agent_daemon_event_type::turn_cancelled
                     : (outcome.turn_result.ok
                         ? common_agent_daemon_event_type::turn_completed
-                        : common_agent_daemon_event_type::turn_failed);
+                        : common_agent_daemon_event_type::turn_failed),
+                outcome.error);
             return outcome.turn_result.ok;
     }
 
@@ -946,6 +967,5 @@ bool common_agent_daemon_service::execute_outcome(
         events,
         error,
         {},
-        "command.failed",
         common_agent_daemon_event_type::command_failed);
 }

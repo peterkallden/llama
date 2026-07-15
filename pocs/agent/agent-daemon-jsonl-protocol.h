@@ -90,6 +90,10 @@ struct agent_daemon_jsonl_event_entry {
     std::string type;
     std::string request_id;
     std::string turn_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string session_id;
+    std::string operation_id;
     std::string detail;
     std::string event_type;
     uint64_t sequence = 0;
