@@ -127,7 +127,7 @@ Short responsibility summary:
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
-- `tools/agent/daemon`: daemon-facing admin/client support, JSONL protocol shaping, and other host-side daemon transport helpers.
+- `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
 - `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
 - `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
 - `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
@@ -154,7 +154,7 @@ The first slice now underway is intentionally narrow:
 
 The next small correction after that first slice is to keep `resource` itself as a domain contract. In other words: traces and other generic runtime envelopes belong in `common/runtime`, but resource references, authority, and host-owned resource-store contracts fit better under `common/resource`, with compatibility wrappers left in place while callers migrate.
 
-The next bounded host slice is now underway as well: daemon client/admin and JSONL protocol code has started moving out of `pocs/agent` and into `tools/agent/daemon`, again with compatibility headers left in the old path for a gradual migration.
+That bounded daemon host slice is now in place as well: daemon client/admin helpers, JSONL protocol shaping, lifecycle/event/collector code, dispatcher/service/runtime assembly, and the daemon entrypoint now live under `tools/agent/daemon`, again with compatibility headers left in the old path for a gradual migration.
 
 The next adjacent host slice is the same kind of cleanup for configuration ownership: host config and MCP-provider config are moving toward `tools/agent/host` so they can be shared by daemon and MCP-facing entrypoints without looking like PoC-only assembly details.
 

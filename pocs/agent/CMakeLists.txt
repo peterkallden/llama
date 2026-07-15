@@ -5,8 +5,8 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-client.cpp
-    agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
     agent-selection-contracts.cpp
@@ -16,11 +16,11 @@ set(AGENT_RUNTIME_SOURCES
     agent-tool-runtime-adapter.cpp
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
-    agent-daemon-adapter.cpp
-    agent-daemon-protocol.cpp
-    agent-daemon-runtime.cpp
-    agent-daemon-dispatcher.cpp
-    agent-daemon-service.cpp
+    ../../tools/agent/daemon/agent-daemon-adapter.cpp
+    ../../tools/agent/daemon/agent-daemon-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-runtime.cpp
+    ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
+    ../../tools/agent/daemon/agent-daemon-service.cpp
     agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
     agent-plan-orchestration.cpp
@@ -517,7 +517,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
-    agent-daemon.cpp
+    ../../tools/agent/daemon/agent-daemon-main.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE

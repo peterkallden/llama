@@ -5,8 +5,8 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-client.cpp
-    ../agent/agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
     ../agent/agent-selection-contracts.cpp
@@ -16,11 +16,11 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../agent/agent-tool-runtime-adapter.cpp
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
-    ../agent/agent-daemon-adapter.cpp
-    ../agent/agent-daemon-protocol.cpp
-    ../agent/agent-daemon-runtime.cpp
-    ../agent/agent-daemon-dispatcher.cpp
-    ../agent/agent-daemon-service.cpp
+    ../../tools/agent/daemon/agent-daemon-adapter.cpp
+    ../../tools/agent/daemon/agent-daemon-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-runtime.cpp
+    ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
+    ../../tools/agent/daemon/agent-daemon-service.cpp
     ../agent/agent-cli-host-adapter.cpp
     ../agent/agent-cli-inference.cpp
     ../agent/agent-plan-orchestration.cpp
