@@ -96,9 +96,10 @@ $requests = @(
     '{"command":"shutdown"}'
 )
 
-$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-requests.txt"
-$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-stdout.log"
-$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-stderr.log"
+$runId = [guid]::NewGuid().ToString("N")
+$requestsPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-$runId-requests.txt"
+$stdoutPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-$runId-stdout.log"
+$stderrPath = Join-Path $env:TEMP "llama-agent-daemon-smoke-$runId-stderr.log"
 Set-Content -LiteralPath $requestsPath -Value $requests -Encoding Ascii
 Remove-Item -LiteralPath $stdoutPath -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $stderrPath -ErrorAction SilentlyContinue
