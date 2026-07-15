@@ -385,8 +385,8 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                     emit_event(
                         lane.pending_operation->pending_operation.kind ==
                             common_agent_runtime_pending_operation_kind::tool
-                            ? common_agent_daemon_event_type::tool_started
-                            : common_agent_daemon_event_type::turn_started,
+                            ? common_agent_daemon_event_type::turn_waiting_for_tool
+                            : common_agent_daemon_event_type::turn_waiting_for_inference,
                         request.request_id,
                         request.turn.turn_id,
                         lane.pending_operation->pending_operation.detail.empty()
@@ -410,7 +410,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                 }
             }
             emit_event(
-                common_agent_daemon_event_type::turn_started,
+                common_agent_daemon_event_type::turn_waiting_for_inference,
                 request.request_id,
                 request.turn.turn_id,
                 "turn entered inference execution");

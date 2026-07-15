@@ -7,8 +7,25 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
+
+namespace {
+
+bool contains_event_type(
+        const std::vector<common_agent_daemon_event> & events,
+        const char * type) {
+    for (const auto & event : events) {
+        if (event.type == type) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 int main() {
     common_memory_in_memory_store memory_store;
@@ -798,6 +815,24 @@ int main() {
         };
     auto waiting_manager_config = make_agent_runtime_session_manager_config(std::move(waiting_manager_build_config));
     common_agent_runtime_session_manager waiting_manager(std::move(waiting_manager_config));
+    auto waiting_events = std::make_shared<std::vector<common_agent_daemon_event>>();
+    auto waiting_events_mutex = std::make_shared<std::mutex>();
+    waiting_manager.set_event_sink(
+        [waiting_events, waiting_events_mutex](
+                common_agent_daemon_event_type type,
+                const std::string & request_id,
+                const std::string & turn_id,
+                const std::string & detail) {
+            std::lock_guard<std::mutex> lock(*waiting_events_mutex);
+            waiting_events->push_back({
+                common_agent_daemon_event_type_name(type),
+                request_id,
+                turn_id,
+                detail,
+                type,
+                0,
+            });
+        });
 
     auto waiting_control = make_common_agent_runtime_execution_control({});
     common_agent_runtime_session_manager_turn_result waiting_result;
@@ -882,6 +917,13 @@ int main() {
         std::fprintf(stderr, "session manager tool-wait smoke did not preserve cancellation result\n");
         return 1;
     }
+    {
+        std::lock_guard<std::mutex> lock(*waiting_events_mutex);
+        if (!contains_event_type(*waiting_events, "turn.waiting_for_tool")) {
+            std::fprintf(stderr, "session manager tool-wait smoke did not emit turn.waiting_for_tool\n");
+            return 1;
+        }
+    }
 
     auto inference_wait_release = std::make_shared<std::promise<void>>();
     auto inference_wait_release_future = inference_wait_release->get_future().share();
@@ -946,6 +988,24 @@ int main() {
         };
     common_agent_runtime_session_manager inference_wait_manager(
         make_agent_runtime_session_manager_config(std::move(inference_wait_manager_build_config)));
+    auto inference_wait_events = std::make_shared<std::vector<common_agent_daemon_event>>();
+    auto inference_wait_events_mutex = std::make_shared<std::mutex>();
+    inference_wait_manager.set_event_sink(
+        [inference_wait_events, inference_wait_events_mutex](
+                common_agent_daemon_event_type type,
+                const std::string & request_id,
+                const std::string & turn_id,
+                const std::string & detail) {
+            std::lock_guard<std::mutex> lock(*inference_wait_events_mutex);
+            inference_wait_events->push_back({
+                common_agent_daemon_event_type_name(type),
+                request_id,
+                turn_id,
+                detail,
+                type,
+                0,
+            });
+        });
 
     common_agent_runtime_session_manager_turn_result inference_wait_result;
     std::string inference_wait_error;
@@ -1018,6 +1078,13 @@ int main() {
             inference_wait_result.error.find("inference-wait-resolver turn=turn-11") == std::string::npos) {
         std::fprintf(stderr, "session manager inference-wait smoke did not resume into host execution correctly\n");
         return 1;
+    }
+    {
+        std::lock_guard<std::mutex> lock(*inference_wait_events_mutex);
+        if (!contains_event_type(*inference_wait_events, "turn.waiting_for_inference")) {
+            std::fprintf(stderr, "session manager inference-wait smoke did not emit turn.waiting_for_inference\n");
+            return 1;
+        }
     }
 
     std::printf("session_manager_tooling_calls=%d\n", *call_count);

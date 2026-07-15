@@ -10,6 +10,8 @@ enum class common_agent_daemon_event_type {
     command_started,
     turn_accepted,
     turn_started,
+    turn_waiting_for_tool,
+    turn_waiting_for_inference,
     turn_completed,
     turn_failed,
     turn_cancelled,
@@ -45,6 +47,8 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::command_started:         return "command.started";
         case common_agent_daemon_event_type::turn_accepted:           return "turn.accepted";
         case common_agent_daemon_event_type::turn_started:            return "turn.started";
+        case common_agent_daemon_event_type::turn_waiting_for_tool:   return "turn.waiting_for_tool";
+        case common_agent_daemon_event_type::turn_waiting_for_inference: return "turn.waiting_for_inference";
         case common_agent_daemon_event_type::turn_completed:          return "turn.completed";
         case common_agent_daemon_event_type::turn_failed:             return "turn.failed";
         case common_agent_daemon_event_type::turn_cancelled:          return "turn.cancelled";
