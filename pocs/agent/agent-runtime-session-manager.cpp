@@ -51,17 +51,6 @@ common_agent_event_emitter common_agent_runtime_session_manager::make_lane_emitt
         });
 }
 
-void common_agent_runtime_session_manager::emit_event(
-        common_agent_daemon_event_type type,
-        const std::string & request_id,
-        const std::string & turn_id,
-        const std::string & detail) const {
-    if (event_sink) {
-        common_agent_event_emitter(event_sink, {{}, {}, {}, request_id, turn_id, {}})
-            .emit(type, detail);
-    }
-}
-
 std::shared_ptr<common_agent_runtime_session_manager::common_agent_runtime_session_lane_message>
 common_agent_runtime_session_manager::enqueue_lane_turn(
         common_agent_runtime_session_lane & lane,
@@ -643,11 +632,10 @@ bool common_agent_runtime_session_manager::drain_lane(
                 common_agent_daemon_event_type::lane_drained,
                 "session lane mailbox drained");
     } else {
-        emit_event(
-            common_agent_daemon_event_type::lane_drained,
-            {},
-            {},
-            "session lane mailbox drained");
+        common_agent_event_emitter(event_sink)
+            .emit(
+                common_agent_daemon_event_type::lane_drained,
+                "session lane mailbox drained");
     }
     if (target_message != nullptr) {
         return wait_for_message_completion(target_message, error);

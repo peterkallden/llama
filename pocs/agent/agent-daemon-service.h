@@ -226,12 +226,6 @@ public:
 
     void emit_internal_event(common_agent_daemon_event event);
 
-    void emit_internal_event(
-        common_agent_daemon_event_type type,
-        const std::string & request_id,
-        const std::string & turn_id,
-        const std::string & detail);
-
     std::vector<common_agent_daemon_event> take_internal_events();
 
 private:

@@ -74,9 +74,7 @@ void emit_plan_and_resource_events_from_turn(
         common_agent_daemon_service & service,
         const common_agent_daemon_command & command,
         const common_agent_runtime_session_manager_turn_result & turn_result) {
-    const std::string turn_id = command.turn.has_value()
-        ? command.turn->request.turn.turn_id
-        : std::string();
+    const auto command_context = make_command_event_context(command);
     std::set<std::string> emitted_keys;
 
     const auto emit_once = [&](
@@ -87,11 +85,14 @@ void emit_plan_and_resource_events_from_turn(
         if (!emitted_keys.insert(key).second) {
             return;
         }
-        service.emit_internal_event(
+        auto context = command_context;
+        service.emit_internal_event(make_common_agent_daemon_event(
             type,
-            command.request_id,
-            turn_id,
-            detail);
+            context.request_id,
+            context.turn_id,
+            detail,
+            0,
+            std::move(context)));
     };
 
     for (const auto & event : turn_result.events) {
@@ -210,18 +211,6 @@ void common_agent_daemon_service::emit_internal_event(
         return;
     }
     event_collector->append(std::move(event));
-}
-
-void common_agent_daemon_service::emit_internal_event(
-        common_agent_daemon_event_type type,
-        const std::string & request_id,
-        const std::string & turn_id,
-        const std::string & detail) {
-    emit_internal_event(make_common_agent_daemon_event(
-        type,
-        request_id,
-        turn_id,
-        detail));
 }
 
 std::vector<common_agent_daemon_event> common_agent_daemon_service::take_internal_events() {
@@ -938,17 +927,39 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.turn_result.cancelled
                     ? "turn_cancelled"
                     : (outcome.turn_result.ok ? "turn_completed" : "turn_failed");
+            const auto command_context = make_command_event_context(command);
             for (const auto & trace : outcome.turn_result.trace) {
                 if (trace.stage == common_runtime_trace_stage::tool && !trace.tool_name.empty()) {
-                    emit_internal_event(common_agent_daemon_event_type::tool_started, command.request_id, command_turn_id(command), trace.tool_name);
-                    emit_internal_event(common_agent_daemon_event_type::tool_completed, command.request_id, command_turn_id(command), trace.tool_name + ":" + common_runtime_trace_kind_name(trace.kind));
+                    auto started_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_started,
+                        started_context.request_id,
+                        started_context.turn_id,
+                        trace.tool_name,
+                        0,
+                        std::move(started_context)));
+                    auto completed_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_completed,
+                        completed_context.request_id,
+                        completed_context.turn_id,
+                        trace.tool_name + ":" + common_runtime_trace_kind_name(trace.kind),
+                        0,
+                        std::move(completed_context)));
                 }
             }
             emit_plan_and_resource_events_from_turn(*this, command, outcome.turn_result);
             if (outcome.turn_result.memory_learning_related_count > 0 ||
                     (!outcome.turn_result.memory_learning_summary.empty() &&
                         outcome.turn_result.memory_learning_summary != "none")) {
-                emit_internal_event(common_agent_daemon_event_type::memory_learned, command.request_id, command_turn_id(command), outcome.turn_result.memory_learning_summary);
+                auto memory_context = command_context;
+                emit_internal_event(make_common_agent_daemon_event(
+                    common_agent_daemon_event_type::memory_learned,
+                    memory_context.request_id,
+                    memory_context.turn_id,
+                    outcome.turn_result.memory_learning_summary,
+                    0,
+                    std::move(memory_context)));
             }
             command_events.emit(
                 outcome.turn_result.cancelled
