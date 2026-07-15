@@ -14,8 +14,8 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../agent/agent-tool-provider.cpp
     ../agent/agent-tool-result-json-contracts.cpp
     ../agent/agent-tool-runtime-adapter.cpp
-    ../agent/agent-resource-catalog.cpp
-    ../agent/agent-resource-store.cpp
+    ../../tools/agent/resource/agent-resource-catalog.cpp
+    ../../tools/agent/resource/agent-resource-store.cpp
     ../agent/agent-daemon-adapter.cpp
     ../agent/agent-daemon-protocol.cpp
     ../agent/agent-daemon-runtime.cpp
@@ -41,7 +41,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
 
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_MEMORY_RUNTIME_SOURCES
-        ../agent/agent-resource-catalog-cozo.cpp
+        ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
     )
 endif()
 
@@ -56,7 +56,12 @@ add_executable(${TARGET}
     ../agent/agent-cli-run.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
-target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../agent ${PROJECT_SOURCE_DIR}/tools/server)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../agent
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
 target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 

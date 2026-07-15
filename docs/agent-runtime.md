@@ -95,6 +95,57 @@ The resource path is also now split more cleanly internally:
 - resource catalog owns descriptor/authority metadata and lookup
 - the composed resource store binds those two responsibilities together for runtime and tool callers
 
+## Target Layout
+
+The medium-term target is to separate durable domain contracts from host/runtime implementation more explicitly.
+
+```text
+common/
+  memory/      what the agent can remember
+  plan/        how the agent structures work
+  resource/    how larger working material is referenced
+  runtime/     host-neutral runtime DTOs and envelopes
+  agent/       agent orchestration contracts above memory/plan/resource/tools
+
+tools/
+  agent/
+    resource/  resource-store implementation and host-owned resource plumbing
+    ...        future CLI, daemon, MCP host/server implementation modules
+
+pocs/
+  archive/     older experiments and superseded slices
+```
+
+Short responsibility summary:
+
+- `common/memory`: durable memory records, scopes, retrieval, and store contracts.
+- `common/plan`: plan structures, state transitions, evidence links, and plan stores.
+- `common/resource`: host-neutral resource references and later broader resource contracts.
+- `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
+- `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
+- `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
+- `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
+- `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
+
+The practical rule is simple: reusable contracts move downward; executable host assembly moves upward; old experiments move aside.
+
+## Refactor Steps
+
+The intended refactor should happen in small, buildable slices:
+
+1. Create the target directories and document their responsibilities.
+2. Move neutral runtime contracts under `common/runtime` first, with compatibility shims while include paths are migrated.
+3. Move host-owned resource-store implementation code from `pocs/agent` to `tools/agent/resource`, again keeping temporary shims so runtime and smoke coverage stay stable.
+4. Move active CLI/daemon/MCP host code from `pocs/agent` toward `tools/agent` in bounded groups instead of one global rename.
+5. Reduce `common/agent` back toward orchestration contracts only, moving neutral DTOs lower and host-specific code higher.
+6. Archive genuinely old experiments into `pocs/archive` once the active code paths no longer depend on them.
+
+The first slice now underway is intentionally narrow:
+
+- neutral runtime headers start moving under `common/runtime`
+- resource-store implementation starts moving under `tools/agent/resource`
+- compatibility headers remain in the old locations for now so the rest of the branch can migrate gradually
+
 ## Design Constraints
 
 The runtime direction depends on keeping the layer boundaries boring and explicit.
