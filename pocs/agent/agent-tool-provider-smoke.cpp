@@ -5,8 +5,10 @@
 #include "memory/memory-in-memory.h"
 
 #include <cstdio>
+#include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -147,6 +149,7 @@ int main() {
                     {resource});
             };
             bindings.web_fetch = [runtime](const std::string &) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
                 agent_resource_put_request request;
                 request.name = "web-fetch-result.json";
                 request.description = "Full bounded web fetch payload for the current turn.";
@@ -190,6 +193,8 @@ int main() {
     research_context.turn_id = "turn-2";
     research_context.profile_id = "research";
     research_context.allow_network = true;
+    research_context.max_calls = 8;
+    research_context.async_exposed_tool_names = {"web_fetch"};
     research_context.scope.namespace_id = "provider-smoke";
     research_context.scope.session_id = "session-1";
     research_context.scope.project_id = "project-1";
@@ -202,6 +207,14 @@ int main() {
     }
     if (!has_tool(research_view->chat_tools(), "web_search")) {
         std::fprintf(stderr, "web_search was not exposed in the research tool view\n");
+        return 1;
+    }
+    if (research_view->supports_async_call("web_search")) {
+        std::fprintf(stderr, "web_search should not have been marked async in this smoke\n");
+        return 1;
+    }
+    if (!research_view->supports_async_call("web_fetch")) {
+        std::fprintf(stderr, "web_fetch should have been marked async in this smoke\n");
         return 1;
     }
 
@@ -227,13 +240,45 @@ int main() {
         return 1;
     }
 
-    const auto fetch_result = research_view->call({
+    agent_tool_pending_call pending_fetch;
+    if (!research_view->begin_call_async({
+            "call-2d",
+            "web_fetch",
+            R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+        }, pending_fetch, error)) {
+        std::fprintf(stderr, "web_fetch async start failed: %s\n", error.c_str());
+        return 1;
+    }
+    bool fetch_ready = false;
+    agent_tool_result fetch_result;
+    if (!research_view->poll_call_async(pending_fetch, fetch_ready, fetch_result, error)) {
+        std::fprintf(stderr, "web_fetch async poll failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (fetch_ready) {
+        std::fprintf(stderr, "web_fetch async operation completed too early for the smoke\n");
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    if (!research_view->poll_call_async(pending_fetch, fetch_ready, fetch_result, error)) {
+        std::fprintf(stderr, "web_fetch async completion poll failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (!fetch_ready) {
+        std::fprintf(stderr, "web_fetch async operation did not complete in time\n");
+        return 1;
+    }
+    if (!fetch_result.ok) {
+        std::fprintf(stderr, "web_fetch async call failed: %s\n", fetch_result.content_json.c_str());
+        return 1;
+    }
+    const auto sync_fetch_result = research_view->call({
         "call-2d",
         "web_fetch",
         R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
     }, error);
-    if (!fetch_result.ok) {
-        std::fprintf(stderr, "web_fetch call failed: %s\n", fetch_result.content_json.c_str());
+    if (!sync_fetch_result.ok) {
+        std::fprintf(stderr, "web_fetch sync call failed: %s\n", sync_fetch_result.content_json.c_str());
         return 1;
     }
     if (fetch_result.resource_refs.empty()) {
@@ -321,6 +366,7 @@ int main() {
     std::printf("provider_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("calculator_result=%s\n", first_result.content_json.c_str());
     std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web_search") ? "yes" : "no");
+    std::printf("web_fetch_async=%s\n", fetch_ready ? "yes" : "no");
     std::printf("web_search_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
     std::printf("web_fetch_resource_uri=%s\n", fetch_result.resource_refs.empty() ? "" : fetch_result.resource_refs[0].uri.c_str());
     std::printf("memory_remember_result=%s\n", memory_result.content_json.c_str());

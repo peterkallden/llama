@@ -4,8 +4,11 @@
 #include "agent/tool-registry.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <map>
+#include <mutex>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
@@ -16,6 +19,15 @@ size_t effective_result_limit(
         const agent_tool_context & context,
         const common_tool_definition & definition) {
     return std::min(context.default_max_result_bytes, definition.max_result_bytes);
+}
+
+bool tool_async_enabled(
+        const agent_tool_context & context,
+        const std::string & tool_name) {
+    return std::find(
+        context.async_exposed_tool_names.begin(),
+        context.async_exposed_tool_names.end(),
+        tool_name) != context.async_exposed_tool_names.end();
 }
 
 bool is_definition_allowed(
@@ -236,21 +248,142 @@ public:
     agent_tool_result call(
             const agent_tool_call & call,
             std::string & error) override {
+        return execute_sync(call, error);
+    }
+
+    bool supports_async_call(const std::string & name) const override {
+        return exposes_tool(name) && tool_async_enabled(context, name);
+    }
+
+    bool begin_call_async(
+            const agent_tool_call & call,
+            agent_tool_pending_call & pending,
+            std::string & error) override {
+        if (!supports_async_call(call.name)) {
+            error = "tool is not configured for asynchronous execution in this runtime view";
+            return false;
+        }
+        if (!reserve_call_slot(call, error)) {
+            return false;
+        }
+
+        pending = {};
+        pending.tool_name = call.name;
+        pending.operation_id = "native-tool-op-" + std::to_string(++next_async_operation_id);
+        {
+            std::lock_guard<std::mutex> lock(async_mutex);
+            async_calls.emplace(
+                pending.operation_id,
+                std::async(std::launch::async, [this, call]() mutable {
+                    std::string ignored_error;
+                    return execute_validated_call(call, ignored_error);
+                }));
+        }
+        error.clear();
+        return true;
+    }
+
+    bool poll_call_async(
+            const agent_tool_pending_call & pending,
+            bool & ready,
+            agent_tool_result & result,
+            std::string & error) override {
+        std::lock_guard<std::mutex> lock(async_mutex);
+        const auto it = async_calls.find(pending.operation_id);
+        if (it == async_calls.end()) {
+            error = "async tool operation is unknown";
+            ready = false;
+            return false;
+        }
+        if (it->second.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            ready = false;
+            error.clear();
+            return true;
+        }
+        ready = true;
+        result = it->second.get();
+        error = result.ok ? std::string() : result.raw_diagnostic;
+        async_calls.erase(it);
+        return true;
+    }
+
+private:
+    bool reserve_call_slot(
+            const agent_tool_call & call,
+            std::string & error) {
         if (context.execution_control.should_stop()) {
             auto result = make_execution_control_failure_result(context, call);
             error = result.raw_diagnostic;
-            return result;
+            return false;
         }
-        if (call_count >= context.max_calls) {
-            error = "tool call limit reached";
-            return make_failure_result(
-                call,
-                "tool_call_limit_reached",
-                common_tool_failure_class::limit,
-                false,
-                "The runtime tool call limit has been reached.");
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            if (call_count >= context.max_calls) {
+                error = "tool call limit reached";
+                return false;
+            }
         }
 
+        auto definition_it = definitions.find(call.name);
+        if (definition_it == definitions.end()) {
+            error = "tool is unavailable in this runtime view";
+            return false;
+        }
+
+        std::string validation_error;
+        if (!validate(call, validation_error)) {
+            error = validation_error;
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ++call_count;
+        }
+        error.clear();
+        return true;
+    }
+
+    agent_tool_result execute_sync(
+            const agent_tool_call & call,
+            std::string & error) {
+        if (!reserve_call_slot(call, error)) {
+            if (context.execution_control.should_stop()) {
+                auto result = make_execution_control_failure_result(context, call);
+                error = result.raw_diagnostic;
+                return result;
+            }
+            if (definitions.find(call.name) == definitions.end()) {
+                return make_failure_result(
+                    call,
+                    "tool_unavailable",
+                    common_tool_failure_class::not_found,
+                    false,
+                    "The requested tool is not available in this runtime view.",
+                    error);
+            }
+            if (error == "tool call limit reached") {
+                return make_failure_result(
+                    call,
+                    "tool_call_limit_reached",
+                    common_tool_failure_class::limit,
+                    false,
+                    "The runtime tool call limit has been reached.");
+            }
+            return make_failure_result(
+                call,
+                "tool.invalid_arguments",
+                common_tool_failure_class::validation,
+                false,
+                "Tool arguments do not satisfy the registered contract.",
+                error);
+        }
+        return execute_validated_call(call, error);
+    }
+
+    agent_tool_result execute_validated_call(
+            const agent_tool_call & call,
+            std::string & error) {
         auto definition_it = definitions.find(call.name);
         if (definition_it == definitions.end()) {
             error = "tool is unavailable in this runtime view";
@@ -263,19 +396,6 @@ public:
                 error);
         }
 
-        std::string validation_error;
-        if (!validate(call, validation_error)) {
-            error = validation_error;
-            return make_failure_result(
-                call,
-                "tool.invalid_arguments",
-                common_tool_failure_class::validation,
-                false,
-                "Tool arguments do not satisfy the registered contract.",
-                validation_error);
-        }
-
-        ++call_count;
         const auto started_at = std::chrono::steady_clock::now();
         const auto execution = registry.execute({call.name, call.arguments_json});
         if (context.execution_control.should_stop()) {
@@ -300,13 +420,15 @@ public:
         error = result.ok ? std::string() : result.raw_diagnostic;
         return result;
     }
-
-private:
     agent_tool_context context;
     common_tool_registry registry;
     std::vector<common_chat_tool> chat_tool_list;
     std::map<std::string, common_tool_definition> definitions;
     size_t call_count = 0;
+    mutable std::mutex state_mutex;
+    mutable std::mutex async_mutex;
+    std::map<std::string, std::future<agent_tool_result>> async_calls;
+    std::atomic<uint64_t> next_async_operation_id = 0;
 };
 
 class mcp_agent_tool_view : public agent_tool_view {
@@ -365,21 +487,142 @@ public:
     agent_tool_result call(
             const agent_tool_call & call,
             std::string & error) override {
+        return execute_sync(call, error);
+    }
+
+    bool supports_async_call(const std::string & name) const override {
+        return exposes_tool(name) && tool_async_enabled(context, name);
+    }
+
+    bool begin_call_async(
+            const agent_tool_call & call,
+            agent_tool_pending_call & pending,
+            std::string & error) override {
+        if (!supports_async_call(call.name)) {
+            error = "tool is not configured for asynchronous execution in this MCP runtime view";
+            return false;
+        }
+        if (!reserve_call_slot(call, error)) {
+            return false;
+        }
+
+        pending = {};
+        pending.tool_name = call.name;
+        pending.operation_id = "mcp-tool-op-" + std::to_string(++next_async_operation_id);
+        {
+            std::lock_guard<std::mutex> lock(async_mutex);
+            async_calls.emplace(
+                pending.operation_id,
+                std::async(std::launch::async, [this, call]() mutable {
+                    std::string ignored_error;
+                    return execute_validated_call(call, ignored_error);
+                }));
+        }
+        error.clear();
+        return true;
+    }
+
+    bool poll_call_async(
+            const agent_tool_pending_call & pending,
+            bool & ready,
+            agent_tool_result & result,
+            std::string & error) override {
+        std::lock_guard<std::mutex> lock(async_mutex);
+        const auto it = async_calls.find(pending.operation_id);
+        if (it == async_calls.end()) {
+            error = "async MCP tool operation is unknown";
+            ready = false;
+            return false;
+        }
+        if (it->second.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            ready = false;
+            error.clear();
+            return true;
+        }
+        ready = true;
+        result = it->second.get();
+        error = result.ok ? std::string() : result.raw_diagnostic;
+        async_calls.erase(it);
+        return true;
+    }
+
+private:
+    bool reserve_call_slot(
+            const agent_tool_call & call,
+            std::string & error) {
         if (context.execution_control.should_stop()) {
             auto result = make_execution_control_failure_result(context, call);
             error = result.raw_diagnostic;
-            return result;
+            return false;
         }
-        if (call_count >= context.max_calls) {
-            error = "tool call limit reached";
-            return make_failure_result(
-                call,
-                "tool_call_limit_reached",
-                common_tool_failure_class::limit,
-                false,
-                "The runtime tool call limit has been reached.");
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            if (call_count >= context.max_calls) {
+                error = "tool call limit reached";
+                return false;
+            }
         }
 
+        auto it = definitions.find(call.name);
+        if (it == definitions.end()) {
+            error = "tool is unavailable in this MCP runtime view";
+            return false;
+        }
+
+        std::string validation_error;
+        if (!validate(call, validation_error)) {
+            error = validation_error;
+            return false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ++call_count;
+        }
+        error.clear();
+        return true;
+    }
+
+    agent_tool_result execute_sync(
+            const agent_tool_call & call,
+            std::string & error) {
+        if (!reserve_call_slot(call, error)) {
+            if (context.execution_control.should_stop()) {
+                auto result = make_execution_control_failure_result(context, call);
+                error = result.raw_diagnostic;
+                return result;
+            }
+            if (definitions.find(call.name) == definitions.end()) {
+                return make_failure_result(
+                    call,
+                    "tool_unavailable",
+                    common_tool_failure_class::not_found,
+                    false,
+                    "The requested tool is not available in this MCP runtime view.",
+                    error);
+            }
+            if (error == "tool call limit reached") {
+                return make_failure_result(
+                    call,
+                    "tool_call_limit_reached",
+                    common_tool_failure_class::limit,
+                    false,
+                    "The runtime tool call limit has been reached.");
+            }
+            return make_failure_result(
+                call,
+                "tool.invalid_arguments",
+                common_tool_failure_class::validation,
+                false,
+                "Tool arguments do not satisfy the MCP tool contract.",
+                error);
+        }
+        return execute_validated_call(call, error);
+    }
+
+    agent_tool_result execute_validated_call(
+            const agent_tool_call & call,
+            std::string & error) {
         auto it = definitions.find(call.name);
         if (it == definitions.end()) {
             error = "tool is unavailable in this MCP runtime view";
@@ -392,19 +635,6 @@ public:
                 error);
         }
 
-        std::string validation_error;
-        if (!validate(call, validation_error)) {
-            error = validation_error;
-            return make_failure_result(
-                call,
-                "tool.invalid_arguments",
-                common_tool_failure_class::validation,
-                false,
-                "Tool arguments do not satisfy the MCP tool contract.",
-                validation_error);
-        }
-
-        ++call_count;
         const auto started_at = std::chrono::steady_clock::now();
         mcp_agent_tool_call_result execution;
         if (!client.call_tool(context, it->second, call.arguments_json, execution, error)) {
@@ -443,13 +673,15 @@ public:
         error = result.ok ? std::string() : result.raw_diagnostic;
         return result;
     }
-
-private:
     agent_tool_context context;
     agent_mcp_tool_client & client;
     std::vector<common_chat_tool> chat_tool_list;
     std::map<std::string, mcp_agent_tool_definition> definitions;
     size_t call_count = 0;
+    mutable std::mutex state_mutex;
+    mutable std::mutex async_mutex;
+    std::map<std::string, std::future<agent_tool_result>> async_calls;
+    std::atomic<uint64_t> next_async_operation_id = 0;
 };
 
 class composite_agent_tool_view : public agent_tool_view {
@@ -504,6 +736,37 @@ public:
                 error);
         }
         return view->call(call, error);
+    }
+
+    bool supports_async_call(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->supports_async_call(name);
+    }
+
+    bool begin_call_async(
+            const agent_tool_call & call,
+            agent_tool_pending_call & pending,
+            std::string & error) override {
+        auto * view = find_owner(call.name);
+        if (view == nullptr) {
+            error = "tool is unavailable in this composite runtime view";
+            return false;
+        }
+        return view->begin_call_async(call, pending, error);
+    }
+
+    bool poll_call_async(
+            const agent_tool_pending_call & pending,
+            bool & ready,
+            agent_tool_result & result,
+            std::string & error) override {
+        auto * view = find_owner(pending.tool_name);
+        if (view == nullptr) {
+            error = "tool is unavailable in this composite runtime view";
+            ready = false;
+            return false;
+        }
+        return view->poll_call_async(pending, ready, result, error);
     }
 
 private:

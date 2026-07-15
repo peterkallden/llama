@@ -45,13 +45,11 @@ std::shared_ptr<common_agent_runtime_session_manager::common_agent_runtime_sessi
 common_agent_runtime_session_manager::enqueue_lane_turn(
         common_agent_runtime_session_lane & lane,
         const common_agent_runtime_session_manager_turn_request & request,
-        common_agent_runtime_session_manager_turn_result & result,
+        common_agent_runtime_session_manager_turn_result &,
         std::string & error) {
     auto message = std::make_shared<common_agent_runtime_session_lane_message>();
     message->id = lane.next_message_id++;
     message->request = request;
-    message->result = &result;
-    message->error = &error;
     std::lock_guard<std::mutex> lock(lane.mutex);
     if (lane.state == common_agent_runtime_session_lane_state::resetting) {
         error = "session lane is resetting";
@@ -86,11 +84,7 @@ bool common_agent_runtime_session_manager::wait_for_message_completion(
     message->condition.wait(lock, [&]() {
         return message->completed;
     });
-    if (message->error != nullptr) {
-        error = *message->error;
-    } else {
-        error.clear();
-    }
+    error = message->error;
     return message->ok;
 }
 
@@ -103,13 +97,9 @@ void common_agent_runtime_session_manager::complete_lane_message(
         return;
     }
 
-    if (message->result != nullptr) {
-        message->result->error = error;
-        message->result->cancelled = cancelled;
-    }
-    if (message->error != nullptr) {
-        *message->error = error;
-    }
+    message->result.error = error;
+    message->result.cancelled = cancelled;
+    message->error = error;
 
     {
         std::lock_guard<std::mutex> lock(message->mutex);
@@ -140,13 +130,13 @@ void common_agent_runtime_session_manager::reconcile_lane_state(
 bool common_agent_runtime_session_manager::run_lane_turn(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message) {
-    if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+    if (message == nullptr) {
         return false;
     }
 
     auto & request = message->request;
-    auto & result = *message->result;
-    auto & error = *message->error;
+    auto & result = message->result;
+    auto & error = message->error;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
         if (!lane.active_turn.has_value()) {
@@ -186,13 +176,13 @@ bool common_agent_runtime_session_manager::run_lane_turn(
 common_agent_runtime_turn_disposition common_agent_runtime_session_manager::advance_lane_turn(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message) {
-    if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+    if (message == nullptr) {
         return common_agent_runtime_turn_disposition::failed;
     }
 
     auto & request = message->request;
-    auto & result = *message->result;
-    auto & error = *message->error;
+    auto & result = message->result;
+    auto & error = message->error;
     common_agent_runtime_turn_phase phase;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
@@ -238,6 +228,14 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                 std::lock_guard<std::mutex> lock(lane.mutex);
                 if (lane.active_turn.has_value()) {
                     lane.active_turn->phase = common_agent_runtime_turn_phase::awaiting_inference;
+                    common_agent_runtime_pending_operation pending;
+                    pending.operation_id = "inference:" + request.request_id;
+                    pending.kind = common_agent_runtime_pending_operation_kind::inference;
+                    pending.detail = "session host turn execution";
+                    if (request.turn.execution_control.deadline.has_value()) {
+                        pending.deadline = *request.turn.execution_control.deadline;
+                    }
+                    lane.active_turn->pending_operation = std::move(pending);
                 }
             }
             emit_event(
@@ -259,6 +257,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                 if (lane.active_turn.has_value()) {
                     lane.active_turn->cancellation_requested = request.turn.execution_control.is_cancel_requested();
                     lane.active_turn->disposition = disposition;
+                    lane.active_turn->pending_operation.reset();
                     lane.active_turn->phase = ok
                         ? common_agent_runtime_turn_phase::completing
                         : (result.cancelled
@@ -336,11 +335,11 @@ bool common_agent_runtime_session_manager::drain_lane(
         std::string & error) {
     const auto resolve_lane_error = [](
             const common_agent_runtime_session_lane_message & message) {
-        if (message.error != nullptr && !message.error->empty()) {
-            return *message.error;
+        if (!message.error.empty()) {
+            return message.error;
         }
-        if (message.result != nullptr && !message.result->error.empty()) {
-            return message.result->error;
+        if (!message.result.error.empty()) {
+            return message.result.error;
         }
         return std::string();
     };
@@ -378,11 +377,11 @@ bool common_agent_runtime_session_manager::drain_lane(
             lane.current_message = message;
         }
         reconcile_lane_state(lane);
-        if (message == nullptr || message->result == nullptr || message->error == nullptr) {
+        if (message == nullptr) {
             std::lock_guard<std::mutex> lock(lane.mutex);
             lane.current_message.reset();
             lane.state = common_agent_runtime_session_lane_state::idle;
-            error = "lane mailbox message is missing result/error storage";
+            error = "lane mailbox message is missing result storage";
             return false;
         }
 
@@ -504,7 +503,15 @@ bool common_agent_runtime_session_manager::run_turn(
         result.error = error;
         return false;
     }
-    return drain_lane(lane, message, error);
+    const bool ok = drain_lane(lane, message, error);
+    result = message->result;
+    if (result.error.empty()) {
+        result.error = message->error;
+    }
+    if (error.empty()) {
+        error = message->error;
+    }
+    return ok;
 }
 
 bool common_agent_runtime_session_manager::reset_session(

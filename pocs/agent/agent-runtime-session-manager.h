@@ -120,8 +120,8 @@ private:
     struct common_agent_runtime_session_lane_message {
         size_t id = 0;
         common_agent_runtime_session_manager_turn_request request;
-        common_agent_runtime_session_manager_turn_result * result = nullptr;
-        std::string * error = nullptr;
+        common_agent_runtime_session_manager_turn_result result;
+        std::string error;
         bool ok = false;
         bool completed = false;
         mutable std::mutex mutex;

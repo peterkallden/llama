@@ -3,6 +3,8 @@
 #include "agent-runtime-turn.h"
 #include "agent-runtime-control.h"
 
+#include <chrono>
+#include <optional>
 #include <string>
 
 enum class common_agent_runtime_turn_phase {
@@ -33,6 +35,8 @@ inline const char * common_agent_runtime_turn_phase_name(
 
 enum class common_agent_runtime_turn_disposition {
     continue_immediately,
+    wait_for_inference,
+    wait_for_tool,
     completed,
     failed,
     cancelled,
@@ -42,12 +46,36 @@ inline const char * common_agent_runtime_turn_disposition_name(
         common_agent_runtime_turn_disposition disposition) {
     switch (disposition) {
         case common_agent_runtime_turn_disposition::continue_immediately: return "continue_immediately";
+        case common_agent_runtime_turn_disposition::wait_for_inference:   return "wait_for_inference";
+        case common_agent_runtime_turn_disposition::wait_for_tool:        return "wait_for_tool";
         case common_agent_runtime_turn_disposition::completed:            return "completed";
         case common_agent_runtime_turn_disposition::failed:               return "failed";
         case common_agent_runtime_turn_disposition::cancelled:            return "cancelled";
     }
     return "continue_immediately";
 }
+
+enum class common_agent_runtime_pending_operation_kind {
+    inference,
+    tool,
+};
+
+inline const char * common_agent_runtime_pending_operation_kind_name(
+        common_agent_runtime_pending_operation_kind kind) {
+    switch (kind) {
+        case common_agent_runtime_pending_operation_kind::inference: return "inference";
+        case common_agent_runtime_pending_operation_kind::tool:      return "tool";
+    }
+    return "tool";
+}
+
+struct common_agent_runtime_pending_operation {
+    std::string operation_id;
+    common_agent_runtime_pending_operation_kind kind =
+        common_agent_runtime_pending_operation_kind::tool;
+    std::string detail;
+    std::chrono::steady_clock::time_point deadline{};
+};
 
 struct common_agent_runtime_turn_execution {
     std::string request_id;
@@ -57,4 +85,5 @@ struct common_agent_runtime_turn_execution {
     common_agent_runtime_turn_disposition disposition = common_agent_runtime_turn_disposition::continue_immediately;
     bool cancellation_requested = false;
     std::shared_ptr<common_agent_runtime_cancellation_state> cancellation;
+    std::optional<common_agent_runtime_pending_operation> pending_operation;
 };

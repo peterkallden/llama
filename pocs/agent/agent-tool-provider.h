@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@ struct agent_tool_context {
     // tools use their definition name directly; MCP tools use their exposed
     // name after any provider prefixing.
     std::vector<std::string> allowed_exposed_tool_names;
+    std::vector<std::string> async_exposed_tool_names;
 
     bool allow_network = false;
     bool allow_policy_gated_writes = false;
@@ -76,6 +78,11 @@ struct agent_tool_result {
     std::string raw_diagnostic;
 };
 
+struct agent_tool_pending_call {
+    std::string operation_id;
+    std::string tool_name;
+};
+
 class agent_tool_view {
 public:
     virtual ~agent_tool_view() = default;
@@ -88,6 +95,19 @@ public:
 
     virtual agent_tool_result call(
         const agent_tool_call & call,
+        std::string & error) = 0;
+
+    virtual bool supports_async_call(const std::string & name) const = 0;
+
+    virtual bool begin_call_async(
+        const agent_tool_call & call,
+        agent_tool_pending_call & pending,
+        std::string & error) = 0;
+
+    virtual bool poll_call_async(
+        const agent_tool_pending_call & pending,
+        bool & ready,
+        agent_tool_result & result,
         std::string & error) = 0;
 };
 

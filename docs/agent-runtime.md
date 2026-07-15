@@ -204,6 +204,8 @@ The host/runtime path now also carries one small tooling contract instead of thr
 
 That provider assembly is now a little less CLI-shaped internally as well. The CLI-facing resolver still exists, but it now sits on top of a smaller host-owned tool-selection request: resolved `agent_tool_context`, repository root, resource-store config, and optional MCP stdio provider command. The foreground daemon now uses that host-owned request directly instead of first synthesizing a temporary CLI `args` object just to reach the tool provider seam.
 
+The provider/view seam has also grown a first narrowly scoped async capability. A resolved `agent_tool_view` can still be used exactly as before through ordinary synchronous `call(...)`, but it can now also advertise per-tool async support and expose a small `begin_call_async(...)` / `poll_call_async(...)` contract for tools that a host marks as async-capable in the resolved tool context. The current slice is intentionally host-owned and opt-in per tool rather than a global mode switch: one tool can remain synchronous while another is allowed to run behind a pending operation, and the existing model-visible tool schema does not need to change first.
+
 The new host-config slice is intentionally modest. It currently models:
 
 - model backend/path and optional embedding model
@@ -235,7 +237,11 @@ That same slice also begins to separate command handling from event production a
 
 The mailbox itself is now a little more explicit too. Session-lane messages carry a stable message id plus completion/result state as their own object rather than being only a transient deque entry, and lane draining now targets a specific enqueued message instead of relying on a more implicit "push then empty the whole deque" shape. That seam is now also waitable: when a second turn arrives for a lane that is already running, it can wait on its own mailbox message completion instead of failing immediately with a lane-local bookkeeping error. The implementation is still intentionally modest and still drains synchronously, but it now looks more like an actor mailbox with one active drainer plus queued waiters than like a plain recursive helper call.
 
+One small but important technical-debt cleanup landed in the same area: the lane message now owns its own completion result and error state instead of keeping raw pointers to caller-owned stack storage. The public `run_turn(...)` API still looks synchronous to current callers, but the internal mailbox object is now much safer to carry forward into later async scheduling or pending-operation completion without tying session state to the caller's stack lifetime.
+
 The lane also now owns one explicit current-message pointer alongside the active turn record, and its own processing state is now a named lane-state rather than a bare boolean. That means active request/turn identity, queued-vs-running observation, and host-side cancellation all have one clearer owner inside the lane itself instead of reconstructing the same identity from several partially overlapping fields. It is still the same single-lane synchronous flow, but the ownership model is now closer to "mailbox message plus lane execution state" and less like "deque entry plus a separately inferred active turn".
+
+The turn-state seam itself is also a little more future-proof now. The active turn can carry an explicit pending-operation descriptor in addition to phase/disposition, and the disposition enum has reserved room for `wait_for_inference` and `wait_for_tool` rather than only terminal outcomes plus `continue_immediately`. That does not yet mean the full resident agent loop pauses and resumes around tool calls in production; it means the lane/runtime seam now has a neutral place to describe those waits without redesigning the state model later.
 
 That lane-state is now visible in the session diagnostics path as well. Session descriptors and daemon status snapshots can report the lane's processing state directly, so operators and later scheduler code do not have to infer "idle versus running" only from a mix of queue length and active-turn fields.
 
