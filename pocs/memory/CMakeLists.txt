@@ -23,18 +23,18 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../agent/agent-cli-host-adapter.cpp
     ../agent/agent-cli-inference.cpp
-    ../agent/agent-plan-orchestration.cpp
-    ../agent/agent-runtime-chat-driver.cpp
-    ../agent/agent-runtime-host.cpp
-    ../agent/agent-runtime-resident.cpp
-    ../agent/agent-runtime-session-host.cpp
-    ../agent/agent-runtime-session-manager.cpp
-    ../agent/agent-runtime-execution.cpp
-    ../agent/agent-runtime-session.cpp
-    ../agent/agent-server-context-host.cpp
-    ../agent/agent-server-generation.cpp
-    ../agent/agent-server-inference.cpp
-    ../agent/agent-runtime-assembly.cpp
+    ../../tools/agent/runtime/agent-plan-orchestration.cpp
+    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
+    ../../tools/agent/runtime/agent-runtime-host.cpp
+    ../../tools/agent/runtime/agent-runtime-resident.cpp
+    ../../tools/agent/runtime/agent-runtime-session-host.cpp
+    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
+    ../../tools/agent/runtime/agent-runtime-execution.cpp
+    ../../tools/agent/runtime/agent-runtime-session.cpp
+    ../../tools/agent/runtime/agent-server-context-host.cpp
+    ../../tools/agent/runtime/agent-server-generation.cpp
+    ../../tools/agent/runtime/agent-server-inference.cpp
+    ../../tools/agent/runtime/agent-runtime-assembly.cpp
     ../agent/agent-cli-runtime.cpp
     ../agent/agent-cli-selection.cpp
 )
@@ -60,6 +60,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../agent
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )

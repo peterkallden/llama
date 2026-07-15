@@ -112,6 +112,7 @@ tools/
     daemon/    daemon admin/client/jsonl transport and related host-side protocol code
     host/      host configuration and shared host-side policy/provider config
     mcp/       MCP client/server transport, stdio server, and shared MCP protocol helpers
+    runtime/   resident runtime/session/inference assembly and host runtime plumbing
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
@@ -130,6 +131,7 @@ Short responsibility summary:
 - `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
 - `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
 - `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
+- `tools/agent/runtime`: resident runtime/session assembly, runtime host/session contracts, and in-process inference/runtime plumbing shared by CLI/daemon/MCP-facing hosts.
 - `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
 - `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
 
@@ -159,6 +161,8 @@ That bounded daemon host slice is now in place as well: daemon client/admin help
 The next adjacent host slice is the same kind of cleanup for configuration ownership: host config and MCP-provider config are moving toward `tools/agent/host` so they can be shared by daemon and MCP-facing entrypoints without looking like PoC-only assembly details.
 
 That MCP host-facing cleanup is now in place as well. Client/server protocol helpers, stdio client/server support, and the stdio MCP server entrypoint now live under `tools/agent/mcp`, while the existing PoC tree keeps only compatibility headers and smoke harnesses until the remaining runtime assembly finishes moving.
+
+The next bounded host slice after that is the runtime core itself. Resident runtime/session assembly, runtime host/session contracts, and in-process server-context runtime plumbing belong more naturally under `tools/agent/runtime` than under `pocs/agent`, again with compatibility headers left behind while the remaining CLI/tooling surfaces are migrated.
 
 ## Design Constraints
 

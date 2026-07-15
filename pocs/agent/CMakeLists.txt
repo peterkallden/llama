@@ -23,18 +23,18 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-service.cpp
     agent-cli-host-adapter.cpp
     agent-cli-inference.cpp
-    agent-plan-orchestration.cpp
-    agent-runtime-chat-driver.cpp
-    agent-runtime-host.cpp
-    agent-runtime-resident.cpp
-    agent-runtime-session-host.cpp
-    agent-runtime-session-manager.cpp
-    agent-runtime-execution.cpp
-    agent-runtime-session.cpp
-    agent-server-context-host.cpp
-    agent-server-generation.cpp
-    agent-server-inference.cpp
-    agent-runtime-assembly.cpp
+    ../../tools/agent/runtime/agent-plan-orchestration.cpp
+    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
+    ../../tools/agent/runtime/agent-runtime-host.cpp
+    ../../tools/agent/runtime/agent-runtime-resident.cpp
+    ../../tools/agent/runtime/agent-runtime-session-host.cpp
+    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
+    ../../tools/agent/runtime/agent-runtime-execution.cpp
+    ../../tools/agent/runtime/agent-runtime-session.cpp
+    ../../tools/agent/runtime/agent-server-context-host.cpp
+    ../../tools/agent/runtime/agent-server-generation.cpp
+    ../../tools/agent/runtime/agent-server-inference.cpp
+    ../../tools/agent/runtime/agent-runtime-assembly.cpp
     agent-cli-runtime.cpp
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp
@@ -60,6 +60,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -87,6 +88,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -110,6 +112,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -133,6 +136,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -156,6 +160,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -180,6 +185,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
