@@ -40,6 +40,8 @@ That foreground daemon now also has a first explicit lifecycle-state contract ab
 
 The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
 
+That status surface now also preserves one small but important bit of lane-owned waiting state: when an active turn is parked behind a manager-owned pending operation, daemon status can report not only the active phase/disposition but also the pending operation kind/detail on both the top-level active turn and the keyed session descriptor. In practice that means admin/test callers can now distinguish "turn is awaiting inference" from "turn is awaiting inference because a specific pending lane operation is still unresolved" without scraping internal debug logs.
+
 The response side is now slightly less string-shaped too. The daemon command result carries an explicit response kind for `turn`, `status`, or lifecycle/session actions, so the current JSONL adapter no longer has to infer the response shape only from ad hoc event-string conventions before serializing it.
 
 The command side is now also a little less ad hoc. The transport still speaks the same JSONL command fields, but the host-owned daemon command contract now carries small typed payloads for turn execution, session actions and queued-turn cancellation instead of relying only on a flat bag of optional top-level fields.
@@ -941,6 +943,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
 - `llama-agent-runtime-session-manager-smoke` also verifies that `reset_all()` now routes through lane-owned close semantics instead of bypassing the lane lifecycle with a raw map clear
 - `llama-agent-runtime-session-manager-smoke` now also verifies manager-owned parked states for both `awaiting_tool` and `awaiting_inference`, including `wait_for_tool`, `wait_for_inference`, host-driven cancellation out of the parked tool state, and resumption into host execution after the parked inference state is released
+- `llama-agent-daemon-jsonl-protocol-smoke`, verifying the JSONL/admin status contract now projects lane-owned pending operation kind/detail on both the top-level active turn and the keyed session binding summary
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
