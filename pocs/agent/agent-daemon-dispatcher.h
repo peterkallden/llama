@@ -69,6 +69,7 @@ private:
         std::string & error,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown,
         std::string turn_id = {}) const;
 
     bool succeed_lifecycle_result_locked(
@@ -77,6 +78,7 @@ private:
         std::string & error,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown,
         std::string detail = {},
         std::string turn_id = {}) const;
 
@@ -90,6 +92,7 @@ private:
         common_agent_daemon_command_result & result,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type,
         std::string error) const;
 
     void finalize_lifecycle_result_locked(

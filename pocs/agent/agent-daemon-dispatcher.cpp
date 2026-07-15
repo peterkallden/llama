@@ -41,6 +41,20 @@ void append_daemon_event(
     result.daemon_event_count = result.events.size();
 }
 
+void append_typed_daemon_event(
+        common_agent_daemon_command_result & result,
+        common_agent_daemon_event_type type,
+        std::string request_id,
+        std::string turn_id,
+        std::string detail = {}) {
+    result.events.push_back(make_common_agent_daemon_event(
+        type,
+        std::move(request_id),
+        std::move(turn_id),
+        std::move(detail)));
+    result.daemon_event_count = result.events.size();
+}
+
 std::string command_turn_id(const common_agent_daemon_command & command) {
     if (!command.turn.has_value()) {
         return {};
@@ -96,6 +110,11 @@ const char * queued_turn_rejection_daemon_event(
         default:
             return "turn.rejected";
     }
+}
+
+common_agent_daemon_event_type queued_turn_rejection_daemon_event_type(
+        common_agent_daemon_command_type) {
+    return common_agent_daemon_event_type::turn_rejected;
 }
 
 } // namespace
@@ -154,6 +173,7 @@ bool common_agent_daemon_dispatcher::execute(
                 error,
                 "command_rejected",
                 "command.rejected",
+                common_agent_daemon_event_type::command_rejected,
                 command_turn_id(command));
         }
         if (queue.size() >= max_queue_size) {
@@ -164,6 +184,7 @@ bool common_agent_daemon_dispatcher::execute(
                 error,
                 "command_rejected",
                 "command.rejected",
+                common_agent_daemon_event_type::command_rejected,
                 command_turn_id(command));
         }
         item->events.push_back(make_common_agent_daemon_event(
@@ -214,6 +235,7 @@ bool common_agent_daemon_dispatcher::execute_session_lifecycle(
                 error,
                 "command_rejected",
                 "command.rejected",
+                common_agent_daemon_event_type::command_rejected,
                 command_turn_id(command));
         }
         if (queue.size() >= max_queue_size) {
@@ -224,6 +246,7 @@ bool common_agent_daemon_dispatcher::execute_session_lifecycle(
                 error,
                 "command_rejected",
                 "command.rejected",
+                common_agent_daemon_event_type::command_rejected,
                 command_turn_id(command));
         }
         if (command.session.has_value()) {
@@ -252,6 +275,7 @@ bool common_agent_daemon_dispatcher::execute_session_lifecycle(
             rejected.result,
             queued_turn_rejection_event(command.type),
             queued_turn_rejection_daemon_event(command.type),
+            queued_turn_rejection_daemon_event_type(command.type),
             queued_turn_rejection_error(command.type));
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -318,6 +342,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
                     error,
                     "turn_cancel_requested",
                     "turn.cancel_requested",
+                    common_agent_daemon_event_type::turn_cancel_requested,
                     "active turn cancellation requested",
                     !command.cancel.has_value() || command.cancel->target_turn_id.empty()
                         ? active_turn.turn_id
@@ -336,6 +361,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             error,
             "turn_cancel_rejected",
             "turn.cancel_rejected",
+            common_agent_daemon_event_type::turn_cancel_rejected,
             command.cancel.has_value() ? command.cancel->target_turn_id : std::string());
     }
 
@@ -360,6 +386,7 @@ bool common_agent_daemon_dispatcher::execute_cancel_turn(
             error,
             "turn_cancelled",
             "turn.cancelled",
+            common_agent_daemon_event_type::turn_cancelled,
             "queued turn cancelled",
             !command.cancel.has_value() || command.cancel->target_turn_id.empty()
                 ? command_turn_id(cancelled_item->command)
@@ -408,17 +435,27 @@ bool common_agent_daemon_dispatcher::fail_lifecycle_result_locked(
         std::string & error,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type,
         std::string turn_id) const {
     initialize_lifecycle_result(command, result);
     result.ok = false;
     result.event = std::move(event);
     result.error = error;
-    append_daemon_event(
-        result,
-        std::move(daemon_event_type),
-        command.request_id,
-        std::move(turn_id),
-        error);
+    if (event_type != common_agent_daemon_event_type::unknown) {
+        append_typed_daemon_event(
+            result,
+            event_type,
+            command.request_id,
+            std::move(turn_id),
+            error);
+    } else {
+        append_daemon_event(
+            result,
+            std::move(daemon_event_type),
+            command.request_id,
+            std::move(turn_id),
+            error);
+    }
     finalize_lifecycle_result_locked(result);
     return false;
 }
@@ -429,17 +466,27 @@ bool common_agent_daemon_dispatcher::succeed_lifecycle_result_locked(
         std::string & error,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type,
         std::string detail,
         std::string turn_id) const {
     initialize_lifecycle_result(command, result);
     result.ok = true;
     result.event = std::move(event);
-    append_daemon_event(
-        result,
-        std::move(daemon_event_type),
-        command.request_id,
-        std::move(turn_id),
-        std::move(detail));
+    if (event_type != common_agent_daemon_event_type::unknown) {
+        append_typed_daemon_event(
+            result,
+            event_type,
+            command.request_id,
+            std::move(turn_id),
+            std::move(detail));
+    } else {
+        append_daemon_event(
+            result,
+            std::move(daemon_event_type),
+            command.request_id,
+            std::move(turn_id),
+            std::move(detail));
+    }
     finalize_lifecycle_result_locked(result);
     error.clear();
     return true;
@@ -454,6 +501,7 @@ void common_agent_daemon_dispatcher::cancel_queued_turn_result(
         result,
         "turn_cancelled",
         "turn.cancelled",
+        common_agent_daemon_event_type::turn_cancelled,
         std::move(error));
     result.turn_result.cancelled = true;
     result.turn_result.response_generation_status = common_agent_generation_status::cancelled;
@@ -465,6 +513,7 @@ void common_agent_daemon_dispatcher::reject_queued_turn_result(
         common_agent_daemon_command_result & result,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type,
         std::string error) const {
     initialize_turn_result(command, result);
     result.ok = false;
@@ -475,12 +524,21 @@ void common_agent_daemon_dispatcher::reject_queued_turn_result(
     result.turn_result.response_stop_reason = common_agent_generation_stop_reason::error;
     result.turn_result.error = error;
     result.error = std::move(error);
-    append_daemon_event(
-        result,
-        std::move(daemon_event_type),
-        command.request_id,
-        command_turn_id(command),
-        result.turn_result.error);
+    if (event_type != common_agent_daemon_event_type::unknown) {
+        append_typed_daemon_event(
+            result,
+            event_type,
+            command.request_id,
+            command_turn_id(command),
+            result.turn_result.error);
+    } else {
+        append_daemon_event(
+            result,
+            std::move(daemon_event_type),
+            command.request_id,
+            command_turn_id(command),
+            result.turn_result.error);
+    }
 }
 
 void common_agent_daemon_dispatcher::finalize_lifecycle_result_locked(

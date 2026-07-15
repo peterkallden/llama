@@ -8,8 +8,12 @@ enum class common_agent_daemon_event_type {
     unknown,
     command_queued,
     command_started,
+    command_rejected,
     turn_accepted,
     turn_started,
+    turn_rejected,
+    turn_cancel_requested,
+    turn_cancel_rejected,
     turn_waiting_for_tool,
     turn_waiting_for_inference,
     turn_completed,
@@ -45,8 +49,12 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::unknown:                 return "unknown";
         case common_agent_daemon_event_type::command_queued:          return "command.queued";
         case common_agent_daemon_event_type::command_started:         return "command.started";
+        case common_agent_daemon_event_type::command_rejected:        return "command.rejected";
         case common_agent_daemon_event_type::turn_accepted:           return "turn.accepted";
         case common_agent_daemon_event_type::turn_started:            return "turn.started";
+        case common_agent_daemon_event_type::turn_rejected:           return "turn.rejected";
+        case common_agent_daemon_event_type::turn_cancel_requested:   return "turn.cancel_requested";
+        case common_agent_daemon_event_type::turn_cancel_rejected:    return "turn.cancel_rejected";
         case common_agent_daemon_event_type::turn_waiting_for_tool:   return "turn.waiting_for_tool";
         case common_agent_daemon_event_type::turn_waiting_for_inference: return "turn.waiting_for_inference";
         case common_agent_daemon_event_type::turn_completed:          return "turn.completed";

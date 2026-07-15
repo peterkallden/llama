@@ -137,6 +137,17 @@ bool has_event_type(
     return false;
 }
 
+bool has_typed_event(
+        const common_agent_daemon_command_result & result,
+        common_agent_daemon_event_type event_type) {
+    for (const auto & event : result.events) {
+        if (event.event_type == event_type) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -228,7 +239,8 @@ int main(int argc, char ** argv) {
     }
     if (cancel_result.daemon_event_count < 1 ||
             cancel_result.events.empty() ||
-            cancel_result.events.back().type != "turn.cancelled") {
+            cancel_result.events.back().type != "turn.cancelled" ||
+            cancel_result.events.back().event_type != common_agent_daemon_event_type::turn_cancelled) {
         std::fprintf(stderr, "cancel result missing daemon cancellation event\n");
         return 1;
     }
@@ -257,7 +269,8 @@ int main(int argc, char ** argv) {
     }
     if (second_result.daemon_event_count < 1 ||
             second_result.events.empty() ||
-            second_result.events.back().type != "turn.cancelled") {
+            second_result.events.back().type != "turn.cancelled" ||
+            second_result.events.back().event_type != common_agent_daemon_event_type::turn_cancelled) {
         std::fprintf(stderr, "second queued turn missing daemon cancellation event\n");
         return 1;
     }
@@ -352,7 +365,8 @@ int main(int argc, char ** argv) {
     }
     if (reset_second_result.daemon_event_count < 1 ||
             reset_second_result.events.empty() ||
-            reset_second_result.events.back().type != "turn.rejected") {
+            reset_second_result.events.back().type != "turn.rejected" ||
+            reset_second_result.events.back().event_type != common_agent_daemon_event_type::turn_rejected) {
         std::fprintf(stderr, "reset scenario queued turn missing rejection event\n");
         return 1;
     }
@@ -443,7 +457,8 @@ int main(int argc, char ** argv) {
     }
     if (close_second_result.daemon_event_count < 1 ||
             close_second_result.events.empty() ||
-            close_second_result.events.back().type != "turn.rejected") {
+            close_second_result.events.back().type != "turn.rejected" ||
+            close_second_result.events.back().event_type != common_agent_daemon_event_type::turn_rejected) {
         std::fprintf(stderr, "close scenario queued turn missing rejection event\n");
         return 1;
     }
@@ -475,7 +490,10 @@ int main(int argc, char ** argv) {
         tool_wait_result,
         tool_wait_error);
     if (tool_wait_ok ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::command_queued) ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::command_started) ||
             !has_event_type(tool_wait_result, "turn.waiting_for_tool") ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::turn_waiting_for_tool) ||
             tool_wait_result.turn_result.error.find("dispatcher tool wait resolver") == std::string::npos) {
         std::fprintf(stderr, "tool-wait dispatcher scenario did not project wait event correctly\n");
         return 1;
@@ -498,7 +516,10 @@ int main(int argc, char ** argv) {
         inference_wait_result,
         inference_wait_error);
     if (inference_wait_ok ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::command_queued) ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::command_started) ||
             !has_event_type(inference_wait_result, "turn.waiting_for_inference") ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::turn_waiting_for_inference) ||
             inference_wait_result.turn_result.error.find("dispatcher inference wait resolver") == std::string::npos) {
         std::fprintf(stderr, "inference-wait dispatcher scenario did not project wait event correctly\n");
         return 1;
