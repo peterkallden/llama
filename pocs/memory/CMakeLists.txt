@@ -2,8 +2,10 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../agent/agent-cli-config.cpp
     ../agent/agent-cli-generation-utils.cpp
     ../agent/agent-cli-run-adapter.cpp
+    ../agent/agent-daemon-client-admin.cpp
     ../agent/agent-daemon-client-status.cpp
     ../agent/agent-daemon-client.cpp
+    ../agent/agent-daemon-event-collector.cpp
     ../agent/agent-daemon-jsonl-protocol.cpp
     ../agent/agent-host-config.cpp
     ../agent/agent-mcp-protocol.cpp
