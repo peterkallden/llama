@@ -7,7 +7,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client.cpp
     agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
-    agent-host-config.cpp
+    ../../tools/agent/host/agent-host-config.cpp
     agent-mcp-protocol.cpp
     agent-selection-contracts.cpp
     agent-mcp-stdio-client.cpp
@@ -544,6 +544,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-mcp-tool-provider-smoke
     llama-agent-mcp-stdio-client-smoke
     llama-agent-mcp-stdio-server-smoke
+    llama-agent-mcp-stdio-server
     llama-agent-cli-mcp-selection-smoke
     llama-agent-cli-run-mcp-smoke
     llama-agent-daemon-dispatcher-smoke

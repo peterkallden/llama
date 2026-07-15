@@ -7,7 +7,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client.cpp
     ../agent/agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
-    ../agent/agent-host-config.cpp
+    ../../tools/agent/host/agent-host-config.cpp
     ../agent/agent-mcp-protocol.cpp
     ../agent/agent-selection-contracts.cpp
     ../agent/agent-mcp-stdio-client.cpp
