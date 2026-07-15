@@ -774,12 +774,12 @@ int main() {
             error = "tool-wait-resolver turn=" + request.turn_id;
             return false;
         };
-    waiting_manager_build_config.pending_tool_operation_resolver =
+    waiting_manager_build_config.pending_operation_resolver =
         [waiting_poll_count, waiting_tool_started](
                 const common_agent_runtime_session_host_turn_request & request,
-                std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
+                std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
                 std::string & error) {
-            pending_operation = common_agent_runtime_session_manager_pending_tool_operation{};
+            pending_operation = common_agent_runtime_session_manager_pending_operation{};
             pending_operation->pending_operation.operation_id = "tool:" + request.turn_id;
             pending_operation->pending_operation.kind = common_agent_runtime_pending_operation_kind::tool;
             pending_operation->pending_operation.detail = "session manager smoke pending tool";
@@ -875,9 +875,141 @@ int main() {
         return 1;
     }
 
+    auto inference_wait_release = std::make_shared<std::promise<void>>();
+    auto inference_wait_release_future = inference_wait_release->get_future().share();
+    auto inference_wait_poll_count = std::make_shared<int>(0);
+    auto inference_wait_started = std::make_shared<std::promise<void>>();
+    auto inference_wait_started_future = inference_wait_started->get_future();
+
+    common_agent_runtime_session_manager_build_config inference_wait_manager_build_config = {
+        memory_store,
+        plan_store,
+    };
+    inference_wait_manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    inference_wait_manager_build_config.tooling_resolver =
+        [](const common_agent_runtime_resident_runtime *,
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            tooling = {};
+            error = "inference-wait-resolver turn=" + request.turn_id;
+            return false;
+        };
+    inference_wait_manager_build_config.pending_operation_resolver =
+        [inference_wait_release_future, inference_wait_poll_count, inference_wait_started](
+                const common_agent_runtime_session_host_turn_request & request,
+                std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
+                std::string & error) {
+            pending_operation = common_agent_runtime_session_manager_pending_operation{};
+            pending_operation->pending_operation.operation_id = "inference-wait:" + request.turn_id;
+            pending_operation->pending_operation.kind = common_agent_runtime_pending_operation_kind::inference;
+            pending_operation->pending_operation.detail = "session manager smoke pending inference";
+            pending_operation->waiting_phase = common_agent_runtime_turn_phase::awaiting_inference;
+            pending_operation->waiting_disposition = common_agent_runtime_turn_disposition::wait_for_inference;
+            pending_operation->poll =
+                [inference_wait_release_future, inference_wait_poll_count, inference_wait_started](
+                        bool & ready,
+                        std::string & error) mutable {
+                    ++(*inference_wait_poll_count);
+                    if (*inference_wait_poll_count == 1) {
+                        inference_wait_started->set_value();
+                    }
+                    ready =
+                        inference_wait_release_future.wait_for(std::chrono::milliseconds(0)) ==
+                        std::future_status::ready;
+                    error.clear();
+                    return true;
+                };
+            error.clear();
+            return true;
+        };
+    common_agent_runtime_session_manager inference_wait_manager(
+        make_agent_runtime_session_manager_config(std::move(inference_wait_manager_build_config)));
+
+    common_agent_runtime_session_manager_turn_result inference_wait_result;
+    std::string inference_wait_error;
+    auto inference_wait_future = std::async(std::launch::async, [&]() {
+        return inference_wait_manager.run_turn({
+            "request-11",
+            {
+                common_agent_runtime_host_mode::chat,
+                "inference-wait",
+                "session-g",
+                "namespace-g",
+                "",
+                "turn-11",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, inference_wait_result, inference_wait_error);
+    });
+
+    if (inference_wait_started_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager inference-wait smoke did not enter the pending inference state in time\n");
+        return 1;
+    }
+
+    const auto inference_wait_active_turn = inference_wait_manager.describe_active_turn();
+    if (!inference_wait_active_turn.has_value() ||
+            inference_wait_active_turn->request_id != "request-11" ||
+            inference_wait_active_turn->turn_id != "turn-11" ||
+            inference_wait_active_turn->phase != "awaiting_inference" ||
+            inference_wait_active_turn->disposition != "wait_for_inference") {
+        std::fprintf(
+            stderr,
+            "session manager did not expose the waiting inference state: request='%s' turn='%s' phase='%s' disposition='%s'\n",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->request_id.c_str() : "",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->turn_id.c_str() : "",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->phase.c_str() : "",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->disposition.c_str() : "");
+        return 1;
+    }
+
+    const auto inference_wait_sessions = inference_wait_manager.list_sessions();
+    if (inference_wait_sessions.size() != 1 ||
+            inference_wait_sessions[0].lane_state != "running" ||
+            !inference_wait_sessions[0].has_active_turn ||
+            inference_wait_sessions[0].active_turn_phase != "awaiting_inference" ||
+            inference_wait_sessions[0].active_turn_disposition != "wait_for_inference") {
+        std::fprintf(stderr, "session manager did not retain awaiting_inference lane diagnostics for pending inference\n");
+        return 1;
+    }
+
+    inference_wait_release->set_value();
+    if (inference_wait_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager inference-wait smoke did not finish after release\n");
+        return 1;
+    }
+    if (inference_wait_future.get()) {
+        std::fprintf(stderr, "session manager inference-wait smoke unexpectedly succeeded\n");
+        return 1;
+    }
+    if (inference_wait_error.find("inference-wait-resolver turn=turn-11") == std::string::npos ||
+            inference_wait_result.error.find("inference-wait-resolver turn=turn-11") == std::string::npos) {
+        std::fprintf(stderr, "session manager inference-wait smoke did not resume into host execution correctly\n");
+        return 1;
+    }
+
     std::printf("session_manager_tooling_calls=%d\n", *call_count);
     std::printf("session_manager_queued_calls=%d\n", *queued_call_count);
     std::printf("session_manager_lifecycle_calls=%d\n", *lifecycle_call_count + *close_call_count);
     std::printf("session_manager_waiting_tool_polls=%d\n", *waiting_poll_count);
+    std::printf("session_manager_waiting_inference_polls=%d\n", *inference_wait_poll_count);
     return 0;
 }

@@ -142,6 +142,17 @@ bool is_terminal_disposition(common_agent_runtime_turn_disposition disposition) 
         disposition == common_agent_runtime_turn_disposition::cancelled;
 }
 
+common_agent_daemon_event_type completed_event_for_operation_kind(
+        common_agent_runtime_pending_operation_kind kind) {
+    switch (kind) {
+        case common_agent_runtime_pending_operation_kind::tool:
+            return common_agent_daemon_event_type::tool_completed;
+        case common_agent_runtime_pending_operation_kind::inference:
+            return common_agent_daemon_event_type::turn_started;
+    }
+    return common_agent_daemon_event_type::turn_started;
+}
+
 } // namespace
 
 bool common_agent_runtime_session_manager::run_lane_turn(
@@ -184,11 +195,111 @@ bool common_agent_runtime_session_manager::run_lane_turn(
         lane.last_turn_phase = lane.active_turn->phase;
     }
     if (is_terminal_disposition(disposition)) {
-        lane.pending_tool_operation.reset();
+        lane.pending_operation.reset();
         lane.active_turn.reset();
     }
 
     return disposition == common_agent_runtime_turn_disposition::completed;
+}
+
+common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll_pending_operation(
+        common_agent_runtime_session_lane & lane,
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        common_agent_runtime_turn_phase phase) {
+    auto & request = message->request;
+    auto & result = message->result;
+    auto & error = message->error;
+
+    if (request.turn.execution_control.should_stop()) {
+        {
+            std::lock_guard<std::mutex> lock(lane.mutex);
+            lane.pending_operation.reset();
+            if (lane.active_turn.has_value()) {
+                lane.active_turn->pending_operation.reset();
+                lane.active_turn->cancellation_requested = true;
+                lane.active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                lane.active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+            }
+        }
+        result = {};
+        result.cancelled = true;
+        result.error = request.turn.execution_control.stop_reason();
+        error = result.error;
+        emit_event(
+            common_agent_daemon_event_type::turn_cancelled,
+            request.request_id,
+            request.turn.turn_id,
+            result.error);
+        return common_agent_runtime_turn_disposition::cancelled;
+    }
+
+    if (!lane.pending_operation.has_value()) {
+        error = "lane phase is missing its pending operation";
+        {
+            std::lock_guard<std::mutex> lock(lane.mutex);
+            if (lane.active_turn.has_value()) {
+                lane.active_turn->pending_operation.reset();
+                lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
+            }
+        }
+        emit_event(
+            common_agent_daemon_event_type::turn_failed,
+            request.request_id,
+            request.turn.turn_id,
+            error);
+        return common_agent_runtime_turn_disposition::failed;
+    }
+
+    bool ready = false;
+    if (!lane.pending_operation->poll(ready, error)) {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        lane.pending_operation.reset();
+        if (lane.active_turn.has_value()) {
+            lane.active_turn->pending_operation.reset();
+            lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+            lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
+        }
+        emit_event(
+            common_agent_daemon_event_type::turn_failed,
+            request.request_id,
+            request.turn.turn_id,
+            error);
+        return common_agent_runtime_turn_disposition::failed;
+    }
+    if (!ready) {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (lane.active_turn.has_value()) {
+            lane.active_turn->disposition = lane.pending_operation->waiting_disposition;
+        }
+        return lane.pending_operation->waiting_disposition;
+    }
+
+    const auto operation_kind = lane.pending_operation->pending_operation.kind;
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (lane.active_turn.has_value()) {
+            lane.active_turn->pending_operation.reset();
+            lane.active_turn->disposition = common_agent_runtime_turn_disposition::continue_immediately;
+            lane.active_turn->phase = phase;
+        }
+        lane.pending_operation.reset();
+    }
+    emit_event(
+        completed_event_for_operation_kind(operation_kind),
+        request.request_id,
+        request.turn.turn_id,
+        operation_kind == common_agent_runtime_pending_operation_kind::tool
+            ? "manager-owned pending tool operation completed"
+            : "manager-owned pending inference operation completed");
+    if (operation_kind == common_agent_runtime_pending_operation_kind::tool) {
+        emit_event(
+            common_agent_daemon_event_type::turn_started,
+            request.request_id,
+            request.turn.turn_id,
+            "turn resumed after pending tool operation");
+    }
+    return common_agent_runtime_turn_disposition::continue_immediately;
 }
 
 common_agent_runtime_turn_disposition common_agent_runtime_session_manager::advance_lane_turn(
@@ -242,12 +353,12 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::preparing:
-            if (config.pending_tool_operation_resolver) {
-                std::optional<common_agent_runtime_session_manager_pending_tool_operation> pending_tool_operation;
-                if (!config.pending_tool_operation_resolver(request.turn, pending_tool_operation, error)) {
+            if (config.pending_operation_resolver) {
+                std::optional<common_agent_runtime_session_manager_pending_operation> pending_operation;
+                if (!config.pending_operation_resolver(request.turn, pending_operation, error)) {
                     {
                         std::lock_guard<std::mutex> lock(lane.mutex);
-                        lane.pending_tool_operation.reset();
+                        lane.pending_operation.reset();
                         if (lane.active_turn.has_value()) {
                             lane.active_turn->pending_operation.reset();
                             lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
@@ -261,24 +372,27 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                         error);
                     return common_agent_runtime_turn_disposition::failed;
                 }
-                if (pending_tool_operation.has_value()) {
+                if (pending_operation.has_value()) {
                     {
                         std::lock_guard<std::mutex> lock(lane.mutex);
-                        lane.pending_tool_operation = std::move(pending_tool_operation);
+                        lane.pending_operation = std::move(pending_operation);
                         if (lane.active_turn.has_value()) {
-                            lane.active_turn->phase = common_agent_runtime_turn_phase::awaiting_tool;
-                            lane.active_turn->disposition = common_agent_runtime_turn_disposition::wait_for_tool;
-                            lane.active_turn->pending_operation = lane.pending_tool_operation->pending_operation;
+                            lane.active_turn->phase = lane.pending_operation->waiting_phase;
+                            lane.active_turn->disposition = lane.pending_operation->waiting_disposition;
+                            lane.active_turn->pending_operation = lane.pending_operation->pending_operation;
                         }
                     }
                     emit_event(
-                        common_agent_daemon_event_type::tool_started,
+                        lane.pending_operation->pending_operation.kind ==
+                            common_agent_runtime_pending_operation_kind::tool
+                            ? common_agent_daemon_event_type::tool_started
+                            : common_agent_daemon_event_type::turn_started,
                         request.request_id,
                         request.turn.turn_id,
-                        lane.pending_tool_operation->pending_operation.detail.empty()
-                            ? "lane entered manager-owned pending tool operation"
-                            : lane.pending_tool_operation->pending_operation.detail);
-                    return common_agent_runtime_turn_disposition::wait_for_tool;
+                        lane.pending_operation->pending_operation.detail.empty()
+                            ? "lane entered manager-owned pending operation"
+                            : lane.pending_operation->pending_operation.detail);
+                    return lane.pending_operation->waiting_disposition;
                 }
             }
             {
@@ -303,6 +417,15 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::awaiting_inference: {
+            if (lane.pending_operation.has_value()) {
+                const auto pending_disposition = poll_pending_operation(
+                    lane,
+                    message,
+                    common_agent_runtime_turn_phase::awaiting_inference);
+                if (pending_disposition != common_agent_runtime_turn_disposition::continue_immediately) {
+                    return pending_disposition;
+                }
+            }
             const bool ok = lane.host->run_turn(request.turn, result, error);
             const auto disposition = ok
                 ? common_agent_runtime_turn_disposition::completed
@@ -335,90 +458,10 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
         }
 
         case common_agent_runtime_turn_phase::awaiting_tool:
-            if (request.turn.execution_control.should_stop()) {
-                {
-                    std::lock_guard<std::mutex> lock(lane.mutex);
-                    lane.pending_tool_operation.reset();
-                    if (lane.active_turn.has_value()) {
-                        lane.active_turn->pending_operation.reset();
-                        lane.active_turn->cancellation_requested = true;
-                        lane.active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
-                        lane.active_turn->phase = common_agent_runtime_turn_phase::cancelled;
-                    }
-                }
-                result = {};
-                result.cancelled = true;
-                result.error = request.turn.execution_control.stop_reason();
-                error = result.error;
-                emit_event(
-                    common_agent_daemon_event_type::turn_cancelled,
-                    request.request_id,
-                    request.turn.turn_id,
-                    result.error);
-                return common_agent_runtime_turn_disposition::cancelled;
-            }
-            if (!lane.pending_tool_operation.has_value()) {
-                error = "awaiting_tool phase is missing a pending tool operation";
-                {
-                    std::lock_guard<std::mutex> lock(lane.mutex);
-                    if (lane.active_turn.has_value()) {
-                        lane.active_turn->pending_operation.reset();
-                        lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
-                        lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
-                    }
-                }
-                emit_event(
-                    common_agent_daemon_event_type::turn_failed,
-                    request.request_id,
-                    request.turn.turn_id,
-                    error);
-                return common_agent_runtime_turn_disposition::failed;
-            }
-            {
-                bool ready = false;
-                if (!lane.pending_tool_operation->poll(ready, error)) {
-                    std::lock_guard<std::mutex> lock(lane.mutex);
-                    lane.pending_tool_operation.reset();
-                    if (lane.active_turn.has_value()) {
-                        lane.active_turn->pending_operation.reset();
-                        lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
-                        lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
-                    }
-                    emit_event(
-                        common_agent_daemon_event_type::turn_failed,
-                        request.request_id,
-                        request.turn.turn_id,
-                        error);
-                    return common_agent_runtime_turn_disposition::failed;
-                }
-                if (!ready) {
-                    std::lock_guard<std::mutex> lock(lane.mutex);
-                    if (lane.active_turn.has_value()) {
-                        lane.active_turn->disposition = common_agent_runtime_turn_disposition::wait_for_tool;
-                    }
-                    return common_agent_runtime_turn_disposition::wait_for_tool;
-                }
-            }
-            {
-                std::lock_guard<std::mutex> lock(lane.mutex);
-                if (lane.active_turn.has_value()) {
-                    lane.active_turn->pending_operation.reset();
-                    lane.active_turn->disposition = common_agent_runtime_turn_disposition::continue_immediately;
-                    lane.active_turn->phase = common_agent_runtime_turn_phase::awaiting_inference;
-                }
-                lane.pending_tool_operation.reset();
-            }
-            emit_event(
-                common_agent_daemon_event_type::tool_completed,
-                request.request_id,
-                request.turn.turn_id,
-                "manager-owned pending tool operation completed");
-            emit_event(
-                common_agent_daemon_event_type::turn_started,
-                request.request_id,
-                request.turn.turn_id,
-                "turn resumed after pending tool operation");
-            return common_agent_runtime_turn_disposition::continue_immediately;
+            return poll_pending_operation(
+                lane,
+                message,
+                common_agent_runtime_turn_phase::awaiting_inference);
 
         case common_agent_runtime_turn_phase::completing:
             {
@@ -685,7 +728,7 @@ bool common_agent_runtime_session_manager::reset_session(
         it->second.mailbox.clear();
         it->second.current_message.reset();
         it->second.active_turn.reset();
-        it->second.pending_tool_operation.reset();
+        it->second.pending_operation.reset();
         it->second.last_turn_id.clear();
         it->second.last_turn_phase = common_agent_runtime_turn_phase::queued;
         it->second.last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;

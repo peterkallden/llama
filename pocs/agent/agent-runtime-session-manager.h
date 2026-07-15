@@ -49,8 +49,11 @@ struct common_agent_runtime_session_manager_turn_request {
 };
 using common_agent_runtime_session_manager_turn_result = common_agent_runtime_session_host_turn_result;
 
-struct common_agent_runtime_session_manager_pending_tool_operation {
+struct common_agent_runtime_session_manager_pending_operation {
     common_agent_runtime_pending_operation pending_operation;
+    common_agent_runtime_turn_phase waiting_phase = common_agent_runtime_turn_phase::awaiting_tool;
+    common_agent_runtime_turn_disposition waiting_disposition =
+        common_agent_runtime_turn_disposition::wait_for_tool;
     std::function<bool(bool & ready, std::string & error)> poll;
 };
 
@@ -58,8 +61,8 @@ struct common_agent_runtime_session_manager_config {
     common_agent_runtime_session_host_config host_config;
     std::function<bool(
         const common_agent_runtime_session_host_turn_request & request,
-        std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
-        std::string & error)> pending_tool_operation_resolver;
+        std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
+        std::string & error)> pending_operation_resolver;
 };
 
 struct common_agent_runtime_session_manager_build_config {
@@ -80,8 +83,8 @@ struct common_agent_runtime_session_manager_build_config {
         std::string & error)> tooling_resolver;
     std::function<bool(
         const common_agent_runtime_session_host_turn_request & request,
-        std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
-        std::string & error)> pending_tool_operation_resolver;
+        std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
+        std::string & error)> pending_operation_resolver;
 };
 
 struct common_agent_runtime_active_turn_descriptor {
@@ -111,7 +114,7 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
     };
     return {
         make_agent_runtime_session_host_config(std::move(host_build_config)),
-        std::move(config.pending_tool_operation_resolver),
+        std::move(config.pending_operation_resolver),
     };
 }
 
@@ -183,7 +186,7 @@ private:
         std::deque<std::shared_ptr<common_agent_runtime_session_lane_message>> mailbox;
         std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
         std::optional<common_agent_runtime_turn_execution> active_turn;
-        std::optional<common_agent_runtime_session_manager_pending_tool_operation> pending_tool_operation;
+        std::optional<common_agent_runtime_session_manager_pending_operation> pending_operation;
         std::string last_turn_id;
         common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
         common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
@@ -216,6 +219,11 @@ private:
 
     void reconcile_lane_state(
         common_agent_runtime_session_lane & lane) const;
+
+    common_agent_runtime_turn_disposition poll_pending_operation(
+        common_agent_runtime_session_lane & lane,
+        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
+        common_agent_runtime_turn_phase phase);
 
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
