@@ -257,6 +257,58 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command cancel_command;
+    cancel_command.request_id = "cancel-service-1";
+    cancel_command.type = common_agent_daemon_command_type::cancel_turn;
+    common_agent_daemon_command_result cancel_service_result;
+    if (missing_payload_service.execute(cancel_command, cancel_service_result, error) ||
+            cancel_service_result.events.size() != 1 ||
+            cancel_service_result.events[0].event_type != common_agent_daemon_event_type::turn_cancel_rejected) {
+        std::fprintf(stderr, "service cancel rejection did not preserve typed event metadata\n");
+        return 1;
+    }
+
+    common_agent_daemon_command list_sessions_service_command;
+    list_sessions_service_command.request_id = "sessions-service-1";
+    list_sessions_service_command.type = common_agent_daemon_command_type::list_sessions;
+    common_agent_daemon_command_result list_sessions_service_result;
+    missing_payload_service.execute(list_sessions_service_command, list_sessions_service_result, error);
+    if (list_sessions_service_result.events.size() != 1 ||
+            list_sessions_service_result.events[0].event_type != common_agent_daemon_event_type::sessions_listed) {
+        std::fprintf(stderr, "service list_sessions did not preserve typed event metadata\n");
+        return 1;
+    }
+
+    common_agent_daemon_command get_session_service_command;
+    get_session_service_command.request_id = "session-service-1";
+    get_session_service_command.type = common_agent_daemon_command_type::get_session;
+    get_session_service_command.session = common_agent_daemon_session_payload{{"namespace-a", "session-a"}};
+    common_agent_daemon_command_result get_session_service_result;
+    if (missing_payload_service.execute(get_session_service_command, get_session_service_result, error) ||
+            get_session_service_result.event != "session_lookup_failed" ||
+            get_session_service_result.events.size() != 1 ||
+            get_session_service_result.events[0].event_type != common_agent_daemon_event_type::session_lookup_failed) {
+        std::fprintf(stderr, "service get_session failure did not preserve typed event metadata\n");
+        return 1;
+    }
+
+    common_agent_daemon_command read_resource_service_command;
+    read_resource_service_command.request_id = "resource-service-1";
+    read_resource_service_command.type = common_agent_daemon_command_type::read_resource;
+    read_resource_service_command.resource = common_agent_daemon_resource_payload{
+        "agent-resource://resource/r-1",
+        {"namespace-a", "session-a", "project-a", "turn-a"},
+        1024,
+    };
+    common_agent_daemon_command_result read_resource_service_result;
+    if (missing_payload_service.execute(read_resource_service_command, read_resource_service_result, error) ||
+            read_resource_service_result.event != "resource_read_failed" ||
+            read_resource_service_result.events.size() != 1 ||
+            read_resource_service_result.events[0].event_type != common_agent_daemon_event_type::resource_read_failed) {
+        std::fprintf(stderr, "service read_resource failure did not preserve typed event metadata\n");
+        return 1;
+    }
+
     common_agent_daemon_service rejected_turn_service({});
     common_agent_daemon_command rejected_turn_command = turn_command;
     rejected_turn_command.request_id = "turn-rejected";

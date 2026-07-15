@@ -35,12 +35,24 @@ enum class common_agent_daemon_event_type {
     session_closed,
     lane_drained,
     status_reported,
+    sessions_listed,
+    session_found,
+    session_not_found,
+    session_lookup_failed,
     resources_listed,
+    resources_list_failed,
     memories_listed,
+    memories_list_failed,
     plans_listed,
+    plans_list_failed,
     resource_read,
+    resource_not_found,
+    resource_read_failed,
+    session_reset_failed,
+    session_close_failed,
     drain_requested,
     shutdown_requested,
+    command_failed,
 };
 
 inline const char * common_agent_daemon_event_type_name(
@@ -76,12 +88,24 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::session_closed:          return "session.closed";
         case common_agent_daemon_event_type::lane_drained:            return "lane.drained";
         case common_agent_daemon_event_type::status_reported:         return "status.reported";
+        case common_agent_daemon_event_type::sessions_listed:         return "sessions.listed";
+        case common_agent_daemon_event_type::session_found:           return "session.found";
+        case common_agent_daemon_event_type::session_not_found:       return "session.not_found";
+        case common_agent_daemon_event_type::session_lookup_failed:   return "session.lookup_failed";
         case common_agent_daemon_event_type::resources_listed:        return "resources.listed";
+        case common_agent_daemon_event_type::resources_list_failed:   return "resources.list_failed";
         case common_agent_daemon_event_type::memories_listed:         return "memories.listed";
+        case common_agent_daemon_event_type::memories_list_failed:    return "memories.list_failed";
         case common_agent_daemon_event_type::plans_listed:            return "plans.listed";
+        case common_agent_daemon_event_type::plans_list_failed:       return "plans.list_failed";
         case common_agent_daemon_event_type::resource_read:           return "resource.read";
+        case common_agent_daemon_event_type::resource_not_found:      return "resource.not_found";
+        case common_agent_daemon_event_type::resource_read_failed:    return "resource.read_failed";
+        case common_agent_daemon_event_type::session_reset_failed:    return "session.reset_failed";
+        case common_agent_daemon_event_type::session_close_failed:    return "session.close_failed";
         case common_agent_daemon_event_type::drain_requested:         return "daemon.drain_requested";
         case common_agent_daemon_event_type::shutdown_requested:      return "daemon.shutdown_requested";
+        case common_agent_daemon_event_type::command_failed:          return "command.failed";
     }
     return "unknown";
 }

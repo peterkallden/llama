@@ -508,6 +508,7 @@ bool common_agent_daemon_service::execute_outcome(
             error = "cancel_turn is handled by the daemon dispatcher";
             outcome.error = error;
             append_event("turn.cancel_rejected", command.request_id, {}, error);
+            events.back().event_type = common_agent_daemon_event_type::turn_cancel_rejected;
             return false;
 
         case common_agent_daemon_command_type::list_sessions:
@@ -525,17 +526,32 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.error = "daemon host is not initialized";
             }
             append_event("sessions.listed", command.request_id, {}, std::to_string(outcome.status.session_count));
+            events.back().event_type = common_agent_daemon_event_type::sessions_listed;
             error = outcome.error;
             return outcome.ok;
 
         case common_agent_daemon_command_type::get_session:
             if (!command.session.has_value()) {
                 error = "get_session command missing session payload";
-                return fail_lifecycle_result(command, outcome, events, error, "session_lookup_failed", "session.lookup_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_lookup_failed",
+                    "session.lookup_failed",
+                    common_agent_daemon_event_type::session_lookup_failed);
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "session_lookup_failed", "session.lookup_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_lookup_failed",
+                    "session.lookup_failed",
+                    common_agent_daemon_event_type::session_lookup_failed);
             }
             outcome.response_kind = common_agent_daemon_response_kind::status;
             outcome.event = "session_found";
@@ -555,10 +571,12 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.event = "session_not_found";
                 outcome.ok = false;
                 append_event("session.not_found", command.request_id, {}, error);
+                events.back().event_type = common_agent_daemon_event_type::session_not_found;
                 return false;
             }
             outcome.ok = true;
             append_event("session.found", command.request_id, {}, outcome.status.sessions.front().key.session_id);
+            events.back().event_type = common_agent_daemon_event_type::session_found;
             error.clear();
             return true;
 
@@ -580,6 +598,7 @@ bool common_agent_daemon_service::execute_outcome(
             if (!outcome.ok) {
                 outcome.error = error;
                 append_event("resources.list_failed", command.request_id, {}, error);
+                events.back().event_type = common_agent_daemon_event_type::resources_list_failed;
                 return false;
             }
             append_event("resources.listed", command.request_id, {}, std::to_string(outcome.listing_result.resources.size()));
@@ -617,6 +636,7 @@ bool common_agent_daemon_service::execute_outcome(
                 if (!error.empty()) {
                     outcome.error = error;
                     append_event("memories.list_failed", command.request_id, {}, error);
+                    events.back().event_type = common_agent_daemon_event_type::memories_list_failed;
                     return false;
                 }
                 collected.insert(collected.end(), session_memories.begin(), session_memories.end());
@@ -632,6 +652,7 @@ bool common_agent_daemon_service::execute_outcome(
                     if (!error.empty()) {
                         outcome.error = error;
                         append_event("memories.list_failed", command.request_id, {}, error);
+                        events.back().event_type = common_agent_daemon_event_type::memories_list_failed;
                         return false;
                     }
                     collected.insert(collected.end(), project_memories.begin(), project_memories.end());
@@ -671,6 +692,7 @@ bool common_agent_daemon_service::execute_outcome(
                 if (!error.empty()) {
                     outcome.error = error;
                     append_event("plans.list_failed", command.request_id, {}, error);
+                    events.back().event_type = common_agent_daemon_event_type::plans_list_failed;
                     return false;
                 }
                 for (const auto & plan : plans) {
@@ -703,15 +725,36 @@ bool common_agent_daemon_service::execute_outcome(
         case common_agent_daemon_command_type::reset_session:
             if (!command.session.has_value()) {
                 error = "reset_session command missing session payload";
-                return fail_lifecycle_result(command, outcome, events, error, "session_reset_failed", "session.reset_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    "session.reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "session_reset_failed", "session.reset_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    "session.reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
             }
             outcome.ok = runtime.host->reset_session(command.session->key, error);
             if (!outcome.ok) {
-                return fail_lifecycle_result(command, outcome, events, error, "session_reset_failed", "session.reset_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    "session.reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
             }
             return succeed_lifecycle_result(
                 command,
@@ -726,15 +769,36 @@ bool common_agent_daemon_service::execute_outcome(
         case common_agent_daemon_command_type::close_session:
             if (!command.session.has_value()) {
                 error = "close_session command missing session payload";
-                return fail_lifecycle_result(command, outcome, events, error, "session_close_failed", "session.close_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    "session.close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
             }
             if (!runtime.host) {
                 error = "daemon host is not initialized";
-                return fail_lifecycle_result(command, outcome, events, error, "session_close_failed", "session.close_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    "session.close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
             }
             outcome.ok = runtime.host->close_session(command.session->key, error);
             if (!outcome.ok) {
-                return fail_lifecycle_result(command, outcome, events, error, "session_close_failed", "session.close_failed");
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    "session.close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
             }
             return succeed_lifecycle_result(
                 command,
@@ -761,6 +825,7 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.event = "resource_not_found";
                 outcome.error = error;
                 append_event("resource.not_found", command.request_id, {}, error);
+                events.back().event_type = common_agent_daemon_event_type::resource_not_found;
                 return false;
             }
             if (!runtime.resource_store->read_text(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error)) {
@@ -768,6 +833,7 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.event = "resource_read_failed";
                 outcome.error = error;
                 append_event("resource.read_failed", command.request_id, {}, error);
+                events.back().event_type = common_agent_daemon_event_type::resource_read_failed;
                 return false;
             }
             outcome.ok = true;
@@ -874,5 +940,12 @@ bool common_agent_daemon_service::execute_outcome(
     }
 
     error = "unsupported daemon command";
-    return fail_lifecycle_result(command, outcome, events, error, {}, "command.failed");
+    return fail_lifecycle_result(
+        command,
+        outcome,
+        events,
+        error,
+        {},
+        "command.failed",
+        common_agent_daemon_event_type::command_failed);
 }
