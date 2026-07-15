@@ -2,11 +2,11 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../agent/agent-cli-config.cpp
     ../agent/agent-cli-generation-utils.cpp
     ../agent/agent-cli-run-adapter.cpp
-    ../agent/agent-daemon-client-admin.cpp
-    ../agent/agent-daemon-client-status.cpp
-    ../agent/agent-daemon-client.cpp
+    ../../tools/agent/daemon/agent-daemon-client-admin.cpp
+    ../../tools/agent/daemon/agent-daemon-client-status.cpp
+    ../../tools/agent/daemon/agent-daemon-client.cpp
     ../agent/agent-daemon-event-collector.cpp
-    ../agent/agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     ../agent/agent-host-config.cpp
     ../agent/agent-mcp-protocol.cpp
     ../agent/agent-selection-contracts.cpp
@@ -59,6 +59,7 @@ set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-memory)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../agent
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )

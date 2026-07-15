@@ -2,11 +2,11 @@ set(AGENT_RUNTIME_SOURCES
     agent-cli-config.cpp
     agent-cli-generation-utils.cpp
     agent-cli-run-adapter.cpp
-    agent-daemon-client-admin.cpp
-    agent-daemon-client-status.cpp
-    agent-daemon-client.cpp
+    ../../tools/agent/daemon/agent-daemon-client-admin.cpp
+    ../../tools/agent/daemon/agent-daemon-client-status.cpp
+    ../../tools/agent/daemon/agent-daemon-client.cpp
     agent-daemon-event-collector.cpp
-    agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     agent-host-config.cpp
     agent-mcp-protocol.cpp
     agent-selection-contracts.cpp
@@ -59,6 +59,7 @@ set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -85,6 +86,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -107,6 +109,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -129,6 +132,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -151,6 +155,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -174,6 +179,7 @@ add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -200,6 +206,7 @@ add_dependencies(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -223,6 +230,7 @@ add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -246,6 +254,7 @@ add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -347,11 +356,12 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
     agent-daemon-jsonl-protocol-smoke.cpp
-    agent-daemon-client-status.cpp
-    agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-client-status.cpp
+    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/vendor
 )
 target_link_libraries(${TARGET} PRIVATE
@@ -362,10 +372,11 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-daemon-client-fake-daemon)
 add_executable(${TARGET}
     agent-daemon-client-fake-daemon.cpp
-    agent-daemon-jsonl-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/vendor
 )
 target_link_libraries(${TARGET} PRIVATE
@@ -382,6 +393,7 @@ add_dependencies(${TARGET} llama-agent-daemon-client-fake-daemon)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -404,6 +416,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_link_libraries(${TARGET} PRIVATE

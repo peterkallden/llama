@@ -109,6 +109,7 @@ common/
 
 tools/
   agent/
+    daemon/    daemon admin/client/jsonl transport and related host-side protocol code
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
@@ -124,6 +125,7 @@ Short responsibility summary:
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
+- `tools/agent/daemon`: daemon-facing admin/client support, JSONL protocol shaping, and other host-side daemon transport helpers.
 - `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
 - `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
 
@@ -147,6 +149,8 @@ The first slice now underway is intentionally narrow:
 - compatibility headers remain in the old locations for now so the rest of the branch can migrate gradually
 
 The next small correction after that first slice is to keep `resource` itself as a domain contract. In other words: traces and other generic runtime envelopes belong in `common/runtime`, but resource references, authority, and host-owned resource-store contracts fit better under `common/resource`, with compatibility wrappers left in place while callers migrate.
+
+The next bounded host slice is now underway as well: daemon client/admin and JSONL protocol code has started moving out of `pocs/agent` and into `tools/agent/daemon`, again with compatibility headers left in the old path for a gradual migration.
 
 ## Design Constraints
 
