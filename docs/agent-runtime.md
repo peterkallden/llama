@@ -66,6 +66,8 @@ The newest part of that projection is intentionally pragmatic rather than fully 
 
 The next small cleanup inside that seam is now in place too: daemon execution now has an internal split between command outcome and event log before anything is projected back to the current wire/result shape. In practice that means the service layer can produce a host-owned outcome payload without also being the long-term owner of the projected JSONL response envelope, while the dispatcher remains the place where queued/started/internal daemon events are merged and then projected to today's `common_agent_daemon_command_result`. The transport still sees the same response surface, but the core no longer has to treat "response object with embedded event vector" as its native execution model.
 
+That event projection is now also a little more internally consistent for fast service-owned replies. Status, drain, shutdown, resource/listing results, early turn-failure paths, and dispatcher-owned `command.queued` / `command.started` markers now preserve typed daemon event metadata directly instead of mixing the typed path with one-off raw string events for the same already-named event families.
+
 The JSONL/client side now mirrors that a little better as well. The parser no longer treats `events` as opaque leftover payload inside only a few response types; turn, status, lifecycle, listing, resource and event responses now all expose parsed `daemon_event_count` plus a small typed event-entry list with `type`, `event_type`, `sequence`, request/turn ids and detail when present. That keeps future client/admin work from having to re-open raw JSON just to inspect the daemon event surface.
 
 The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
@@ -948,8 +950,10 @@ The resident-inference branch has been validated with:
   - that same parked-turn smoke now also checks that the lane/session descriptors preserve `pending_operation_kind` and `pending_operation_detail` while a turn is actually parked
 - that same parked-turn smoke now also verifies the new internal wait-entered events for both `turn.waiting_for_tool` and `turn.waiting_for_inference`
 - `llama-agent-daemon-wait-events-smoke`, verifying those same `turn.waiting_for_tool` and `turn.waiting_for_inference` events survive dispatcher/service projection and appear in the final daemon command result without needing a live model
+- that same daemon wait-events smoke now also checks typed `command.queued`, `command.started`, and typed wait-entered event metadata on the projected dispatcher result
   - `llama-agent-daemon-jsonl-protocol-smoke`, verifying the JSONL/admin status contract now projects lane-owned pending operation kind/detail on both the top-level active turn and the keyed session binding summary
   - `llama-agent-daemon-protocol-smoke`, verifying the daemon-side status serializer emits the same pending-operation fields before the JSONL/client parser ever sees them
+  - `llama-agent-daemon-protocol-smoke` now also verifies typed daemon event metadata for service-owned `status`, `drain`, `shutdown`, and early `turn.failed` result shaping
 - `llama-agent-daemon-client-smoke`, verifying the child-process admin/client path renders the same pending active-turn and session-binding state through `/sessions`, `/session`, and lifecycle/admin summaries
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`

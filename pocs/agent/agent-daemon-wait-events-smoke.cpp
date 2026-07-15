@@ -42,6 +42,17 @@ bool has_event_type(
     return false;
 }
 
+bool has_typed_event(
+        const common_agent_daemon_command_result & result,
+        common_agent_daemon_event_type event_type) {
+    for (const auto & event : result.events) {
+        if (event.event_type == event_type) {
+            return true;
+        }
+    }
+    return false;
+}
+
 common_agent_daemon_runtime make_waiting_runtime(
         common_agent_runtime_pending_operation_kind kind,
         const std::string & pending_detail,
@@ -134,7 +145,10 @@ int main() {
         tool_wait_error);
 
     if (tool_wait_ok ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::command_queued) ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::command_started) ||
             !has_event_type(tool_wait_result, "turn.waiting_for_tool") ||
+            !has_typed_event(tool_wait_result, common_agent_daemon_event_type::turn_waiting_for_tool) ||
             tool_wait_result.turn_result.error.find("wait-events tool resolver") == std::string::npos) {
         std::fprintf(stderr, "tool wait scenario did not project the waiting event correctly\n");
         return 1;
@@ -158,7 +172,10 @@ int main() {
         inference_wait_error);
 
     if (inference_wait_ok ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::command_queued) ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::command_started) ||
             !has_event_type(inference_wait_result, "turn.waiting_for_inference") ||
+            !has_typed_event(inference_wait_result, common_agent_daemon_event_type::turn_waiting_for_inference) ||
             inference_wait_result.turn_result.error.find("wait-events inference resolver") == std::string::npos) {
         std::fprintf(stderr, "inference wait scenario did not project the waiting event correctly\n");
         return 1;

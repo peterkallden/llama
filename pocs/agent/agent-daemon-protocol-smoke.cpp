@@ -156,6 +156,18 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command shutdown_command;
+    if (!parse_agent_daemon_command(
+            json{{"request_id", "shutdown-1"}, {"command", "shutdown"}},
+            options,
+            common_agent_runtime_host_mode::chat,
+            shutdown_command,
+            error) ||
+            shutdown_command.type != common_agent_daemon_command_type::shutdown) {
+        std::fprintf(stderr, "failed to parse shutdown command: %s\n", error.c_str());
+        return 1;
+    }
+
     common_agent_daemon_command turn_command;
     if (!parse_agent_daemon_command(
             json{
@@ -234,6 +246,8 @@ int main() {
     common_agent_daemon_command_result missing_payload_result;
     if (missing_payload_service.execute(missing_payload_command, missing_payload_result, error) ||
             missing_payload_result.event != "turn_failed" ||
+            missing_payload_result.events.size() != 1 ||
+            missing_payload_result.events[0].event_type != common_agent_daemon_event_type::turn_failed ||
             missing_payload_result.turn_result.error != "run_turn command missing turn payload" ||
             missing_payload_result.turn_result.cancelled ||
             missing_payload_result.turn_result.failure_class != common_agent_failure_class::execution ||
@@ -252,12 +266,42 @@ int main() {
     common_agent_daemon_command_result rejected_turn_result;
     if (rejected_turn_service.execute(rejected_turn_command, rejected_turn_result, error) ||
             rejected_turn_result.event != "turn_rejected" ||
+            rejected_turn_result.events.size() != 1 ||
+            rejected_turn_result.events[0].type != "turn.rejected" ||
             rejected_turn_result.turn_result.error != "daemon is not accepting new turns" ||
             !rejected_turn_result.turn_result.cancelled ||
             rejected_turn_result.turn_result.failure_class != common_agent_failure_class::timeout ||
             rejected_turn_result.turn_result.response_generation_status != common_agent_generation_status::cancelled ||
             rejected_turn_result.turn_result.response_stop_reason != common_agent_generation_stop_reason::cancelled) {
         std::fprintf(stderr, "rejected-turn service failure did not preserve expected timeout metadata\n");
+        return 1;
+    }
+
+    common_agent_daemon_command_result service_status_result;
+    service_status_result.request_id = "status-live-1";
+    rejected_turn_service.populate_status(service_status_result, error);
+    if (service_status_result.event != "status" ||
+            service_status_result.events.size() != 1 ||
+            service_status_result.events[0].event_type != common_agent_daemon_event_type::status_reported) {
+        std::fprintf(stderr, "service status did not preserve typed status event metadata: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command_result drain_service_result;
+    if (!rejected_turn_service.execute(drain_command, drain_service_result, error) ||
+            drain_service_result.event != "drain" ||
+            drain_service_result.events.size() != 1 ||
+            drain_service_result.events[0].event_type != common_agent_daemon_event_type::drain_requested) {
+        std::fprintf(stderr, "drain service result did not preserve typed daemon event metadata: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_command_result shutdown_service_result;
+    if (!rejected_turn_service.execute(shutdown_command, shutdown_service_result, error) ||
+            shutdown_service_result.event != "shutdown" ||
+            shutdown_service_result.events.size() != 1 ||
+            shutdown_service_result.events[0].event_type != common_agent_daemon_event_type::shutdown_requested) {
+        std::fprintf(stderr, "shutdown service result did not preserve typed daemon event metadata: %s\n", error.c_str());
         return 1;
     }
 

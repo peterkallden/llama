@@ -87,6 +87,22 @@ struct common_agent_daemon_event {
     uint64_t sequence = 0;
 };
 
+inline common_agent_daemon_event make_common_agent_daemon_event(
+        common_agent_daemon_event_type type,
+        std::string request_id,
+        std::string turn_id,
+        std::string detail = {},
+        uint64_t sequence = 0) {
+    return {
+        common_agent_daemon_event_type_name(type),
+        std::move(request_id),
+        std::move(turn_id),
+        std::move(detail),
+        type,
+        sequence,
+    };
+}
+
 using common_agent_daemon_event_sink =
     std::function<void(
         common_agent_daemon_event_type type,

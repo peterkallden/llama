@@ -166,12 +166,10 @@ bool common_agent_daemon_dispatcher::execute(
                 "command.rejected",
                 command_turn_id(command));
         }
-        item->events.push_back(common_agent_daemon_event{
-            "command.queued",
+        item->events.push_back(make_common_agent_daemon_event(
+            common_agent_daemon_event_type::command_queued,
             command.request_id,
-            command_turn_id(command),
-            {},
-        });
+            command_turn_id(command)));
         queue.push_back(item);
     }
 
@@ -239,12 +237,10 @@ bool common_agent_daemon_dispatcher::execute_session_lifecycle(
                 ++it;
             }
         }
-        item->events.push_back(common_agent_daemon_event{
-            "command.queued",
+        item->events.push_back(make_common_agent_daemon_event(
+            common_agent_daemon_event_type::command_queued,
             command.request_id,
-            command_turn_id(command),
-            {},
-        });
+            command_turn_id(command)));
         queue.push_back(item);
     }
 
@@ -556,9 +552,9 @@ void common_agent_daemon_dispatcher::worker_loop() {
         common_agent_daemon_command_execution execution;
         execution.outcome.request_id = item->command.request_id;
         execution.events = item->events;
-        append_agent_daemon_execution_event(
+        append_agent_daemon_execution_typed_event(
             execution,
-            "command.started",
+            common_agent_daemon_event_type::command_started,
             item->command.request_id,
             command_turn_id(item->command));
         if (item->command.type == common_agent_daemon_command_type::get_status) {

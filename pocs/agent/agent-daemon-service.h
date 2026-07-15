@@ -184,6 +184,13 @@ void append_agent_daemon_execution_event(
     std::string turn_id,
     std::string detail = {});
 
+void append_agent_daemon_execution_typed_event(
+    common_agent_daemon_command_execution & execution,
+    common_agent_daemon_event_type type,
+    std::string request_id,
+    std::string turn_id,
+    std::string detail = {});
+
 class common_agent_daemon_service {
 public:
     explicit common_agent_daemon_service(common_agent_daemon_runtime runtime);
@@ -252,7 +259,8 @@ private:
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type) const;
+        std::string daemon_event_type,
+        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown) const;
 
     bool fail_turn_result(
         const common_agent_daemon_command & command,
@@ -260,7 +268,8 @@ private:
         std::vector<common_agent_daemon_event> & events,
         std::string & error,
         std::string event,
-        std::string daemon_event_type) const;
+        std::string daemon_event_type,
+        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown) const;
 
     bool succeed_lifecycle_result(
         const common_agent_daemon_command & command,
@@ -269,6 +278,7 @@ private:
         std::string & error,
         std::string event,
         std::string daemon_event_type,
+        common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown,
         std::string detail = {}) const;
 
     common_agent_daemon_runtime runtime;
