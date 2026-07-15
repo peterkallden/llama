@@ -297,6 +297,8 @@ int main() {
     status_result.status.active_turn_id = "turn-active";
     status_result.status.active_turn_phase = "awaiting_inference";
     status_result.status.active_turn_disposition = "continue_immediately";
+    status_result.status.active_pending_operation_kind = "inference";
+    status_result.status.active_pending_operation_detail = "session host turn execution";
     common_agent_runtime_session_descriptor session_descriptor;
     session_descriptor.key = {"namespace-a", "session-a"};
     session_descriptor.project_id = "project-a";
@@ -309,6 +311,8 @@ int main() {
     session_descriptor.active_turn_id = "turn-active";
     session_descriptor.active_turn_phase = "awaiting_inference";
     session_descriptor.active_turn_disposition = "continue_immediately";
+    session_descriptor.pending_operation_kind = "inference";
+    session_descriptor.pending_operation_detail = "session host turn execution";
     session_descriptor.last_turn_id = "turn-a";
     session_descriptor.last_turn_phase = "completed";
     session_descriptor.last_turn_disposition = "completed";
@@ -322,6 +326,8 @@ int main() {
             status_response.value("active_turn_id", "") != "turn-active" ||
             status_response.value("active_turn_phase", "") != "awaiting_inference" ||
             status_response.value("active_turn_disposition", "") != "continue_immediately" ||
+            status_response.value("active_pending_operation_kind", "") != "inference" ||
+            status_response.value("active_pending_operation_detail", "") != "session host turn execution" ||
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||
@@ -330,6 +336,8 @@ int main() {
             status_response["session_keys"][0].value("active_turn_id", "") != "turn-active" ||
             status_response["session_keys"][0].value("active_turn_phase", "") != "awaiting_inference" ||
             status_response["session_keys"][0].value("active_turn_disposition", "") != "continue_immediately" ||
+            status_response["session_keys"][0].value("pending_operation_kind", "") != "inference" ||
+            status_response["session_keys"][0].value("pending_operation_detail", "") != "session host turn execution" ||
             status_response["session_keys"][0].value("last_turn_id", "") != "turn-a" ||
             status_response["session_keys"][0].value("last_turn_phase", "") != "completed" ||
             status_response["session_keys"][0].value("last_turn_disposition", "") != "completed" ||
