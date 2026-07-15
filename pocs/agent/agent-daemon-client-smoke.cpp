@@ -213,6 +213,12 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon client smoke missing /session output: %s\n", output.c_str());
         return 1;
     }
+    if (!contains(
+                output,
+                "active_turn=turn-active/awaiting_inference:continue_immediately pending=inference(session host turn execution)")) {
+        std::fprintf(stderr, "daemon client smoke missing pending active-turn summary: %s\n", output.c_str());
+        return 1;
+    }
     if (!contains(output, "[daemon-resources] count=1")) {
         std::fprintf(stderr, "daemon client smoke missing /resources output: %s\n", output.c_str());
         return 1;
@@ -247,6 +253,12 @@ int main(int argc, char ** argv) {
     }
     if (!contains(output, "namespace-a/session-a@project-a#pack-a")) {
         std::fprintf(stderr, "daemon client smoke missing session binding summary: %s\n", output.c_str());
+        return 1;
+    }
+    if (!contains(
+                output,
+                "namespace-a/session-a@project-a#pack-a{state=running}[active=turn-active/awaiting_inference:continue_immediately pending=inference(session host turn execution)]")) {
+        std::fprintf(stderr, "daemon client smoke missing pending session binding summary: %s\n", output.c_str());
         return 1;
     }
 
