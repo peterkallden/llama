@@ -412,9 +412,26 @@ bool initialize_agent_daemon_environment(
         return false;
     }
 
+    auto session_manager_build_config = make_session_host_build_config(
+        *runtime.memory_store,
+        *runtime.plan_store,
+        *runtime.resource_store,
+        options);
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(
-        make_agent_runtime_session_manager_config(
-            make_session_host_build_config(*runtime.memory_store, *runtime.plan_store, *runtime.resource_store, options)));
+        make_agent_runtime_session_manager_config({
+            session_manager_build_config.memory_store,
+            session_manager_build_config.plan_store,
+            std::move(session_manager_build_config.resident_request),
+            std::move(session_manager_build_config.policy),
+            std::move(session_manager_build_config.runtime_config),
+            std::move(session_manager_build_config.orchestration_config),
+            session_manager_build_config.memory_scope,
+            session_manager_build_config.memory_enabled,
+            std::move(session_manager_build_config.installed_blueprint_candidates),
+            std::move(session_manager_build_config.tooling),
+            std::move(session_manager_build_config.tooling_resolver),
+            {},
+        }));
     error.clear();
     return true;
 }

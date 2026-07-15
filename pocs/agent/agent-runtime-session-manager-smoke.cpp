@@ -49,7 +49,7 @@ int main() {
             return false;
         };
     auto manager_config = make_agent_runtime_session_manager_config(std::move(manager_build_config));
-    if (!manager_config.tooling_resolver) {
+    if (!manager_config.host_config.tooling_resolver) {
         std::fprintf(stderr, "session manager smoke lost the tooling resolver while building config\n");
         return 1;
     }
@@ -268,7 +268,7 @@ int main() {
             return true;
         };
     auto active_manager_config = make_agent_runtime_session_manager_config(std::move(active_manager_build_config));
-    if (!active_manager_config.tooling_resolver) {
+    if (!active_manager_config.host_config.tooling_resolver) {
         std::fprintf(stderr, "session manager active-turn smoke lost the tooling resolver while building config\n");
         return 1;
     }
@@ -743,8 +743,141 @@ int main() {
         return 1;
     }
 
+    auto waiting_poll_count = std::make_shared<int>(0);
+    auto waiting_tool_started = std::make_shared<std::promise<void>>();
+    auto waiting_tool_started_future = waiting_tool_started->get_future();
+
+    common_agent_runtime_session_manager_build_config waiting_manager_build_config = {
+        memory_store,
+        plan_store,
+    };
+    waiting_manager_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    waiting_manager_build_config.tooling_resolver =
+        [](const common_agent_runtime_resident_runtime *,
+                const common_agent_runtime_session_host_turn_request & request,
+                common_agent_runtime_tooling & tooling,
+                std::string & error) {
+            tooling = {};
+            error = "tool-wait-resolver turn=" + request.turn_id;
+            return false;
+        };
+    waiting_manager_build_config.pending_tool_operation_resolver =
+        [waiting_poll_count, waiting_tool_started](
+                const common_agent_runtime_session_host_turn_request & request,
+                std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
+                std::string & error) {
+            pending_operation = common_agent_runtime_session_manager_pending_tool_operation{};
+            pending_operation->pending_operation.operation_id = "tool:" + request.turn_id;
+            pending_operation->pending_operation.kind = common_agent_runtime_pending_operation_kind::tool;
+            pending_operation->pending_operation.detail = "session manager smoke pending tool";
+            pending_operation->poll =
+                [waiting_poll_count, waiting_tool_started](bool & ready, std::string & error) mutable {
+                    ++(*waiting_poll_count);
+                    if (*waiting_poll_count == 1) {
+                        waiting_tool_started->set_value();
+                    }
+                    ready = false;
+                    error.clear();
+                    return true;
+                };
+            error.clear();
+            return true;
+        };
+    auto waiting_manager_config = make_agent_runtime_session_manager_config(std::move(waiting_manager_build_config));
+    common_agent_runtime_session_manager waiting_manager(std::move(waiting_manager_config));
+
+    auto waiting_control = make_common_agent_runtime_execution_control({});
+    common_agent_runtime_session_manager_turn_result waiting_result;
+    std::string waiting_error;
+    auto waiting_future = std::async(std::launch::async, [&]() {
+        return waiting_manager.run_turn({
+            "request-10",
+            {
+                common_agent_runtime_host_mode::chat,
+                "tool-wait",
+                "session-f",
+                "namespace-f",
+                "",
+                "turn-10",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                waiting_control,
+            },
+        }, waiting_result, waiting_error);
+    });
+
+    if (waiting_tool_started_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager tool-wait smoke did not enter the pending tool state in time\n");
+        return 1;
+    }
+
+    const auto waiting_active_turn = waiting_manager.describe_active_turn();
+    if (!waiting_active_turn.has_value() ||
+            waiting_active_turn->request_id != "request-10" ||
+            waiting_active_turn->turn_id != "turn-10" ||
+            waiting_active_turn->phase != "awaiting_tool" ||
+            waiting_active_turn->disposition != "wait_for_tool") {
+        std::fprintf(
+            stderr,
+            "session manager did not expose the waiting tool state: request='%s' turn='%s' phase='%s' disposition='%s'\n",
+            waiting_active_turn.has_value() ? waiting_active_turn->request_id.c_str() : "",
+            waiting_active_turn.has_value() ? waiting_active_turn->turn_id.c_str() : "",
+            waiting_active_turn.has_value() ? waiting_active_turn->phase.c_str() : "",
+            waiting_active_turn.has_value() ? waiting_active_turn->disposition.c_str() : "");
+        return 1;
+    }
+
+    const auto waiting_sessions = waiting_manager.list_sessions();
+    if (waiting_sessions.size() != 1 ||
+            waiting_sessions[0].lane_state != "running" ||
+            !waiting_sessions[0].has_active_turn ||
+            waiting_sessions[0].active_turn_phase != "awaiting_tool" ||
+            waiting_sessions[0].active_turn_disposition != "wait_for_tool") {
+        std::fprintf(stderr, "session manager did not retain awaiting_tool lane diagnostics\n");
+        return 1;
+    }
+
+    common_agent_runtime_active_turn_descriptor cancelled_waiting_turn;
+    error.clear();
+    if (!waiting_manager.request_cancel_active_turn("request-10", "", cancelled_waiting_turn, error) ||
+            cancelled_waiting_turn.request_id != "request-10" ||
+            cancelled_waiting_turn.turn_id != "turn-10" ||
+            !cancelled_waiting_turn.cancellation_requested) {
+        std::fprintf(stderr, "session manager failed to cancel the waiting tool turn: %s\n", error.c_str());
+        return 1;
+    }
+
+    if (waiting_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+        std::fprintf(stderr, "session manager tool-wait smoke did not finish after cancellation\n");
+        return 1;
+    }
+    if (waiting_future.get()) {
+        std::fprintf(stderr, "session manager tool-wait smoke unexpectedly succeeded\n");
+        return 1;
+    }
+    if (!waiting_result.cancelled || waiting_result.error != "turn cancelled by host") {
+        std::fprintf(stderr, "session manager tool-wait smoke did not preserve cancellation result\n");
+        return 1;
+    }
+
     std::printf("session_manager_tooling_calls=%d\n", *call_count);
     std::printf("session_manager_queued_calls=%d\n", *queued_call_count);
     std::printf("session_manager_lifecycle_calls=%d\n", *lifecycle_call_count + *close_call_count);
+    std::printf("session_manager_waiting_tool_polls=%d\n", *waiting_poll_count);
     return 0;
 }

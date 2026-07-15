@@ -865,6 +865,8 @@ The current code should remain useful without any of these. The next steps shoul
 
    Synchronous tools are still acceptable for the current slice. The daemon/session seam now has a shared execution-control contract plus active-turn cancellation requests, configured timeout budgets, and per-turn daemon request overrides, but workers should still wait until those controls propagate all the way into inference, tool execution, MCP requests, retry policy, ordering, and richer failure reporting.
 
+   The session-lane state machine now also has a first concrete `wait_for_tool` slice above that control contract. This is intentionally narrow: the keyed session manager can now park a lane in `awaiting_tool` behind a manager-owned pending tool operation, poll that operation, and then either resume the same turn back into inference or cancel/fail it through the same host-owned execution control. The important boundary is that this is still a lane/session seam, not a fully asynchronous resident runtime yet. `common_agent_runtime_session_host` still executes one turn synchronously once it is entered; the new waiting state exists so daemon/session orchestration can start behaving more like an actor without pretending the whole agent loop is already coroutine-shaped.
+
 6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
 
    The current `server-context` path is a good resident smoke backend, but a real host should be able to keep models loaded while resetting or expiring individual agent sessions.
@@ -938,6 +940,7 @@ The resident-inference branch has been validated with:
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
 - `llama-agent-runtime-session-manager-smoke` also verifies that `reset_all()` now routes through lane-owned close semantics instead of bypassing the lane lifecycle with a raw map clear
+- `llama-agent-runtime-session-manager-smoke` now also verifies a manager-owned `awaiting_tool` lane state, including one poll cycle in `wait_for_tool` plus host-driven cancellation back out of that parked state
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
 - resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
@@ -960,6 +963,8 @@ The foreground daemon `mini` path is now part of the smoke baseline as well. One
 Another small runtime stabilization in the current slice is around incomplete `memory_get` planning/repair steps. The model still sometimes proposes `memory_get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
 
 The daemon/session seam also took another small actor-shaped step in the same sweep. Session lanes already owned their own mailbox and lifecycle once a turn had reached the keyed session manager, but the foreground daemon still had a global dispatcher queue in front of that seam. `cancel_turn` already knew how to remove a queued turn there; `reset_session` and `close_session` now do the equivalent for queued turns that belong to the same session before those turns ever reach the lane. That keeps session lifecycle actions from racing with stale same-session work that was still parked in the transport-side queue.
+
+The lane seam now also has a first real parked-turn state instead of only placeholder enum values. `awaiting_tool` is still driven by a deliberately narrow manager-owned pending-operation hook rather than by a fully asynchronous runtime host, but it is enough to prove that the keyed session/lane layer can retain turn identity, expose `wait_for_tool` in status/inspection surfaces, and resume or cancel the same turn without dropping out of the lane. That is the intended stepping stone before making tool execution or inference ownership itself more directly nonblocking.
 
 The daemon status surface is now a little more consistent as a result. Lifecycle responses already carried a status snapshot, but that snapshot now includes the current session descriptors as well instead of leaving populated `sessions` only to the dedicated `status` command. That keeps lane state, queued count, and active/last-turn diagnostics visible through the same host-owned status shape on both explicit status requests and lifecycle/admin replies.
 

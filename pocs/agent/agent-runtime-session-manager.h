@@ -4,6 +4,7 @@
 #include "agent-runtime-turn-execution.h"
 #include "agent-daemon-events.h"
 
+#include <functional>
 #include <deque>
 #include <map>
 #include <memory>
@@ -47,8 +48,41 @@ struct common_agent_runtime_session_manager_turn_request {
     common_agent_runtime_session_host_turn_request turn;
 };
 using common_agent_runtime_session_manager_turn_result = common_agent_runtime_session_host_turn_result;
-using common_agent_runtime_session_manager_config = common_agent_runtime_session_host_config;
-using common_agent_runtime_session_manager_build_config = common_agent_runtime_session_host_build_config;
+
+struct common_agent_runtime_session_manager_pending_tool_operation {
+    common_agent_runtime_pending_operation pending_operation;
+    std::function<bool(bool & ready, std::string & error)> poll;
+};
+
+struct common_agent_runtime_session_manager_config {
+    common_agent_runtime_session_host_config host_config;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
+        std::string & error)> pending_tool_operation_resolver;
+};
+
+struct common_agent_runtime_session_manager_build_config {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_runtime_resident_request_config resident_request;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    common_agent_runtime_tooling tooling;
+    std::function<bool(
+        const common_agent_runtime_resident_runtime * runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error)> tooling_resolver;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::optional<common_agent_runtime_session_manager_pending_tool_operation> & pending_operation,
+        std::string & error)> pending_tool_operation_resolver;
+};
 
 struct common_agent_runtime_active_turn_descriptor {
     common_agent_runtime_session_key key;
@@ -62,7 +96,23 @@ struct common_agent_runtime_active_turn_descriptor {
 
 inline common_agent_runtime_session_manager_config make_agent_runtime_session_manager_config(
         common_agent_runtime_session_manager_build_config config) {
-    return make_agent_runtime_session_host_config(std::move(config));
+    common_agent_runtime_session_host_build_config host_build_config = {
+        config.memory_store,
+        config.plan_store,
+        std::move(config.resident_request),
+        std::move(config.policy),
+        std::move(config.runtime_config),
+        std::move(config.orchestration_config),
+        config.memory_scope,
+        config.memory_enabled,
+        std::move(config.installed_blueprint_candidates),
+        std::move(config.tooling),
+        std::move(config.tooling_resolver),
+    };
+    return {
+        make_agent_runtime_session_host_config(std::move(host_build_config)),
+        std::move(config.pending_tool_operation_resolver),
+    };
 }
 
 enum class common_agent_runtime_session_lane_state {
@@ -133,6 +183,7 @@ private:
         std::deque<std::shared_ptr<common_agent_runtime_session_lane_message>> mailbox;
         std::shared_ptr<common_agent_runtime_session_lane_message> current_message;
         std::optional<common_agent_runtime_turn_execution> active_turn;
+        std::optional<common_agent_runtime_session_manager_pending_tool_operation> pending_tool_operation;
         std::string last_turn_id;
         common_agent_runtime_turn_phase last_turn_phase = common_agent_runtime_turn_phase::queued;
         common_agent_runtime_turn_disposition last_turn_disposition = common_agent_runtime_turn_disposition::continue_immediately;
