@@ -4,7 +4,7 @@
 #include "agent/tool-registry.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
-#include "runtime-resource.h"
+#include "resource/resource-contract.h"
 
 #include <functional>
 #include <string>

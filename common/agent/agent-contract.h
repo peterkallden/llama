@@ -9,7 +9,7 @@
 #include "memory/memory-policy-pack.h"
 #include "memory/memory-candidate.h"
 #include "plan/plan-types.h"
-#include "runtime-trace.h"
+#include "runtime/runtime-trace.h"
 
 #include <cstdint>
 #include <optional>

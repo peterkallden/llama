@@ -3,7 +3,7 @@
 #include "agent/tool-runtime-contract.h"
 #include "memory/memory-tool-service.h"
 #include "plan/plan-types.h"
-#include "runtime-resource.h"
+#include "resource/resource-contract.h"
 
 #include <nlohmann/json.hpp>
 

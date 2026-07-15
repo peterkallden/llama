@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime-resource.h"
+#include "resource/resource-contract.h"
 
 #include <string>
 #include <vector>

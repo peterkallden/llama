@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent-resource-catalog.h"
-#include "runtime-resource.h"
+#include "resource/resource-contract.h"
 
 #include <filesystem>
 #include <fstream>

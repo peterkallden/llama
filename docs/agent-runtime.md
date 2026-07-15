@@ -120,7 +120,7 @@ Short responsibility summary:
 
 - `common/memory`: durable memory records, scopes, retrieval, and store contracts.
 - `common/plan`: plan structures, state transitions, evidence links, and plan stores.
-- `common/resource`: host-neutral resource references and later broader resource contracts.
+- `common/resource`: host-neutral resource references, authority descriptors, and later broader resource contracts for larger working material.
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
@@ -145,6 +145,8 @@ The first slice now underway is intentionally narrow:
 - neutral runtime headers start moving under `common/runtime`
 - resource-store implementation starts moving under `tools/agent/resource`
 - compatibility headers remain in the old locations for now so the rest of the branch can migrate gradually
+
+The next small correction after that first slice is to keep `resource` itself as a domain contract. In other words: traces and other generic runtime envelopes belong in `common/runtime`, but resource references, authority, and host-owned resource-store contracts fit better under `common/resource`, with compatibility wrappers left in place while callers migrate.
 
 ## Design Constraints
 
