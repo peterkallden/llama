@@ -382,6 +382,27 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
+set(TARGET llama-agent-daemon-wait-events-smoke)
+add_executable(${TARGET}
+    agent-daemon-wait-events-smoke.cpp
+    ${AGENT_RUNTIME_SOURCES}
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-memory
+    llama-common
+    llama
+    llama-agent-poc
+    server-context
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
 set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
     agent-daemon-mcp-config-smoke.cpp
@@ -502,6 +523,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-daemon-protocol-smoke
     llama-agent-daemon-jsonl-protocol-smoke
     llama-agent-daemon-client-smoke
+    llama-agent-daemon-wait-events-smoke
     llama-agent-daemon-mcp-config-smoke
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke

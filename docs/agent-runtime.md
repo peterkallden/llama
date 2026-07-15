@@ -945,10 +945,11 @@ The resident-inference branch has been validated with:
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
 - `llama-agent-runtime-session-manager-smoke` also verifies that `reset_all()` now routes through lane-owned close semantics instead of bypassing the lane lifecycle with a raw map clear
 - `llama-agent-runtime-session-manager-smoke` now also verifies manager-owned parked states for both `awaiting_tool` and `awaiting_inference`, including `wait_for_tool`, `wait_for_inference`, host-driven cancellation out of the parked tool state, and resumption into host execution after the parked inference state is released
-- that same parked-turn smoke now also checks that the lane/session descriptors preserve `pending_operation_kind` and `pending_operation_detail` while a turn is actually parked
+  - that same parked-turn smoke now also checks that the lane/session descriptors preserve `pending_operation_kind` and `pending_operation_detail` while a turn is actually parked
 - that same parked-turn smoke now also verifies the new internal wait-entered events for both `turn.waiting_for_tool` and `turn.waiting_for_inference`
-- `llama-agent-daemon-jsonl-protocol-smoke`, verifying the JSONL/admin status contract now projects lane-owned pending operation kind/detail on both the top-level active turn and the keyed session binding summary
-- `llama-agent-daemon-protocol-smoke`, verifying the daemon-side status serializer emits the same pending-operation fields before the JSONL/client parser ever sees them
+- `llama-agent-daemon-wait-events-smoke`, verifying those same `turn.waiting_for_tool` and `turn.waiting_for_inference` events survive dispatcher/service projection and appear in the final daemon command result without needing a live model
+  - `llama-agent-daemon-jsonl-protocol-smoke`, verifying the JSONL/admin status contract now projects lane-owned pending operation kind/detail on both the top-level active turn and the keyed session binding summary
+  - `llama-agent-daemon-protocol-smoke`, verifying the daemon-side status serializer emits the same pending-operation fields before the JSONL/client parser ever sees them
 - `llama-agent-daemon-client-smoke`, verifying the child-process admin/client path renders the same pending active-turn and session-binding state through `/sessions`, `/session`, and lifecycle/admin summaries
 - ordinary chat smoke with local Qwen plus Nomic embedding
 - mini planning smoke with `--agent-inference-backend server-context`
