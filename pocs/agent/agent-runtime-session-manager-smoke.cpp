@@ -831,14 +831,18 @@ int main() {
             waiting_active_turn->request_id != "request-10" ||
             waiting_active_turn->turn_id != "turn-10" ||
             waiting_active_turn->phase != "awaiting_tool" ||
-            waiting_active_turn->disposition != "wait_for_tool") {
+            waiting_active_turn->disposition != "wait_for_tool" ||
+            waiting_active_turn->pending_operation_kind != "tool" ||
+            waiting_active_turn->pending_operation_detail != "session manager smoke pending tool") {
         std::fprintf(
             stderr,
-            "session manager did not expose the waiting tool state: request='%s' turn='%s' phase='%s' disposition='%s'\n",
+            "session manager did not expose the waiting tool state: request='%s' turn='%s' phase='%s' disposition='%s' pending_kind='%s' pending_detail='%s'\n",
             waiting_active_turn.has_value() ? waiting_active_turn->request_id.c_str() : "",
             waiting_active_turn.has_value() ? waiting_active_turn->turn_id.c_str() : "",
             waiting_active_turn.has_value() ? waiting_active_turn->phase.c_str() : "",
-            waiting_active_turn.has_value() ? waiting_active_turn->disposition.c_str() : "");
+            waiting_active_turn.has_value() ? waiting_active_turn->disposition.c_str() : "",
+            waiting_active_turn.has_value() ? waiting_active_turn->pending_operation_kind.c_str() : "",
+            waiting_active_turn.has_value() ? waiting_active_turn->pending_operation_detail.c_str() : "");
         return 1;
     }
 
@@ -847,7 +851,9 @@ int main() {
             waiting_sessions[0].lane_state != "running" ||
             !waiting_sessions[0].has_active_turn ||
             waiting_sessions[0].active_turn_phase != "awaiting_tool" ||
-            waiting_sessions[0].active_turn_disposition != "wait_for_tool") {
+            waiting_sessions[0].active_turn_disposition != "wait_for_tool" ||
+            waiting_sessions[0].pending_operation_kind != "tool" ||
+            waiting_sessions[0].pending_operation_detail != "session manager smoke pending tool") {
         std::fprintf(stderr, "session manager did not retain awaiting_tool lane diagnostics\n");
         return 1;
     }
@@ -857,7 +863,9 @@ int main() {
     if (!waiting_manager.request_cancel_active_turn("request-10", "", cancelled_waiting_turn, error) ||
             cancelled_waiting_turn.request_id != "request-10" ||
             cancelled_waiting_turn.turn_id != "turn-10" ||
-            !cancelled_waiting_turn.cancellation_requested) {
+            !cancelled_waiting_turn.cancellation_requested ||
+            cancelled_waiting_turn.pending_operation_kind != "tool" ||
+            cancelled_waiting_turn.pending_operation_detail != "session manager smoke pending tool") {
         std::fprintf(stderr, "session manager failed to cancel the waiting tool turn: %s\n", error.c_str());
         return 1;
     }
@@ -970,14 +978,18 @@ int main() {
             inference_wait_active_turn->request_id != "request-11" ||
             inference_wait_active_turn->turn_id != "turn-11" ||
             inference_wait_active_turn->phase != "awaiting_inference" ||
-            inference_wait_active_turn->disposition != "wait_for_inference") {
+            inference_wait_active_turn->disposition != "wait_for_inference" ||
+            inference_wait_active_turn->pending_operation_kind != "inference" ||
+            inference_wait_active_turn->pending_operation_detail != "session manager smoke pending inference") {
         std::fprintf(
             stderr,
-            "session manager did not expose the waiting inference state: request='%s' turn='%s' phase='%s' disposition='%s'\n",
+            "session manager did not expose the waiting inference state: request='%s' turn='%s' phase='%s' disposition='%s' pending_kind='%s' pending_detail='%s'\n",
             inference_wait_active_turn.has_value() ? inference_wait_active_turn->request_id.c_str() : "",
             inference_wait_active_turn.has_value() ? inference_wait_active_turn->turn_id.c_str() : "",
             inference_wait_active_turn.has_value() ? inference_wait_active_turn->phase.c_str() : "",
-            inference_wait_active_turn.has_value() ? inference_wait_active_turn->disposition.c_str() : "");
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->disposition.c_str() : "",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->pending_operation_kind.c_str() : "",
+            inference_wait_active_turn.has_value() ? inference_wait_active_turn->pending_operation_detail.c_str() : "");
         return 1;
     }
 
@@ -986,7 +998,9 @@ int main() {
             inference_wait_sessions[0].lane_state != "running" ||
             !inference_wait_sessions[0].has_active_turn ||
             inference_wait_sessions[0].active_turn_phase != "awaiting_inference" ||
-            inference_wait_sessions[0].active_turn_disposition != "wait_for_inference") {
+            inference_wait_sessions[0].active_turn_disposition != "wait_for_inference" ||
+            inference_wait_sessions[0].pending_operation_kind != "inference" ||
+            inference_wait_sessions[0].pending_operation_detail != "session manager smoke pending inference") {
         std::fprintf(stderr, "session manager did not retain awaiting_inference lane diagnostics for pending inference\n");
         return 1;
     }
