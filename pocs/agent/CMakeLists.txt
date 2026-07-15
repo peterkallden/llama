@@ -8,9 +8,9 @@ set(AGENT_RUNTIME_SOURCES
     agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     ../../tools/agent/host/agent-host-config.cpp
-    agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-protocol.cpp
     agent-selection-contracts.cpp
-    agent-mcp-stdio-client.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     agent-tool-provider.cpp
     agent-tool-result-json-contracts.cpp
     agent-tool-runtime-adapter.cpp
@@ -271,10 +271,10 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-stdio-fake-server)
 add_executable(${TARGET}
-    agent-mcp-stdio-fake-server.cpp
-    agent-mcp-server-protocol.cpp
-    agent-mcp-server-tool-registry.cpp
-    agent-mcp-stdio-server.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-fake-server.cpp
+    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -286,11 +286,11 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-mcp-stdio-server)
 add_executable(${TARGET}
-    agent-mcp-stdio-server-main.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-server-main.cpp
     ${AGENT_RUNTIME_SOURCES}
-    agent-mcp-server-protocol.cpp
-    agent-mcp-server-tool-registry.cpp
-    agent-mcp-stdio-server.cpp
+    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

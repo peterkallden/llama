@@ -248,7 +248,7 @@ int main(int argc, char ** argv) {
     const auto repository_result = research_view->call({
         "call-3",
         "local_repository_list",
-        R"({"path":"pocs/agent","depth":0})",
+        R"({"path":"tools/agent/mcp","depth":0})",
     }, error);
     if (!repository_result.ok || repository_result.content_json.find("agent-mcp-stdio-server-main.cpp") == std::string::npos) {
         std::fprintf(stderr, "repository_list did not return the expected repository payload: %s\n", repository_result.content_json.c_str());

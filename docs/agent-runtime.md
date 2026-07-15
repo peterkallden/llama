@@ -111,6 +111,7 @@ tools/
   agent/
     daemon/    daemon admin/client/jsonl transport and related host-side protocol code
     host/      host configuration and shared host-side policy/provider config
+    mcp/       MCP client/server transport, stdio server, and shared MCP protocol helpers
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
@@ -128,6 +129,7 @@ Short responsibility summary:
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
 - `tools/agent/daemon`: daemon-facing admin/client support, JSONL protocol shaping, and other host-side daemon transport helpers.
 - `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
+- `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
 - `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
 - `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
 
@@ -155,6 +157,8 @@ The next small correction after that first slice is to keep `resource` itself as
 The next bounded host slice is now underway as well: daemon client/admin and JSONL protocol code has started moving out of `pocs/agent` and into `tools/agent/daemon`, again with compatibility headers left in the old path for a gradual migration.
 
 The next adjacent host slice is the same kind of cleanup for configuration ownership: host config and MCP-provider config are moving toward `tools/agent/host` so they can be shared by daemon and MCP-facing entrypoints without looking like PoC-only assembly details.
+
+That MCP host-facing cleanup is now in place as well. Client/server protocol helpers, stdio client/server support, and the stdio MCP server entrypoint now live under `tools/agent/mcp`, while the existing PoC tree keeps only compatibility headers and smoke harnesses until the remaining runtime assembly finishes moving.
 
 ## Design Constraints
 
@@ -188,7 +192,7 @@ The same direction has now been reinforced around the biggest JSON-heavy runtime
 
 That does not mean every JSON surface is now formalized. It means the highest-value runtime seams now have a named contract boundary, so later daemon/host/MCP work is less likely to hard-code behavior into scattered `.dump()` or `parse()` sites.
 
-The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation remains intentionally local to `pocs/agent`, but it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
+The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation now lives under `tools/agent/resource`, and it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
 That contract is now also a little less ad hoc for tools. Native tool bindings no longer thread a raw `resource_store` plus separate namespace/session/project/turn fields through the host path. Instead they carry one scoped `agent_resource_runtime`, and helper functions derive read authority or stamp put-requests from that host-owned runtime scope.
 

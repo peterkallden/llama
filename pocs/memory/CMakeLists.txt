@@ -8,9 +8,9 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../agent/agent-daemon-event-collector.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     ../../tools/agent/host/agent-host-config.cpp
-    ../agent/agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-protocol.cpp
     ../agent/agent-selection-contracts.cpp
-    ../agent/agent-mcp-stdio-client.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     ../agent/agent-tool-provider.cpp
     ../agent/agent-tool-result-json-contracts.cpp
     ../agent/agent-tool-runtime-adapter.cpp
