@@ -55,7 +55,7 @@ int main() {
     verify.tool_call = common_plan_tool_call{"repository_read", R"({"path":"memory.db"})"};
     verify.status = common_plan_step_status::completed;
     plan.steps.push_back(verify);
-    plan.observations.push_back({"tool:verify:read-back", "read-back", "record persisted", 1.0f, {}, 0});
+    plan.observations.push_back({"tool:verify:read-back", "read-back", "record persisted", 1.0f, {}, {}, 0});
     common_agent_result result;
     result.response = "done";
     result.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-a", "verify", "repository_read", "tool:verify:repository_read", "repository read failed"});
@@ -88,7 +88,7 @@ int main() {
     tool_recovery_procedure.final_score = 0.75f;
     common_plan_step recovery_step{"recover", "Recover", "Recover from the failed read"};
     recovery_step.mode = common_plan_step_mode::reasoning;
-    plan.observations.push_back({"tool:verify:repository_read", "repository_read", "read failed", 0.0f, {}, 0});
+    plan.observations.push_back({"tool:verify:repository_read", "repository_read", "read failed", 0.0f, {}, {}, 0});
     const auto procedures = common_memory_select_procedure_memories({generic_procedure, tool_recovery_procedure}, plan, recovery_step);
     assert(procedures.size() == 2 && procedures.front().memory.id == "tool-recovery");
 

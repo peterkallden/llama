@@ -1,3 +1,5 @@
+include_directories(${PROJECT_SOURCE_DIR})
+
 set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-config.cpp
     ../../tools/agent/cli/agent-cli-generation-utils.cpp
@@ -579,10 +581,6 @@ set(AGENT_RUNTIME_TARGETS
 
 if (LLAMA_MEMORY_COZO)
     foreach(TARGET ${AGENT_RUNTIME_TARGETS})
-        target_include_directories(${TARGET} PRIVATE ${COZO_INCLUDE_DIR})
-        target_link_libraries(${TARGET} PRIVATE ${COZO_LIBRARY})
-        if (WIN32)
-            target_link_libraries(${TARGET} PRIVATE ws2_32 bcrypt ntdll rpcrt4 shlwapi crypt32)
-        endif()
+        llama_link_cozo(${TARGET})
     endforeach()
 endif()

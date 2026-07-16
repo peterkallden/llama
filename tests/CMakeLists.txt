@@ -1,5 +1,7 @@
 llama_add_compile_flags()
 
+include_directories(${PROJECT_SOURCE_DIR})
+
 function(llama_build source)
     set(TEST_SOURCES ${source} ${ARGN})
 

@@ -89,6 +89,17 @@ The resource-store slice now follows the same host-owned backend pattern. The CL
 
 The current implementation supports `fs` and `in-memory` for blob storage, and `in-memory` and `cozo` for metadata. `s3` remains deferred. In the current default shape, blob storage resolves to `fs` and derives a default root if one is not supplied, while metadata resolves to `cozo` when a metadata DB path is present and otherwise stays `in-memory`.
 
+One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
+
+That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:
+
+- `llama-agent.exe`
+- `llama-agent-daemon.exe`
+- `llama-agent-cli-mcp-selection-smoke.exe`
+- `llama-agent-cli-run-mcp-smoke.exe`
+
+The two CLI/MCP smoke binaries also ran successfully after rebuild. A full-tree debug build can still surface broader workspace concerns such as UI asset provisioning or unrelated test churn, so the current documented verification strategy for this branch is "narrow serial target build plus targeted smoke execution" unless a wider sweep is the explicit goal.
+
 The resource path is also now split more cleanly internally:
 
 - blob storage owns raw bytes and content-addressed persistence
@@ -171,6 +182,8 @@ The next bounded host slice after that is the runtime core itself. Resident runt
 The next adjacent slice after runtime is the CLI surface. Once the resident runtime, daemon, and MCP layers no longer live under `pocs/agent`, the command-line entrypoints and adapters fit naturally under `tools/agent/cli`, leaving the PoC tree mostly as smoke harnesses plus temporary compatibility headers while the last active seams are migrated.
 
 The next small slice after that is the tooling surface. Tool-provider/view logic, tool-runtime adapters, and the smaller host-owned tool selection/result contracts fit better under `tools/agent/tooling` than under the PoC tree, because both CLI/runtime hosts and the MCP-facing path depend on the same tool abstraction without wanting `pocs/agent` to remain the owner of it.
+
+That compatibility-header bridge has now effectively been retired for the active agent path. The branch no longer keeps a forwarder header layer under `pocs/agent`; active code, tests, and smoke binaries now include the concrete `tools/agent/...` locations directly. In practice that means `pocs/agent` is now much closer to its intended role in this phase: smoke harnesses, a few helper binaries, and migration-era build glue, rather than a second include tree pretending to own the runtime.
 
 ## Design Constraints
 

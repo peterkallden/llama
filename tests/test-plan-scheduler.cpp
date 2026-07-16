@@ -26,7 +26,7 @@ int main() {
     schedule = common_plan_schedule(plan);
     assert(schedule.ready_step_ids.empty() && (schedule.blocked_step_ids == std::vector<std::string>{"report"}) && schedule.blocked && !schedule.terminal && schedule.state == common_plan_schedule_state::blocked);
 
-    plan.observations.push_back({"tool:verify", "run_test", "passed", 1.0f, {"test-result"}, 0});
+    plan.observations.push_back({"tool:verify", "run_test", "passed", 1.0f, {"test-result"}, {}, 0});
     schedule = common_plan_schedule(plan);
     assert((schedule.ready_step_ids == std::vector<std::string>{"report"}));
 
