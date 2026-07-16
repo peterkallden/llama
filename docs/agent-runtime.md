@@ -109,6 +109,7 @@ common/
 
 tools/
   agent/
+    cli/       command-line entrypoints and CLI-only host adapters
     daemon/    daemon admin/client/jsonl transport and related host-side protocol code
     host/      host configuration and shared host-side policy/provider config
     mcp/       MCP client/server transport, stdio server, and shared MCP protocol helpers
@@ -128,6 +129,7 @@ Short responsibility summary:
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
+- `tools/agent/cli`: command-line entrypoints, selection/config parsing, and CLI-specific host adapters.
 - `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
 - `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
 - `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
@@ -163,6 +165,8 @@ The next adjacent host slice is the same kind of cleanup for configuration owner
 That MCP host-facing cleanup is now in place as well. Client/server protocol helpers, stdio client/server support, and the stdio MCP server entrypoint now live under `tools/agent/mcp`, while the existing PoC tree keeps only compatibility headers and smoke harnesses until the remaining runtime assembly finishes moving.
 
 The next bounded host slice after that is the runtime core itself. Resident runtime/session assembly, runtime host/session contracts, and in-process server-context runtime plumbing belong more naturally under `tools/agent/runtime` than under `pocs/agent`, again with compatibility headers left behind while the remaining CLI/tooling surfaces are migrated.
+
+The next adjacent slice after runtime is the CLI surface. Once the resident runtime, daemon, and MCP layers no longer live under `pocs/agent`, the command-line entrypoints and adapters fit naturally under `tools/agent/cli`, leaving the PoC tree mostly as smoke harnesses plus temporary compatibility headers while the last active seams are migrated.
 
 ## Design Constraints
 

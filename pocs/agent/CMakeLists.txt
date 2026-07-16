@@ -1,7 +1,7 @@
 set(AGENT_RUNTIME_SOURCES
-    agent-cli-config.cpp
-    agent-cli-generation-utils.cpp
-    agent-cli-run-adapter.cpp
+    ../../tools/agent/cli/agent-cli-config.cpp
+    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/cli/agent-cli-run-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-client.cpp
@@ -21,8 +21,8 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
-    agent-cli-host-adapter.cpp
-    agent-cli-inference.cpp
+    ../../tools/agent/cli/agent-cli-host-adapter.cpp
+    ../../tools/agent/cli/agent-cli-inference.cpp
     ../../tools/agent/runtime/agent-plan-orchestration.cpp
     ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-host.cpp
@@ -35,11 +35,11 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/runtime/agent-server-generation.cpp
     ../../tools/agent/runtime/agent-server-inference.cpp
     ../../tools/agent/runtime/agent-runtime-assembly.cpp
-    agent-cli-runtime.cpp
+    ../../tools/agent/cli/agent-cli-runtime.cpp
     ../common/cli-config.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp
-    agent-cli-selection.cpp
+    ../../tools/agent/cli/agent-cli-selection.cpp
 )
 
 if (LLAMA_MEMORY_COZO)
@@ -50,15 +50,16 @@ endif()
 
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
-    agent.cpp
-    agent-cli-command.cpp
+    ../../tools/agent/cli/agent-cli-main.cpp
+    ../../tools/agent/cli/agent-cli-command.cpp
     ${AGENT_RUNTIME_SOURCES}
-    agent-cli-run.cpp
+    ../../tools/agent/cli/agent-cli-run.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
@@ -87,6 +88,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
@@ -111,6 +113,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
@@ -135,6 +138,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
@@ -159,6 +163,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
@@ -184,6 +189,7 @@ add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
