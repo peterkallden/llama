@@ -300,9 +300,44 @@ if (LLAMA_AGENT_REFLECTION)
     target_include_directories(test-cli-scope PRIVATE ${PROJECT_SOURCE_DIR}/pocs)
     target_link_libraries(test-cli-scope PRIVATE llama-agent-poc)
     llama_set_test_labels(test-cli-scope agent)
-    llama_build_and_test(test-agent-inference.cpp ../tools/agent/cli/agent-cli-host-adapter.cpp ../tools/agent/cli/agent-cli-inference.cpp ../tools/agent/runtime/agent-server-generation.cpp ../tools/agent/runtime/agent-server-inference.cpp ../tools/agent/cli/agent-cli-runtime.cpp ../tools/agent/cli/agent-cli-selection.cpp ../tools/agent/runtime/agent-plan-orchestration.cpp ../tools/agent/runtime/agent-runtime-chat-driver.cpp ../tools/agent/runtime/agent-runtime-host.cpp ../tools/agent/runtime/agent-runtime-assembly.cpp ../tools/agent/runtime/agent-runtime-execution.cpp ../tools/agent/runtime/agent-runtime-session.cpp ../pocs/memory/memory-cli-chat.cpp ../pocs/memory/memory-cli-memory.cpp)
+    llama_build_and_test(
+        test-agent-inference.cpp
+        ../tools/agent/cli/agent-cli-generation-utils.cpp
+        ../tools/agent/cli/agent-cli-host-adapter.cpp
+        ../tools/agent/cli/agent-cli-inference.cpp
+        ../tools/agent/cli/agent-cli-runtime.cpp
+        ../tools/agent/cli/agent-cli-selection.cpp
+        ../tools/agent/mcp/agent-mcp-protocol.cpp
+        ../tools/agent/mcp/agent-mcp-stdio-client.cpp
+        ../tools/agent/resource/agent-resource-catalog.cpp
+        ../tools/agent/resource/agent-resource-catalog-cozo.cpp
+        ../tools/agent/resource/agent-resource-store.cpp
+        ../tools/agent/runtime/agent-plan-orchestration.cpp
+        ../tools/agent/runtime/agent-runtime-assembly.cpp
+        ../tools/agent/runtime/agent-runtime-chat-driver.cpp
+        ../tools/agent/runtime/agent-runtime-execution.cpp
+        ../tools/agent/runtime/agent-runtime-host.cpp
+        ../tools/agent/runtime/agent-runtime-resident.cpp
+        ../tools/agent/runtime/agent-runtime-session.cpp
+        ../tools/agent/runtime/agent-server-context-host.cpp
+        ../tools/agent/runtime/agent-server-generation.cpp
+        ../tools/agent/runtime/agent-server-inference.cpp
+        ../tools/agent/tooling/agent-selection-contracts.cpp
+        ../tools/agent/tooling/agent-tool-provider.cpp
+        ../tools/agent/tooling/agent-tool-result-json-contracts.cpp
+        ../tools/agent/tooling/agent-tool-runtime-adapter.cpp
+        ../pocs/memory/memory-cli-chat.cpp
+        ../pocs/memory/memory-cli-memory.cpp
+    )
     target_include_directories(test-agent-inference PRIVATE ${PROJECT_SOURCE_DIR}/pocs ${PROJECT_SOURCE_DIR}/pocs/agent ${PROJECT_SOURCE_DIR}/pocs/memory ${PROJECT_SOURCE_DIR}/tools/agent/cli ${PROJECT_SOURCE_DIR}/tools/agent/runtime ${PROJECT_SOURCE_DIR}/tools/server ${PROJECT_SOURCE_DIR}/tools/mtmd)
     target_link_libraries(test-agent-inference PRIVATE llama-agent-poc server-context)
+    if (LLAMA_MEMORY_COZO)
+        target_include_directories(test-agent-inference PRIVATE ${COZO_INCLUDE_DIR})
+        target_link_libraries(test-agent-inference PRIVATE ${COZO_LIBRARY})
+        if (WIN32)
+            target_link_libraries(test-agent-inference PRIVATE ws2_32 bcrypt ntdll rpcrt4 uuid shlwapi crypt32)
+        endif()
+    endif()
     llama_set_test_labels(test-agent-inference agent agent-aggregate)
     llama_agent_named_inference_test(generation-contract)
     llama_agent_named_inference_test(cli-scope)

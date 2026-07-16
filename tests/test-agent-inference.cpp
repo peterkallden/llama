@@ -10,6 +10,9 @@
 #include "tools/agent/runtime/agent-runtime-chat-driver.h"
 #include "tools/agent/runtime/agent-runtime-execution.h"
 #include "tools/agent/runtime/agent-runtime-host.h"
+#include "tools/agent/runtime/agent-runtime-resident.h"
+#include "tools/agent/runtime/agent-runtime-tooling.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 #include "chat-peg-parser.h"
 #include "common/cli-scope.h"
 
@@ -97,10 +100,162 @@ public:
     }
 };
 
+class test_agent_tool_view final : public agent_tool_view {
+public:
+    std::vector<common_chat_tool> tools;
+    std::function<agent_tool_result(const agent_tool_call &, std::string &)> handler;
+
+    const std::vector<common_chat_tool> & chat_tools() const override {
+        return tools;
+    }
+
+    bool exposes_tool(const std::string & name) const override {
+        for (const auto & tool : tools) {
+            if (tool.name == name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool is_read_only(const std::string &) const override {
+        return true;
+    }
+
+    bool is_policy_gated(const std::string &) const override {
+        return false;
+    }
+
+    bool validate(const agent_tool_call & call, std::string & error) const override {
+        if (!exposes_tool(call.name)) {
+            error = "tool not exposed: " + call.name;
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    agent_tool_result call(
+            const agent_tool_call & call,
+            std::string & error) override {
+        if (!validate(call, error)) {
+            return {};
+        }
+        if (handler) {
+            return handler(call, error);
+        }
+        error.clear();
+        agent_tool_result result;
+        result.ok = true;
+        result.tool_call_id = call.id;
+        result.tool_name = call.name;
+        result.content_json = R"({"ok":true})";
+        return result;
+    }
+
+    bool supports_async_call(const std::string &) const override {
+        return false;
+    }
+
+    bool begin_call_async(
+            const agent_tool_call &,
+            agent_tool_pending_call &,
+            std::string & error) override {
+        error = "async tools are not supported in test_agent_tool_view";
+        return false;
+    }
+
+    bool poll_call_async(
+            const agent_tool_pending_call &,
+            bool &,
+            agent_tool_result &,
+            std::string & error) override {
+        error = "async tools are not supported in test_agent_tool_view";
+        return false;
+    }
+};
+
 static args make_test_args() {
     args options;
     options.n_predict = 64;
     return options;
+}
+
+static common_agent_inference_options make_agent_inference_options(const args & options) {
+    common_agent_inference_options result;
+    result.model = options.model;
+    result.n_predict = options.n_predict;
+    result.n_gpu_layers = options.n_gpu_layers;
+    result.fit_params = true;
+    return result;
+}
+
+static common_agent_generation_config make_agent_generation_config(const args & options) {
+    return {options.n_predict};
+}
+
+static common_agent_runtime_policy make_agent_runtime_policy(const args & options) {
+    return ::make_agent_runtime_policy({
+        options.agent_inference_backend,
+        options.tool_profile,
+        options.memory_learn,
+        options.memory_learn_show_candidate,
+        options.plan_show_summary,
+        options.agent_trace,
+        options.reflection_mode,
+        options.max_tool_rounds,
+    });
+}
+
+static common_agent_runtime_config make_agent_runtime_config(const args & options) {
+    return ::make_agent_runtime_config({
+        make_agent_generation_config(options),
+        options.memory_learn == "post-turn",
+        {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
+        {},
+    });
+}
+
+static common_agent_orchestration_config make_test_agent_orchestration_config(const args & options) {
+    return ::make_agent_orchestration_config({
+        options.prompt,
+        options.agent_plan,
+        options.agent_blueprint,
+        options.agent_bootstrap,
+        options.agent_import,
+        options.agent_export,
+    });
+}
+
+static bool make_agent_inference_session(
+        const common_agent_inference_options & options,
+        agent_inference_backend backend,
+        llama_model * model,
+        const common_chat_templates * templates,
+        common_agent_inference_session & session,
+        std::string & error) {
+    session = {};
+    session.backend = backend;
+    session.model = model;
+    session.templates = templates;
+    if (backend == agent_inference_backend::server_context) {
+        error = "test helper does not build server_context sessions";
+        return false;
+    }
+    session.inference = std::make_unique<counting_agent_inference>();
+    error.clear();
+    return true;
+}
+
+static common_agent_runtime_tooling make_runtime_tooling(
+        const std::vector<common_chat_tool> & tools,
+        agent_tool_view * tool_view = nullptr,
+        bool profile_tools_active = false) {
+    common_agent_runtime_tooling tooling;
+    tooling.tools = tools;
+    tooling.profile_tools_active = profile_tools_active;
+    tooling.tool_view = tool_view;
+    return tooling;
 }
 
 static common_agent_generation_config make_test_generation_config() {
@@ -375,7 +530,11 @@ static void test_selection_generation_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), registry, request, store, "task-1", error);
+    test_agent_tool_view tool_view;
+    tool_view.tools = {
+        {"lookup", "Look up a record", R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"},
+    };
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
     assert(error.empty());
     assert(binding.applied);
     assert(binding.bound_steps == 1);
@@ -471,7 +630,11 @@ static void test_selection_generation_failure_metadata() {
     tool.handler = [](const std::string &) { return common_tool_execution_result::success("ok"); };
     assert(registry.register_tool(std::move(tool), error));
 
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), registry, request, store, "task-1", error);
+    test_agent_tool_view tool_view;
+    tool_view.tools = {
+        {"lookup", "Look up a record", R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"},
+    };
+    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
     assert(!binding.applied);
     assert(binding.generation);
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");
@@ -508,22 +671,22 @@ static void test_mini_runtime_smoke() {
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id;
+    const auto tooling = make_runtime_tooling(tools);
     common_agent_runtime_driver_execution execution{
         memories,
         plans,
         inference,
         make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         current_plan_id,
         scope,
         blueprints,
+        std::nullopt,
         hits,
         common_memory_scope::session,
         true,
-        tools,
-        false,
-        nullptr,
+        tooling,
     };
 
     common_agent_result result;
@@ -573,22 +736,22 @@ static void test_runtime_request_builder() {
     const std::vector<common_memory_hit> hits = {hit};
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id = "plan-1";
+    const auto tooling = make_runtime_tooling(tools, nullptr, true);
     const common_agent_runtime_driver_execution execution{
         memories,
         plans,
         inference,
         make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         current_plan_id,
         scope,
         blueprints,
+        std::nullopt,
         hits,
         common_memory_scope::project,
         true,
-        tools,
-        true,
-        nullptr,
+        tooling,
     };
 
     const auto request = make_agent_runtime_driver_request(execution);
@@ -614,22 +777,22 @@ static void test_runtime_request_builder() {
     options.max_tool_rounds = 4;
     options.tool_profile = "safe";
     std::string no_tools_plan_id = "plan-1";
+    const auto no_tools_tooling = make_runtime_tooling(tools);
     const common_agent_runtime_driver_execution no_tools_execution{
         memories,
         plans,
         inference,
         make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         no_tools_plan_id,
         scope,
         blueprints,
+        std::nullopt,
         hits,
         common_memory_scope::project,
         false,
-        tools,
-        false,
-        nullptr,
+        no_tools_tooling,
     };
 
     const auto no_tools_request = make_agent_runtime_driver_request(no_tools_execution);
@@ -683,23 +846,23 @@ static void test_runtime_execution_builder() {
     };
     const std::string fallback_reason = "embedding disabled";
     std::string current_plan_id = options.plan_id;
+    const auto tooling = make_runtime_tooling(tools);
     common_agent_runtime_driver_inputs inputs{
         memories,
         plans,
         make_agent_inference_options(options),
         make_agent_runtime_policy(options),
         make_agent_runtime_config(options),
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         current_plan_id,
         scope,
         blueprints,
+        std::nullopt,
         hits,
         common_memory_scope::project,
         true,
         fallback_reason,
-        tools,
-        true,
-        nullptr,
+        tooling,
     };
 
     const auto execution = make_agent_runtime_driver_execution(inputs, inference);
@@ -719,15 +882,17 @@ static void test_runtime_execution_builder() {
     assert(execution.policy.agent_trace);
     assert(execution.runtime_config.generation_config.n_predict == 64);
     assert(execution.runtime_config.enable_memory_learning);
-    assert(execution.runtime_config.embed_memory);
-    assert(&execution.scope == &scope);
+    assert(!execution.runtime_config.embed_memory);
+    assert(execution.scope.namespace_id == scope.namespace_id);
+    assert(execution.scope.session_id == scope.session_id);
+    assert(execution.scope.project_id == scope.project_id);
     assert(&execution.installed_blueprint_candidates == &blueprints);
     assert(&execution.memories == &hits);
     assert(execution.memory_scope == common_memory_scope::project);
     assert(execution.memory_enabled);
-    assert(&execution.tools == &tools);
-    assert(execution.profile_tools_active);
-    assert(!execution.tool_registry);
+    assert(&execution.tooling == &tooling);
+    assert(!execution.tooling.profile_tools_active);
+    assert(execution.tooling.tool_view == nullptr);
 }
 
 static void test_chat_runtime_driver_smoke() {
@@ -748,19 +913,26 @@ static void test_chat_runtime_driver_smoke() {
     request.messages = {{"user", "Check status"}};
     common_agent_generation_options options;
     options.n_predict = 64;
+    test_agent_tool_view tool_view;
+    tool_view.tools = tools;
+    tool_view.handler = [](const agent_tool_call & call, std::string & error) {
+        assert(call.name == "memory_search");
+        error.clear();
+        agent_tool_result result;
+        result.ok = true;
+        result.tool_call_id = call.id;
+        result.tool_name = call.name;
+        result.content_json = R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})";
+        return result;
+    };
+    const auto tooling = make_runtime_tooling(tools, &tool_view, false);
 
     common_agent_chat_runtime_execution execution{
         inference,
         request,
         options,
-        {2},
-        tools,
-        false,
-        nullptr,
-        [](const common_chat_tool_call & call) {
-            assert(call.name == "memory_search");
-            return std::string(R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})");
-        },
+        {1},
+        tooling,
     };
 
     common_agent_result result;
@@ -810,6 +982,20 @@ static void test_runtime_host_chat_smoke() {
     turn_request.request = request;
     turn_request.generation_options = options;
     turn_request.memory_enabled = true;
+    turn_request.policy.max_tool_rounds = 1;
+    test_agent_tool_view tool_view;
+    tool_view.tools = tools;
+    tool_view.handler = [](const agent_tool_call & call, std::string & error) {
+        assert(call.name == "memory_search");
+        error.clear();
+        agent_tool_result result;
+        result.ok = true;
+        result.tool_call_id = call.id;
+        result.tool_name = call.name;
+        result.content_json = R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})";
+        return result;
+    };
+    const auto tooling = make_runtime_tooling(tools, &tool_view, false);
 
     common_agent_runtime_host_inputs inputs{
         common_agent_runtime_host_mode::chat,
@@ -819,14 +1005,9 @@ static void test_runtime_host_chat_smoke() {
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        tools,
+        tooling,
         false,
-        nullptr,
-        [](const common_chat_tool_call & call) {
-            assert(call.name == "memory_search");
-            return std::string(R"({"ok":true,"result":{"items":[{"id":"mem-1"}]}})");
-        },
+        {},
     };
 
     auto execution = make_agent_runtime_host_execution(inputs, inference);
@@ -872,7 +1053,7 @@ static void test_runtime_host_mini_smoke() {
     turn_request.scope = scope;
     turn_request.policy = make_agent_runtime_policy(options);
     turn_request.runtime_config = make_agent_runtime_config(options);
-    turn_request.orchestration_config = make_agent_orchestration_config(options);
+    turn_request.orchestration_config = make_test_agent_orchestration_config(options);
     turn_request.memory_scope = common_memory_scope::session;
     turn_request.memory_enabled = true;
 
@@ -880,18 +1061,17 @@ static void test_runtime_host_mini_smoke() {
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id;
+    const auto tooling = make_runtime_tooling(tools);
     common_agent_runtime_host_inputs inputs{
         common_agent_runtime_host_mode::mini,
         memories,
         &plans,
         turn_request,
         &current_plan_id,
-        &scope,
         &blueprints,
         &hits,
-        tools,
+        tooling,
         false,
-        nullptr,
         {},
     };
 
@@ -939,12 +1119,14 @@ static void test_runtime_host_input_builders() {
     common_agent_runtime_turn_request turn_request = make_agent_cli_runtime_turn_request(
         options,
         scope,
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         common_memory_scope::project,
         true,
-        error,
+        {},
+        nullptr,
         std::move(request),
         generation_options);
+    const auto tooling = make_runtime_tooling(tools);
 
     common_agent_runtime_host_build_context build_context{
         memories,
@@ -953,10 +1135,7 @@ static void test_runtime_host_input_builders() {
         &current_plan_id,
         &blueprints,
         hits,
-        tools,
-        true,
-        nullptr,
-        {},
+        tooling,
     };
 
     auto chat_inputs = make_agent_runtime_host_chat_inputs(build_context);
@@ -972,10 +1151,10 @@ static void test_runtime_host_input_builders() {
     common_agent_runtime_turn_request mini_turn_request = make_agent_cli_runtime_turn_request(
         options,
         scope,
-        make_agent_orchestration_config(options),
+        make_test_agent_orchestration_config(options),
         common_memory_scope::project,
         true,
-        error);
+        {});
     common_agent_runtime_host_build_context mini_context{
         memories,
         &plans,
@@ -983,18 +1162,16 @@ static void test_runtime_host_input_builders() {
         &current_plan_id,
         &blueprints,
         hits,
-        tools,
-        true,
-        nullptr,
-        {},
+        tooling,
     };
 
-    const auto orchestration_config = make_agent_orchestration_config(options);
+    const auto orchestration_config = make_test_agent_orchestration_config(options);
     auto mini_inputs = make_agent_runtime_host_mini_inputs(mini_context, orchestration_config);
     assert(mini_inputs.mode == common_agent_runtime_host_mode::mini);
     assert(mini_inputs.plan_store == &plans);
     assert(mini_inputs.current_plan_id == &current_plan_id);
-    assert(mini_inputs.scope == &mini_inputs.turn_request.scope);
+    assert(mini_inputs.turn_request.scope.session_id == "session-42");
+    assert(mini_inputs.turn_request.scope.project_id == "repo-1");
     assert(mini_inputs.installed_blueprint_candidates == &blueprints);
     assert(mini_inputs.turn_request.request.prompt == "Check status");
     assert(mini_inputs.turn_request.request.plan_scope == common_plan_scope::session);
@@ -1007,6 +1184,7 @@ static void test_runtime_host_turn_completion() {
     assert(memories.open("", error));
 
     const std::vector<common_chat_tool> tools;
+    const auto tooling = make_runtime_tooling(tools);
     common_agent_request request;
     request.messages = {{"user", "Check status"}};
 
@@ -1018,12 +1196,8 @@ static void test_runtime_host_turn_completion() {
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        tools,
+        tooling,
         false,
-        nullptr,
-        {},
-        true,
         {},
     };
 
@@ -1036,14 +1210,15 @@ static void test_runtime_host_turn_completion() {
     };
 
     common_agent_runtime_session session;
-    session.inference_session.inference = std::make_unique<fake_agent_inference>();
+    session.inference_context.initialized = true;
+    session.inference_context.session.inference = std::make_unique<fake_agent_inference>();
     common_agent_result result;
     result.response = "Status is green.";
 
     assert(complete_agent_runtime_host_turn(inputs, session, result, error));
     assert(error.empty());
     assert(post_run_calls == 1);
-    assert(session.inference_session.inference == nullptr);
+    assert(session.active_inference_session() != nullptr);
 }
 
 static void test_runtime_resident_host_multi_turn_smoke() {
@@ -1058,14 +1233,13 @@ static void test_runtime_resident_host_multi_turn_smoke() {
     };
 
     common_agent_runtime_resident_host host;
-    host.session().inference_session.backend = agent_inference_backend::cli;
-    host.session().inference_session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
-    auto * inference_ptr = static_cast<fake_agent_inference *>(host.session().inference_session.inference.get());
-    host.session().initialized = true;
-    host.session().initialized_backend = agent_inference_backend::cli;
-    host.session().initialized_options = {};
+    host.session().inference_context.session.backend = agent_inference_backend::cli;
+    host.session().inference_context.session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
+    auto * inference_ptr = static_cast<fake_agent_inference *>(host.session().inference_context.session.inference.get());
+    host.session().inference_context.initialized = true;
 
     const std::vector<common_chat_tool> tools;
+    const auto tooling = make_runtime_tooling(tools);
 
     common_agent_runtime_turn_request first_turn;
     first_turn.request = make_request();
@@ -1080,12 +1254,8 @@ static void test_runtime_resident_host_multi_turn_smoke() {
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        tools,
+        tooling,
         false,
-        nullptr,
-        {},
-        true,
         {},
     };
 
@@ -1093,8 +1263,8 @@ static void test_runtime_resident_host_multi_turn_smoke() {
     assert(host.run_turn(first_inputs, first_result, error));
     assert(error.empty());
     assert(first_result.response == "First answer");
-    assert(host.session().inference_session.inference.get() == inference_ptr);
-    assert(host.session().initialized);
+    assert(host.session().inference_context.session.inference.get() == inference_ptr);
+    assert(host.session().inference_context.initialized);
 
     common_agent_runtime_turn_request second_turn;
     second_turn.request = make_request();
@@ -1110,12 +1280,8 @@ static void test_runtime_resident_host_multi_turn_smoke() {
         nullptr,
         nullptr,
         nullptr,
-        nullptr,
-        tools,
+        tooling,
         false,
-        nullptr,
-        {},
-        true,
         {},
     };
 
@@ -1123,13 +1289,13 @@ static void test_runtime_resident_host_multi_turn_smoke() {
     assert(host.run_turn(second_inputs, second_result, error));
     assert(error.empty());
     assert(second_result.response == "Second answer");
-    assert(host.session().inference_session.inference.get() == inference_ptr);
+    assert(host.session().inference_context.session.inference.get() == inference_ptr);
     assert(inference_ptr->seen.size() == 2);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-7:conversation");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-8:conversation");
 
     host.reset();
-    assert(!host.session().initialized);
+    assert(!host.session().inference_context.initialized);
 }
 
 static void test_runtime_resident_chat_host_builder() {
@@ -1145,21 +1311,17 @@ static void test_runtime_resident_chat_host_builder() {
     base_turn_request.inference_options = {};
     base_turn_request.generation_options.n_predict = 24;
 
-    common_agent_runtime_resident_chat_host host({
-        memories,
-        base_turn_request,
-    });
+    common_agent_runtime_resident_runtime host(
+        make_agent_runtime_resident_runtime_config(memories, nullptr, base_turn_request));
 
     auto inference = std::make_unique<counting_agent_inference>();
     auto * inference_ptr = inference.get();
-    host.runtime_host().session().inference_session.backend = agent_inference_backend::cli;
-    host.runtime_host().session().inference_session.inference = std::move(inference);
-    host.runtime_host().session().initialized = true;
-    host.runtime_host().session().initialized_backend = agent_inference_backend::cli;
-    host.runtime_host().session().initialized_options = {};
+    host.runtime_host().session().inference_context.session.backend = agent_inference_backend::cli;
+    host.runtime_host().session().inference_context.session.inference = std::move(inference);
+    host.runtime_host().session().inference_context.initialized = true;
 
     common_agent_result result;
-    assert(host.run_prompt("Reply with TEST only.", "turn-9", result, error));
+    assert(host.run_chat_prompt("Reply with TEST only.", "turn-9", 24, result, error));
     assert(error.empty());
     assert(result.response == "counted");
     assert(inference_ptr->calls == 1);
@@ -1179,6 +1341,7 @@ static void test_runtime_resident_request_builders() {
         "resident-session",
         "tenant-a",
         "repo-1",
+        std::nullopt,
         "model.gguf",
         64,
         2,
@@ -1217,32 +1380,6 @@ static void test_runtime_resident_request_builders() {
     assert(&runtime_config.memory_store == &memories);
     assert(runtime_config.plan_store == nullptr);
     assert(runtime_config.base_turn_request.request.session_id == "resident-session");
-
-    common_agent_runtime_daemon_turn_request daemon_request;
-    daemon_request.mode = common_agent_runtime_host_mode::mini;
-    daemon_request.prompt = "Check status";
-    daemon_request.session_id = "resident-session";
-    daemon_request.namespace_id = "tenant-a";
-    daemon_request.project_id = "repo-1";
-    daemon_request.turn_id = "turn-3";
-    daemon_request.memory_scope = common_memory_scope::project;
-    daemon_request.plan_scope = common_plan_scope::project;
-    daemon_request.n_predict = 32;
-    assert(daemon_request.mode == common_agent_runtime_host_mode::mini);
-    assert(daemon_request.project_id == "repo-1");
-    assert(daemon_request.turn_id == "turn-3");
-    assert(daemon_request.memory_scope == common_memory_scope::project);
-    assert(daemon_request.plan_scope == common_plan_scope::project);
-
-    common_agent_runtime_daemon_turn_result daemon_result;
-    daemon_result.ok = true;
-    daemon_result.response = "All set";
-    daemon_result.plan_id = "plan-1";
-    daemon_result.total_decoded_tokens = 12;
-    assert(daemon_result.ok);
-    assert(daemon_result.response == "All set");
-    assert(daemon_result.plan_id == "plan-1");
-    assert(daemon_result.total_decoded_tokens == 12);
 }
 
 static void test_runtime_resident_runtime_builder() {
@@ -1264,6 +1401,7 @@ static void test_runtime_resident_runtime_builder() {
         "session-42",
         "tenant-a",
         {},
+        std::nullopt,
         "model.gguf",
         0,
         0,
@@ -1274,7 +1412,7 @@ static void test_runtime_resident_runtime_builder() {
     });
     base_turn_request.policy = make_agent_runtime_policy(options);
     base_turn_request.runtime_config = make_agent_runtime_config(options);
-    base_turn_request.orchestration_config = make_agent_orchestration_config(options);
+    base_turn_request.orchestration_config = make_test_agent_orchestration_config(options);
     base_turn_request.memory_scope = common_memory_scope::session;
     base_turn_request.memory_enabled = true;
     base_turn_request.generation_options.n_predict = 24;
@@ -1290,20 +1428,33 @@ static void test_runtime_resident_runtime_builder() {
         make_success(R"(not-json)"),
         make_success("draft-content", 7),
     };
-    runtime.runtime_host().session().inference_session.backend = agent_inference_backend::cli;
-    runtime.runtime_host().session().inference_session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
-    auto * inference_ptr = static_cast<fake_agent_inference *>(runtime.runtime_host().session().inference_session.inference.get());
-    runtime.runtime_host().session().initialized = true;
-    runtime.runtime_host().session().initialized_backend = agent_inference_backend::cli;
-    runtime.runtime_host().session().initialized_options = {};
+    auto & runtime_session = runtime.runtime_host().session();
+    auto * fake_model = reinterpret_cast<llama_model *>(0x11);
+    runtime_session.loaded_model.model = fake_model;
+    runtime_session.loaded_model.loaded = true;
+    runtime_session.loaded_model.backend = agent_inference_backend::cli;
+    runtime_session.loaded_model.key = {
+        base_turn_request.inference_options.model,
+        base_turn_request.inference_options.n_gpu_layers,
+        base_turn_request.inference_options.fit_params,
+    };
+    runtime_session.inference_context.session.backend = agent_inference_backend::cli;
+    runtime_session.inference_context.session.model = fake_model;
+    runtime_session.inference_context.session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
+    runtime_session.inference_context.key = {
+        agent_inference_backend::cli,
+        runtime_session.loaded_model.key,
+    };
+    auto * inference_ptr = static_cast<fake_agent_inference *>(runtime_session.inference_context.session.inference.get());
+    runtime_session.inference_context.initialized = true;
 
     common_agent_result chat_result;
-    assert(runtime.run_chat_prompt("Reply with TEST only.", "turn-9", chat_result, error));
+    assert(runtime.run_chat_prompt("Reply with TEST only.", "turn-9", 24, chat_result, error));
     assert(error.empty());
     assert(chat_result.response == "chat-response");
 
     common_agent_result mini_result;
-    assert(runtime.run_mini_prompt("Check status", "turn-11", mini_result, error));
+    assert(runtime.run_mini_prompt("Check status", "turn-11", 24, mini_result, error));
     assert(error.empty());
     assert(mini_result.response == "draft-content");
     assert(mini_result.plan_id);
@@ -1312,6 +1463,8 @@ static void test_runtime_resident_runtime_builder() {
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-9:conversation");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
     assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:draft");
+    runtime_session.loaded_model.model = nullptr;
+    runtime_session.loaded_model.loaded = false;
 }
 
 static void test_runtime_resident_mini_host_builder() {
@@ -1339,6 +1492,7 @@ static void test_runtime_resident_mini_host_builder() {
         "session-42",
         "tenant-a",
         {},
+        std::nullopt,
         "model.gguf",
         0,
         0,
@@ -1349,30 +1503,35 @@ static void test_runtime_resident_mini_host_builder() {
     });
     base_turn_request.policy = make_agent_runtime_policy(options);
     base_turn_request.runtime_config = make_agent_runtime_config(options);
-    base_turn_request.orchestration_config = make_agent_orchestration_config(options);
+    base_turn_request.orchestration_config = make_test_agent_orchestration_config(options);
     base_turn_request.memory_scope = common_memory_scope::session;
     base_turn_request.memory_enabled = true;
 
-    common_agent_runtime_resident_mini_host host({
-        memories,
-        plans,
-        base_turn_request,
-        {},
-        {},
-        {},
-        false,
-        nullptr,
-    });
+    common_agent_runtime_resident_runtime host(
+        make_agent_runtime_resident_runtime_config(memories, &plans, base_turn_request));
 
-    host.runtime_host().session().inference_session.backend = agent_inference_backend::cli;
-    host.runtime_host().session().inference_session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
-    auto * inference_ptr = static_cast<fake_agent_inference *>(host.runtime_host().session().inference_session.inference.get());
-    host.runtime_host().session().initialized = true;
-    host.runtime_host().session().initialized_backend = agent_inference_backend::cli;
-    host.runtime_host().session().initialized_options = {};
+    auto & runtime_session = host.runtime_host().session();
+    auto * fake_model = reinterpret_cast<llama_model *>(0x12);
+    runtime_session.loaded_model.model = fake_model;
+    runtime_session.loaded_model.loaded = true;
+    runtime_session.loaded_model.backend = agent_inference_backend::cli;
+    runtime_session.loaded_model.key = {
+        base_turn_request.inference_options.model,
+        base_turn_request.inference_options.n_gpu_layers,
+        base_turn_request.inference_options.fit_params,
+    };
+    runtime_session.inference_context.session.backend = agent_inference_backend::cli;
+    runtime_session.inference_context.session.model = fake_model;
+    runtime_session.inference_context.session.inference = std::make_unique<fake_agent_inference>(std::move(inference));
+    runtime_session.inference_context.key = {
+        agent_inference_backend::cli,
+        runtime_session.loaded_model.key,
+    };
+    auto * inference_ptr = static_cast<fake_agent_inference *>(runtime_session.inference_context.session.inference.get());
+    runtime_session.inference_context.initialized = true;
 
     common_agent_result result;
-    assert(host.run_prompt("Check status", "turn-11", result, error));
+    assert(host.run_mini_prompt("Check status", "turn-11", 24, result, error));
     assert(error.empty());
     assert(result.response == "draft-content");
     assert(result.plan_id);
@@ -1380,6 +1539,8 @@ static void test_runtime_resident_mini_host_builder() {
     assert(inference_ptr->seen.size() == 2);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:planner");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:draft");
+    runtime_session.loaded_model.model = nullptr;
+    runtime_session.loaded_model.loaded = false;
 }
 
 static void test_cli_runtime_host_adapter_chat_inputs() {
@@ -1403,6 +1564,7 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
     const std::vector<common_chat_tool> tools = {
         {"memory_search", "Search memory", R"({"type":"object"})"},
     };
+    const auto tooling = make_runtime_tooling(tools);
 
     auto inputs = make_agent_cli_runtime_host_chat_inputs(
         memories,
@@ -1411,9 +1573,8 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
         common_memory_scope::project,
         hits,
         true,
-        error,
-        tools,
-        false,
+        {},
+        tooling,
         nullptr,
         {});
 
@@ -1422,9 +1583,10 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
     assert(inputs.turn_request.request.prompt == "Check status");
     assert(inputs.turn_request.request.namespace_id == "tenant-a");
     assert(inputs.turn_request.request.project_id == "repo-1");
-    assert(inputs.turn_request.request.plan_scope == common_plan_scope::session);
+    assert(inputs.turn_request.scope.plan_scope == common_plan_scope::project);
     assert(inputs.turn_request.request.enable_memory);
-    assert(inputs.tool_handler);
+    assert(&inputs.tooling == &tooling);
+    assert(inputs.tooling.tool_view == nullptr);
 }
 
 static void test_runtime_session_reuse() {
@@ -1434,29 +1596,41 @@ static void test_runtime_session_reuse() {
     auto inference = std::make_unique<counting_agent_inference>();
     auto * inference_ptr = inference.get();
 
-    session.model = fake_model;
-    session.inference_session.backend = agent_inference_backend::cli;
-    session.inference_session.model = fake_model;
-    session.inference_session.templates = fake_templates;
-    session.inference_session.inference = std::move(inference);
-    session.initialized = true;
-    session.initialized_backend = agent_inference_backend::cli;
-    session.initialized_options = make_agent_inference_options(make_test_args());
+    const auto options = make_agent_inference_options(make_test_args());
+    session.loaded_model.model = fake_model;
+    session.loaded_model.loaded = true;
+    session.loaded_model.backend = agent_inference_backend::cli;
+    session.loaded_model.key = {
+        options.model,
+        options.n_gpu_layers,
+        options.fit_params,
+    };
+    session.inference_context.session.backend = agent_inference_backend::cli;
+    session.inference_context.session.model = fake_model;
+    session.inference_context.session.templates = fake_templates;
+    session.inference_context.session.inference = std::move(inference);
+    session.inference_context.initialized = true;
+    session.inference_context.key = {
+        agent_inference_backend::cli,
+        session.loaded_model.key,
+    };
 
     std::string error;
     assert(initialize_agent_runtime_session(
-        make_agent_inference_options(make_test_args()),
+        options,
         agent_inference_backend::cli,
         true,
         {},
         session,
         error));
     assert(error.empty());
-    assert(session.model == fake_model);
-    assert(session.inference_session.inference.get() == inference_ptr);
-    session.model = nullptr;
-    session.inference_session = {};
-    session.initialized = false;
+    assert(session.loaded_model.model == fake_model);
+    assert(session.active_inference_session() != nullptr);
+    assert(session.active_inference_session()->inference.get() == inference_ptr);
+    session.loaded_model.model = nullptr;
+    session.loaded_model.loaded = false;
+    session.inference_context.session = {};
+    session.inference_context.initialized = false;
 }
 
 static bool run_named_test(const std::string & name) {
