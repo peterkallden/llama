@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../common/runtime/runtime-operation.h"
 #include "../runtime/agent-runtime-control.h"
 #include "../runtime/agent-runtime-turn.h"
 
@@ -55,27 +56,14 @@ inline const char * common_agent_runtime_turn_disposition_name(
     return "continue_immediately";
 }
 
-enum class common_agent_runtime_pending_operation_kind {
-    inference,
-    tool,
-};
+using common_agent_runtime_pending_operation_kind = common_runtime_operation_kind;
 
 inline const char * common_agent_runtime_pending_operation_kind_name(
         common_agent_runtime_pending_operation_kind kind) {
-    switch (kind) {
-        case common_agent_runtime_pending_operation_kind::inference: return "inference";
-        case common_agent_runtime_pending_operation_kind::tool:      return "tool";
-    }
-    return "tool";
+    return common_runtime_operation_kind_name(kind);
 }
 
-struct common_agent_runtime_pending_operation {
-    std::string operation_id;
-    common_agent_runtime_pending_operation_kind kind =
-        common_agent_runtime_pending_operation_kind::tool;
-    std::string detail;
-    std::chrono::steady_clock::time_point deadline{};
-};
+using common_agent_runtime_pending_operation = common_runtime_operation;
 
 struct common_agent_runtime_turn_execution {
     std::string request_id;

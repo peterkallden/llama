@@ -192,10 +192,12 @@ The runtime direction depends on keeping the layer boundaries boring and explici
 - `common/memory` should not depend on agent/runtime host code.
 - `common/plan` may depend on memory contracts and stores, but not on agent PoC host flow.
 - `common/agent` may depend on plan and memory, but should still prefer neutral runtime-facing contracts when a type does not need full agent semantics.
-- `pocs/agent` may depend on all lower layers and is where host adapters, daemon experiments, MCP-shaped seams, and resident runtime assembly can live.
+- `common/runtime` should own host-neutral execution-control, pending-operation, trace, and other runtime DTO-style contracts that do not need full agent semantics.
+- `tools/agent/*` is now the owner of active agent host/runtime behavior: resident runtime assembly, daemon/service code, MCP transport, tool providers, resource stores, and CLI adapters live there.
+- `pocs/agent` may still depend on all lower layers, but it should now stay focused on smoke harnesses, fake backends, helper binaries, and migration-era build glue rather than regaining ownership of core runtime behavior.
 - `pocs/memory` should not become the owner of agent orchestration or resident host flow.
 
-In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the PoC host layer and keep the PoC layer focused on assembly rather than ownership of core abstractions.
+In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, execution-control contracts, pending-operation descriptors, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the operational host layer, keep `tools/agent/*` responsible for concrete runtime behavior, and keep the PoC layer focused on smoke assembly rather than ownership of core abstractions.
 
 The practical JSON rule is now the same: if JSON crosses a subsystem boundary and is not just a short-lived local implementation detail, it should move behind a named parse/serialize/validate helper. JSON as a wire or storage format is fine; raw `ordered_json` plus string `.dump()` should not silently become the contract.
 

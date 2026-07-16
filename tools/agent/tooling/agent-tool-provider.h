@@ -4,6 +4,7 @@
 #include "agent/tool-adapters.h"
 #include "agent/tool-catalog.h"
 #include "agent/tool-chat-bridge.h"
+#include "../../../common/runtime/runtime-operation.h"
 #include "../runtime/agent-runtime-control.h"
 #include "chat.h"
 #include "plan/plan-types.h"
@@ -78,10 +79,7 @@ struct agent_tool_result {
     std::string raw_diagnostic;
 };
 
-struct agent_tool_pending_call {
-    std::string operation_id;
-    std::string tool_name;
-};
+using agent_tool_pending_call = common_runtime_operation_ref;
 
 class agent_tool_view {
 public:

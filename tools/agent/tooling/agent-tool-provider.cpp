@@ -268,7 +268,8 @@ public:
         }
 
         pending = {};
-        pending.tool_name = call.name;
+        pending.kind = common_runtime_operation_kind::tool;
+        pending.subject_name = call.name;
         pending.operation_id = "native-tool-op-" + std::to_string(++next_async_operation_id);
         {
             std::lock_guard<std::mutex> lock(async_mutex);
@@ -507,7 +508,8 @@ public:
         }
 
         pending = {};
-        pending.tool_name = call.name;
+        pending.kind = common_runtime_operation_kind::tool;
+        pending.subject_name = call.name;
         pending.operation_id = "mcp-tool-op-" + std::to_string(++next_async_operation_id);
         {
             std::lock_guard<std::mutex> lock(async_mutex);
@@ -760,7 +762,7 @@ public:
             bool & ready,
             agent_tool_result & result,
             std::string & error) override {
-        auto * view = find_owner(pending.tool_name);
+        auto * view = find_owner(pending.subject_name);
         if (view == nullptr) {
             error = "tool is unavailable in this composite runtime view";
             ready = false;
