@@ -1,10 +1,10 @@
 #include "memory/memory-context.h"
 #include "memory/memory-in-memory.h"
 
-#include "../agent/agent-cli-command.h"
-#include "../agent/agent-cli-config.h"
 #include "common/cli-config.h"
 #include "memory-cli-memory.h"
+#include "tools/agent/cli/agent-cli-command.h"
+#include "tools/agent/cli/agent-cli-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-in-memory.h"
