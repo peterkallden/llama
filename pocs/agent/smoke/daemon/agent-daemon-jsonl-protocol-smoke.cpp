@@ -1,5 +1,5 @@
-#include "agent-daemon-client-status.h"
-#include "agent-daemon-jsonl-protocol.h"
+#include "tools/agent/daemon/agent-daemon-client-status.h"
+#include "tools/agent/daemon/agent-daemon-jsonl-protocol.h"
 
 #include <cstdio>
 

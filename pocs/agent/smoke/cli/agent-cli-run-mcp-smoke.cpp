@@ -1,6 +1,6 @@
-#include "agent-cli-config.h"
-#include "agent-cli-host-adapter.h"
-#include "agent-cli-run-adapter.h"
+#include "tools/agent/cli/agent-cli-config.h"
+#include "tools/agent/cli/agent-cli-host-adapter.h"
+#include "tools/agent/cli/agent-cli-run-adapter.h"
 
 #include "memory/memory-in-memory.h"
 

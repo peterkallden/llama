@@ -1,13 +1,13 @@
 #pragma once
 
-#include "agent-tool-provider.h"
-#include "agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../tooling/agent-tool-provider.h"
 #include "agent/agent-contract.h"
 #include "agent/agent-inference.h"
 #include "agent/blueprint-selector.h"
 #include "agent/tool-registry.h"
-#include "agent-plan-orchestration.h"
-#include "agent-runtime-session.h"
+#include "../runtime/agent-plan-orchestration.h"
+#include "../runtime/agent-runtime-session.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 

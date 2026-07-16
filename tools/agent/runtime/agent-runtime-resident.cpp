@@ -1,6 +1,6 @@
 #include "agent-runtime-resident.h"
 
-#include "agent-runtime-host.h"
+#include "../runtime/agent-runtime-host.h"
 
 bool common_agent_runtime_resident_host::run_turn(
         common_agent_runtime_host_inputs & inputs,

@@ -1,4 +1,4 @@
-#include "agent-cli-host-adapter.h"
+#include "tools/agent/cli/agent-cli-host-adapter.h"
 
 #include "../common/cli-config.h"
 

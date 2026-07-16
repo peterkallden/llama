@@ -3,8 +3,8 @@
 #include "agent-daemon-event-collector.h"
 #include "agent-daemon-lifecycle.h"
 #include "agent-daemon-events.h"
-#include "agent-runtime-session-manager.h"
-#include "agent-resource-store.h"
+#include "../resource/agent-resource-store.h"
+#include "../runtime/agent-runtime-session-manager.h"
 
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"

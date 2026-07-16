@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent-tool-provider.h"
+#include "../tooling/agent-tool-provider.h"
 #include "agent/agent-inference.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"

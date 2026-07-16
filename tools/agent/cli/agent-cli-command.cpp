@@ -1,8 +1,8 @@
 #include "agent-cli-command.h"
 
 #include "agent-cli-config.h"
-#include "agent-daemon-client.h"
 #include "agent-cli-run.h"
+#include "../daemon/agent-daemon-client.h"
 
 #include <cstdio>
 

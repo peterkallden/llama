@@ -1,7 +1,7 @@
 #include "agent-plan-orchestration.h"
 
-#include "agent-cli-selection.h"
-#include "agent-tool-provider.h"
+#include "../cli/agent-cli-selection.h"
+#include "../tooling/agent-tool-provider.h"
 #include "common/cli-scope.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"

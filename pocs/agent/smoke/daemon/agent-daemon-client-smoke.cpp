@@ -1,5 +1,5 @@
-#include "agent-daemon-client.h"
-#include "agent-daemon-client-admin.h"
+#include "tools/agent/daemon/agent-daemon-client.h"
+#include "tools/agent/daemon/agent-daemon-client-admin.h"
 
 #include <cstdio>
 #include <chrono>

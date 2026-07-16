@@ -1,7 +1,7 @@
 #pragma once
 
-#include "agent-runtime-turn.h"
-#include "agent-runtime-control.h"
+#include "../runtime/agent-runtime-control.h"
+#include "../runtime/agent-runtime-turn.h"
 
 #include <chrono>
 #include <optional>

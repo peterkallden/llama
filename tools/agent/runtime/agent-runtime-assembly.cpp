@@ -1,7 +1,7 @@
 #include "agent-runtime-assembly.h"
 
-#include "agent-cli-runtime.h"
-#include "agent-tool-runtime-adapter.h"
+#include "../cli/agent-cli-runtime.h"
+#include "../tooling/agent-tool-runtime-adapter.h"
 
 common_agent_inference_options make_agent_inference_options(common_agent_inference_options config) {
     return config;

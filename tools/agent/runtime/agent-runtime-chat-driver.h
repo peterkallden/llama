@@ -2,7 +2,7 @@
 
 #include "agent/agent-contract.h"
 #include "agent/agent-inference.h"
-#include "agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-tooling.h"
 
 #include <string>
 #include <vector>

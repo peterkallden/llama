@@ -1,7 +1,7 @@
 #include "agent-runtime-execution.h"
 
-#include "agent-plan-orchestration.h"
-#include "agent-runtime-assembly.h"
+#include "../runtime/agent-plan-orchestration.h"
+#include "../runtime/agent-runtime-assembly.h"
 
 #include <cstdio>
 

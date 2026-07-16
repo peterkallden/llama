@@ -1,5 +1,5 @@
 #include "agent-host-config.h"
-#include "agent-daemon-adapter.h"
+#include "../daemon/agent-daemon-adapter.h"
 
 #include <fstream>
 #include <nlohmann/json.hpp>

@@ -1,6 +1,6 @@
-#include "agent-tool-provider.h"
-#include "agent-resource-store.h"
-#include "agent-tool-runtime-adapter.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
+#include "tools/agent/tooling/agent-tool-runtime-adapter.h"
 
 #include "agent/agent-runtime.h"
 #include "agent/tool-catalog.h"

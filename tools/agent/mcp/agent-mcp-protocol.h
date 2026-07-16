@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent-tool-provider.h"
+#include "../tooling/agent-tool-provider.h"
 
 #include <nlohmann/json.hpp>
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "agent-runtime-turn.h"
-#include "agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-turn.h"
 
 using common_agent_runtime_host_post_run = std::function<bool(
     const common_agent_result & result,

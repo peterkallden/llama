@@ -2,7 +2,7 @@
 
 #include "../common/cli-config.h"
 
-#include "agent-plan-orchestration.h"
+#include "../runtime/agent-plan-orchestration.h"
 #include "common/cli-scope.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"

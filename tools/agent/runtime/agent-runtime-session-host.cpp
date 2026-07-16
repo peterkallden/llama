@@ -1,7 +1,7 @@
 #include "agent-runtime-session-host.h"
 
-#include "agent-runtime-resident.h"
-#include "agent-tool-provider.h"
+#include "../runtime/agent-runtime-resident.h"
+#include "../tooling/agent-tool-provider.h"
 #include "memory/memory-context.h"
 
 namespace {

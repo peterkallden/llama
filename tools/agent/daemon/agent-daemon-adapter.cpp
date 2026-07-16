@@ -1,10 +1,10 @@
 #include "agent-daemon-adapter.h"
 
-#include "agent-cli-selection.h"
+#include "../cli/agent-cli-selection.h"
 #include "agent-daemon-dispatcher.h"
 #include "agent-daemon-jsonl-protocol.h"
-#include "agent-host-config.h"
-#include "agent-resource-store.h"
+#include "../host/agent-host-config.h"
+#include "../resource/agent-resource-store.h"
 
 #include <cstdio>
 #include <cstring>

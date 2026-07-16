@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent-runtime-assembly.h"
+#include "../runtime/agent-runtime-assembly.h"
 
 #include "common.h"
 #include "log.h"

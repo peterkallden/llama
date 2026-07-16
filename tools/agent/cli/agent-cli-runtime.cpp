@@ -1,6 +1,6 @@
 #include "agent-cli-runtime.h"
 #include "agent-cli-generation-utils.h"
-#include "agent-runtime-assembly.h"
+#include "../runtime/agent-runtime-assembly.h"
 
 #include "agent/reflection-json.h"
 #include "agent/schema-contract.h"

@@ -1,5 +1,5 @@
 #include "agent-mcp-protocol.h"
-#include "agent-tool-provider.h"
+#include "../tooling/agent-tool-provider.h"
 
 #include <sheredom/subprocess.h>
 

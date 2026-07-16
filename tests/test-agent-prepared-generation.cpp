@@ -1,6 +1,6 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
-#include "agent-server-generation.h"
+#include "tools/agent/runtime/agent-server-generation.h"
 #include "chat.h"
 
 #include <cassert>

@@ -1,6 +1,6 @@
 #include "agent-server-context-host.h"
 
-#include "agent-cli-inference.h"
+#include "../cli/agent-cli-inference.h"
 
 #include "log.h"
 #include "server-context.h"

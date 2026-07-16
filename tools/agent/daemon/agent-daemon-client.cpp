@@ -1,11 +1,11 @@
 #include "agent-daemon-client.h"
 
 #include "agent-daemon-client-admin.h"
-#include "agent-cli-config.h"
-#include "agent-cli-selection.h"
+#include "../cli/agent-cli-config.h"
+#include "../cli/agent-cli-selection.h"
+#include "../resource/agent-resource-store.h"
 #include "agent-daemon-client-status.h"
 #include "agent-daemon-jsonl-protocol.h"
-#include "agent-resource-store.h"
 
 #include <nlohmann/json.hpp>
 #include <sheredom/subprocess.h>

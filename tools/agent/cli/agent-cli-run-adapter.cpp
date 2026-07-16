@@ -2,7 +2,7 @@
 
 #include "../memory/memory-cli-memory.h"
 
-#include "agent-resource-store.h"
+#include "../resource/agent-resource-store.h"
 #include "agent-cli-selection.h"
 
 #include <ctime>

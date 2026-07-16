@@ -1,6 +1,6 @@
 #include "agent-runtime-chat-driver.h"
 
-#include "agent-tool-provider.h"
+#include "../tooling/agent-tool-provider.h"
 #include "agent/tool-chat-bridge.h"
 
 namespace {

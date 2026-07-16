@@ -2,11 +2,11 @@
 
 #include "../memory/memory-cli-memory.h"
 
-#include "agent-host-config.h"
-#include "agent-cli-host-adapter.h"
-#include "agent-cli-selection.h"
-#include "agent-resource-store.h"
-#include "agent-tool-provider.h"
+#include "../cli/agent-cli-host-adapter.h"
+#include "../cli/agent-cli-selection.h"
+#include "../host/agent-host-config.h"
+#include "../resource/agent-resource-store.h"
+#include "../tooling/agent-tool-provider.h"
 #include "common/cli-config.h"
 #include "common/cli-scope.h"
 #include "memory/memory-in-memory.h"

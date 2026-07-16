@@ -1,8 +1,8 @@
 #pragma once
 
-#include "agent-runtime-session-host.h"
-#include "agent-runtime-turn-execution.h"
-#include "agent-daemon-events.h"
+#include "../daemon/agent-daemon-events.h"
+#include "../runtime/agent-runtime-session-host.h"
+#include "../runtime/agent-runtime-turn-execution.h"
 
 #include <functional>
 #include <deque>

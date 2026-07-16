@@ -2,8 +2,8 @@
 
 #include "../common/cli-config.h"
 
-#include "agent-runtime-chat-driver.h"
-#include "agent-runtime-execution.h"
+#include "../runtime/agent-runtime-chat-driver.h"
+#include "../runtime/agent-runtime-execution.h"
 
 #include <string>
 

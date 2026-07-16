@@ -1,5 +1,5 @@
-#include "agent-tool-provider.h"
-#include "agent-resource-store.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 
 #include "agent/tool-catalog.h"
 #include "memory/memory-in-memory.h"

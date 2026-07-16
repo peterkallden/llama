@@ -1,7 +1,7 @@
 #include "agent-daemon-adapter.h"
 
-#include "agent-cli-host-adapter.h"
-#include "agent-cli-selection.h"
+#include "../cli/agent-cli-host-adapter.h"
+#include "../cli/agent-cli-selection.h"
 #include "agent/agent-scope.h"
 #include "../memory/memory-cli-memory.h"
 #include "memory/memory-in-memory.h"

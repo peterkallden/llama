@@ -1,5 +1,5 @@
-#include "agent-daemon-adapter.h"
-#include "agent-daemon-dispatcher.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+#include "tools/agent/daemon/agent-daemon-dispatcher.h"
 
 #include "log.h"
 #include "memory/memory-in-memory.h"

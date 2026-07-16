@@ -1,8 +1,8 @@
 #pragma once
 
-#include "agent-runtime-host-contracts.h"
-#include "agent-runtime-tooling.h"
-#include "agent-runtime-turn.h"
+#include "../runtime/agent-runtime-host-contracts.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-turn.h"
 
 #include <string>
 #include <vector>

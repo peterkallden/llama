@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../common/cli-config.h"
-#include "agent-host-mcp-provider-config.h"
+#include "../host/agent-host-mcp-provider-config.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>

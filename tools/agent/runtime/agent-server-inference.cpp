@@ -1,5 +1,5 @@
-#include "agent-cli-inference.h"
-#include "agent-server-generation.h"
+#include "../cli/agent-cli-inference.h"
+#include "../runtime/agent-server-generation.h"
 
 #include "agent/agent-prepared-generation.h"
 #include "server-context.h"

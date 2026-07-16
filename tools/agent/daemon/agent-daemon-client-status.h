@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent-daemon-jsonl-protocol.h"
+#include "../daemon/agent-daemon-jsonl-protocol.h"
 
 #include <string>
 #include <vector>

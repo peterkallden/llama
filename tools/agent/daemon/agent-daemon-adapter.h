@@ -2,12 +2,12 @@
 
 #include "../common/cli-config.h"
 
-#include "agent-host-mcp-provider-config.h"
+#include "../host/agent-host-mcp-provider-config.h"
+#include "../runtime/agent-plan-orchestration.h"
+#include "../runtime/agent-runtime-assembly.h"
+#include "../runtime/agent-runtime-execution.h"
+#include "../runtime/agent-runtime-resident.h"
 #include "agent-daemon-service.h"
-#include "agent-runtime-resident.h"
-#include "agent-runtime-assembly.h"
-#include "agent-runtime-execution.h"
-#include "agent-plan-orchestration.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>

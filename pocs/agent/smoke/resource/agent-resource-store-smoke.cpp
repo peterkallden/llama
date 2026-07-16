@@ -1,4 +1,4 @@
-#include "agent-resource-store.h"
+#include "tools/agent/resource/agent-resource-store.h"
 
 #include <cstdio>
 #include <filesystem>

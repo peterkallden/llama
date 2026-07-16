@@ -1,8 +1,8 @@
 #include "agent-cli-selection.h"
 #include "agent-cli-generation-utils.h"
-#include "agent-runtime-assembly.h"
-#include "agent-selection-contracts.h"
-#include "agent-tool-provider.h"
+#include "../runtime/agent-runtime-assembly.h"
+#include "../tooling/agent-selection-contracts.h"
+#include "../tooling/agent-tool-provider.h"
 
 #include "agent/agent-package-json.h"
 #include "common/cli-scope.h"

@@ -1,7 +1,7 @@
 #include "agent-runtime-session.h"
 
-#include "agent-cli-inference.h"
-#include "agent-server-context-host.h"
+#include "../cli/agent-cli-inference.h"
+#include "../runtime/agent-server-context-host.h"
 
 #include "chat.h"
 

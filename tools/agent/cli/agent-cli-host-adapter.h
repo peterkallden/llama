@@ -2,11 +2,11 @@
 
 #include "../common/cli-config.h"
 
-#include "agent-host-mcp-provider-config.h"
-#include "agent-resource-store.h"
-#include "agent-tool-provider.h"
-#include "agent-runtime-host.h"
-#include "agent-runtime-tooling.h"
+#include "../host/agent-host-mcp-provider-config.h"
+#include "../resource/agent-resource-store.h"
+#include "../runtime/agent-runtime-host.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../tooling/agent-tool-provider.h"
 
 #include <memory>
 #include <string>

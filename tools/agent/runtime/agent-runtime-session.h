@@ -2,7 +2,7 @@
 
 #include "../common/cli-config.h"
 
-#include "agent-runtime-assembly.h"
+#include "../runtime/agent-runtime-assembly.h"
 
 #include "chat.h"
 #include "llama.h"

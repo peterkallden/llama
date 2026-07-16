@@ -4,7 +4,7 @@
 #include "agent/tool-adapters.h"
 #include "agent/tool-catalog.h"
 #include "agent/tool-chat-bridge.h"
-#include "agent-runtime-control.h"
+#include "../runtime/agent-runtime-control.h"
 #include "chat.h"
 #include "plan/plan-types.h"
 #include "runtime-resource.h"
