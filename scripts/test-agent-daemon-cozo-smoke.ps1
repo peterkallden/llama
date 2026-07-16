@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir = "build-plan-resident-cozo-debug",
+    [string]$Configuration = "Release",
     [string]$ChatModel = "$HOME\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$CozoBin = "",
     [switch]$Build
@@ -36,6 +37,7 @@ Assert-PathExists -Path $CozoBin -Label "Cozo runtime directory"
 try {
     & $smokeScript `
         -BuildDir $BuildDir `
+        -Configuration $Configuration `
         -ChatModel $ChatModel `
         -PathPrefix $CozoBin `
         -ExtraDaemonArgs @(

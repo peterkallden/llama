@@ -1,7 +1,5 @@
-#include "tools/agent/daemon/agent-daemon-adapter.h"
 #include "tools/agent/daemon/agent-daemon-dispatcher.h"
 
-#include "log.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
@@ -150,23 +148,13 @@ bool has_typed_event(
 
 } // namespace
 
-int main(int argc, char ** argv) {
-    daemon_options options;
-    if (!parse_agent_daemon_args(argc, argv, options)) {
-        print_agent_daemon_usage(argv[0]);
-        return 2;
-    }
-
-    common_log_set_verbosity_thold(LOG_LEVEL_WARN);
-
-    common_agent_daemon_runtime runtime;
-    std::string error;
-    if (!initialize_agent_daemon_environment(options, runtime, error)) {
-        std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
-        return 2;
-    }
-
-    common_agent_daemon_dispatcher dispatcher(std::move(runtime), 8);
+int main() {
+    common_agent_daemon_dispatcher dispatcher(
+        make_waiting_runtime(
+            common_agent_runtime_pending_operation_kind::inference,
+            "dispatcher smoke pending inference",
+            "dispatcher cancel resolver"),
+        8);
 
     common_agent_daemon_command_result first_result;
     common_agent_daemon_command_result second_result;
@@ -244,8 +232,10 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "cancel result missing daemon cancellation event\n");
         return 1;
     }
-    if (!first_ok || first_result.turn_result.response.empty()) {
-        std::fprintf(stderr, "first turn failed: %s\n", first_error.c_str());
+    if (first_ok ||
+            !first_result.turn_result.cancelled ||
+            first_result.turn_result.error != "turn cancelled by host") {
+        std::fprintf(stderr, "first turn did not preserve host cancellation\n");
         return 1;
     }
     if (first_result.daemon_event_count < 2) {
@@ -280,16 +270,16 @@ int main(int argc, char ** argv) {
         cancel_result.status.active_turn_id.c_str(),
         cancel_result.status.active_turn_phase.c_str(),
         cancel_result.status.active_turn_disposition.c_str());
-    std::printf("first_turn_response=%s\n", first_result.turn_result.response.c_str());
+    std::printf("first_turn_error=%s\n", first_result.turn_result.error.c_str());
     std::printf("second_turn_cancelled=%s\n", second_result.turn_result.cancelled ? "yes" : "no");
     std::printf("second_turn_error=%s\n", second_result.turn_result.error.c_str());
 
-    common_agent_daemon_runtime reset_runtime;
-    if (!initialize_agent_daemon_environment(options, reset_runtime, error)) {
-        std::fprintf(stderr, "failed to initialize reset daemon environment: %s\n", error.c_str());
-        return 2;
-    }
-    common_agent_daemon_dispatcher reset_dispatcher(std::move(reset_runtime), 8);
+    common_agent_daemon_dispatcher reset_dispatcher(
+        make_waiting_runtime(
+            common_agent_runtime_pending_operation_kind::inference,
+            "dispatcher reset pending inference",
+            "dispatcher reset resolver"),
+        8);
 
     common_agent_daemon_command_result reset_first_result;
     common_agent_daemon_command_result reset_second_result;
@@ -349,8 +339,9 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "reset command missing internal session reset events\n");
         return 1;
     }
-    if (!reset_first_ok || reset_first_result.turn_result.response.empty()) {
-        std::fprintf(stderr, "reset scenario first turn failed: %s\n", reset_first_error.c_str());
+    if (reset_first_ok ||
+            reset_first_result.turn_result.error.find("dispatcher reset resolver") == std::string::npos) {
+        std::fprintf(stderr, "reset scenario first turn did not preserve pending-operation failure\n");
         return 1;
     }
     if (reset_second_ok) {
@@ -376,12 +367,12 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    common_agent_daemon_runtime close_runtime;
-    if (!initialize_agent_daemon_environment(options, close_runtime, error)) {
-        std::fprintf(stderr, "failed to initialize close daemon environment: %s\n", error.c_str());
-        return 2;
-    }
-    common_agent_daemon_dispatcher close_dispatcher(std::move(close_runtime), 8);
+    common_agent_daemon_dispatcher close_dispatcher(
+        make_waiting_runtime(
+            common_agent_runtime_pending_operation_kind::inference,
+            "dispatcher close pending inference",
+            "dispatcher close resolver"),
+        8);
 
     common_agent_daemon_command_result close_first_result;
     common_agent_daemon_command_result close_second_result;
@@ -441,8 +432,9 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "close command missing internal session close events\n");
         return 1;
     }
-    if (!close_first_ok || close_first_result.turn_result.response.empty()) {
-        std::fprintf(stderr, "close scenario first turn failed: %s\n", close_first_error.c_str());
+    if (close_first_ok ||
+            close_first_result.turn_result.error.find("dispatcher close resolver") == std::string::npos) {
+        std::fprintf(stderr, "close scenario first turn did not preserve pending-operation failure\n");
         return 1;
     }
     if (close_second_ok) {
