@@ -114,6 +114,7 @@ tools/
     host/      host configuration and shared host-side policy/provider config
     mcp/       MCP client/server transport, stdio server, and shared MCP protocol helpers
     runtime/   resident runtime/session/inference assembly and host runtime plumbing
+    tooling/   tool-provider, tool-runtime adapter, and host-owned tool-selection/result contracts
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
@@ -134,6 +135,7 @@ Short responsibility summary:
 - `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
 - `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
 - `tools/agent/runtime`: resident runtime/session assembly, runtime host/session contracts, and in-process inference/runtime plumbing shared by CLI/daemon/MCP-facing hosts.
+- `tools/agent/tooling`: host-owned tool provider/view code, tool-runtime adapters, and tool-related selection/result contracts shared by CLI/runtime/daemon/MCP hosts.
 - `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
 - `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
 
@@ -167,6 +169,8 @@ That MCP host-facing cleanup is now in place as well. Client/server protocol hel
 The next bounded host slice after that is the runtime core itself. Resident runtime/session assembly, runtime host/session contracts, and in-process server-context runtime plumbing belong more naturally under `tools/agent/runtime` than under `pocs/agent`, again with compatibility headers left behind while the remaining CLI/tooling surfaces are migrated.
 
 The next adjacent slice after runtime is the CLI surface. Once the resident runtime, daemon, and MCP layers no longer live under `pocs/agent`, the command-line entrypoints and adapters fit naturally under `tools/agent/cli`, leaving the PoC tree mostly as smoke harnesses plus temporary compatibility headers while the last active seams are migrated.
+
+The next small slice after that is the tooling surface. Tool-provider/view logic, tool-runtime adapters, and the smaller host-owned tool selection/result contracts fit better under `tools/agent/tooling` than under the PoC tree, because both CLI/runtime hosts and the MCP-facing path depend on the same tool abstraction without wanting `pocs/agent` to remain the owner of it.
 
 ## Design Constraints
 

@@ -9,11 +9,11 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
-    agent-selection-contracts.cpp
+    ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
-    agent-tool-provider.cpp
-    agent-tool-result-json-contracts.cpp
-    agent-tool-runtime-adapter.cpp
+    ../../tools/agent/tooling/agent-tool-provider.cpp
+    ../../tools/agent/tooling/agent-tool-result-json-contracts.cpp
+    ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
@@ -62,6 +62,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -91,6 +92,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -116,6 +118,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -141,6 +144,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -166,6 +170,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
@@ -192,6 +197,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/cli
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
