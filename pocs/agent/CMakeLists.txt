@@ -579,6 +579,76 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-daemon
 )
 
+set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
+    llama-agent-resident-smoke
+    llama-agent-tool-provider-smoke
+    llama-agent-tool-runtime-smoke
+    llama-agent-runtime-session-host-tooling-smoke
+    llama-agent-runtime-session-manager-smoke
+)
+
+set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
+    llama-agent-mcp-tool-provider-smoke
+    llama-agent-mcp-stdio-client-smoke
+    llama-agent-mcp-stdio-server-smoke
+)
+
+set(AGENT_RUNTIME_SMOKE_CLI_TARGETS
+    llama-agent-cli-mcp-selection-smoke
+    llama-agent-cli-run-mcp-smoke
+)
+
+set(AGENT_RUNTIME_SMOKE_DAEMON_TARGETS
+    llama-agent-daemon-dispatcher-smoke
+    llama-agent-daemon-protocol-smoke
+    llama-agent-daemon-jsonl-protocol-smoke
+    llama-agent-daemon-client-smoke
+    llama-agent-daemon-wait-events-smoke
+    llama-agent-daemon-mcp-config-smoke
+)
+
+set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
+    llama-agent-resource-store-smoke
+)
+
+function(llama_agent_add_smoke_group TARGET_NAME)
+    add_custom_target(${TARGET_NAME} DEPENDS ${ARGN})
+endfunction()
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-runtime
+    ${AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS}
+)
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-mcp
+    ${AGENT_RUNTIME_SMOKE_MCP_TARGETS}
+)
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-cli
+    ${AGENT_RUNTIME_SMOKE_CLI_TARGETS}
+)
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-daemon
+    ${AGENT_RUNTIME_SMOKE_DAEMON_TARGETS}
+)
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-resource
+    ${AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS}
+)
+
+llama_agent_add_smoke_group(
+    llama-agent-smoke-all
+    ${AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS}
+    ${AGENT_RUNTIME_SMOKE_MCP_TARGETS}
+    ${AGENT_RUNTIME_SMOKE_CLI_TARGETS}
+    ${AGENT_RUNTIME_SMOKE_DAEMON_TARGETS}
+    ${AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS}
+)
+
 if (LLAMA_MEMORY_COZO)
     foreach(TARGET ${AGENT_RUNTIME_TARGETS})
         llama_link_cozo(${TARGET})

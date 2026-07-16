@@ -1072,6 +1072,52 @@ The resident-inference branch has been validated with:
 
 The foreground daemon `mini` path is now part of the smoke baseline as well. One stabilization issue in this layer was contract drift across wrappers: the daemon request builder was correctly seeded with `server-context`, but a later policy overwrite silently fell back to the default CLI backend, and a second host-execution scope duplication made resident `mini` fragile. The current shape keeps the daemon/backend wiring explicit and reuses `turn_request.scope` as the single host-execution scope source for mini turns.
 
+### Running Agent Tests
+
+The current branch now supports a more targeted serial workflow for agent-heavy verification on this laptop.
+
+Smoke binaries are grouped by the same category split already used in `pocs/agent/smoke`:
+
+- `llama-agent-smoke-runtime`
+- `llama-agent-smoke-mcp`
+- `llama-agent-smoke-cli`
+- `llama-agent-smoke-daemon`
+- `llama-agent-smoke-resource`
+- `llama-agent-smoke-all`
+
+That means the normal build entrypoint for smoke coverage can stay narrow and category-scoped:
+
+```powershell
+cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-daemon
+cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-mcp
+```
+
+The regular `tests/` side is now a little easier to slice as well. Agent-adjacent tests carry focused CTest labels such as:
+
+- `agent`
+- `agent-inference`
+- `agent-memory`
+- `agent-plan`
+- `agent-tooling`
+
+Example serial runs:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-inference --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-memory --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-plan --output-on-failure
+```
+
+`test-agent-inference` also keeps its aggregate executable run, but its internal scenarios are now exposed as individual CTest cases as well. That makes it possible to run just one inference/runtime scenario without paying for the whole aggregate sweep:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-session-reuse --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-host-mini-smoke --output-on-failure
+```
+
+That split is intentional: smoke groups stay category-oriented and close to the `pocs/agent/smoke/*` layout, while the longer-lived `tests/` binaries are driven through CTest labels and named scenarios.
+
 Another small runtime stabilization in the current slice is around incomplete `memory_get` planning/repair steps. The model still sometimes proposes `memory_get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
 
 The daemon/session seam also took another small actor-shaped step in the same sweep. Session lanes already owned their own mailbox and lifecycle once a turn had reached the keyed session manager, but the foreground daemon still had a global dispatcher queue in front of that seam. `cancel_turn` already knew how to remove a queued turn there; `reset_session` and `close_session` now do the equivalent for queued turns that belong to the same session before those turns ever reach the lane. That keeps session lifecycle actions from racing with stale same-session work that was still parked in the transport-side queue.
