@@ -83,7 +83,7 @@ endif()
 
 set(TARGET llama-agent-resident-smoke)
 add_executable(${TARGET}
-    agent-resident-smoke.cpp
+    smoke/runtime/agent-resident-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -109,7 +109,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
-    agent-tool-provider-smoke.cpp
+    smoke/runtime/agent-tool-provider-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -135,7 +135,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-tool-runtime-smoke)
 add_executable(${TARGET}
-    agent-tool-runtime-smoke.cpp
+    smoke/runtime/agent-tool-runtime-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -161,7 +161,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-tool-provider-smoke)
 add_executable(${TARGET}
-    agent-mcp-tool-provider-smoke.cpp
+    smoke/mcp/agent-mcp-tool-provider-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -187,7 +187,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-stdio-client-smoke)
 add_executable(${TARGET}
-    agent-mcp-stdio-client-smoke.cpp
+    smoke/mcp/agent-mcp-stdio-client-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
@@ -214,7 +214,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-stdio-server-smoke)
 add_executable(${TARGET}
-    agent-mcp-stdio-server-smoke.cpp
+    smoke/mcp/agent-mcp-stdio-server-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET}
@@ -241,7 +241,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-cli-mcp-selection-smoke)
 add_executable(${TARGET}
-    agent-cli-mcp-selection-smoke.cpp
+    smoke/cli/agent-cli-mcp-selection-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
@@ -265,7 +265,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-cli-run-mcp-smoke)
 add_executable(${TARGET}
-    agent-cli-run-mcp-smoke.cpp
+    smoke/cli/agent-cli-run-mcp-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
@@ -329,7 +329,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-dispatcher-smoke)
 add_executable(${TARGET}
-    agent-daemon-dispatcher-smoke.cpp
+    smoke/daemon/agent-daemon-dispatcher-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -351,7 +351,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-protocol-smoke)
 add_executable(${TARGET}
-    agent-daemon-protocol-smoke.cpp
+    smoke/daemon/agent-daemon-protocol-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -373,7 +373,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
-    agent-daemon-jsonl-protocol-smoke.cpp
+    smoke/daemon/agent-daemon-jsonl-protocol-smoke.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
@@ -404,7 +404,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-daemon-client-smoke)
 add_executable(${TARGET}
-    agent-daemon-client-smoke.cpp
+    smoke/daemon/agent-daemon-client-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-daemon-client-fake-daemon)
@@ -428,7 +428,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-wait-events-smoke)
 add_executable(${TARGET}
-    agent-daemon-wait-events-smoke.cpp
+    smoke/daemon/agent-daemon-wait-events-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -450,7 +450,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
-    agent-daemon-mcp-config-smoke.cpp
+    smoke/daemon/agent-daemon-mcp-config-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
@@ -472,7 +472,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-runtime-session-host-tooling-smoke)
 add_executable(${TARGET}
-    agent-runtime-session-host-tooling-smoke.cpp
+    smoke/runtime/agent-runtime-session-host-tooling-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -493,7 +493,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-runtime-session-manager-smoke)
 add_executable(${TARGET}
-    agent-runtime-session-manager-smoke.cpp
+    smoke/runtime/agent-runtime-session-manager-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
@@ -514,7 +514,7 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-resource-store-smoke)
 add_executable(${TARGET}
-    agent-resource-store-smoke.cpp
+    smoke/resource/agent-resource-store-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
