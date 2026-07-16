@@ -1,4 +1,4 @@
-#include "agent-daemon-jsonl-protocol.h"
+#include "tools/agent/daemon/agent-daemon-jsonl-protocol.h"
 
 #include <cstdio>
 #include <string>
