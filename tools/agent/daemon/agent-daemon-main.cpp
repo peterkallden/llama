@@ -257,6 +257,7 @@ int main(int argc, char ** argv) {
                 policy.tool_profile,
                 tool_name,
                 arguments.dump(),
+                policy.allow_writes,
             };
             common_agent_daemon_command_result daemon_result;
             if (!dispatcher.execute(command, daemon_result, callback_error)) {

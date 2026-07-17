@@ -54,3 +54,19 @@ bool agent_mcp_policy_allows_tool(
     return policy.allowed_tools.empty() ||
         std::find(policy.allowed_tools.begin(), policy.allowed_tools.end(), tool_name) != policy.allowed_tools.end();
 }
+
+bool agent_mcp_policy_allows_tool(
+        const agent_mcp_caller_policy & policy,
+        const std::string & tool_name,
+        bool read_only,
+        bool requires_confirmation) {
+    if (!agent_mcp_policy_allows_tool(policy, tool_name)) {
+        return false;
+    }
+    if (policy.allow_writes) {
+        return true;
+    }
+    // A caller without write authority may only see and invoke read-only
+    // tools. Confirmation metadata does not grant authority by itself.
+    return read_only && !requires_confirmation;
+}

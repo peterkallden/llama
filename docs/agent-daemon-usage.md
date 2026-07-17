@@ -127,9 +127,12 @@ The HTTP listener is stopped as part of foreground shutdown. Keep the default
 local binding until a service host supplies TLS termination and a production
 authentication/policy configuration. The daemon projects the resolved
 tool-profile catalog for `tools/list` and validates tool names and input
-schemas before dispatching calls. A successful provider reload atomically
-replaces this catalog for new HTTP requests; existing requests keep their
-registry snapshot. Supporting multiple token profiles remains follow-up work.
+schemas before dispatching calls. The authenticated caller policy narrows that
+surface further: `allowed_tools` applies to both listing and calls, and
+`allow_writes: false` removes confirmation/write tools and is propagated to the
+native runtime gate. A successful provider reload atomically replaces this
+catalog for new HTTP requests; existing requests keep their registry/policy
+snapshot. Configuration-driven token profiles remain a follow-up.
 
 ## Daemon lifecycle
 

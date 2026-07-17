@@ -141,7 +141,8 @@ bool agent_mcp_http_server::handle_message(
         }
         agent_mcp_json tools = agent_mcp_json::array();
         for (const auto & tool : registry.list_tools()) {
-            if (!agent_mcp_policy_allows_tool(policy, tool.name)) continue;
+            if (!agent_mcp_policy_allows_tool(
+                    policy, tool.name, tool.read_only, tool.requires_confirmation)) continue;
             const auto schema = agent_mcp_json::parse(tool.input_schema_json, nullptr, false);
             tools.push_back({
                 {"name", tool.name},
@@ -189,7 +190,17 @@ bool agent_mcp_http_server::handle_message(
         const std::string name = params.value("name", "");
         const auto arguments = params.value("arguments", agent_mcp_json::object());
         agent_mcp_server_tool_result result;
-        if (!agent_mcp_policy_allows_tool(policy, name)) {
+        const auto listed_tools = registry.list_tools();
+        const auto listed_tool = std::find_if(
+            listed_tools.begin(), listed_tools.end(),
+            [&name](const agent_mcp_server_tool & tool) { return tool.name == name; });
+        const bool caller_allowed = listed_tool != listed_tools.end() &&
+            agent_mcp_policy_allows_tool(
+                policy,
+                name,
+                listed_tool->read_only,
+                listed_tool->requires_confirmation);
+        if (!caller_allowed) {
             error = "MCP tool is not allowed for caller policy: " + name;
             result.ok = false;
             result.failure_code = "tool.forbidden";

@@ -168,7 +168,8 @@ common_memory_query make_daemon_memory_query(
 
 agent_host_tool_selection_request make_daemon_tool_request(
         const daemon_options & options,
-        const common_agent_runtime_session_host_turn_request & request) {
+        const common_agent_runtime_session_host_turn_request & request,
+        std::optional<bool> allow_policy_gated_writes) {
     agent_host_tool_selection_request tool_request;
     tool_request.tool_context.request_id = "daemon";
     tool_request.tool_context.turn_id = request.turn_id;
@@ -188,6 +189,9 @@ agent_host_tool_selection_request make_daemon_tool_request(
         !options.mcp_tool_command.empty();
     tool_request.tool_context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";
+    if (allow_policy_gated_writes.has_value()) {
+        tool_request.tool_context.allow_policy_gated_writes = *allow_policy_gated_writes;
+    }
     tool_request.tool_context.allow_memory_proposals =
         tool_request.tool_context.allow_policy_gated_writes;
     tool_request.tool_context.allow_plan_proposals =
@@ -229,10 +233,12 @@ bool resolve_agent_daemon_tooling(
         common_plan_store & plan_store,
         agent_resource_store * resource_store,
         common_agent_runtime_tooling & tooling,
-        std::string & error) {
+        std::string & error,
+        std::optional<bool> allow_policy_gated_writes) {
     tooling = {};
     common_memory_query query = make_daemon_memory_query(request);
-    const auto tool_request = make_daemon_tool_request(options, request);
+    const auto tool_request = make_daemon_tool_request(
+        options, request, allow_policy_gated_writes);
         std::string * current_plan_id = runtime != nullptr
         ? const_cast<std::string *>(&runtime->current_plan_id())
         : nullptr;
@@ -473,7 +479,8 @@ bool initialize_agent_daemon_environment(
                 *plan_store,
                 resource_store,
                 tooling,
-                callback_error)) {
+                callback_error,
+                payload.allow_policy_gated_writes)) {
             return false;
         }
         if (tooling.tool_view == nullptr) {

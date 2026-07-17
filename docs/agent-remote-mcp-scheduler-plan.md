@@ -19,7 +19,7 @@ The current branch has:
   with local binding, bearer authentication, Origin checking, bounded request
   and response bodies, session IDs, and DELETE session cleanup;
 - a caller-policy contract for opaque bearer tokens, including caller identity,
-  audience, namespace, project, tool profile and tool allowlists;
+  audience, namespace, project, tool profile, tool allowlists and write authority;
 - a transport-neutral `execute_tool` daemon command and dispatcher bridge used
   by the inbound HTTP end-to-end smoke;
 - daemon host assembly that starts inbound MCP HTTP beside the JSONL adapter and
@@ -142,9 +142,13 @@ HTTP -> Origin check -> authentication -> caller policy
 ```
 
 The current beta authenticates an opaque configured token, binds the session to
-the resulting caller policy, and tracks MCP session IDs. The single-token
-entrypoint uses a local caller policy derived from its host configuration;
-multi-token config and daemon-owned policy resolution remain follow-up work.
+the resulting caller policy, and tracks MCP session IDs. The caller policy is
+projected onto the native tool surface: `allowed_tools` filters both
+`tools/list` and `tools/call`, while `allow_writes=false` hides and rejects
+non-read-only/confirmation-gated tools and is also passed into the daemon's
+native tool view. The native profile remains the source of tool definitions and
+execution bindings; MCP auth supplies caller identity and narrower authority.
+Multi-token config and daemon-owned policy resolution remain follow-up work.
 The authenticated caller, not the request body, must determine the default
 namespace, project and allowed tool profile. Every request must have bounded
 body/result sizes and a deadline. Write-capable tools require the existing

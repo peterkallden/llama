@@ -91,6 +91,9 @@ struct common_agent_daemon_tool_payload {
     std::string tool_profile;
     std::string tool_name;
     std::string arguments_json = "{}";
+    // Set by an authenticated caller when its write authority is narrower
+    // than the daemon's configured profile. Empty preserves native defaults.
+    std::optional<bool> allow_policy_gated_writes;
 };
 
 struct common_agent_daemon_session_payload {

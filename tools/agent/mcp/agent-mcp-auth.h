@@ -51,3 +51,12 @@ private:
 bool agent_mcp_policy_allows_tool(
     const agent_mcp_caller_policy & policy,
     const std::string & tool_name);
+
+// Projects caller policy onto the MCP-visible tool metadata. The native
+// runtime remains the final execution authority; this helper keeps listing
+// and inbound dispatch aligned with that authority.
+bool agent_mcp_policy_allows_tool(
+    const agent_mcp_caller_policy & policy,
+    const std::string & tool_name,
+    bool read_only,
+    bool requires_confirmation);

@@ -33,6 +33,22 @@ int main() {
         std::fprintf(stderr, "failed to register HTTP smoke tool: %s\n", error.c_str());
         return 1;
     }
+    if (!registry.register_tool({
+            "write_probe",
+            "HTTP inbound smoke write probe",
+            R"({"type":"object"})",
+            false,
+            true,
+            false,
+            false,
+            false,
+            [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) {
+                return true;
+            },
+        }, error)) {
+        std::fprintf(stderr, "failed to register HTTP smoke write probe: %s\n", error.c_str());
+        return 1;
+    }
 
     auto authenticator = std::make_shared<agent_mcp_opaque_token_authenticator>();
     if (!authenticator->register_token("http-smoke-token-a", {
@@ -79,6 +95,7 @@ int main() {
             policy.tool_profile,
             tool_name,
             arguments.dump(),
+            policy.allow_writes,
         };
         common_agent_daemon_command_result command_result;
         if (!dispatcher.execute(command, command_result, callback_error)) {
@@ -141,6 +158,17 @@ int main() {
                 return true;
             },
         }, error) ||
+            !replacement_registry.register_tool({
+                "write_probe",
+                "HTTP inbound smoke write probe after catalog reload",
+                R"({"type":"object"})",
+                false,
+                true,
+                false,
+                false,
+                false,
+                [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) { return true; },
+            }, error) ||
             !server.replace_registry(std::move(replacement_registry), error)) {
         std::fprintf(stderr, "HTTP server catalog replacement failed: %s\n", error.c_str());
         server.stop(); server_thread.join(); return 1;
@@ -153,6 +181,8 @@ int main() {
         R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{}}})", "application/json");
     const auto unknown = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"missing","arguments":{}}})", "application/json");
+    const auto write_blocked = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"write_probe","arguments":{}}})", "application/json");
 
     httplib::Headers other_headers = {{"Authorization", "Bearer http-smoke-token-b"}};
     const auto other_initialize = client.Post("/mcp", other_headers,
@@ -179,12 +209,14 @@ int main() {
     const auto unknown_json = unknown ? json::parse(unknown->body, nullptr, false) : json();
     const auto other_listed_json = other_listed ? json::parse(other_listed->body, nullptr, false) : json();
     const auto other_called_json = other_called ? json::parse(other_called->body, nullptr, false) : json();
+    const auto write_blocked_json = write_blocked ? json::parse(write_blocked->body, nullptr, false) : json();
     const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 1 &&
         reloaded_listed && reloaded_listed->status == 200 &&
         reloaded_listed_json["result"]["tools"][0]["description"] == "HTTP inbound smoke echo after catalog reload" &&
         called && called->status == 200 && called_json["result"]["structuredContent"]["text"] == "hello" &&
         invalid && invalid->status == 200 && invalid_json["result"]["isError"] == true &&
         unknown && unknown->status == 200 && unknown_json["result"]["isError"] == true &&
+        write_blocked && write_blocked->status == 200 && write_blocked_json["result"]["isError"] == true &&
         other_initialize && other_initialize->status == 200 &&
         other_listed && other_listed->status == 200 && other_listed_json["result"]["tools"].empty() &&
         other_called && other_called->status == 200 && other_called_json["result"]["isError"] == true &&

@@ -100,7 +100,8 @@ bool resolve_agent_daemon_tooling(
     common_plan_store & plan_store,
     agent_resource_store * resource_store,
     common_agent_runtime_tooling & tooling,
-    std::string & error);
+    std::string & error,
+    std::optional<bool> allow_policy_gated_writes = std::nullopt);
 
 bool parse_agent_daemon_command(
     const nlohmann::ordered_json & parsed,
