@@ -31,6 +31,14 @@ enum class common_agent_daemon_command_type {
     get_status,
     drain,
     shutdown,
+    reload_config,
+};
+
+struct common_agent_daemon_reload_result {
+    uint64_t config_version = 1;
+    std::vector<std::string> applied_fields;
+    std::vector<std::string> restart_required;
+    std::string warning;
 };
 
 struct common_agent_daemon_runtime {
@@ -43,6 +51,10 @@ struct common_agent_daemon_runtime {
         const struct common_agent_daemon_tool_payload & payload,
         agent_tool_result & result,
         std::string & error)> tool_executor;
+    std::function<bool(
+        const std::string & path,
+        common_agent_daemon_reload_result & result,
+        std::string & error)> reload_config;
 };
 
 struct common_agent_daemon_turn_payload {
@@ -85,6 +97,7 @@ struct common_agent_daemon_command {
     std::optional<common_agent_daemon_cancel_payload> cancel;
     std::optional<common_agent_daemon_resource_payload> resource;
     std::optional<common_agent_daemon_scope_payload> scope;
+    std::string reload_path;
 };
 
 struct common_agent_daemon_active_turn_status {
@@ -125,6 +138,7 @@ struct common_agent_daemon_status {
     uint64_t commands_failed = 0;
     uint64_t turns_completed = 0;
     uint64_t tools_completed = 0;
+    uint64_t config_version = 1;
 };
 
 enum class common_agent_daemon_response_kind {
@@ -186,6 +200,7 @@ struct common_agent_daemon_command_outcome {
     agent_tool_result tool_result;
     common_agent_daemon_resource_read_result resource_result;
     common_agent_daemon_listing_result listing_result;
+    common_agent_daemon_reload_result reload_result;
     std::string error;
 };
 

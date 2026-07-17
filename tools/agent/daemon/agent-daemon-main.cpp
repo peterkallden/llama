@@ -1,11 +1,13 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-dispatcher.h"
 #include "../mcp/agent-mcp-http-server.h"
+#include "../host/agent-host-config.h"
 
 #include "log.h"
 
 #include <memory>
 #include <thread>
+#include <atomic>
 #include <nlohmann/json.hpp>
 
 int main(int argc, char ** argv) {
@@ -22,6 +24,105 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
     }
+    auto config_version = std::make_shared<std::atomic<uint64_t>>(1);
+    runtime.reload_config = [&options, config_version](
+            const std::string & path,
+            common_agent_daemon_reload_result & result,
+            std::string & reload_error) {
+        agent_host_config config;
+        if (!load_agent_host_config(path, config, reload_error)) {
+            return false;
+        }
+        daemon_options candidate = options;
+        apply_agent_host_config_to_daemon_options(config, candidate);
+
+        auto require_restart = [&](bool changed, const char * field) {
+            if (changed) {
+                result.restart_required.emplace_back(field);
+            }
+        };
+        require_restart(candidate.model != options.model, "model.path");
+        require_restart(candidate.embedding_model != options.embedding_model, "model.embedding_model");
+        require_restart(candidate.backend != options.backend, "stores.memory.backend");
+        require_restart(candidate.memory_db != options.memory_db, "stores.memory.path");
+        require_restart(candidate.plan_backend != options.plan_backend, "stores.plan.backend");
+        require_restart(candidate.plan_db != options.plan_db, "stores.plan.path");
+        require_restart(candidate.resource_blob_backend != options.resource_blob_backend, "resources.blob_backend");
+        require_restart(candidate.resource_blob_root != options.resource_blob_root, "resources.blob_root");
+        require_restart(candidate.resource_metadata_backend != options.resource_metadata_backend, "resources.metadata_backend");
+        require_restart(candidate.resource_metadata_db != options.resource_metadata_db, "resources.metadata_db");
+        require_restart(candidate.queue_capacity != options.queue_capacity, "limits.queue_capacity");
+        require_restart(candidate.worker_count != options.worker_count, "limits.worker_count");
+        require_restart(candidate.default_mode != options.default_mode, "runtime.default_mode");
+        require_restart(candidate.n_predict != options.n_predict, "runtime.n_predict");
+        require_restart(candidate.n_gpu_layers != options.n_gpu_layers, "runtime.n_gpu_layers");
+        require_restart(candidate.planning_mode != options.planning_mode, "runtime.planning_mode");
+        require_restart(candidate.reflection_mode != options.reflection_mode, "runtime.reflection_mode");
+        require_restart(candidate.memory_learn != options.memory_learn, "runtime.memory_learn");
+        require_restart(candidate.agent_plan != options.agent_plan, "runtime.agent_plan");
+        bool providers_changed = candidate.mcp_providers.size() != options.mcp_providers.size();
+        if (!providers_changed) {
+            for (size_t i = 0; i < candidate.mcp_providers.size(); ++i) {
+                const auto & a = candidate.mcp_providers[i];
+                const auto & b = options.mcp_providers[i];
+                providers_changed = a.id != b.id || a.enabled != b.enabled ||
+                    a.transport != b.transport || a.command != b.command ||
+                    a.url != b.url || a.token_env != b.token_env ||
+                    a.allowed_tools != b.allowed_tools ||
+                    a.connect_timeout_ms != b.connect_timeout_ms ||
+                    a.request_timeout_ms != b.request_timeout_ms ||
+                    a.shutdown_timeout_ms != b.shutdown_timeout_ms ||
+                    a.max_result_bytes != b.max_result_bytes ||
+                    a.prefix != b.prefix || a.server_name != b.server_name;
+                if (providers_changed) break;
+            }
+        }
+        require_restart(providers_changed, "tools.providers");
+
+        if (!result.restart_required.empty()) {
+            result.warning = "configuration was not applied; restart the daemon to change the listed fields";
+            reload_error.clear();
+            return true;
+        }
+
+        if (candidate.tool_profile != options.tool_profile) {
+            options.tool_profile = candidate.tool_profile;
+            result.applied_fields.emplace_back("tools.profile");
+        }
+        if (candidate.turn_timeout_ms != options.turn_timeout_ms ||
+                candidate.max_turn_seconds != options.max_turn_seconds) {
+            options.turn_timeout_ms = candidate.turn_timeout_ms;
+            options.max_turn_seconds = candidate.max_turn_seconds;
+            result.applied_fields.emplace_back("limits.turn_timeout_ms");
+        }
+        if (candidate.inference_step_timeout_ms != options.inference_step_timeout_ms) {
+            options.inference_step_timeout_ms = candidate.inference_step_timeout_ms;
+            result.applied_fields.emplace_back("limits.inference_step_timeout_ms");
+        }
+        if (candidate.tool_timeout_ms != options.tool_timeout_ms) {
+            options.tool_timeout_ms = candidate.tool_timeout_ms;
+            result.applied_fields.emplace_back("limits.tool_timeout_ms");
+        }
+        if (candidate.mcp_connect_timeout_ms != options.mcp_connect_timeout_ms) {
+            options.mcp_connect_timeout_ms = candidate.mcp_connect_timeout_ms;
+            result.applied_fields.emplace_back("limits.mcp_connect_timeout_ms");
+        }
+        if (candidate.mcp_request_timeout_ms != options.mcp_request_timeout_ms) {
+            options.mcp_request_timeout_ms = candidate.mcp_request_timeout_ms;
+            result.applied_fields.emplace_back("limits.mcp_request_timeout_ms");
+        }
+        if (candidate.mcp_shutdown_timeout_ms != options.mcp_shutdown_timeout_ms) {
+            options.mcp_shutdown_timeout_ms = candidate.mcp_shutdown_timeout_ms;
+            result.applied_fields.emplace_back("limits.mcp_shutdown_timeout_ms");
+        }
+        if (candidate.max_tool_rounds != options.max_tool_rounds) {
+            options.max_tool_rounds = candidate.max_tool_rounds;
+            result.applied_fields.emplace_back("limits.max_tool_rounds");
+        }
+        result.config_version = config_version->fetch_add(1) + 1;
+        reload_error.clear();
+        return true;
+    };
     agent_mcp_server_tool_registry http_registry;
     if (options.http_enabled) {
         common_agent_runtime_session_host_turn_request catalog_request;

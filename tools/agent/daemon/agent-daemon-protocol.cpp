@@ -83,6 +83,16 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "reload_config") {
+        command.type = common_agent_daemon_command_type::reload_config;
+        if (!parsed.contains("path") || !parsed["path"].is_string() || parsed["path"].get<std::string>().empty()) {
+            error = "reload_config requires path";
+            return false;
+        }
+        command.reload_path = parsed["path"].get<std::string>();
+        error.clear();
+        return true;
+    }
     if (command_name == "status") {
         command.type = common_agent_daemon_command_type::get_status;
         error.clear();
@@ -439,6 +449,14 @@ json make_agent_daemon_lifecycle_response(
     }
     if (!result.target_turn_id.empty()) {
         response["target_turn_id"] = result.target_turn_id;
+    }
+    if (result.event == "config.reload.completed" || result.event == "config.reload.rejected") {
+        response["config_version"] = result.reload_result.config_version;
+        response["applied_fields"] = result.reload_result.applied_fields;
+        response["restart_required"] = result.reload_result.restart_required;
+        if (!result.reload_result.warning.empty()) {
+            response["warning"] = result.reload_result.warning;
+        }
     }
     if (!result.error.empty()) {
         response["error"] = result.error;

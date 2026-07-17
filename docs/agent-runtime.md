@@ -38,6 +38,15 @@ What exists today is a narrow foreground daemon, not a production service lifecy
 
 That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
 
+The JSONL administration path now has a first configuration-reload contract.
+`reload_config` validates a complete host-config candidate and either applies
+the bounded mutable fields for new operations or returns a structured
+`config.reload.rejected` result with `restart_required` field paths. Model and
+backend resources, stores, worker/queue sizing, runtime assembly, and MCP
+provider topology remain restart-required. The current implementation keeps
+reload local to JSONL administration and does not rebuild listeners or live
+provider connections.
+
 The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
 
 That status surface now also preserves one small but important bit of lane-owned waiting state: when an active turn is parked behind a manager-owned pending operation, daemon status can report not only the active phase/disposition but also the pending operation kind/detail on both the top-level active turn and the keyed session descriptor. In practice that means admin/test callers can now distinguish "turn is awaiting inference" from "turn is awaiting inference because a specific pending lane operation is still unresolved" without scraping internal debug logs.

@@ -54,6 +54,9 @@ enum class common_agent_daemon_event_type {
     session_close_failed,
     drain_requested,
     shutdown_requested,
+    config_reload_started,
+    config_reload_completed,
+    config_reload_rejected,
     command_failed,
 };
 
@@ -107,6 +110,9 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::session_close_failed:    return "session.close_failed";
         case common_agent_daemon_event_type::drain_requested:         return "daemon.drain_requested";
         case common_agent_daemon_event_type::shutdown_requested:      return "daemon.shutdown_requested";
+        case common_agent_daemon_event_type::config_reload_started:   return "config.reload.started";
+        case common_agent_daemon_event_type::config_reload_completed: return "config.reload.completed";
+        case common_agent_daemon_event_type::config_reload_rejected:  return "config.reload.rejected";
         case common_agent_daemon_event_type::command_failed:          return "command.failed";
     }
     return "unknown";

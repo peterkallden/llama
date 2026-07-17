@@ -76,6 +76,20 @@ Important protocol behavior:
 - send `{"command":"shutdown"}` for graceful foreground shutdown;
 - do not treat this stdin/stdout process as a production network service yet.
 
+Configuration can be reloaded by the local JSONL administration channel:
+
+```json
+{"request_id":"reload-1","command":"reload_config","path":"docs/examples/agent-host-config-stdio.json"}
+```
+
+The daemon validates the complete candidate configuration before applying it.
+Timeouts, tool profile and bounded tool limits can be applied to new
+operations. Model/backend, stores, resource roots, worker/queue sizing,
+runtime assembly and MCP provider topology are restart-required for now. A
+rejected reload returns `event: "config.reload.rejected"`, a
+`restart_required` array and a warning; it never partially applies a
+candidate. In-flight operations retain their existing configuration snapshot.
+
 `--worker-count N` enables a shared worker pool. The default remains `1` for
 compatibility. Multiple workers may process different session lanes in
 parallel, while the session manager keeps turns within one session ordered.
@@ -132,6 +146,8 @@ Prometheus text without making metrics an MCP tool.
 - foreground process only;
 - JSONL remains the only administrative transport;
 - no automatic restart or supervisor;
-- no config reload;
+- config reload is currently available only through local JSONL administration;
+- config reload does not restart the process or rebuild model, stores, workers,
+  HTTP listeners or MCP provider connections;
 - HTTPS support depends on an OpenSSL-enabled build for the current HTTP
   client/listener path; TLS termination is not part of the foreground daemon.

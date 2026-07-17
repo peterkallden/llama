@@ -239,6 +239,58 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command reload_command;
+    if (!parse_agent_daemon_command(
+            json{{"request_id", "reload-1"}, {"command", "reload_config"}, {"path", "fake-config.json"}},
+            options,
+            common_agent_runtime_host_mode::chat,
+            reload_command,
+            error) ||
+            reload_command.type != common_agent_daemon_command_type::reload_config ||
+            reload_command.reload_path != "fake-config.json") {
+        std::fprintf(stderr, "reload_config command did not preserve its path: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_agent_daemon_runtime reload_runtime;
+    reload_runtime.reload_config = [](
+            const std::string & path,
+            common_agent_daemon_reload_result & result,
+            std::string & callback_error) {
+        if (path == "fake-restart-required.json") {
+            result.restart_required = {"model.path", "limits.worker_count"};
+            result.warning = "configuration was not applied; restart the daemon to change the listed fields";
+            callback_error.clear();
+            return true;
+        }
+        result.config_version = 2;
+        result.applied_fields = {"limits.tool_timeout_ms"};
+        callback_error.clear();
+        return true;
+    };
+    common_agent_daemon_service reload_service(std::move(reload_runtime));
+    common_agent_daemon_command_result reload_result;
+    if (!reload_service.execute(reload_command, reload_result, error) ||
+            reload_result.event != "config.reload.completed" ||
+            reload_result.reload_result.config_version != 2 ||
+            reload_result.reload_result.applied_fields.size() != 1 ||
+            reload_result.events.size() != 2 ||
+            reload_result.events[0].event_type != common_agent_daemon_event_type::config_reload_started ||
+            reload_result.events[1].event_type != common_agent_daemon_event_type::config_reload_completed) {
+        std::fprintf(stderr, "fake config reload did not complete as expected: %s\n", error.c_str());
+        return 1;
+    }
+    reload_command.reload_path = "fake-restart-required.json";
+    if (reload_service.execute(reload_command, reload_result, error) ||
+            reload_result.event != "config.reload.rejected" ||
+            reload_result.reload_result.restart_required.size() != 2 ||
+            reload_result.reload_result.warning.empty() ||
+            reload_result.events.size() != 2 ||
+            reload_result.events[1].event_type != common_agent_daemon_event_type::config_reload_rejected) {
+        std::fprintf(stderr, "fake restart-required reload was not rejected as expected: %s\n", error.c_str());
+        return 1;
+    }
+
     common_agent_daemon_service missing_payload_service({});
     common_agent_daemon_command missing_payload_command;
     missing_payload_command.request_id = "turn-missing";

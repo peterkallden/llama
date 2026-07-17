@@ -883,6 +883,38 @@ bool common_agent_daemon_service::execute_outcome(
                 common_agent_daemon_event_type::shutdown_requested,
                 "shutdown requested");
 
+        case common_agent_daemon_command_type::reload_config:
+            initialize_lifecycle_outcome(command, outcome);
+            outcome.response_kind = common_agent_daemon_response_kind::lifecycle;
+            command_events.emit(common_agent_daemon_event_type::config_reload_started, command.reload_path);
+            if (!runtime.reload_config) {
+                error = "config reload is not enabled for this daemon";
+                outcome.ok = false;
+                outcome.event = "config.reload.rejected";
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::config_reload_rejected, error);
+                return false;
+            }
+            if (!runtime.reload_config(command.reload_path, outcome.reload_result, error)) {
+                outcome.ok = false;
+                outcome.event = "config.reload.rejected";
+                outcome.error = error;
+                command_events.emit(
+                    common_agent_daemon_event_type::config_reload_rejected,
+                    outcome.reload_result.warning.empty() ? error : outcome.reload_result.warning);
+                return false;
+            }
+            outcome.ok = outcome.reload_result.restart_required.empty();
+            outcome.event = outcome.ok ? "config.reload.completed" : "config.reload.rejected";
+            outcome.error = outcome.ok ? std::string() : "configuration change requires daemon restart";
+            command_events.emit(
+                outcome.ok
+                    ? common_agent_daemon_event_type::config_reload_completed
+                    : common_agent_daemon_event_type::config_reload_rejected,
+                outcome.ok ? std::to_string(outcome.reload_result.config_version) : outcome.error);
+            error = outcome.error;
+            return outcome.ok;
+
         case common_agent_daemon_command_type::execute_tool:
             if (!command.tool.has_value()) {
                 error = "execute_tool command missing tool payload";
