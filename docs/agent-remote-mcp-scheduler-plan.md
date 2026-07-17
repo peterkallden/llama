@@ -20,6 +20,8 @@ The current branch has:
   and response bodies, session IDs, and DELETE session cleanup;
 - a caller-policy contract for opaque bearer tokens, including caller identity,
   audience, namespace, project, tool profile and tool allowlists;
+- a transport-neutral `execute_tool` daemon command and dispatcher bridge used
+  by the inbound HTTP end-to-end smoke;
 - a beta smoke pack covering the above.
 
 This branch adds the configuration contract for remote providers and an

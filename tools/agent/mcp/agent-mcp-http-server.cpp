@@ -168,6 +168,8 @@ bool agent_mcp_http_server::handle_message(
             result.failure_class = "policy";
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        } else if (options_.execute_tool) {
+            options_.execute_tool(policy, name, arguments, result, error);
         } else if (!registry_.call_tool(name, arguments, result, error)) {
             result.ok = false;
             result.failure_code = error.rfind("unknown MCP server tool:", 0) == 0

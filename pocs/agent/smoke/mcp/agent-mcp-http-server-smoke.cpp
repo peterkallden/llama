@@ -1,4 +1,5 @@
 #include "tools/agent/mcp/agent-mcp-http-server.h"
+#include "tools/agent/daemon/agent-daemon-dispatcher.h"
 
 #include <cpp-httplib/httplib.h>
 
@@ -44,9 +45,60 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_runtime daemon_runtime;
+    daemon_runtime.tool_executor = [](
+            const common_agent_daemon_tool_payload & payload,
+            agent_tool_result & result,
+            std::string & callback_error) {
+        const auto arguments = json::parse(payload.arguments_json, nullptr, false);
+        if (arguments.is_discarded() || !arguments.is_object() ||
+                payload.tool_name != "echo" || arguments.value("text", "").empty()) {
+            callback_error = "dispatcher tool executor rejected arguments";
+            result.raw_diagnostic = callback_error;
+            return false;
+        }
+        result.ok = true;
+        result.content_json = json{{"text", arguments.at("text")}}.dump();
+        result.content_summary = arguments.at("text").get<std::string>();
+        callback_error.clear();
+        return true;
+    };
+    common_agent_daemon_dispatcher dispatcher(std::move(daemon_runtime), 8, 1);
+    const auto execute_through_dispatcher = [&dispatcher](
+            const agent_mcp_caller_policy & policy,
+            const std::string & tool_name,
+            const agent_mcp_json & arguments,
+            agent_mcp_server_tool_result & result,
+            std::string & callback_error) {
+        common_agent_daemon_command command;
+        command.request_id = "http-dispatcher-tool";
+        command.type = common_agent_daemon_command_type::execute_tool;
+        command.tool = common_agent_daemon_tool_payload{
+            {policy.namespace_id, policy.caller_id + "-session"},
+            policy.project_id,
+            policy.tool_profile,
+            tool_name,
+            arguments.dump(),
+        };
+        common_agent_daemon_command_result command_result;
+        if (!dispatcher.execute(command, command_result, callback_error)) {
+            result.ok = false;
+            result.safe_summary = callback_error;
+            result.content = {{{"type", "text"}, {"text", callback_error}}};
+            return false;
+        }
+        result.ok = command_result.tool_result.ok;
+        result.structured_content = json::parse(command_result.tool_result.content_json, nullptr, false);
+        if (result.structured_content.is_discarded()) result.structured_content = json::object();
+        result.safe_summary = command_result.tool_result.content_summary;
+        result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
+        callback_error = command_result.error;
+        return result.ok;
+    };
+
     agent_mcp_http_server server(std::move(registry), {
         "127.0.0.1", 0, "/mcp", "", "", authenticator, {}, 4096, 4096,
-        "http-inbound-smoke", "1", "2025-06-18", {}, {},
+        "http-inbound-smoke", "1", "2025-06-18", {}, {}, execute_through_dispatcher,
     });
     if (!server.bind(error)) {
         std::fprintf(stderr, "failed to bind HTTP server smoke: %s\n", error.c_str());

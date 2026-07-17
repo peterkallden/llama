@@ -27,6 +27,12 @@ struct agent_mcp_http_server_options {
     std::string protocol_version = "2024-11-05";
     std::function<bool(agent_mcp_json & result, std::string & error)> list_resources;
     std::function<bool(const agent_mcp_json & params, agent_mcp_json & result, std::string & error)> read_resource;
+    std::function<bool(
+        const agent_mcp_caller_policy & policy,
+        const std::string & tool_name,
+        const agent_mcp_json & arguments,
+        agent_mcp_server_tool_result & result,
+        std::string & error)> execute_tool;
 };
 
 class agent_mcp_http_server {

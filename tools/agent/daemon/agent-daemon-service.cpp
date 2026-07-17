@@ -192,7 +192,9 @@ common_agent_daemon_service::common_agent_daemon_service(
             emit_internal_event(std::move(event));
         });
     }
-    state_value = this->runtime.host ? common_agent_daemon_state::ready : common_agent_daemon_state::failed;
+    state_value = (this->runtime.host || this->runtime.tool_executor)
+        ? common_agent_daemon_state::ready
+        : common_agent_daemon_state::failed;
 }
 
 bool common_agent_daemon_service::execute(
@@ -880,6 +882,38 @@ bool common_agent_daemon_service::execute_outcome(
                 "shutdown",
                 common_agent_daemon_event_type::shutdown_requested,
                 "shutdown requested");
+
+        case common_agent_daemon_command_type::execute_tool:
+            if (!command.tool.has_value()) {
+                error = "execute_tool command missing tool payload";
+                outcome.error = error;
+                outcome.event = "tool_failed";
+                command_events.emit(common_agent_daemon_event_type::command_failed, error);
+                return false;
+            }
+            if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
+                error = "daemon is not accepting new tools";
+                outcome.error = error;
+                outcome.event = "tool_rejected";
+                command_events.emit(common_agent_daemon_event_type::command_rejected, error);
+                return false;
+            }
+            if (!runtime.tool_executor) {
+                error = "daemon tool executor is not initialized";
+                outcome.error = error;
+                outcome.event = "tool_failed";
+                command_events.emit(common_agent_daemon_event_type::command_failed, error);
+                return false;
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::tool;
+            command_events.emit(common_agent_daemon_event_type::tool_started, command.tool->tool_name);
+            outcome.ok = runtime.tool_executor(*command.tool, outcome.tool_result, error);
+            outcome.event = outcome.ok ? "tool_completed" : "tool_failed";
+            outcome.error = error.empty() ? outcome.tool_result.raw_diagnostic : error;
+            command_events.emit(
+                outcome.ok ? common_agent_daemon_event_type::tool_completed : common_agent_daemon_event_type::command_failed,
+                outcome.tool_result.safe_summary);
+            return outcome.ok;
 
         case common_agent_daemon_command_type::run_turn:
             if (!command.turn.has_value()) {

@@ -793,6 +793,7 @@ int main(int argc, char ** argv) {
                 "2024-11-05",
                 list_resources,
                 read_resource,
+                {},
             });
         if (!http_server.listen(error)) {
             std::fprintf(stderr, "failed to run MCP HTTP server: %s\n", error.c_str());
@@ -812,6 +813,7 @@ int main(int argc, char ** argv) {
             false,
             list_resources,
             read_resource,
+            {},
         });
     return server.run(stdin, stdout, stderr);
 }

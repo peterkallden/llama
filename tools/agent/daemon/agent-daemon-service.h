@@ -5,6 +5,7 @@
 #include "agent-daemon-events.h"
 #include "../resource/agent-resource-store.h"
 #include "../runtime/agent-runtime-session-manager.h"
+#include "../tooling/agent-tool-provider.h"
 
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
@@ -17,6 +18,7 @@
 
 enum class common_agent_daemon_command_type {
     run_turn,
+    execute_tool,
     cancel_turn,
     list_sessions,
     get_session,
@@ -37,10 +39,22 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<agent_resource_store> resource_store;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
+    std::function<bool(
+        const struct common_agent_daemon_tool_payload & payload,
+        agent_tool_result & result,
+        std::string & error)> tool_executor;
 };
 
 struct common_agent_daemon_turn_payload {
     common_agent_runtime_session_manager_turn_request request;
+};
+
+struct common_agent_daemon_tool_payload {
+    common_agent_runtime_session_key session;
+    std::string project_id;
+    std::string tool_profile;
+    std::string tool_name;
+    std::string arguments_json = "{}";
 };
 
 struct common_agent_daemon_session_payload {
@@ -66,6 +80,7 @@ struct common_agent_daemon_command {
     std::string request_id;
     common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
     std::optional<common_agent_daemon_turn_payload> turn;
+    std::optional<common_agent_daemon_tool_payload> tool;
     std::optional<common_agent_daemon_session_payload> session;
     std::optional<common_agent_daemon_cancel_payload> cancel;
     std::optional<common_agent_daemon_resource_payload> resource;
@@ -109,6 +124,7 @@ struct common_agent_daemon_status {
 
 enum class common_agent_daemon_response_kind {
     turn,
+    tool,
     status,
     lifecycle,
     resource,
@@ -162,6 +178,7 @@ struct common_agent_daemon_command_outcome {
     std::string target_turn_id;
     common_agent_daemon_status status;
     common_agent_runtime_session_manager_turn_result turn_result;
+    agent_tool_result tool_result;
     common_agent_daemon_resource_read_result resource_result;
     common_agent_daemon_listing_result listing_result;
     std::string error;
