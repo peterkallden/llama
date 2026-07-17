@@ -83,7 +83,8 @@ int main(int argc, char ** argv) {
     auto config_version = std::make_shared<std::atomic<uint64_t>>(1);
     auto refresh_http_catalog = std::make_shared<std::function<bool(
         const daemon_options &, std::string &)>>();
-    runtime.reload_config = [&options, config_version, refresh_http_catalog](
+    const auto config_store = runtime.config_store;
+    runtime.reload_config = [config_store, config_version, refresh_http_catalog](
             const std::string & path,
             common_agent_daemon_reload_result & result,
             std::string & reload_error) {
@@ -91,6 +92,8 @@ int main(int argc, char ** argv) {
         if (!load_agent_host_config(path, config, reload_error)) {
             return false;
         }
+        const auto active_snapshot = config_store->snapshot();
+        const daemon_options & options = *active_snapshot;
         daemon_options candidate = options;
         apply_agent_host_config_to_daemon_options(config, candidate);
         if (!candidate.repository_root.empty()) {
@@ -169,17 +172,8 @@ int main(int argc, char ** argv) {
             candidate.tool_profile != options.tool_profile ||
             candidate.repository_root != options.repository_root;
         if (native_catalog_changed) {
-            const auto previous_providers = options.mcp_providers;
-            const auto previous_tool_profile = options.tool_profile;
-            const auto previous_repository_root = options.repository_root;
-            options.mcp_providers = candidate.mcp_providers;
-            options.tool_profile = candidate.tool_profile;
-            options.repository_root = candidate.repository_root;
             if (*refresh_http_catalog) {
-                if (!(*refresh_http_catalog)(options, reload_error)) {
-                    options.mcp_providers = previous_providers;
-                    options.tool_profile = previous_tool_profile;
-                    options.repository_root = previous_repository_root;
+                if (!(*refresh_http_catalog)(candidate, reload_error)) {
                     result.warning = "native/MCP tool catalog change was not applied to the inbound HTTP catalog";
                     return false;
                 }
@@ -187,43 +181,36 @@ int main(int argc, char ** argv) {
             if (providers_changed) {
                 result.applied_fields.emplace_back("tools.providers");
             }
-            if (candidate.tool_profile != previous_tool_profile) {
-            result.applied_fields.emplace_back("tools.profile");
+            if (candidate.tool_profile != options.tool_profile) {
+                result.applied_fields.emplace_back("tools.profile");
             }
-            if (candidate.repository_root != previous_repository_root) {
+            if (candidate.repository_root != options.repository_root) {
                 result.applied_fields.emplace_back("tools.repository_root");
             }
         }
         if (candidate.turn_timeout_ms != options.turn_timeout_ms ||
                 candidate.max_turn_seconds != options.max_turn_seconds) {
-            options.turn_timeout_ms = candidate.turn_timeout_ms;
-            options.max_turn_seconds = candidate.max_turn_seconds;
             result.applied_fields.emplace_back("limits.turn_timeout_ms");
         }
         if (candidate.inference_step_timeout_ms != options.inference_step_timeout_ms) {
-            options.inference_step_timeout_ms = candidate.inference_step_timeout_ms;
             result.applied_fields.emplace_back("limits.inference_step_timeout_ms");
         }
         if (candidate.tool_timeout_ms != options.tool_timeout_ms) {
-            options.tool_timeout_ms = candidate.tool_timeout_ms;
             result.applied_fields.emplace_back("limits.tool_timeout_ms");
         }
         if (candidate.mcp_connect_timeout_ms != options.mcp_connect_timeout_ms) {
-            options.mcp_connect_timeout_ms = candidate.mcp_connect_timeout_ms;
             result.applied_fields.emplace_back("limits.mcp_connect_timeout_ms");
         }
         if (candidate.mcp_request_timeout_ms != options.mcp_request_timeout_ms) {
-            options.mcp_request_timeout_ms = candidate.mcp_request_timeout_ms;
             result.applied_fields.emplace_back("limits.mcp_request_timeout_ms");
         }
         if (candidate.mcp_shutdown_timeout_ms != options.mcp_shutdown_timeout_ms) {
-            options.mcp_shutdown_timeout_ms = candidate.mcp_shutdown_timeout_ms;
             result.applied_fields.emplace_back("limits.mcp_shutdown_timeout_ms");
         }
         if (candidate.max_tool_rounds != options.max_tool_rounds) {
-            options.max_tool_rounds = candidate.max_tool_rounds;
             result.applied_fields.emplace_back("limits.max_tool_rounds");
         }
+        config_store->replace(std::make_shared<const daemon_options>(std::move(candidate)));
         result.config_version = config_version->fetch_add(1) + 1;
         reload_error.clear();
         return true;
@@ -297,7 +284,20 @@ int main(int argc, char ** argv) {
             if (!dispatcher.build_http_tool_catalog(current_options, next_registry, refresh_error)) {
                 return false;
             }
-            return http_server->replace_registry(std::move(next_registry), refresh_error);
+            if (!http_server->replace_registry(std::move(next_registry), refresh_error)) {
+                return false;
+            }
+            http_server->replace_default_policy({
+                "daemon-http",
+                "llama-agent",
+                "local",
+                "",
+                current_options.tool_profile,
+                {},
+                current_options.tool_profile == "memory" || current_options.tool_profile == "research",
+            });
+            refresh_error.clear();
+            return true;
         };
         if (!http_server->bind(error)) {
             std::fprintf(stderr, "failed to bind daemon MCP HTTP server: %s\n", error.c_str());
@@ -308,7 +308,13 @@ int main(int argc, char ** argv) {
         });
     }
 
-    const bool jsonl_ok = run_agent_daemon_jsonl_adapter(stdin, stdout, options, dispatcher, error);
+    const bool jsonl_ok = run_agent_daemon_jsonl_adapter(
+        stdin,
+        stdout,
+        options,
+        config_store,
+        dispatcher,
+        error);
     if (http_server) {
         http_server->stop();
         if (http_thread.joinable()) http_thread.join();

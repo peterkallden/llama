@@ -293,7 +293,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
         agent_resource_store & resource_store,
-        const daemon_options & options) {
+        const daemon_options & options,
+        const std::shared_ptr<common_agent_daemon_config_store> & config_store) {
     return {
         memory_store,
         plan_store,
@@ -305,13 +306,14 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         true,
         {},
         {},
-        [&options, &memory_store, &plan_store, &resource_store](
+        [config_store, &memory_store, &plan_store, &resource_store](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
                 std::string & error) {
+            const auto current_options = config_store->snapshot();
             return resolve_agent_daemon_tooling(
-                options,
+                *current_options,
                 runtime,
                 request,
                 memory_store,
@@ -398,6 +400,10 @@ bool initialize_agent_daemon_environment(
         const daemon_options & options,
         common_agent_daemon_runtime & runtime,
         std::string & error) {
+    if (!runtime.config_store) {
+        runtime.config_store = std::make_shared<common_agent_daemon_config_store>(
+            std::make_shared<const daemon_options>(options));
+    }
     if (!open_daemon_memory_store(options, runtime.memory_store, error)) {
         return false;
     }
@@ -416,7 +422,8 @@ bool initialize_agent_daemon_environment(
         *runtime.memory_store,
         *runtime.plan_store,
         *runtime.resource_store,
-        options);
+        options,
+        runtime.config_store);
     runtime.host = std::make_unique<common_agent_runtime_session_manager>(
         make_agent_runtime_session_manager_config({
             session_manager_build_config.memory_store,
@@ -436,7 +443,7 @@ bool initialize_agent_daemon_environment(
     common_memory_store * memory_store = runtime.memory_store.get();
     common_plan_store * plan_store = runtime.plan_store.get();
     agent_resource_store * resource_store = runtime.resource_store.get();
-    runtime.tool_executor = [&options, memory_store, plan_store, resource_store](
+    runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store, resource_store](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {
@@ -444,7 +451,7 @@ bool initialize_agent_daemon_environment(
             callback_error = "daemon tool executor stores are not initialized";
             return false;
         }
-        daemon_options call_options = options;
+        daemon_options call_options = *config_store->snapshot();
         if (!payload.tool_profile.empty()) {
             call_options.tool_profile = payload.tool_profile;
         }

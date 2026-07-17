@@ -52,6 +52,11 @@ rebuild listeners or already-running provider clients. When the daemon hosts
 inbound MCP HTTP, the resolved tool catalog is replaced atomically for new
 HTTP requests as part of the same provider reload.
 
+Daemon configuration now travels through a shared immutable snapshot store.
+Reload publishes a new snapshot instead of mutating the options object that
+worker, session and HTTP paths may already be reading. Requests and resolved
+tool views retain the snapshot they materialized for their own lifetime.
+
 The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
 
 That status surface now also preserves one small but important bit of lane-owned waiting state: when an active turn is parked behind a manager-owned pending operation, daemon status can report not only the active phase/disposition but also the pending operation kind/detail on both the top-level active turn and the keyed session descriptor. In practice that means admin/test callers can now distinguish "turn is awaiting inference" from "turn is awaiting inference because a specific pending lane operation is still unresolved" without scraping internal debug logs.
@@ -618,15 +623,15 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
    This file is much cleaner now: request-tool safe defaults plus the bounded user-correction, failure-observation, reflection-hint, and reasoning-observation payload seams all go through named runtime JSON helpers. The remaining runtime-core cleanup is more about reducing mixed responsibilities than about raw JSON literals.
 
-2. `pocs/agent/agent-cli-selection.cpp`
+2. `tools/agent/cli/agent-cli-selection.cpp`
 
    This seam is narrower now too: selection schemas are requested through named schema-string helpers, and blueprint-binding tool arguments travel as a named plan tool-arguments contract instead of raw nested JSON until the final plan serializer step. The remaining work there is mostly around separating more assembly responsibility out of the CLI adapter, not about ad hoc nested selection payloads.
 
-3. `pocs/agent/agent-daemon.cpp` plus `pocs/agent/agent-daemon-client.cpp`
+3. `tools/agent/daemon/agent-daemon-adapter.cpp` plus `tools/agent/daemon/agent-daemon-client.cpp`
 
    The daemon wire payload and the JSONL transport framing are now both explicit seams. The daemon protocol still owns the command/response objects, while the transport endpoints now reuse one small JSONL helper for line-oriented parsing and emission instead of open-coding request/shutdown JSON in each caller.
 
-4. `pocs/agent/agent-tool-provider.cpp`
+4. `tools/agent/tooling/agent-tool-provider.cpp`
 
    The provider/view boundary is structurally much better now, and the final success/failure payload shaping has been pulled behind named helper contracts. The remaining work here is mostly around richer typed normalization and eventual schema validation parity for MCP, rather than hand-built wrapper JSON at each provider return site.
 
@@ -646,7 +651,7 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
    This file intentionally owns a large amount of OpenAI-compatible chat/tool JSON mapping, so not all JSON use here is debt. Even so, there are still some model-facing parsed/normalized shapes here that could benefit from more explicit contract helpers over time, especially where argument strings are parsed and re-emitted.
 
-9. `pocs/agent/agent-server-inference.cpp`
+9. `tools/agent/runtime/agent-server-inference.cpp`
 
    A few resident `server_context` result paths still parse response JSON blobs directly to interpret structured output. The scope is smaller than the files above, but it is still a live runtime seam.
 

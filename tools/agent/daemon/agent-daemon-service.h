@@ -17,6 +17,20 @@
 #include <vector>
 
 class agent_mcp_server_tool_registry;
+struct daemon_options;
+
+class common_agent_daemon_config_store {
+public:
+    explicit common_agent_daemon_config_store(
+        std::shared_ptr<const daemon_options> initial);
+
+    std::shared_ptr<const daemon_options> snapshot() const;
+    void replace(std::shared_ptr<const daemon_options> next);
+
+private:
+    mutable std::mutex mutex_;
+    std::shared_ptr<const daemon_options> current_;
+};
 
 enum class common_agent_daemon_command_type {
     run_turn,
@@ -47,6 +61,7 @@ struct common_agent_daemon_reload_result {
 };
 
 struct common_agent_daemon_runtime {
+    std::shared_ptr<common_agent_daemon_config_store> config_store;
     std::unique_ptr<common_memory_store> memory_store;
     std::unique_ptr<common_plan_store> plan_store;
     std::unique_ptr<agent_resource_store> resource_store;

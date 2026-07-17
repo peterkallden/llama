@@ -1,5 +1,21 @@
 #include "agent-daemon-service.h"
+#include "agent-daemon-adapter.h"
 #include "../mcp/agent-mcp-server-tool-registry.h"
+
+common_agent_daemon_config_store::common_agent_daemon_config_store(
+        std::shared_ptr<const daemon_options> initial)
+    : current_(std::move(initial)) {}
+
+std::shared_ptr<const daemon_options> common_agent_daemon_config_store::snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_;
+}
+
+void common_agent_daemon_config_store::replace(
+        std::shared_ptr<const daemon_options> next) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    current_ = std::move(next);
+}
 
 namespace {
 

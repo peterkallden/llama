@@ -286,9 +286,10 @@ void print_agent_daemon_usage(const char * argv0) {
 
 bool run_agent_daemon_jsonl_adapter(
         FILE * input,
-        FILE * output,
-        const daemon_options & options,
-        common_agent_daemon_dispatcher & dispatcher,
+    FILE * output,
+    const daemon_options & options,
+    const std::shared_ptr<common_agent_daemon_config_store> & config_store,
+    common_agent_daemon_dispatcher & dispatcher,
         std::string & error) {
     error.clear();
     if (!emit_agent_daemon_jsonl_message(output, make_agent_daemon_ready_response(options), error)) {
@@ -299,9 +300,12 @@ bool run_agent_daemon_jsonl_adapter(
     json parsed;
     while (read_agent_daemon_jsonl_message(input, parsed, protocol_error)) {
         agent_daemon_foreground_request request;
+        const auto current_options = config_store
+            ? config_store->snapshot()
+            : std::make_shared<const daemon_options>(options);
         if (!parse_agent_daemon_foreground_request(
                     parsed,
-                    options,
+                    *current_options,
                     dispatcher.default_mode(),
                     request,
                     error)) {

@@ -44,6 +44,7 @@ public:
     bool bind(std::string & error);
     bool listen(std::string & error);
     bool replace_registry(agent_mcp_server_tool_registry registry, std::string & error);
+    void replace_default_policy(agent_mcp_caller_policy policy);
     void stop();
     int port() const { return port_; }
 
@@ -56,6 +57,7 @@ private:
 
     agent_mcp_server_tool_registry registry_;
     mutable std::mutex registry_mutex_;
+    mutable std::mutex policy_mutex_;
     agent_mcp_http_server_options options_;
     httplib::Server server_;
     int port_ = 0;

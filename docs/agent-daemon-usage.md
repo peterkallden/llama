@@ -93,6 +93,9 @@ assembly are restart-required for now. A
 rejected reload returns `event: "config.reload.rejected"`, a
 `restart_required` array and a warning; it never partially applies a
 candidate. In-flight operations retain their existing configuration snapshot.
+The daemon stores the active configuration as a shared immutable snapshot;
+reload publishes a new snapshot for subsequent JSONL, HTTP and tool-resolution
+work without mutating the snapshot already observed by an operation.
 
 `--worker-count N` enables a shared worker pool. The default remains `1` for
 compatibility. Multiple workers may process different session lanes in

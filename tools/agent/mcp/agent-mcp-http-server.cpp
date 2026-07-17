@@ -28,6 +28,12 @@ bool agent_mcp_http_server::replace_registry(
     return true;
 }
 
+void agent_mcp_http_server::replace_default_policy(
+        agent_mcp_caller_policy policy) {
+    std::lock_guard<std::mutex> lock(policy_mutex_);
+    options_.default_policy = std::move(policy);
+}
+
 bool agent_mcp_http_server::authorize(
         const httplib::Request & request,
         httplib::Response & response,
@@ -54,6 +60,7 @@ bool agent_mcp_http_server::authorize(
         response.set_content(R"({"error":"unauthorized"})", "application/json");
         return false;
     } else {
+        std::lock_guard<std::mutex> lock(policy_mutex_);
         policy = options_.default_policy;
     }
     return true;
