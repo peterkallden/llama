@@ -153,6 +153,11 @@ struct agent_daemon_jsonl_status_response {
     int queued_commands = 0;
     int max_queue_size = 0;
     int queue_capacity_remaining = 0;
+    uint64_t commands_accepted = 0;
+    uint64_t commands_completed = 0;
+    uint64_t commands_failed = 0;
+    uint64_t turns_completed = 0;
+    uint64_t tools_completed = 0;
     std::string active_request_id;
     std::string active_turn_id;
     std::string active_turn_phase;

@@ -370,6 +370,13 @@ void append_agent_daemon_status_snapshot(
     response["queued_commands"] = status.queued_command_count;
     response["max_queue_size"] = status.max_queue_size;
     response["queue_capacity_remaining"] = status.queue_capacity_remaining;
+    response["metrics"] = {
+        {"commands_accepted", status.commands_accepted},
+        {"commands_completed", status.commands_completed},
+        {"commands_failed", status.commands_failed},
+        {"turns_completed", status.turns_completed},
+        {"tools_completed", status.tools_completed},
+    };
     const auto * active_turn = status.active_turn.has_value()
         ? &*status.active_turn
         : nullptr;

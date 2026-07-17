@@ -121,6 +121,12 @@ lane information. A later service host may wrap the same daemon service and
 dispatcher contracts with HTTP, named pipes or a supervisor without changing
 the JSON/runtime ownership model.
 
+Every status-shaped JSONL response also contains a small `metrics` object with
+dispatcher counters: `commands_accepted`, `commands_completed`,
+`commands_failed`, `turns_completed`, and `tools_completed`. This is the first
+host metrics slice; a later service host can project the same counters to
+Prometheus text without making metrics an MCP tool.
+
 ## Current limitations
 
 - foreground process only;

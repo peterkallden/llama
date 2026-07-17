@@ -113,4 +113,9 @@ private:
     bool worker_running = false;
     bool accepting_commands = true;
     bool stop_requested = false;
+    uint64_t commands_accepted = 0;
+    uint64_t commands_completed = 0;
+    uint64_t commands_failed = 0;
+    uint64_t turns_completed = 0;
+    uint64_t tools_completed = 0;
 };

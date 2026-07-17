@@ -395,6 +395,14 @@ bool parse_agent_daemon_jsonl_status_response(
     response.queued_commands = message.value("queued_commands", 0);
     response.max_queue_size = message.value("max_queue_size", 0);
     response.queue_capacity_remaining = message.value("queue_capacity_remaining", 0);
+    if (message.contains("metrics") && message["metrics"].is_object()) {
+        const auto & metrics = message["metrics"];
+        response.commands_accepted = metrics.value("commands_accepted", uint64_t(0));
+        response.commands_completed = metrics.value("commands_completed", uint64_t(0));
+        response.commands_failed = metrics.value("commands_failed", uint64_t(0));
+        response.turns_completed = metrics.value("turns_completed", uint64_t(0));
+        response.tools_completed = metrics.value("tools_completed", uint64_t(0));
+    }
     response.active_request_id = message.value("active_request_id", std::string());
     response.active_turn_id = message.value("active_turn_id", std::string());
     response.active_turn_phase = message.value("active_turn_phase", std::string());

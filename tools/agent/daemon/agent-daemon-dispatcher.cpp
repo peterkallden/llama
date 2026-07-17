@@ -199,6 +199,7 @@ bool common_agent_daemon_dispatcher::execute(
             make_dispatcher_command_event_context(command))
             .emit(common_agent_daemon_event_type::command_queued);
         queue.push_back(item);
+        ++commands_accepted;
     }
 
     condition.notify_one();
@@ -555,6 +556,11 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     status.max_queue_size = max_queue_size;
     status.queue_capacity_remaining =
         max_queue_size > queued_count ? (max_queue_size - queued_count) : 0;
+    status.commands_accepted = commands_accepted;
+    status.commands_completed = commands_completed;
+    status.commands_failed = commands_failed;
+    status.turns_completed = turns_completed;
+    status.tools_completed = tools_completed;
     status.state = service.state();
     status.live = status.state != common_agent_daemon_state::stopped && worker_running;
     status.ready = status.state == common_agent_daemon_state::ready &&
@@ -616,6 +622,13 @@ void common_agent_daemon_dispatcher::worker_loop() {
             std::move(execution.outcome),
             std::move(execution.events),
         });
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            ++commands_completed;
+            if (!queued.ok) ++commands_failed;
+            if (item->command.type == common_agent_daemon_command_type::run_turn && queued.ok) ++turns_completed;
+            if (item->command.type == common_agent_daemon_command_type::execute_tool && queued.ok) ++tools_completed;
+        }
         if (!queued.error.empty() && queued.result.error.empty()) {
             queued.result.error = queued.error;
         }

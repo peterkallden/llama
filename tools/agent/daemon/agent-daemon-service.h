@@ -120,6 +120,11 @@ struct common_agent_daemon_status {
     std::string active_pending_operation_detail;
     std::vector<common_agent_runtime_session_descriptor> sessions;
     bool session_snapshot_populated = false;
+    uint64_t commands_accepted = 0;
+    uint64_t commands_completed = 0;
+    uint64_t commands_failed = 0;
+    uint64_t turns_completed = 0;
+    uint64_t tools_completed = 0;
 };
 
 enum class common_agent_daemon_response_kind {
