@@ -227,6 +227,12 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
         request.turn.turn_id);
 
     if (request.turn.execution_control.should_stop()) {
+        if (lane.pending_operation.has_value()) {
+            std::string ignored_error;
+            operation_manager.cancel(
+                lane.pending_operation->pending_operation.operation_id,
+                ignored_error);
+        }
         {
             std::lock_guard<std::mutex> lock(lane.mutex);
             lane.pending_operation.reset();
@@ -259,8 +265,9 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::poll
         return common_agent_runtime_turn_disposition::failed;
     }
 
+    const std::string operation_id = lane.pending_operation->pending_operation.operation_id;
     bool ready = false;
-    if (!lane.pending_operation->poll(ready, error)) {
+    if (!operation_manager.poll(operation_id, ready, error)) {
         std::lock_guard<std::mutex> lock(lane.mutex);
         lane.pending_operation.reset();
         if (lane.active_turn.has_value()) {
@@ -370,6 +377,24 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
                     return common_agent_runtime_turn_disposition::failed;
                 }
                 if (pending_operation.has_value()) {
+                    std::string operation_error;
+                    if (!operation_manager.begin(
+                            pending_operation->pending_operation,
+                            pending_operation->poll,
+                            {},
+                            operation_error)) {
+                        error = operation_error;
+                        {
+                            std::lock_guard<std::mutex> lock(lane.mutex);
+                            lane.pending_operation.reset();
+                            if (lane.active_turn.has_value()) {
+                                lane.active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                                lane.active_turn->phase = common_agent_runtime_turn_phase::failed;
+                            }
+                        }
+                        turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
+                        return common_agent_runtime_turn_disposition::failed;
+                    }
                     {
                         std::lock_guard<std::mutex> lock(lane.mutex);
                         lane.pending_operation = std::move(pending_operation);

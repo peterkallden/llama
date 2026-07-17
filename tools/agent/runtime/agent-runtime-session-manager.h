@@ -257,6 +257,7 @@ private:
         const std::string & operation_id = {}) const;
 
     common_agent_runtime_session_manager_config config;
+    common_runtime_operation_manager operation_manager;
     std::map<common_agent_runtime_session_key, common_agent_runtime_session_lane> lanes;
     common_agent_daemon_event_sink event_sink;
 };
