@@ -308,6 +308,8 @@ That provider assembly is now a little less CLI-shaped internally as well. The C
 
 The provider/view seam has also grown a first narrowly scoped async capability. A resolved `agent_tool_view` can still be used exactly as before through ordinary synchronous `call(...)`, but it can now also advertise per-tool async support and expose a small `begin_call_async(...)` / `poll_call_async(...)` contract for tools that a host marks as async-capable in the resolved tool context. The current slice is intentionally host-owned and opt-in per tool rather than a global mode switch: one tool can remain synchronous while another is allowed to run behind a pending operation, and the existing model-visible tool schema does not need to change first.
 
+Pending work now also has a neutral central registry in `common/runtime/runtime-operation.h`. The registry owns operation identity, deadlines, poll/cancel transitions, terminal state and cleanup; session lanes still own ordering and turn-phase decisions. This is deliberately an intermediate seam, not yet a global inference scheduler or GPU batcher.
+
 The new host-config slice is intentionally modest. It currently models:
 
 - model backend/path and optional embedding model
@@ -644,7 +646,7 @@ That seam now has two concrete test paths:
 - an in-process fake MCP client used to exercise provider filtering and result normalization
 - a first stdio-based MCP client adapter that speaks JSON-RPC-style `Content-Length` framed messages to a subprocess
 
-The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`, but it is not yet a production MCP lifecycle: there is still no reconnect logic, approval model, streaming event path, or broader capability surface.
+The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. Request deadlines now run the blocking read in a bounded helper and terminate the child process on expiry; reconnect logic, approval model, streaming event path, and broader capability surface remain deferred.
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
@@ -731,7 +733,7 @@ Tool execution is synchronous in this slice. That is deliberate: it preserves cu
 
 The cancellation/timeout seam now also reaches a little deeper into the runtime-owned tool and inference paths. Resolved `agent_tool_context` values now carry the shared execution-control contract, native and MCP-backed tool views fail early when a host cancellation or turn deadline has already fired, and the current runtime checks the same seam again immediately after synchronous tool execution. That is still cooperative rather than preemptive, but it means the provider-backed tool surface now has one host-owned place to report `tool_call_cancelled`, `tool_call_deadline_exceeded`, or timeout-class failures instead of only treating those conditions as outer daemon concerns.
 
-The runtime now also starts mapping inference-step budgets into the existing generation request contract. CLI and resident/session-host assembly set `t_max_predict_ms` from `inference_step_timeout_ms` when configured, so the `server-context` path can begin enforcing bounded generation time through the same generation-options seam it already uses for `n_predict`. This is still only a first slice: active cancellation does not yet safely interrupt every in-flight inference or native tool body, and MCP stdio transport timeouts are not yet enforced as a fully isolated subprocess lifecycle.
+The runtime now also starts mapping inference-step budgets into the existing generation request contract. CLI and resident/session-host assembly set `t_max_predict_ms` from `inference_step_timeout_ms` when configured, so the `server-context` path can begin enforcing bounded generation time through the same generation-options seam it already uses for `n_predict`. This is still only a first slice: active cancellation does not yet safely interrupt every in-flight inference or native tool body, and inference is not yet managed as a globally scheduled/batched operation.
 
 ## MCP Direction
 
@@ -767,7 +769,7 @@ The native tool registry is the first concrete provider. There is now also a fir
 
 That MCP-facing tool surface has now also been tightened slightly around naming and policy. Runtime filters treat the resolved model-visible name as the authority surface for exposed MCP tools, so prefixed MCP names are filtered the same way the model actually sees them rather than by an internal pre-prefix identifier.
 
-One intentional gap remains in the current MCP tool path: validation currently enforces that tool arguments parse as a JSON object, but it does not yet validate those arguments against the advertised `inputSchema`. Native tools already get stronger contract validation through the registry path; fuller MCP schema validation is still an explicit follow-up item rather than something hidden behind the current PoC surface.
+MCP tool arguments now use the same bounded JSON Schema subset as native tool calls. Required fields, additional-property policy, scalar types, enum/bounds and array bounds are validated against the advertised `inputSchema` before the provider is invoked. Full JSON Schema and transport-specific schema dialects remain outside the current subset.
 
 Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
 
