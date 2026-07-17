@@ -48,6 +48,9 @@ HTTP. `streamable_http` is the preferred transport value; `http` and `https`
 remain accepted aliases in the provider validator. Do not expose the token in
 command-line arguments, URLs, logs, event payloads or checked-in config.
 
+For the complete daemon startup, flag and JSONL command walkthrough, see
+[agent-daemon-usage.md](agent-daemon-usage.md).
+
 ## Standard transport and authorization
 
 Remote MCP should use MCP Streamable HTTP: one MCP endpoint supporting POST,
