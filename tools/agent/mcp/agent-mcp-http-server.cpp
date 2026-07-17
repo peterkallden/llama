@@ -17,6 +17,17 @@ agent_mcp_http_server::agent_mcp_http_server(
     install_routes();
 }
 
+bool agent_mcp_http_server::replace_registry(
+        agent_mcp_server_tool_registry registry,
+        std::string & error) {
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex_);
+        registry_ = std::move(registry);
+    }
+    error.clear();
+    return true;
+}
+
 bool agent_mcp_http_server::authorize(
         const httplib::Request & request,
         httplib::Response & response,
@@ -116,8 +127,13 @@ bool agent_mcp_http_server::handle_message(
         return true;
     }
     if (method == "tools/list") {
+        agent_mcp_server_tool_registry registry;
+        {
+            std::lock_guard<std::mutex> lock(registry_mutex_);
+            registry = registry_;
+        }
         agent_mcp_json tools = agent_mcp_json::array();
-        for (const auto & tool : registry_.list_tools()) {
+        for (const auto & tool : registry.list_tools()) {
             if (!agent_mcp_policy_allows_tool(policy, tool.name)) continue;
             const auto schema = agent_mcp_json::parse(tool.input_schema_json, nullptr, false);
             tools.push_back({
@@ -157,6 +173,11 @@ bool agent_mcp_http_server::handle_message(
         return true;
     }
     if (method == "tools/call") {
+        agent_mcp_server_tool_registry registry;
+        {
+            std::lock_guard<std::mutex> lock(registry_mutex_);
+            registry = registry_;
+        }
         const auto params = message.value("params", agent_mcp_json::object());
         const std::string name = params.value("name", "");
         const auto arguments = params.value("arguments", agent_mcp_json::object());
@@ -168,14 +189,14 @@ bool agent_mcp_http_server::handle_message(
             result.failure_class = "policy";
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
-        } else if (!registry_.contains_tool(name)) {
+        } else if (!registry.contains_tool(name)) {
             error = "unknown MCP server tool: " + name;
             result.ok = false;
             result.failure_code = "tool.not_found";
             result.failure_class = "not_found";
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
-        } else if (!registry_.validate_tool_arguments(name, arguments, error)) {
+        } else if (!registry.validate_tool_arguments(name, arguments, error)) {
             result.ok = false;
             result.failure_code = "tool.invalid_arguments";
             result.failure_class = "validation";
@@ -183,7 +204,7 @@ bool agent_mcp_http_server::handle_message(
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
         } else if (options_.execute_tool) {
             options_.execute_tool(policy, name, arguments, result, error);
-        } else if (!registry_.call_tool(name, arguments, result, error)) {
+        } else if (!registry.call_tool(name, arguments, result, error)) {
             result.ok = false;
             result.failure_code = error.rfind("unknown MCP server tool:", 0) == 0
                 ? "tool.not_found" : "tool.invalid_arguments";

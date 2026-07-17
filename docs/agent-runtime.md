@@ -46,7 +46,9 @@ backend resources, stores, worker/queue sizing, and runtime assembly remain
 restart-required. MCP providers are diffed by stable ID and added, removed, or
 replaced for new operations, while existing tooling retains its clients. The
 current implementation keeps reload local to JSONL administration and does not
-rebuild listeners or already-running provider clients.
+rebuild listeners or already-running provider clients. When the daemon hosts
+inbound MCP HTTP, the resolved tool catalog is replaced atomically for new
+HTTP requests as part of the same provider reload.
 
 The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
 

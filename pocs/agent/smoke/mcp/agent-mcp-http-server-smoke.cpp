@@ -124,6 +124,29 @@ int main() {
 
     const auto listed = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})", "application/json");
+    agent_mcp_server_tool_registry replacement_registry;
+    if (!replacement_registry.register_tool({
+            "echo",
+            "HTTP inbound smoke echo after catalog reload",
+            R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","minLength":1}}})",
+            true,
+            false,
+            false,
+            false,
+            false,
+            [](const agent_mcp_json & arguments, agent_mcp_server_tool_result & result, std::string &) {
+                result.structured_content = {{"text", arguments.at("text")}};
+                result.content = {{{"type", "text"}, {"text", arguments.at("text")}}};
+                result.safe_summary = arguments.at("text").get<std::string>();
+                return true;
+            },
+        }, error) ||
+            !server.replace_registry(std::move(replacement_registry), error)) {
+        std::fprintf(stderr, "HTTP server catalog replacement failed: %s\n", error.c_str());
+        server.stop(); server_thread.join(); return 1;
+    }
+    const auto reloaded_listed = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":9,"method":"tools/list","params":{}})", "application/json");
     const auto called = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hello"}}})", "application/json");
     const auto invalid = client.Post("/mcp", headers,
@@ -150,12 +173,15 @@ int main() {
     const auto other_cleanup = client.Delete("/mcp", other_headers);
 
     const auto listed_json = listed ? json::parse(listed->body, nullptr, false) : json();
+    const auto reloaded_listed_json = reloaded_listed ? json::parse(reloaded_listed->body, nullptr, false) : json();
     const auto called_json = called ? json::parse(called->body, nullptr, false) : json();
     const auto invalid_json = invalid ? json::parse(invalid->body, nullptr, false) : json();
     const auto unknown_json = unknown ? json::parse(unknown->body, nullptr, false) : json();
     const auto other_listed_json = other_listed ? json::parse(other_listed->body, nullptr, false) : json();
     const auto other_called_json = other_called ? json::parse(other_called->body, nullptr, false) : json();
     const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 1 &&
+        reloaded_listed && reloaded_listed->status == 200 &&
+        reloaded_listed_json["result"]["tools"][0]["description"] == "HTTP inbound smoke echo after catalog reload" &&
         called && called->status == 200 && called_json["result"]["structuredContent"]["text"] == "hello" &&
         invalid && invalid->status == 200 && invalid_json["result"]["isError"] == true &&
         unknown && unknown->status == 200 && unknown_json["result"]["isError"] == true &&

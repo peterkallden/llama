@@ -43,6 +43,7 @@ public:
 
     bool bind(std::string & error);
     bool listen(std::string & error);
+    bool replace_registry(agent_mcp_server_tool_registry registry, std::string & error);
     void stop();
     int port() const { return port_; }
 
@@ -54,6 +55,7 @@ private:
     void install_routes();
 
     agent_mcp_server_tool_registry registry_;
+    mutable std::mutex registry_mutex_;
     agent_mcp_http_server_options options_;
     httplib::Server server_;
     int port_ = 0;

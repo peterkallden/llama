@@ -25,8 +25,64 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
     }
+    common_memory_store * catalog_memory_store = runtime.memory_store.get();
+    common_plan_store * catalog_plan_store = runtime.plan_store.get();
+    agent_resource_store * catalog_resource_store = runtime.resource_store.get();
+    runtime.build_http_tool_catalog = [catalog_memory_store, catalog_plan_store, catalog_resource_store](
+            const daemon_options & catalog_options,
+            agent_mcp_server_tool_registry & registry,
+            std::string & catalog_error) {
+        common_agent_runtime_session_host_turn_request catalog_request;
+        catalog_request.mode = common_agent_runtime_host_mode::chat;
+        catalog_request.session_id = "daemon-http-catalog";
+        catalog_request.namespace_id = "local";
+        catalog_request.project_id = "llama-agent";
+        catalog_request.turn_id = "daemon-http-catalog";
+        catalog_request.memory_scope = common_memory_scope::session;
+        catalog_request.plan_scope = common_plan_scope::turn;
+        common_agent_runtime_tooling catalog_tooling;
+        if (!resolve_agent_daemon_tooling(
+                catalog_options,
+                nullptr,
+                catalog_request,
+                *catalog_memory_store,
+                *catalog_plan_store,
+                catalog_resource_store,
+                catalog_tooling,
+                catalog_error)) {
+            return false;
+        }
+        if (catalog_tooling.tool_view == nullptr) {
+            catalog_error = "daemon HTTP catalog resolved no tool view";
+            return false;
+        }
+        for (const auto & tool : catalog_tooling.tool_view->chat_tools()) {
+            const bool read_only = catalog_tooling.tool_view->is_read_only(tool.name);
+            const bool policy_gated = catalog_tooling.tool_view->is_policy_gated(tool.name);
+            if (!registry.register_tool({
+                    tool.name,
+                    tool.description,
+                    tool.parameters,
+                    read_only,
+                    policy_gated,
+                    false,
+                    false,
+                    false,
+                    [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string & handler_error) {
+                        handler_error = "daemon HTTP catalog tools require the dispatcher executor";
+                        return false;
+                    },
+                }, catalog_error)) {
+                return false;
+            }
+        }
+        catalog_error.clear();
+        return true;
+    };
     auto config_version = std::make_shared<std::atomic<uint64_t>>(1);
-    runtime.reload_config = [&options, config_version](
+    auto refresh_http_catalog = std::make_shared<std::function<bool(
+        const daemon_options &, std::string &)>>();
+    runtime.reload_config = [&options, config_version, refresh_http_catalog](
             const std::string & path,
             common_agent_daemon_reload_result & result,
             std::string & reload_error) {
@@ -97,7 +153,15 @@ int main(int argc, char ** argv) {
 
         if (!result.providers_added.empty() || !result.providers_removed.empty() ||
                 !result.providers_replaced.empty()) {
+            const auto previous_providers = options.mcp_providers;
             options.mcp_providers = candidate.mcp_providers;
+            if (*refresh_http_catalog) {
+                if (!(*refresh_http_catalog)(options, reload_error)) {
+                    options.mcp_providers = previous_providers;
+                    result.warning = "MCP provider change was not applied to the inbound HTTP catalog";
+                    return false;
+                }
+            }
             result.applied_fields.emplace_back("tools.providers");
         }
 
@@ -140,53 +204,11 @@ int main(int argc, char ** argv) {
         return true;
     };
     agent_mcp_server_tool_registry http_registry;
-    if (options.http_enabled) {
-        common_agent_runtime_session_host_turn_request catalog_request;
-        catalog_request.mode = common_agent_runtime_host_mode::chat;
-        catalog_request.session_id = "daemon-http-catalog";
-        catalog_request.namespace_id = "local";
-        catalog_request.project_id = "llama-agent";
-        catalog_request.turn_id = "daemon-http-catalog";
-        catalog_request.memory_scope = common_memory_scope::session;
-        catalog_request.plan_scope = common_plan_scope::turn;
-        common_agent_runtime_tooling catalog_tooling;
-        if (!resolve_agent_daemon_tooling(
-                options,
-                nullptr,
-                catalog_request,
-                *runtime.memory_store,
-                *runtime.plan_store,
-                runtime.resource_store.get(),
-                catalog_tooling,
-                error)) {
-            std::fprintf(stderr, "failed to resolve daemon MCP HTTP tool catalog: %s\n", error.c_str());
-            return 2;
-        }
-        if (catalog_tooling.tool_view != nullptr) {
-            for (const auto & tool : catalog_tooling.tool_view->chat_tools()) {
-                const bool read_only = catalog_tooling.tool_view->is_read_only(tool.name);
-                const bool policy_gated = catalog_tooling.tool_view->is_policy_gated(tool.name);
-                if (!http_registry.register_tool({
-                        tool.name,
-                        tool.description,
-                        tool.parameters,
-                        read_only,
-                        policy_gated,
-                        false,
-                        false,
-                        false,
-                        [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string & handler_error) {
-                            handler_error = "daemon HTTP catalog tools require the dispatcher executor";
-                            return false;
-                        },
-                    }, error)) {
-                    std::fprintf(stderr, "failed to register daemon MCP HTTP tool catalog: %s\n", error.c_str());
-                    return 2;
-                }
-            }
-        }
-    }
     common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity, options.worker_count);
+    if (options.http_enabled && !dispatcher.build_http_tool_catalog(options, http_registry, error)) {
+        std::fprintf(stderr, "failed to resolve daemon MCP HTTP tool catalog: %s\n", error.c_str());
+        return 2;
+    }
     std::unique_ptr<agent_mcp_http_server> http_server;
     std::thread http_thread;
     if (options.http_enabled) {
@@ -243,6 +265,15 @@ int main(int argc, char ** argv) {
             return result.ok;
         };
         http_server = std::make_unique<agent_mcp_http_server>(std::move(http_registry), std::move(http_options));
+        *refresh_http_catalog = [&dispatcher, &http_server](
+                const daemon_options & current_options,
+                std::string & refresh_error) {
+            agent_mcp_server_tool_registry next_registry;
+            if (!dispatcher.build_http_tool_catalog(current_options, next_registry, refresh_error)) {
+                return false;
+            }
+            return http_server->replace_registry(std::move(next_registry), refresh_error);
+        };
         if (!http_server->bind(error)) {
             std::fprintf(stderr, "failed to bind daemon MCP HTTP server: %s\n", error.c_str());
             return 2;

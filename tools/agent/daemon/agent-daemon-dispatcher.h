@@ -11,6 +11,9 @@
 #include <string>
 #include <thread>
 
+class agent_mcp_server_tool_registry;
+struct daemon_options;
+
 class common_agent_daemon_dispatcher {
 public:
     explicit common_agent_daemon_dispatcher(
@@ -29,6 +32,10 @@ public:
     size_t queued_command_count() const;
     size_t max_queue_size_value() const { return max_queue_size; }
     size_t worker_count_value() const { return worker_count; }
+    bool build_http_tool_catalog(
+        const daemon_options & options,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error) const;
 
 private:
     struct queued_result {

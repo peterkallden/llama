@@ -219,6 +219,13 @@ common_agent_runtime_host_mode common_agent_daemon_dispatcher::default_mode() co
     return service.default_mode();
 }
 
+bool common_agent_daemon_dispatcher::build_http_tool_catalog(
+        const daemon_options & options,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error) const {
+    return service.build_http_tool_catalog(options, registry, error);
+}
+
 size_t common_agent_daemon_dispatcher::queued_command_count() const {
     std::lock_guard<std::mutex> lock(mutex);
     return queue.size();

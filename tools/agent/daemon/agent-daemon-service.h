@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+class agent_mcp_server_tool_registry;
+
 enum class common_agent_daemon_command_type {
     run_turn,
     execute_tool,
@@ -58,6 +60,10 @@ struct common_agent_daemon_runtime {
         const std::string & path,
         common_agent_daemon_reload_result & result,
         std::string & error)> reload_config;
+    std::function<bool(
+        const struct daemon_options & options,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error)> build_http_tool_catalog;
 };
 
 struct common_agent_daemon_turn_payload {
@@ -270,6 +276,11 @@ public:
     void emit_internal_event(common_agent_daemon_event event);
 
     std::vector<common_agent_daemon_event> take_internal_events();
+
+    bool build_http_tool_catalog(
+        const struct daemon_options & options,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error) const;
 
 private:
     void initialize_command_outcome(
