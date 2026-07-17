@@ -27,6 +27,27 @@ caller operation deadline and active cancellation through the HTTP library is
 still a required follow-up. The inbound HTTP listener is deliberately not
 claimed complete yet.
 
+## Configuration examples
+
+The complete examples are kept as JSON files so they can be copied and adapted:
+
+- [stdio host configuration](examples/agent-host-config-stdio.json)
+- [remote Streamable HTTP host configuration](examples/agent-host-config-remote-http.json)
+
+For the remote example, provide the token before starting the agent. The token
+is intentionally referenced by environment name and is not stored in the JSON
+file:
+
+```powershell
+$env:REMOTE_GITHUB_MCP_TOKEN = "replace-with-a-token"
+llama-agent-daemon.exe --config docs/examples/agent-host-config-remote-http.json
+```
+
+The remote example requires a server endpoint that supports MCP Streamable
+HTTP. `streamable_http` is the preferred transport value; `http` and `https`
+remain accepted aliases in the provider validator. Do not expose the token in
+command-line arguments, URLs, logs, event payloads or checked-in config.
+
 ## Standard transport and authorization
 
 Remote MCP should use MCP Streamable HTTP: one MCP endpoint supporting POST,
