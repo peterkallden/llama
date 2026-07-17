@@ -58,6 +58,15 @@ struct daemon_options {
     uint32_t mcp_connect_timeout_ms = 0;
     uint32_t mcp_request_timeout_ms = 0;
     uint32_t mcp_shutdown_timeout_ms = 0;
+    bool http_enabled = false;
+    std::string http_listen_address = "127.0.0.1";
+    int http_port = 0;
+    std::string http_path = "/mcp";
+    std::string http_allowed_origin;
+    std::string http_token_env;
+    std::string http_bearer_token;
+    size_t http_max_body_bytes = 1024 * 1024;
+    size_t http_max_result_bytes = 1024 * 1024;
 };
 
 class common_agent_daemon_dispatcher;

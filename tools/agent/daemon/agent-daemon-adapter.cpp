@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 using json = nlohmann::ordered_json;
 
@@ -157,6 +158,20 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.queue_capacity = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--worker-count") == 0 || std::strcmp(argv[i], "--workers") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.worker_count = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--http-listen") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_listen_address = value;
+        } else if (std::strcmp(argv[i], "--http-port") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_port = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--http-path") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_path = value;
+        } else if (std::strcmp(argv[i], "--http-allowed-origin") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_allowed_origin = value;
+        } else if (std::strcmp(argv[i], "--http-token-env") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_token_env = value;
+        } else if (std::strcmp(argv[i], "--http-max-body-bytes") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_max_body_bytes = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--http-max-result-bytes") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_max_result_bytes = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--max-turn-seconds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_turn_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -174,6 +189,18 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
     if (options.model.empty()) {
         std::fprintf(stderr, "--model is required\n");
         return false;
+    }
+    if (options.http_enabled) {
+        if (options.http_token_env.empty() || options.http_path.empty()) {
+            std::fprintf(stderr, "HTTP mode requires --http-token-env and --http-path\n");
+            return false;
+        }
+        const char * token = std::getenv(options.http_token_env.c_str());
+        if (token == nullptr || *token == '\0') {
+            std::fprintf(stderr, "HTTP bearer token environment variable is empty: %s\n", options.http_token_env.c_str());
+            return false;
+        }
+        options.http_bearer_token = token;
     }
 
     if (options.default_mode != "chat" && options.default_mode != "mini") {
@@ -252,7 +279,8 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
-        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n",
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n"
+        "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN]\n",
         argv0);
 }
 

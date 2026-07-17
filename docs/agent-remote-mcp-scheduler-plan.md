@@ -22,6 +22,8 @@ The current branch has:
   audience, namespace, project, tool profile and tool allowlists;
 - a transport-neutral `execute_tool` daemon command and dispatcher bridge used
   by the inbound HTTP end-to-end smoke;
+- daemon host assembly that starts inbound MCP HTTP beside the JSONL adapter and
+  routes both transports through the same dispatcher/runtime tool executor;
 - a beta smoke pack covering the above.
 
 This branch adds the configuration contract for remote providers and an
@@ -53,21 +55,22 @@ $env:REMOTE_GITHUB_MCP_TOKEN = "replace-with-a-token"
 llama-agent-daemon.exe --config docs/examples/agent-host-config-remote-http.json
 ```
 
-The current inbound HTTP listener is started from the MCP server entrypoint.
-It binds to localhost by default and requires an opaque bearer token supplied
-through an environment variable:
+The inbound HTTP listener can now be started by the daemon host itself. It
+binds to localhost by default and requires an opaque bearer token supplied
+through an environment variable. JSONL administration and HTTP tool calls
+share the daemon dispatcher and worker pool:
 
 ```powershell
 $env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
-llama-agent-mcp-stdio-server.exe --tool-profile minimal `
+llama-agent-daemon.exe --model MODEL.gguf --tool-profile minimal `
   --http-listen 127.0.0.1 --http-port 8080 --http-path /mcp `
-  --http-token-env LLAMA_AGENT_MCP_TOKEN
+  --http-token-env LLAMA_AGENT_MCP_TOKEN --worker-count 2
 ```
 
 If a browser-originated client is needed, configure one exact allowed origin:
 
 ```powershell
-llama-agent-mcp-stdio-server.exe --http-listen 127.0.0.1 `
+llama-agent-daemon.exe --model MODEL.gguf --http-listen 127.0.0.1 `
   --http-token-env LLAMA_AGENT_MCP_TOKEN `
   --http-allowed-origin http://localhost:3000
 ```

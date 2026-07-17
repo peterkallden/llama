@@ -613,6 +613,10 @@ set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
     ${AGENT_RUNTIME_SOURCES}
+    ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
+    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

@@ -2,9 +2,9 @@
 
 The current daemon is a foreground JSONL process. It reads one JSON command
 per line from stdin and writes one JSON response per line to stdout. The first
-response is `ready`; diagnostics and warnings go to stderr. This is the
-current admin/test host, not yet a detached Windows service or network
-listener.
+response is `ready`; diagnostics and warnings go to stderr. It can also host
+the inbound MCP HTTP listener in the same foreground process. It is not yet a
+detached Windows service or supervised production host.
 
 ## Start from a host configuration file
 
@@ -48,6 +48,7 @@ Useful overrides are:
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
+| HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin` |
 | workers/limits | `--worker-count`/`--workers`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
 
 The config file is loaded first and explicit flags are the appropriate place
@@ -82,6 +83,31 @@ Workers are independent of the foreground/service-host choice: a future HTTP,
 named-pipe or supervised host should construct the same dispatcher with the
 same worker count.
 
+## Inbound MCP HTTP in the daemon host
+
+The daemon can expose the inbound Streamable HTTP MCP endpoint while retaining
+JSONL on stdin/stdout for local administration. Both transports use the same
+dispatcher, worker pool and runtime tool executor:
+
+```powershell
+$env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
+
+& .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe `
+    --model C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf `
+    --tool-profile minimal `
+    --worker-count 2 `
+    --http-listen 127.0.0.1 `
+    --http-port 8080 `
+    --http-path /mcp `
+    --http-token-env LLAMA_AGENT_MCP_TOKEN
+```
+
+The HTTP listener is stopped as part of foreground shutdown. Keep the default
+local binding until a service host supplies TLS termination and a production
+authentication/policy configuration. The current daemon assembly has the
+dispatcher-backed call path; projecting the daemon's complete tool catalog and
+supporting multiple token profiles remain follow-up work.
+
 ## Daemon lifecycle
 
 ```text
@@ -97,9 +123,8 @@ the JSON/runtime ownership model.
 ## Current limitations
 
 - foreground process only;
-- stdin/stdout transport only;
+- JSONL remains the only administrative transport;
 - no automatic restart or supervisor;
 - no config reload;
-- remote inbound MCP HTTP listener is not implemented yet;
 - HTTPS support depends on an OpenSSL-enabled build for the current HTTP
-  client.
+  client/listener path; TLS termination is not part of the foreground daemon.
