@@ -98,6 +98,39 @@ bool read_mcp_provider(
     return true;
 }
 
+bool read_inbound_token(
+        const json & value,
+        agent_host_mcp_inbound_token_config & token,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "MCP inbound token entry must be an object";
+        return false;
+    }
+    read_optional(value, "id", token.id);
+    read_optional(value, "token_env", token.token_env);
+    read_optional(value, "audience", token.audience);
+    read_optional(value, "namespace", token.namespace_id);
+    read_optional(value, "project", token.project_id);
+    read_optional(value, "tool_profile", token.tool_profile);
+    read_optional(value, "allow_writes", token.allow_writes);
+    if (value.contains("allowed_tools")) {
+        if (!value["allowed_tools"].is_array()) {
+            error = "MCP inbound token allowed_tools must be an array";
+            return false;
+        }
+        token.allowed_tools.clear();
+        for (const auto & tool : value["allowed_tools"]) {
+            if (!tool.is_string()) {
+                error = "MCP inbound token allowed_tools entries must be strings";
+                return false;
+            }
+            token.allowed_tools.push_back(tool.get<std::string>());
+        }
+    }
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 bool parse_agent_host_config_json(
@@ -182,6 +215,32 @@ bool parse_agent_host_config_json(
                     return false;
                 }
                 config.mcp_providers.push_back(std::move(provider));
+            }
+        }
+    }
+
+    if (parsed.contains("mcp") && parsed["mcp"].is_object()) {
+        const auto & mcp = parsed["mcp"];
+        if (mcp.contains("inbound") && mcp["inbound"].is_object()) {
+            const auto & inbound = mcp["inbound"];
+            read_optional(inbound, "enabled", config.inbound_mcp_enabled);
+            read_optional(inbound, "listen", config.inbound_mcp_listen_address);
+            read_optional(inbound, "port", config.inbound_mcp_port);
+            read_optional(inbound, "path", config.inbound_mcp_path);
+            read_optional(inbound, "allowed_origin", config.inbound_mcp_allowed_origin);
+            read_optional(inbound, "max_body_bytes", config.inbound_mcp_max_body_bytes);
+            read_optional(inbound, "max_result_bytes", config.inbound_mcp_max_result_bytes);
+            if (inbound.contains("tokens")) {
+                if (!inbound["tokens"].is_array()) {
+                    error = "mcp.inbound.tokens must be an array";
+                    return false;
+                }
+                config.inbound_mcp_tokens.clear();
+                for (const auto & entry : inbound["tokens"]) {
+                    agent_host_mcp_inbound_token_config token;
+                    if (!read_inbound_token(entry, token, error)) return false;
+                    config.inbound_mcp_tokens.push_back(std::move(token));
+                }
             }
         }
     }
@@ -294,6 +353,33 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"repository_root", config.repository_root},
             {"providers", std::move(providers)},
         }},
+        {"mcp", {
+            {"inbound", {
+                {"enabled", config.inbound_mcp_enabled},
+                {"listen", config.inbound_mcp_listen_address},
+                {"port", config.inbound_mcp_port},
+                {"path", config.inbound_mcp_path},
+                {"allowed_origin", config.inbound_mcp_allowed_origin},
+                {"max_body_bytes", config.inbound_mcp_max_body_bytes},
+                {"max_result_bytes", config.inbound_mcp_max_result_bytes},
+                {"tokens", [&config]() {
+                    json tokens = json::array();
+                    for (const auto & token : config.inbound_mcp_tokens) {
+                        tokens.push_back({
+                            {"id", token.id},
+                            {"token_env", token.token_env},
+                            {"audience", token.audience},
+                            {"namespace", token.namespace_id},
+                            {"project", token.project_id},
+                            {"tool_profile", token.tool_profile},
+                            {"allowed_tools", token.allowed_tools},
+                            {"allow_writes", token.allow_writes},
+                        });
+                    }
+                    return tokens;
+                }()},
+            }},
+        }},
         {"limits", {
             {"queue_capacity", config.queue_capacity},
             {"worker_count", config.worker_count},
@@ -323,6 +409,28 @@ bool validate_agent_host_config(
     if (config.worker_count == 0) {
         error = "limits.worker_count must be greater than zero";
         return false;
+    }
+    if (config.inbound_mcp_enabled) {
+        if (config.inbound_mcp_listen_address.empty() || config.inbound_mcp_path.empty()) {
+            error = "mcp.inbound listen and path must not be empty";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty()) {
+            error = "mcp.inbound.tokens must not be empty when inbound MCP is enabled";
+            return false;
+        }
+    }
+    std::unordered_set<std::string> inbound_token_ids;
+    for (const auto & token : config.inbound_mcp_tokens) {
+        if (token.id.empty() || token.token_env.empty() || token.audience.empty() ||
+                token.namespace_id.empty() || token.project_id.empty() || token.tool_profile.empty()) {
+            error = "MCP inbound token requires id, token_env, audience, namespace, project and tool_profile";
+            return false;
+        }
+        if (!inbound_token_ids.insert(token.id).second) {
+            error = "MCP inbound token ids must be unique: " + token.id;
+            return false;
+        }
     }
     std::unordered_set<std::string> provider_ids;
     for (const auto & provider : config.mcp_providers) {
@@ -412,6 +520,14 @@ void apply_agent_host_config_to_daemon_options(
         options.mcp_tool_prefix = provider.prefix;
     }
     options.mcp_providers = config.mcp_providers;
+    options.http_enabled = config.inbound_mcp_enabled;
+    options.http_listen_address = config.inbound_mcp_listen_address;
+    options.http_port = config.inbound_mcp_port;
+    options.http_path = config.inbound_mcp_path;
+    options.http_allowed_origin = config.inbound_mcp_allowed_origin;
+    options.http_max_body_bytes = config.inbound_mcp_max_body_bytes;
+    options.http_max_result_bytes = config.inbound_mcp_max_result_bytes;
+    options.http_token_profiles = config.inbound_mcp_tokens;
 }
 
 void apply_agent_host_config_to_args(

@@ -65,6 +65,7 @@ struct daemon_options {
     std::string http_allowed_origin;
     std::string http_token_env;
     std::string http_bearer_token;
+    std::vector<agent_host_mcp_inbound_token_config> http_token_profiles;
     size_t http_max_body_bytes = 1024 * 1024;
     size_t http_max_result_bytes = 1024 * 1024;
 };

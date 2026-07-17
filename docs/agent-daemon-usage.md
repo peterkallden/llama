@@ -110,6 +110,16 @@ The daemon can expose the inbound Streamable HTTP MCP endpoint while retaining
 JSONL on stdin/stdout for local administration. Both transports use the same
 dispatcher, worker pool and runtime tool executor:
 
+For multiple inbound callers, use the host configuration example
+[agent-host-config-inbound-mcp-auth.json](examples/agent-host-config-inbound-mcp-auth.json)
+and export its `token_env` variables before starting the daemon:
+
+```powershell
+$env:LLAMA_AGENT_READ_TOKEN = "replace-with-read-token"
+$env:LLAMA_AGENT_ADMIN_TOKEN = "replace-with-admin-token"
+llama-agent-daemon.exe --config docs/examples/agent-host-config-inbound-mcp-auth.json
+```
+
 ```powershell
 $env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
 

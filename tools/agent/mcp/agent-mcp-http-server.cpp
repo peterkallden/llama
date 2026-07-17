@@ -34,6 +34,12 @@ void agent_mcp_http_server::replace_default_policy(
     options_.default_policy = std::move(policy);
 }
 
+void agent_mcp_http_server::replace_authenticator(
+        std::shared_ptr<const agent_mcp_authenticator> authenticator) {
+    std::lock_guard<std::mutex> lock(policy_mutex_);
+    options_.authenticator = std::move(authenticator);
+}
+
 bool agent_mcp_http_server::authorize(
         const httplib::Request & request,
         httplib::Response & response,
@@ -45,8 +51,13 @@ bool agent_mcp_http_server::authorize(
         return false;
     }
     std::string error;
-    if (options_.authenticator) {
-        if (!options_.authenticator->authenticate(
+    std::shared_ptr<const agent_mcp_authenticator> authenticator;
+    {
+        std::lock_guard<std::mutex> lock(policy_mutex_);
+        authenticator = options_.authenticator;
+    }
+    if (authenticator) {
+        if (!authenticator->authenticate(
                 {request.get_header_value("Authorization")}, policy, error)) {
             response.status = 401;
             response.set_header("WWW-Authenticate", "Bearer");

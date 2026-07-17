@@ -191,16 +191,19 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         return false;
     }
     if (options.http_enabled) {
-        if (options.http_token_env.empty() || options.http_path.empty()) {
-            std::fprintf(stderr, "HTTP mode requires --http-token-env and --http-path\n");
+        if (options.http_path.empty() ||
+                (options.http_token_profiles.empty() && options.http_token_env.empty())) {
+            std::fprintf(stderr, "HTTP mode requires --http-path and either --http-token-env or configured token profiles\n");
             return false;
         }
-        const char * token = std::getenv(options.http_token_env.c_str());
-        if (token == nullptr || *token == '\0') {
-            std::fprintf(stderr, "HTTP bearer token environment variable is empty: %s\n", options.http_token_env.c_str());
-            return false;
+        if (!options.http_token_env.empty()) {
+            const char * token = std::getenv(options.http_token_env.c_str());
+            if (token == nullptr || *token == '\0') {
+                std::fprintf(stderr, "HTTP bearer token environment variable is empty: %s\n", options.http_token_env.c_str());
+                return false;
+            }
+            options.http_bearer_token = token;
         }
-        options.http_bearer_token = token;
     }
 
     if (options.default_mode != "chat" && options.default_mode != "mini") {

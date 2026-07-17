@@ -151,6 +151,53 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_host_config inbound_config;
+    const json inbound_config_json = {
+        {"mcp", {{"inbound", {
+            {"enabled", true},
+            {"listen", "127.0.0.1"},
+            {"port", 8081},
+            {"path", "/mcp"},
+            {"tokens", json::array({
+                json{
+                    {"id", "readonly"},
+                    {"token_env", "LLAMA_AGENT_READ_TOKEN"},
+                    {"audience", "llama-agent"},
+                    {"namespace", "namespace-a"},
+                    {"project", "project-a"},
+                    {"tool_profile", "minimal"},
+                    {"allowed_tools", json::array({"calculator"})},
+                    {"allow_writes", false},
+                },
+                json{
+                    {"id", "admin"},
+                    {"token_env", "LLAMA_AGENT_ADMIN_TOKEN"},
+                    {"audience", "llama-agent"},
+                    {"namespace", "namespace-a"},
+                    {"project", "project-a"},
+                    {"tool_profile", "research"},
+                    {"allow_writes", true},
+                },
+            })},
+        }}}},
+    };
+    if (!parse_agent_host_config_json(inbound_config_json, inbound_config, error) ||
+            !inbound_config.inbound_mcp_enabled ||
+            inbound_config.inbound_mcp_tokens.size() != 2 ||
+            inbound_config.inbound_mcp_tokens[0].allowed_tools.size() != 1 ||
+            inbound_config.inbound_mcp_tokens[1].allow_writes != true) {
+        std::fprintf(stderr, "inbound MCP token config contract failed: %s\n", error.c_str());
+        return 1;
+    }
+    daemon_options inbound_options;
+    apply_agent_host_config_to_daemon_options(inbound_config, inbound_options);
+    if (!inbound_options.http_enabled ||
+            inbound_options.http_token_profiles.size() != 2 ||
+            inbound_options.http_token_profiles[0].token_env != "LLAMA_AGENT_READ_TOKEN") {
+        std::fprintf(stderr, "inbound MCP token config was not projected to daemon options\n");
+        return 1;
+    }
+
     common_agent_daemon_runtime runtime;
     if (!initialize_agent_daemon_environment(options, runtime, error)) {
         std::fprintf(stderr, "daemon MCP environment init failed: %s\n", error.c_str());

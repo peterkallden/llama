@@ -45,6 +45,14 @@ struct agent_host_config {
     std::string tool_profile;
     std::string repository_root;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
+    bool inbound_mcp_enabled = false;
+    std::string inbound_mcp_listen_address = "127.0.0.1";
+    int inbound_mcp_port = 0;
+    std::string inbound_mcp_path = "/mcp";
+    std::string inbound_mcp_allowed_origin;
+    size_t inbound_mcp_max_body_bytes = 1024 * 1024;
+    size_t inbound_mcp_max_result_bytes = 1024 * 1024;
+    std::vector<agent_host_mcp_inbound_token_config> inbound_mcp_tokens;
 
     size_t queue_capacity = 8;
     size_t worker_count = 1;

@@ -201,6 +201,33 @@ int main() {
     const auto cross_cleanup = client.Delete("/mcp", cross_headers);
     const auto cleanup = client.Delete("/mcp", headers);
     const auto other_cleanup = client.Delete("/mcp", other_headers);
+    auto reloaded_authenticator = std::make_shared<agent_mcp_opaque_token_authenticator>();
+    const bool reloaded_auth_configured = reloaded_authenticator->register_token(
+        "http-smoke-token-reloaded",
+        {"caller-reloaded", "llama-agent", "namespace-reloaded", "project-reloaded", "minimal", {"echo"}, false},
+        error);
+    if (reloaded_auth_configured) {
+        server.replace_authenticator(std::move(reloaded_authenticator));
+    }
+    const auto revoked_old_token = client.Post(
+        "/mcp",
+        httplib::Headers{{"Authorization", "Bearer http-smoke-token-a"}},
+        R"({"jsonrpc":"2.0","id":14,"method":"initialize","params":{}})",
+        "application/json");
+    httplib::Headers reloaded_headers = {{"Authorization", "Bearer http-smoke-token-reloaded"}};
+    const auto reloaded_auth_initialize = client.Post(
+        "/mcp",
+        reloaded_headers,
+        R"({"jsonrpc":"2.0","id":15,"method":"initialize","params":{}})",
+        "application/json");
+    bool reloaded_auth_cleanup_ok = false;
+    if (reloaded_auth_initialize && reloaded_auth_initialize->has_header("Mcp-Session-Id")) {
+        const auto cleanup_result = client.Delete("/mcp", httplib::Headers{
+            {"Authorization", "Bearer http-smoke-token-reloaded"},
+            {"Mcp-Session-Id", reloaded_auth_initialize->get_header_value("Mcp-Session-Id")},
+        });
+        reloaded_auth_cleanup_ok = cleanup_result && cleanup_result->status == 204;
+    }
 
     const auto listed_json = listed ? json::parse(listed->body, nullptr, false) : json();
     const auto reloaded_listed_json = reloaded_listed ? json::parse(reloaded_listed->body, nullptr, false) : json();
@@ -221,7 +248,10 @@ int main() {
         other_listed && other_listed->status == 200 && other_listed_json["result"]["tools"].empty() &&
         other_called && other_called->status == 200 && other_called_json["result"]["isError"] == true &&
         cross_cleanup && cross_cleanup->status == 403 &&
-        cleanup && cleanup->status == 204 && other_cleanup && other_cleanup->status == 204;
+        cleanup && cleanup->status == 204 && other_cleanup && other_cleanup->status == 204 &&
+        reloaded_auth_configured && revoked_old_token && revoked_old_token->status == 401 &&
+        reloaded_auth_initialize && reloaded_auth_initialize->status == 200 &&
+        reloaded_auth_cleanup_ok;
 
     server.stop();
     server_thread.join();

@@ -19,3 +19,14 @@ struct agent_host_mcp_provider_config {
     std::string prefix;
     std::string server_name;
 };
+
+struct agent_host_mcp_inbound_token_config {
+    std::string id;
+    std::string token_env;
+    std::string audience = "llama-agent";
+    std::string namespace_id = "local";
+    std::string project_id;
+    std::string tool_profile;
+    std::vector<std::string> allowed_tools;
+    bool allow_writes = false;
+};

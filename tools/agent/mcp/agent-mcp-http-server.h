@@ -44,6 +44,7 @@ public:
     bool bind(std::string & error);
     bool listen(std::string & error);
     bool replace_registry(agent_mcp_server_tool_registry registry, std::string & error);
+    void replace_authenticator(std::shared_ptr<const agent_mcp_authenticator> authenticator);
     void replace_default_policy(agent_mcp_caller_policy policy);
     void stop();
     int port() const { return port_; }

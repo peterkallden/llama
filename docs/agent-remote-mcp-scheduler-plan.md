@@ -46,6 +46,7 @@ The complete examples are kept as JSON files so they can be copied and adapted:
 
 - [stdio host configuration](examples/agent-host-config-stdio.json)
 - [remote Streamable HTTP host configuration](examples/agent-host-config-remote-http.json)
+- [inbound MCP multi-token configuration](examples/agent-host-config-inbound-mcp-auth.json)
 
 For the remote example, provide the token before starting the agent. The token
 is intentionally referenced by environment name and is not stored in the JSON
@@ -141,14 +142,16 @@ HTTP -> Origin check -> authentication -> caller policy
      -> daemon dispatcher -> session lane -> operation manager
 ```
 
-The current beta authenticates an opaque configured token, binds the session to
+The current beta authenticates opaque configured token profiles, binds the session to
 the resulting caller policy, and tracks MCP session IDs. The caller policy is
 projected onto the native tool surface: `allowed_tools` filters both
 `tools/list` and `tools/call`, while `allow_writes=false` hides and rejects
 non-read-only/confirmation-gated tools and is also passed into the daemon's
 native tool view. The native profile remains the source of tool definitions and
 execution bindings; MCP auth supplies caller identity and narrower authority.
-Multi-token config and daemon-owned policy resolution remain follow-up work.
+The token profiles are now loaded from `mcp.inbound.tokens`; each profile uses
+`token_env`, so raw bearer secrets remain outside the config file. The legacy
+single-token CLI path remains available for compatibility.
 The authenticated caller, not the request body, must determine the default
 namespace, project and allowed tool profile. Every request must have bounded
 body/result sizes and a deadline. Write-capable tools require the existing

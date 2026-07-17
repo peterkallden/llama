@@ -12,6 +12,62 @@
 #include <filesystem>
 #include <nlohmann/json.hpp>
 
+namespace {
+
+bool build_inbound_mcp_authenticator(
+        const daemon_options & options,
+        std::shared_ptr<const agent_mcp_authenticator> & authenticator,
+        std::string & error) {
+    authenticator.reset();
+    if (options.http_token_profiles.empty()) {
+        error.clear();
+        return true;
+    }
+
+    auto next = std::make_shared<agent_mcp_opaque_token_authenticator>();
+    for (const auto & configured : options.http_token_profiles) {
+        const char * token = std::getenv(configured.token_env.c_str());
+        if (token == nullptr || *token == '\0') {
+            error = "HTTP bearer token environment variable is empty: " + configured.token_env;
+            return false;
+        }
+        agent_mcp_caller_policy policy{
+            configured.id,
+            configured.audience,
+            configured.namespace_id,
+            configured.project_id,
+            configured.tool_profile,
+            configured.allowed_tools,
+            configured.allow_writes,
+        };
+        if (!next->register_token(token, std::move(policy), error)) {
+            return false;
+        }
+    }
+    authenticator = std::move(next);
+    error.clear();
+    return true;
+}
+
+bool inbound_token_profiles_equal(
+        const std::vector<agent_host_mcp_inbound_token_config> & left,
+        const std::vector<agent_host_mcp_inbound_token_config> & right) {
+    if (left.size() != right.size()) return false;
+    for (size_t i = 0; i < left.size(); ++i) {
+        const auto & a = left[i];
+        const auto & b = right[i];
+        if (a.id != b.id || a.token_env != b.token_env || a.audience != b.audience ||
+                a.namespace_id != b.namespace_id || a.project_id != b.project_id ||
+                a.tool_profile != b.tool_profile || a.allowed_tools != b.allowed_tools ||
+                a.allow_writes != b.allow_writes) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 int main(int argc, char ** argv) {
     daemon_options options;
     if (!parse_agent_daemon_args(argc, argv, options)) {
@@ -83,8 +139,10 @@ int main(int argc, char ** argv) {
     auto config_version = std::make_shared<std::atomic<uint64_t>>(1);
     auto refresh_http_catalog = std::make_shared<std::function<bool(
         const daemon_options &, std::string &)>>();
+    auto refresh_http_auth = std::make_shared<std::function<bool(
+        const daemon_options &, std::string &)>>();
     const auto config_store = runtime.config_store;
-    runtime.reload_config = [config_store, config_version, refresh_http_catalog](
+    runtime.reload_config = [config_store, config_version, refresh_http_catalog, refresh_http_auth](
             const std::string & path,
             common_agent_daemon_reload_result & result,
             std::string & reload_error) {
@@ -125,6 +183,11 @@ int main(int argc, char ** argv) {
         require_restart(candidate.resource_metadata_db != options.resource_metadata_db, "resources.metadata_db");
         require_restart(candidate.queue_capacity != options.queue_capacity, "limits.queue_capacity");
         require_restart(candidate.worker_count != options.worker_count, "limits.worker_count");
+        require_restart(candidate.http_enabled != options.http_enabled, "mcp.inbound.enabled");
+        require_restart(candidate.http_listen_address != options.http_listen_address, "mcp.inbound.listen");
+        require_restart(candidate.http_port != options.http_port, "mcp.inbound.port");
+        require_restart(candidate.http_path != options.http_path, "mcp.inbound.path");
+        require_restart(candidate.http_allowed_origin != options.http_allowed_origin, "mcp.inbound.allowed_origin");
         require_restart(candidate.default_mode != options.default_mode, "runtime.default_mode");
         require_restart(candidate.n_predict != options.n_predict, "runtime.n_predict");
         require_restart(candidate.n_gpu_layers != options.n_gpu_layers, "runtime.n_gpu_layers");
@@ -188,6 +251,15 @@ int main(int argc, char ** argv) {
                 result.applied_fields.emplace_back("tools.repository_root");
             }
         }
+        const bool auth_profiles_changed = !inbound_token_profiles_equal(
+            candidate.http_token_profiles, options.http_token_profiles);
+        if (auth_profiles_changed && *refresh_http_auth) {
+            if (!(*refresh_http_auth)(candidate, reload_error)) {
+                result.warning = "inbound MCP authentication policy was not applied";
+                return false;
+            }
+            result.applied_fields.emplace_back("mcp.inbound.tokens");
+        }
         if (candidate.turn_timeout_ms != options.turn_timeout_ms ||
                 candidate.max_turn_seconds != options.max_turn_seconds) {
             result.applied_fields.emplace_back("limits.turn_timeout_ms");
@@ -224,12 +296,18 @@ int main(int argc, char ** argv) {
     std::unique_ptr<agent_mcp_http_server> http_server;
     std::thread http_thread;
     if (options.http_enabled) {
+        std::shared_ptr<const agent_mcp_authenticator> inbound_authenticator;
+        if (!build_inbound_mcp_authenticator(options, inbound_authenticator, error)) {
+            std::fprintf(stderr, "failed to configure inbound MCP authentication: %s\n", error.c_str());
+            return 2;
+        }
         agent_mcp_http_server_options http_options;
         http_options.listen_address = options.http_listen_address;
         http_options.port = options.http_port;
         http_options.path = options.http_path;
         http_options.allowed_origin = options.http_allowed_origin;
         http_options.bearer_token = options.http_bearer_token;
+        http_options.authenticator = std::move(inbound_authenticator);
         http_options.max_body_bytes = options.http_max_body_bytes;
         http_options.max_result_bytes = options.http_max_result_bytes;
         http_options.server_name = "llama-agent-daemon-mcp";
@@ -297,6 +375,17 @@ int main(int argc, char ** argv) {
                 {},
                 current_options.tool_profile == "memory" || current_options.tool_profile == "research",
             });
+            refresh_error.clear();
+            return true;
+        };
+        *refresh_http_auth = [&http_server](
+                const daemon_options & current_options,
+                std::string & refresh_error) {
+            std::shared_ptr<const agent_mcp_authenticator> next_authenticator;
+            if (!build_inbound_mcp_authenticator(current_options, next_authenticator, refresh_error)) {
+                return false;
+            }
+            http_server->replace_authenticator(std::move(next_authenticator));
             refresh_error.clear();
             return true;
         };
