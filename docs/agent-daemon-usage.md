@@ -83,8 +83,9 @@ Configuration can be reloaded by the local JSONL administration channel:
 ```
 
 The daemon validates the complete candidate configuration before applying it.
-Timeouts, tool profile, bounded tool limits and MCP providers can be applied
-to new operations. Provider IDs are stable: new IDs are added, missing IDs
+Timeouts, tool profile, repository root, bounded tool limits and MCP providers
+can be applied to new operations. A repository root must resolve to a
+directory. Provider IDs are stable: new IDs are added, missing IDs
 are removed for future operations, and changed IDs are replaced. Existing
 operations keep their provider clients until their tooling is destroyed.
 Model/backend, stores, resource roots, worker/queue sizing and runtime

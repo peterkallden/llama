@@ -44,7 +44,9 @@ the bounded mutable fields for new operations or returns a structured
 `config.reload.rejected` result with `restart_required` field paths. Model and
 backend resources, stores, worker/queue sizing, and runtime assembly remain
 restart-required. MCP providers are diffed by stable ID and added, removed, or
-replaced for new operations, while existing tooling retains its clients. The
+replaced for new operations. Native tool profile and repository-root changes
+also rebuild the host tool view for new operations, while existing tooling
+retains its clients. The
 current implementation keeps reload local to JSONL administration and does not
 rebuild listeners or already-running provider clients. When the daemon hosts
 inbound MCP HTTP, the resolved tool catalog is replaced atomically for new

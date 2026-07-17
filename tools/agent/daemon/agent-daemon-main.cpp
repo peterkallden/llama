@@ -9,6 +9,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 int main(int argc, char ** argv) {
@@ -92,6 +93,17 @@ int main(int argc, char ** argv) {
         }
         daemon_options candidate = options;
         apply_agent_host_config_to_daemon_options(config, candidate);
+        if (!candidate.repository_root.empty()) {
+            std::error_code root_error;
+            const auto canonical_root = std::filesystem::weakly_canonical(
+                candidate.repository_root,
+                root_error);
+            if (root_error || !std::filesystem::is_directory(canonical_root, root_error)) {
+                reload_error = "tools.repository_root must resolve to a directory";
+                return false;
+            }
+            candidate.repository_root = canonical_root.string();
+        }
 
         auto require_restart = [&](bool changed, const char * field) {
             if (changed) {
@@ -151,23 +163,36 @@ int main(int argc, char ** argv) {
             return true;
         }
 
-        if (!result.providers_added.empty() || !result.providers_removed.empty() ||
-                !result.providers_replaced.empty()) {
+        const bool providers_changed = !result.providers_added.empty() ||
+            !result.providers_removed.empty() || !result.providers_replaced.empty();
+        const bool native_catalog_changed = providers_changed ||
+            candidate.tool_profile != options.tool_profile ||
+            candidate.repository_root != options.repository_root;
+        if (native_catalog_changed) {
             const auto previous_providers = options.mcp_providers;
+            const auto previous_tool_profile = options.tool_profile;
+            const auto previous_repository_root = options.repository_root;
             options.mcp_providers = candidate.mcp_providers;
+            options.tool_profile = candidate.tool_profile;
+            options.repository_root = candidate.repository_root;
             if (*refresh_http_catalog) {
                 if (!(*refresh_http_catalog)(options, reload_error)) {
                     options.mcp_providers = previous_providers;
-                    result.warning = "MCP provider change was not applied to the inbound HTTP catalog";
+                    options.tool_profile = previous_tool_profile;
+                    options.repository_root = previous_repository_root;
+                    result.warning = "native/MCP tool catalog change was not applied to the inbound HTTP catalog";
                     return false;
                 }
             }
-            result.applied_fields.emplace_back("tools.providers");
-        }
-
-        if (candidate.tool_profile != options.tool_profile) {
-            options.tool_profile = candidate.tool_profile;
+            if (providers_changed) {
+                result.applied_fields.emplace_back("tools.providers");
+            }
+            if (candidate.tool_profile != previous_tool_profile) {
             result.applied_fields.emplace_back("tools.profile");
+            }
+            if (candidate.repository_root != previous_repository_root) {
+                result.applied_fields.emplace_back("tools.repository_root");
+            }
         }
         if (candidate.turn_timeout_ms != options.turn_timeout_ms ||
                 candidate.max_turn_seconds != options.max_turn_seconds) {
