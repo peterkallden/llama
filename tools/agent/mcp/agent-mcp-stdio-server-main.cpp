@@ -690,6 +690,7 @@ int main(int argc, char ** argv) {
             "2024-11-05",
             false,
             false,
+            false,
             [resource_store = resource_store.get(), resource_authority](agent_mcp_json & result, std::string & callback_error) {
                 std::vector<agent_resource_descriptor> descriptors;
                 if (!resource_store->list(resource_authority, descriptors, callback_error)) {

@@ -10,7 +10,8 @@ The current branch has:
 
 - a host-owned MCP provider configuration model;
 - stdio MCP client/server support;
-- MCP input-schema validation;
+- MCP input-schema validation for native tools, outbound MCP providers, and
+  inbound MCP server tool calls through the shared bounded validator;
 - hard request timeout handling for a hanging stdio server;
 - typed runtime operations with timeout, cancellation, polling and cleanup;
 - session lanes and a daemon dispatcher with queued and active cancellation;

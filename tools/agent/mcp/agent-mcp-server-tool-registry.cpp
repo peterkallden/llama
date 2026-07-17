@@ -1,5 +1,9 @@
 #include "agent-mcp-server-tool-registry.h"
 
+#include "agent/schema-contract.h"
+
+#include <nlohmann/json.hpp>
+
 namespace {
 
 const agent_mcp_server_tool * find_tool(
@@ -54,7 +58,22 @@ bool agent_mcp_server_tool_registry::call_tool(
         error = "MCP tool arguments must be a JSON object";
         return false;
     }
-    return tool->handler(arguments, result, error);
+
+    std::string normalized_arguments;
+    if (!common_schema_normalize_and_validate_object(
+            arguments.dump(),
+            tool->input_schema_json,
+            normalized_arguments,
+            error)) {
+        return false;
+    }
+
+    const auto normalized = agent_mcp_json::parse(normalized_arguments, nullptr, false);
+    if (normalized.is_discarded() || !normalized.is_object()) {
+        error = "MCP tool schema validator returned invalid normalized arguments";
+        return false;
+    }
+    return tool->handler(normalized, result, error);
 }
 
 agent_mcp_json agent_mcp_render_tools_list_result(

@@ -247,6 +247,7 @@ set(TARGET llama-agent-mcp-stdio-server-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-stdio-server-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
+    ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-server-tool-registry.cpp
 )
 add_dependencies(${TARGET}
     llama-agent-mcp-stdio-server
@@ -324,6 +325,7 @@ add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
+    ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

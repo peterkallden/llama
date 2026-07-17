@@ -789,7 +789,7 @@ The native tool registry is the first concrete provider. There is now also a fir
 
 That MCP-facing tool surface has now also been tightened slightly around naming and policy. Runtime filters treat the resolved model-visible name as the authority surface for exposed MCP tools, so prefixed MCP names are filtered the same way the model actually sees them rather than by an internal pre-prefix identifier.
 
-MCP tool arguments now use the same bounded JSON Schema subset as native tool calls. Required fields, additional-property policy, scalar types, enum/bounds and array bounds are validated against the advertised `inputSchema` before the provider is invoked. Full JSON Schema and transport-specific schema dialects remain outside the current subset.
+MCP tool arguments now use the same bounded JSON Schema subset as native tool calls. Required fields, additional-property policy, scalar types, enum/bounds and array bounds are validated against the advertised `inputSchema` before the provider is invoked. The agent's MCP server registry applies the same validation before invoking an inbound tool handler and passes the normalized arguments onward. Full JSON Schema and transport-specific schema dialects remain outside the current subset.
 
 Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
 

@@ -1,4 +1,5 @@
 #include "tools/agent/tooling/agent-tool-provider.h"
+#include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
 
 #include <nlohmann/json.hpp>
 #include <cstdio>
@@ -62,6 +63,49 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    agent_mcp_server_tool_registry schema_registry;
+    std::string schema_error;
+    if (!schema_registry.register_tool({
+            "schema_smoke",
+            "Schema validation smoke",
+            R"({"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string","minLength":1}}})",
+            true,
+            false,
+            false,
+            false,
+            false,
+            [](const agent_mcp_json &, agent_mcp_server_tool_result & result, std::string & error) {
+                result.ok = true;
+                error.clear();
+                return true;
+            },
+        }, schema_error)) {
+        std::fprintf(stderr, "failed to register schema smoke tool: %s\n", schema_error.c_str());
+        return 1;
+    }
+    agent_mcp_server_tool_result schema_result;
+    if (schema_registry.call_tool("schema_smoke", agent_mcp_json::object(), schema_result, schema_error) ||
+            schema_error.empty()) {
+        std::fprintf(stderr, "MCP server accepted missing required argument\n");
+        return 1;
+    }
+    if (schema_registry.call_tool(
+            "schema_smoke",
+            agent_mcp_json{{"title", 42}},
+            schema_result,
+            schema_error) || schema_error.empty()) {
+        std::fprintf(stderr, "MCP server accepted wrong argument type\n");
+        return 1;
+    }
+    if (!schema_registry.call_tool(
+            "schema_smoke",
+            agent_mcp_json{{"title", "valid"}},
+            schema_result,
+            schema_error) || !schema_result.ok) {
+        std::fprintf(stderr, "MCP server rejected valid schema arguments: %s\n", schema_error.c_str());
+        return 1;
+    }
+
     const auto server_path = get_server_path(argc > 0 ? argv[0] : nullptr);
     if (!std::filesystem::exists(server_path)) {
         std::fprintf(stderr, "MCP stdio server not found: %s\n", server_path.string().c_str());
