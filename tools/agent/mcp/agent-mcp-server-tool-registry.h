@@ -38,6 +38,11 @@ class agent_mcp_server_tool_registry {
 public:
     bool register_tool(agent_mcp_server_tool tool, std::string & error);
     std::vector<agent_mcp_server_tool> list_tools() const;
+    bool contains_tool(const std::string & name) const;
+    bool validate_tool_arguments(
+        const std::string & name,
+        const agent_mcp_json & arguments,
+        std::string & error) const;
 
     bool call_tool(
         const std::string & name,

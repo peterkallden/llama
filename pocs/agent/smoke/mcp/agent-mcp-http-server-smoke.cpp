@@ -128,6 +128,8 @@ int main() {
         R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hello"}}})", "application/json");
     const auto invalid = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{}}})", "application/json");
+    const auto unknown = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"missing","arguments":{}}})", "application/json");
 
     httplib::Headers other_headers = {{"Authorization", "Bearer http-smoke-token-b"}};
     const auto other_initialize = client.Post("/mcp", other_headers,
@@ -150,11 +152,13 @@ int main() {
     const auto listed_json = listed ? json::parse(listed->body, nullptr, false) : json();
     const auto called_json = called ? json::parse(called->body, nullptr, false) : json();
     const auto invalid_json = invalid ? json::parse(invalid->body, nullptr, false) : json();
+    const auto unknown_json = unknown ? json::parse(unknown->body, nullptr, false) : json();
     const auto other_listed_json = other_listed ? json::parse(other_listed->body, nullptr, false) : json();
     const auto other_called_json = other_called ? json::parse(other_called->body, nullptr, false) : json();
     const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 1 &&
         called && called->status == 200 && called_json["result"]["structuredContent"]["text"] == "hello" &&
         invalid && invalid->status == 200 && invalid_json["result"]["isError"] == true &&
+        unknown && unknown->status == 200 && unknown_json["result"]["isError"] == true &&
         other_initialize && other_initialize->status == 200 &&
         other_listed && other_listed->status == 200 && other_listed_json["result"]["tools"].empty() &&
         other_called && other_called->status == 200 && other_called_json["result"]["isError"] == true &&

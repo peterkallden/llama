@@ -104,9 +104,10 @@ $env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
 
 The HTTP listener is stopped as part of foreground shutdown. Keep the default
 local binding until a service host supplies TLS termination and a production
-authentication/policy configuration. The current daemon assembly has the
-dispatcher-backed call path; projecting the daemon's complete tool catalog and
-supporting multiple token profiles remain follow-up work.
+authentication/policy configuration. The daemon projects the resolved
+tool-profile catalog for `tools/list` and validates tool names and input
+schemas before dispatching calls. Supporting multiple token profiles remains
+follow-up work.
 
 ## Daemon lifecycle
 

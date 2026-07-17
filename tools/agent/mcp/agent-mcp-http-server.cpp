@@ -168,6 +168,19 @@ bool agent_mcp_http_server::handle_message(
             result.failure_class = "policy";
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        } else if (!registry_.contains_tool(name)) {
+            error = "unknown MCP server tool: " + name;
+            result.ok = false;
+            result.failure_code = "tool.not_found";
+            result.failure_class = "not_found";
+            result.safe_summary = error;
+            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        } else if (!registry_.validate_tool_arguments(name, arguments, error)) {
+            result.ok = false;
+            result.failure_code = "tool.invalid_arguments";
+            result.failure_class = "validation";
+            result.safe_summary = error;
+            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
         } else if (options_.execute_tool) {
             options_.execute_tool(policy, name, arguments, result, error);
         } else if (!registry_.call_tool(name, arguments, result, error)) {

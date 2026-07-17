@@ -43,6 +43,35 @@ std::vector<agent_mcp_server_tool> agent_mcp_server_tool_registry::list_tools() 
     return tools_;
 }
 
+bool agent_mcp_server_tool_registry::contains_tool(const std::string & name) const {
+    return find_tool(tools_, name) != nullptr;
+}
+
+bool agent_mcp_server_tool_registry::validate_tool_arguments(
+        const std::string & name,
+        const agent_mcp_json & arguments,
+        std::string & error) const {
+    const auto * tool = find_tool(tools_, name);
+    if (tool == nullptr) {
+        error = "unknown MCP server tool: " + name;
+        return false;
+    }
+    if (!arguments.is_object()) {
+        error = "MCP tool arguments must be a JSON object";
+        return false;
+    }
+    std::string normalized_arguments;
+    if (!common_schema_normalize_and_validate_object(
+            arguments.dump(),
+            tool->input_schema_json,
+            normalized_arguments,
+            error)) {
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool agent_mcp_server_tool_registry::call_tool(
         const std::string & name,
         const agent_mcp_json & arguments,
@@ -54,17 +83,13 @@ bool agent_mcp_server_tool_registry::call_tool(
         error = "unknown MCP server tool: " + name;
         return false;
     }
-    if (!arguments.is_object()) {
-        error = "MCP tool arguments must be a JSON object";
+    if (!validate_tool_arguments(name, arguments, error)) {
         return false;
     }
 
     std::string normalized_arguments;
     if (!common_schema_normalize_and_validate_object(
-            arguments.dump(),
-            tool->input_schema_json,
-            normalized_arguments,
-            error)) {
+            arguments.dump(), tool->input_schema_json, normalized_arguments, error)) {
         return false;
     }
 
