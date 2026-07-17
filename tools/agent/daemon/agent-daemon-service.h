@@ -10,6 +10,7 @@
 #include "plan/plan-store.h"
 
 #include <memory>
+#include <atomic>
 #include <optional>
 #include <string>
 #include <vector>
@@ -86,6 +87,8 @@ struct common_agent_daemon_status {
     bool live = false;
     bool ready = false;
     bool worker_running = false;
+    size_t worker_count = 1;
+    size_t workers_running = 0;
     bool accepting_commands = false;
     bool shutdown_requested = false;
     size_t queued_command_count = 0;
@@ -198,10 +201,10 @@ public:
         common_agent_daemon_command_result & result,
         std::string & error);
 
-    bool shutdown_requested() const { return shutdown_requested_flag; }
+    bool shutdown_requested() const { return shutdown_requested_flag.load(); }
     common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
-    common_agent_daemon_state state() const { return state_value; }
-    common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value; }
+    common_agent_daemon_state state() const { return state_value.load(); }
+    common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value.load(); }
     std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
 
     void mark_stopping();
@@ -268,7 +271,7 @@ private:
 
     common_agent_daemon_runtime runtime;
     std::unique_ptr<common_agent_daemon_event_collector> event_collector;
-    common_agent_daemon_state state_value = common_agent_daemon_state::starting;
-    common_agent_daemon_shutdown_mode shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
-    bool shutdown_requested_flag = false;
+    std::atomic<common_agent_daemon_state> state_value = common_agent_daemon_state::starting;
+    std::atomic<common_agent_daemon_shutdown_mode> shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
+    std::atomic<bool> shutdown_requested_flag = false;
 };

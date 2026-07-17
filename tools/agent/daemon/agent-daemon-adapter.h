@@ -50,6 +50,7 @@ struct daemon_options {
     bool agent_trace = false;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
+    size_t worker_count = 1;
     size_t max_turn_seconds = 0;
     size_t turn_timeout_ms = 0;
     uint32_t inference_step_timeout_ms = 0;

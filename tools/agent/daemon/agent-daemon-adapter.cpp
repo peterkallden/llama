@@ -155,6 +155,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_tool_rounds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--queue-capacity") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.queue_capacity = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--worker-count") == 0 || std::strcmp(argv[i], "--workers") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.worker_count = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--max-turn-seconds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_turn_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -210,6 +212,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--queue-capacity must be at least 1\n");
         return false;
     }
+    if (options.worker_count == 0) {
+        std::fprintf(stderr, "--worker-count must be at least 1\n");
+        return false;
+    }
     std::string resource_error;
     if (!validate_agent_resource_store_config({
             options.resource_blob_backend,
@@ -246,7 +252,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
-        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n",
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n",
         argv0);
 }
 

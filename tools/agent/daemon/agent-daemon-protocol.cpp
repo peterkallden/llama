@@ -362,6 +362,8 @@ void append_agent_daemon_status_snapshot(
     response["live"] = status.live;
     response["ready"] = status.ready;
     response["worker_running"] = status.worker_running;
+    response["worker_count"] = status.worker_count;
+    response["workers_running"] = status.workers_running;
     response["accepting_commands"] = status.accepting_commands;
     response["shutdown_requested"] = status.shutdown_requested;
     response["sessions"] = status.session_count;

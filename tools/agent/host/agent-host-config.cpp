@@ -187,6 +187,7 @@ bool parse_agent_host_config_json(
     if (parsed.contains("limits") && parsed["limits"].is_object()) {
         const auto & limits = parsed["limits"];
         read_optional(limits, "queue_capacity", config.queue_capacity);
+        read_optional(limits, "worker_count", config.worker_count);
         read_optional(limits, "max_turn_seconds", config.max_turn_seconds);
         read_optional(limits, "turn_timeout_ms", config.turn_timeout_ms);
         read_optional(limits, "inference_step_timeout_ms", config.inference_step_timeout_ms);
@@ -294,6 +295,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         }},
         {"limits", {
             {"queue_capacity", config.queue_capacity},
+            {"worker_count", config.worker_count},
             {"max_turn_seconds", config.max_turn_seconds},
             {"turn_timeout_ms", config.turn_timeout_ms},
             {"inference_step_timeout_ms", config.inference_step_timeout_ms},
@@ -315,6 +317,10 @@ bool validate_agent_host_config(
     }
     if (config.queue_capacity == 0) {
         error = "limits.queue_capacity must be greater than zero";
+        return false;
+    }
+    if (config.worker_count == 0) {
+        error = "limits.worker_count must be greater than zero";
         return false;
     }
     for (const auto & provider : config.mcp_providers) {
@@ -376,6 +382,7 @@ void apply_agent_host_config_to_daemon_options(
     options.agent_trace = config.agent_trace;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
+    options.worker_count = config.worker_count;
     options.max_turn_seconds = config.max_turn_seconds;
     options.turn_timeout_ms = config.turn_timeout_ms;
     options.inference_step_timeout_ms = config.inference_step_timeout_ms;

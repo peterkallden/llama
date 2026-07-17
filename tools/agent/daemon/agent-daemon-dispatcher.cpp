@@ -119,13 +119,19 @@ common_agent_daemon_event_type queued_turn_rejection_daemon_event_type(
 
 common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
         common_agent_daemon_runtime runtime,
-        size_t max_queue_size)
+        size_t max_queue_size,
+        size_t worker_count)
     : service(std::move(runtime))
-    , max_queue_size(max_queue_size) {
+    , max_queue_size(max_queue_size)
+    , worker_count(worker_count == 0 ? 1 : worker_count) {
+    workers.reserve(this->worker_count);
+    for (size_t i = 0; i < this->worker_count; ++i) {
+        workers.emplace_back([this]() {
+            worker_loop();
+        });
+    }
+    workers_running = this->worker_count;
     worker_running = true;
-    worker = std::thread([this]() {
-        worker_loop();
-    });
 }
 
 common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
@@ -136,12 +142,15 @@ common_agent_daemon_dispatcher::~common_agent_daemon_dispatcher() {
         service.mark_stopping();
     }
     condition.notify_all();
-    if (worker.joinable()) {
-        worker.join();
+    for (auto & worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
     }
     {
         std::lock_guard<std::mutex> lock(mutex);
         worker_running = false;
+        workers_running = 0;
         service.mark_stopped();
     }
 }
@@ -539,6 +548,8 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     }
     status.queued_command_count = queued_count;
     status.worker_running = worker_running;
+    status.worker_count = worker_count;
+    status.workers_running = workers_running;
     status.accepting_commands = accepting_commands;
     status.shutdown_requested = service.shutdown_requested();
     status.max_queue_size = max_queue_size;
@@ -613,7 +624,9 @@ void common_agent_daemon_dispatcher::worker_loop() {
             std::lock_guard<std::mutex> lock(mutex);
             if (service.shutdown_requested()) {
                 accepting_commands = false;
-                stop_requested = true;
+                if (queue.empty()) {
+                    stop_requested = true;
+                }
             }
             fill_status_snapshot_locked(queued.result.status);
         }
@@ -624,8 +637,13 @@ void common_agent_daemon_dispatcher::worker_loop() {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        service.mark_stopping();
-        worker_running = false;
-        service.mark_stopped();
+        if (workers_running > 0) {
+            --workers_running;
+        }
+        worker_running = workers_running > 0;
+        if (workers_running == 0) {
+            service.mark_stopping();
+            service.mark_stopped();
+        }
     }
 }

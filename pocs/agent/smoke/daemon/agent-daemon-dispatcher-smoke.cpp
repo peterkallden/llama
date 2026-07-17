@@ -546,6 +546,18 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_dispatcher worker_pool_dispatcher(
+        make_waiting_runtime(
+            common_agent_runtime_pending_operation_kind::inference,
+            "dispatcher worker-pool pending inference",
+            "dispatcher worker-pool resolver"),
+        8,
+        2);
+    if (worker_pool_dispatcher.worker_count_value() != 2) {
+        std::fprintf(stderr, "dispatcher did not retain configured worker count\n");
+        return 1;
+    }
+
     std::printf("tool_wait_event=%s\n",
         has_event_type(tool_wait_result, "turn.waiting_for_tool") ? "yes" : "no");
     std::printf("inference_wait_event=%s\n",

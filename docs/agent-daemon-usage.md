@@ -48,7 +48,7 @@ Useful overrides are:
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
-| limits | `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
+| workers/limits | `--worker-count`/`--workers`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
 
 The config file is loaded first and explicit flags are the appropriate place
 for a one-run override. Secrets should remain in environment variables, not
@@ -74,6 +74,13 @@ Important protocol behavior:
 - use stable `session_id`, `namespace_id`, `project_id`, and `turn_id` values;
 - send `{"command":"shutdown"}` for graceful foreground shutdown;
 - do not treat this stdin/stdout process as a production network service yet.
+
+`--worker-count N` enables a shared worker pool. The default remains `1` for
+compatibility. Multiple workers may process different session lanes in
+parallel, while the session manager keeps turns within one session ordered.
+Workers are independent of the foreground/service-host choice: a future HTTP,
+named-pipe or supervised host should construct the same dispatcher with the
+same worker count.
 
 ## Daemon lifecycle
 

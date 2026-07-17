@@ -145,6 +145,8 @@ struct agent_daemon_jsonl_status_response {
     bool live = false;
     bool ready = false;
     bool worker_running = false;
+    int worker_count = 1;
+    int workers_running = 0;
     bool accepting_commands = false;
     bool shutdown_requested = false;
     int sessions = 0;

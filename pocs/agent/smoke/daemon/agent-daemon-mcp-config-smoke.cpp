@@ -79,6 +79,7 @@ int main(int argc, char ** argv) {
             }},
             {"limits", {
                 {"queue_capacity", 5},
+                {"worker_count", 2},
                 {"max_tool_rounds", 2},
             }},
         }.dump(2);
@@ -104,6 +105,10 @@ int main(int argc, char ** argv) {
     }
     if (loaded_config.schema_version != 1) {
         std::fprintf(stderr, "host config schema_version mismatch\n");
+        return 1;
+    }
+    if (loaded_config.worker_count != 2) {
+        std::fprintf(stderr, "host config worker_count mismatch\n");
         return 1;
     }
     if (!validate_agent_host_config(loaded_config, error)) {

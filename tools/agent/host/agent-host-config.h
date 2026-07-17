@@ -47,6 +47,7 @@ struct agent_host_config {
     std::vector<agent_host_mcp_provider_config> mcp_providers;
 
     size_t queue_capacity = 8;
+    size_t worker_count = 1;
     size_t max_turn_seconds = 0;
     size_t turn_timeout_ms = 0;
     uint32_t inference_step_timeout_ms = 0;

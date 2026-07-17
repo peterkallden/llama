@@ -15,7 +15,8 @@ class common_agent_daemon_dispatcher {
 public:
     explicit common_agent_daemon_dispatcher(
         common_agent_daemon_runtime runtime,
-        size_t max_queue_size = 8);
+        size_t max_queue_size = 8,
+        size_t worker_count = 1);
     ~common_agent_daemon_dispatcher();
 
     bool execute(
@@ -27,6 +28,7 @@ public:
     common_agent_runtime_host_mode default_mode() const;
     size_t queued_command_count() const;
     size_t max_queue_size_value() const { return max_queue_size; }
+    size_t worker_count_value() const { return worker_count; }
 
 private:
     struct queued_result {
@@ -104,8 +106,10 @@ private:
     std::condition_variable condition;
     std::deque<std::shared_ptr<queued_command>> queue;
     common_agent_daemon_service service;
-    std::thread worker;
+    std::vector<std::thread> workers;
     size_t max_queue_size = 0;
+    size_t worker_count = 1;
+    size_t workers_running = 0;
     bool worker_running = false;
     bool accepting_commands = true;
     bool stop_requested = false;
