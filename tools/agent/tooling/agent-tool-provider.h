@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
@@ -223,6 +224,8 @@ struct agent_mcp_stdio_client_config {
     std::string server_name;
     std::vector<std::string> command_line;
     std::map<std::string, std::string> environment;
+    uint32_t request_timeout_ms = 0;
+    uint32_t shutdown_timeout_ms = 1000;
 };
 
 class agent_mcp_stdio_client : public agent_mcp_tool_client {
@@ -252,9 +255,16 @@ public:
         std::string & error);
 
 private:
-    bool ensure_started(std::string & error);
+    bool ensure_started(
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline = {});
     bool send_notification(const std::string & method, const nlohmann::ordered_json & params, std::string & error);
-    bool send_request(const std::string & method, const nlohmann::ordered_json & params, nlohmann::ordered_json & response, std::string & error);
+    bool send_request(
+        const std::string & method,
+        const nlohmann::ordered_json & params,
+        nlohmann::ordered_json & response,
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline = {});
     void collect_stderr_tail();
     void capture_exit_if_needed();
     std::string with_transport_context(const std::string & base_error) const;

@@ -3,6 +3,8 @@
 #include "agent-mcp-server-protocol.h"
 
 #include <utility>
+#include <thread>
+#include <chrono>
 
 agent_mcp_stdio_server::agent_mcp_stdio_server(
         agent_mcp_server_tool_registry registry,
@@ -59,6 +61,11 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
             shutdown_requested = true;
             response = agent_mcp_make_json_rpc_result(id, agent_mcp_json::object());
         } else if (method == "tools/list") {
+            if (options_.hang_on_tools_list) {
+                for (;;) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
             if (options_.emit_malformed_tools_list) {
                 if (diagnostics != nullptr) {
                     std::fprintf(diagnostics, "%s: emitting malformed tools/list payload\n", options_.server_name.c_str());

@@ -131,6 +131,7 @@ int main(int argc, char ** argv) {
             "0.1",
             "2024-11-05",
             mode == "bad-tools-list",
+            mode == "hang-tools-list",
             mode == "exit-after-initialize",
             [](agent_mcp_json & result, std::string & error) {
                 result = {

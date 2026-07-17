@@ -27,7 +27,7 @@ public:
                 "github",
                 "create_issue",
                 "Create a GitHub issue.",
-                R"({"type":"object","required":["title"]})",
+                R"({"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string","minLength":1}}})",
                 false,
                 true,
                 true,
@@ -38,7 +38,7 @@ public:
                 "github",
                 "search_issues",
                 "Search GitHub issues.",
-                R"({"type":"object","required":["query"]})",
+                R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1}}})",
                 true,
                 false,
                 true,
@@ -164,6 +164,26 @@ int main() {
     }, error);
     if (invalid_result.ok || invalid_result.failure_class != common_tool_failure_class::validation) {
         std::fprintf(stderr, "invalid MCP arguments were not rejected correctly\n");
+        return 1;
+    }
+
+    const auto missing_required_result = write_view->call({
+        "call-4",
+        "github_search_issues",
+        R"({})",
+    }, error);
+    if (missing_required_result.ok || missing_required_result.failure_class != common_tool_failure_class::validation) {
+        std::fprintf(stderr, "MCP required-field validation was not enforced\n");
+        return 1;
+    }
+
+    const auto wrong_type_result = write_view->call({
+        "call-5",
+        "github_search_issues",
+        R"({"query":42})",
+    }, error);
+    if (wrong_type_result.ok || wrong_type_result.failure_class != common_tool_failure_class::validation) {
+        std::fprintf(stderr, "MCP property-type validation was not enforced\n");
         return 1;
     }
 

@@ -183,6 +183,25 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_mcp_stdio_client hanging_client({
+        "github",
+        {server_path.string(), "--mode", "hang-tools-list"},
+        {},
+        100,
+        100,
+    });
+    mcp_agent_tool_provider hanging_provider("github", hanging_client);
+    agent_tool_context timeout_context = read_context;
+    timeout_context.execution_control = make_common_agent_runtime_execution_control({
+        0, 0, 0, 0, 100, 100,
+    });
+    error.clear();
+    std::unique_ptr<agent_tool_view> hanging_view = hanging_provider.resolve_tools(timeout_context, error);
+    if (hanging_view != nullptr || !contains(error, "MCP request timeout")) {
+        std::fprintf(stderr, "hanging MCP request did not terminate on hard timeout: %s\n", error.c_str());
+        return 1;
+    }
+
     std::printf("stdio_mcp_tools=%zu\n", write_view->chat_tools().size());
     std::printf("stdio_mcp_search_result=%s\n", search_result.content_json.c_str());
     std::printf("stdio_mcp_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());

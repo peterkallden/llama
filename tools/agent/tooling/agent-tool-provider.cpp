@@ -2,6 +2,7 @@
 #include "agent-tool-result-json-contracts.h"
 
 #include "agent/tool-registry.h"
+#include "agent/schema-contract.h"
 
 #include <algorithm>
 #include <atomic>
@@ -471,13 +472,12 @@ public:
             return false;
         }
 
-        // PoC note: MCP validation currently enforces the basic JSON-object
-        // contract only. Full JSON-schema validation against inputSchema is a
-        // follow-up item so the MCP path reaches parity with native registry
-        // validation without baking transport-specific logic into the runtime.
-        const auto arguments = json::parse(call.arguments_json, nullptr, false);
-        if (arguments.is_discarded() || !arguments.is_object()) {
-            error = "tool arguments must be a JSON object";
+        std::string normalized_arguments;
+        if (!common_schema_normalize_and_validate_object(
+                call.arguments_json,
+                it->second.input_schema_json,
+                normalized_arguments,
+                error)) {
             return false;
         }
 

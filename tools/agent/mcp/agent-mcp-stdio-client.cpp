@@ -6,8 +6,11 @@
 #include <cstdio>
 #include <cstring>
 #include <chrono>
+#include <future>
+#include <mutex>
 #include <sstream>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #ifdef _WIN32
@@ -119,6 +122,21 @@ void append_tail(std::string & tail, const char * data, size_t size, size_t max_
     }
 }
 
+std::optional<std::chrono::steady_clock::time_point> mcp_request_deadline(
+        const agent_tool_context & context,
+        uint32_t configured_timeout_ms) {
+    std::optional<std::chrono::steady_clock::time_point> deadline =
+        context.execution_control.deadline;
+    if (configured_timeout_ms > 0) {
+        const auto configured = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(configured_timeout_ms);
+        if (!deadline.has_value() || configured < *deadline) {
+            deadline = configured;
+        }
+    }
+    return deadline;
+}
+
 } // namespace
 
 struct agent_mcp_stdio_client::impl {
@@ -132,6 +150,7 @@ struct agent_mcp_stdio_client::impl {
     bool initialized = false;
     bool joined = false;
     std::string stderr_tail;
+    std::mutex request_mutex;
     static constexpr size_t max_stderr_tail_bytes = 4096;
 };
 
@@ -143,7 +162,9 @@ agent_mcp_stdio_client::~agent_mcp_stdio_client() {
     shutdown_process();
 }
 
-bool agent_mcp_stdio_client::ensure_started(std::string & error) {
+bool agent_mcp_stdio_client::ensure_started(
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
     error.clear();
     if (state->initialized) {
         return true;
@@ -184,7 +205,7 @@ bool agent_mcp_stdio_client::ensure_started(std::string & error) {
     }
 
     json response;
-    if (!send_request("initialize", make_mcp_initialize_params(), response, error)) {
+    if (!send_request("initialize", make_mcp_initialize_params(), response, error, deadline)) {
         return false;
     }
 
@@ -215,7 +236,9 @@ bool agent_mcp_stdio_client::send_request(
         const std::string & method,
         const json & params,
         json & response,
-        std::string & error) {
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
+    std::lock_guard<std::mutex> request_lock(state->request_mutex);
     response = json();
     if (!state->running || !state->in || !state->out) {
         error = "MCP stdio client is not running";
@@ -232,7 +255,36 @@ bool agent_mcp_stdio_client::send_request(
 
     for (;;) {
         json message;
-        if (!read_json_rpc_message(state->out, message, error)) {
+        bool read_ok = false;
+        std::string read_error;
+        if (!deadline.has_value()) {
+            read_ok = read_json_rpc_message(state->out, message, read_error);
+        } else {
+            std::promise<std::tuple<bool, json, std::string>> promise;
+            auto future = promise.get_future();
+            std::thread reader([&promise, stream = state->out]() mutable {
+                json read_message;
+                std::string error;
+                const bool ok = read_json_rpc_message(stream, read_message, error);
+                promise.set_value({ok, std::move(read_message), std::move(error)});
+            });
+            const auto wait_result = future.wait_until(*deadline);
+            if (wait_result != std::future_status::ready) {
+                subprocess_terminate(&state->proc);
+                subprocess_join(&state->proc, &state->exit_code);
+                state->joined = true;
+                state->running = false;
+                state->initialized = false;
+                reader.join();
+                collect_stderr_tail();
+                error = "MCP request timeout; server process terminated";
+                return false;
+            }
+            std::tie(read_ok, message, read_error) = future.get();
+            reader.join();
+        }
+        if (!read_ok) {
+            error = read_error;
             collect_stderr_tail();
             capture_exit_if_needed();
             error = with_transport_context(error);
@@ -262,7 +314,12 @@ void agent_mcp_stdio_client::shutdown_process() {
         std::string ignored_error;
         json ignored_response;
         if (state->initialized) {
-            send_request("shutdown", json::object(), ignored_response, ignored_error);
+            std::optional<std::chrono::steady_clock::time_point> shutdown_deadline;
+            if (config.shutdown_timeout_ms > 0) {
+                shutdown_deadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(config.shutdown_timeout_ms);
+            }
+            send_request("shutdown", json::object(), ignored_response, ignored_error, shutdown_deadline);
             send_notification("exit", json::object(), ignored_error);
         }
         if (state->in != nullptr) {
@@ -356,12 +413,17 @@ bool agent_mcp_stdio_client::list_tools(
         error = context.execution_control.stop_reason();
         return false;
     }
-    if (!ensure_started(error)) {
+    const auto deadline = mcp_request_deadline(
+        context,
+        context.execution_control.timeout_policy.mcp_request_timeout_ms > 0
+            ? context.execution_control.timeout_policy.mcp_request_timeout_ms
+            : config.request_timeout_ms);
+    if (!ensure_started(error, deadline)) {
         return false;
     }
 
     json response;
-    if (!send_request("tools/list", json::object(), response, error)) {
+    if (!send_request("tools/list", json::object(), response, error, deadline)) {
         return false;
     }
 
@@ -397,7 +459,12 @@ bool agent_mcp_stdio_client::call_tool(
         error = context.execution_control.stop_reason();
         return false;
     }
-    if (!ensure_started(error)) {
+    const auto deadline = mcp_request_deadline(
+        context,
+        context.execution_control.timeout_policy.mcp_request_timeout_ms > 0
+            ? context.execution_control.timeout_policy.mcp_request_timeout_ms
+            : config.request_timeout_ms);
+    if (!ensure_started(error, deadline)) {
         return false;
     }
 
@@ -415,7 +482,8 @@ bool agent_mcp_stdio_client::call_tool(
             "tools/call",
             make_mcp_tools_call_params(tool.name, arguments),
             response,
-            error)) {
+            error,
+            deadline)) {
         return false;
     }
 
