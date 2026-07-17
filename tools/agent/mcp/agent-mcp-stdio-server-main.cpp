@@ -1,4 +1,5 @@
 #include "agent-mcp-stdio-server.h"
+#include "agent-mcp-http-server.h"
 
 #include "../memory/memory-cli-memory.h"
 
@@ -32,6 +33,18 @@
 #endif
 
 namespace {
+
+struct server_http_options {
+    bool enabled = false;
+    std::string listen_address = "127.0.0.1";
+    int port = 0;
+    std::string path = "/mcp";
+    std::string allowed_origin;
+    std::string token_env;
+    std::string bearer_token;
+    size_t max_body_bytes = 1024 * 1024;
+    size_t max_result_bytes = 1024 * 1024;
+};
 
 std::string resolve_memory_backend(
         const std::string & backend,
@@ -255,9 +268,11 @@ bool parse_server_args(
         char ** argv,
         args & options,
         std::vector<agent_host_mcp_provider_config> & configured_mcp_providers,
+        server_http_options & http,
         std::string & error) {
     options = {};
     configured_mcp_providers.clear();
+    http = {};
     options.command = "agent-mcp-stdio-server";
     options.memory_scope = "session";
     options.memory_namespace = "local";
@@ -328,6 +343,20 @@ bool parse_server_args(
             const char * value = need_value(argv[i], i); if (!value) return false; options.resource_metadata_db = value;
         } else if (std::strcmp(argv[i], "--max-tool-rounds") == 0) {
             const char * value = need_value(argv[i], i); if (!value) return false; options.max_tool_rounds = static_cast<size_t>(std::max(1, std::atoi(value)));
+        } else if (std::strcmp(argv[i], "--http-listen") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.enabled = true; http.listen_address = value;
+        } else if (std::strcmp(argv[i], "--http-port") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.enabled = true; http.port = std::atoi(value);
+        } else if (std::strcmp(argv[i], "--http-path") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.enabled = true; http.path = value;
+        } else if (std::strcmp(argv[i], "--http-allowed-origin") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.enabled = true; http.allowed_origin = value;
+        } else if (std::strcmp(argv[i], "--http-token-env") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.enabled = true; http.token_env = value;
+        } else if (std::strcmp(argv[i], "--http-max-body-bytes") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.max_body_bytes = static_cast<size_t>(std::max(1, std::atoi(value)));
+        } else if (std::strcmp(argv[i], "--http-max-result-bytes") == 0) {
+            const char * value = need_value(argv[i], i); if (!value) return false; http.max_result_bytes = static_cast<size_t>(std::max(1, std::atoi(value)));
         } else {
             error = "unknown argument: " + std::string(argv[i]);
             return false;
@@ -358,6 +387,19 @@ bool parse_server_args(
     if (options.tool_profile.empty()) {
         error = "--tool-profile must not be empty";
         return false;
+    }
+
+    if (http.enabled) {
+        if (http.listen_address.empty() || http.path.empty() || http.token_env.empty()) {
+            error = "HTTP MCP mode requires --http-listen, --http-path and --http-token-env";
+            return false;
+        }
+        const char * token = std::getenv(http.token_env.c_str());
+        if (token == nullptr || *token == '\0') {
+            error = "HTTP MCP bearer token environment variable is empty: " + http.token_env;
+            return false;
+        }
+        http.bearer_token = token;
     }
 
     error.clear();
@@ -597,8 +639,9 @@ int main(int argc, char ** argv) {
 
     args options;
     std::vector<agent_host_mcp_provider_config> configured_mcp_providers;
+    server_http_options http_options;
     std::string error;
-    if (!parse_server_args(argc, argv, options, configured_mcp_providers, error)) {
+    if (!parse_server_args(argc, argv, options, configured_mcp_providers, http_options, error)) {
         std::fprintf(stderr, "failed to parse MCP stdio server args: %s\n", error.c_str());
         return 1;
     }
@@ -682,16 +725,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    agent_mcp_stdio_server server(
-        std::move(registry),
-        {
-            "llama-agent-mcp-stdio-server",
-            "0.2",
-            "2024-11-05",
-            false,
-            false,
-            false,
-            [resource_store = resource_store.get(), resource_authority](agent_mcp_json & result, std::string & callback_error) {
+    const auto list_resources = [resource_store = resource_store.get(), resource_authority](agent_mcp_json & result, std::string & callback_error) {
                 std::vector<agent_resource_descriptor> descriptors;
                 if (!resource_store->list(resource_authority, descriptors, callback_error)) {
                     return false;
@@ -704,8 +738,8 @@ int main(int argc, char ** argv) {
                 }
                 callback_error.clear();
                 return true;
-            },
-            [resource_store = resource_store.get(), resource_authority](const agent_mcp_json & params, agent_mcp_json & result, std::string & callback_error) {
+            };
+    const auto read_resource = [resource_store = resource_store.get(), resource_authority](const agent_mcp_json & params, agent_mcp_json & result, std::string & callback_error) {
                 const std::string uri = params.value("uri", "");
                 if (uri.empty()) {
                     callback_error = "resources/read requires a uri";
@@ -729,7 +763,43 @@ int main(int argc, char ** argv) {
                 };
                 callback_error.clear();
                 return true;
-            },
+            };
+
+    if (http_options.enabled) {
+        agent_mcp_http_server http_server(
+            std::move(registry),
+            {
+                http_options.listen_address,
+                http_options.port,
+                http_options.path,
+                http_options.allowed_origin,
+                http_options.bearer_token,
+                http_options.max_body_bytes,
+                http_options.max_result_bytes,
+                "llama-agent-mcp-http-server",
+                "0.2",
+                "2024-11-05",
+                list_resources,
+                read_resource,
+            });
+        if (!http_server.listen(error)) {
+            std::fprintf(stderr, "failed to run MCP HTTP server: %s\n", error.c_str());
+            return 1;
+        }
+        return 0;
+    }
+
+    agent_mcp_stdio_server server(
+        std::move(registry),
+        {
+            "llama-agent-mcp-stdio-server",
+            "0.2",
+            "2024-11-05",
+            false,
+            false,
+            false,
+            list_resources,
+            read_resource,
         });
     return server.run(stdin, stdout, stderr);
 }

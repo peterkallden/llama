@@ -35,6 +35,7 @@ $smokes = @(
     "llama-agent-mcp-tool-provider-smoke.exe",
     "llama-agent-mcp-stdio-client-smoke.exe",
     "llama-agent-mcp-http-client-smoke.exe",
+    "llama-agent-mcp-http-inbound-smoke-v2.exe",
     "llama-agent-resource-store-smoke.exe"
 )
 

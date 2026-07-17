@@ -15,6 +15,9 @@ The current branch has:
 - hard request timeout handling for a hanging stdio server;
 - typed runtime operations with timeout, cancellation, polling and cleanup;
 - session lanes and a daemon dispatcher with queued and active cancellation;
+- an inbound Streamable HTTP MCP listener on the existing MCP server entrypoint,
+  with local binding, bearer authentication, Origin checking, bounded request
+  and response bodies, session IDs, and DELETE session cleanup;
 - a beta smoke pack covering the above.
 
 This branch adds the configuration contract for remote providers and an
@@ -25,8 +28,10 @@ session-id retention, tool listing/call, resource listing/read, and bounded
 JSON responses. HTTPS still requires an OpenSSL-enabled cpp-httplib build.
 The current client uses configured connection/read timeouts; propagation of the
 caller operation deadline and active cancellation through the HTTP library is
-still a required follow-up. The inbound HTTP listener is deliberately not
-claimed complete yet.
+still a required follow-up. The inbound listener is not yet the full service
+integration: it currently exports the same host-resolved tool/resource surface
+as the stdio server and does not yet derive namespace, project, tool profile or
+confirmation scope from an authenticated caller.
 
 ## Configuration examples
 
@@ -42,6 +47,25 @@ file:
 ```powershell
 $env:REMOTE_GITHUB_MCP_TOKEN = "replace-with-a-token"
 llama-agent-daemon.exe --config docs/examples/agent-host-config-remote-http.json
+```
+
+The current inbound HTTP listener is started from the MCP server entrypoint.
+It binds to localhost by default and requires an opaque bearer token supplied
+through an environment variable:
+
+```powershell
+$env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
+llama-agent-mcp-stdio-server.exe --tool-profile minimal `
+  --http-listen 127.0.0.1 --http-port 8080 --http-path /mcp `
+  --http-token-env LLAMA_AGENT_MCP_TOKEN
+```
+
+If a browser-originated client is needed, configure one exact allowed origin:
+
+```powershell
+llama-agent-mcp-stdio-server.exe --http-listen 127.0.0.1 `
+  --http-token-env LLAMA_AGENT_MCP_TOKEN `
+  --http-allowed-origin http://localhost:3000
 ```
 
 The remote example requires a server endpoint that supports MCP Streamable
@@ -99,7 +123,8 @@ The client must support:
 
 ## Inbound MCP server requirements
 
-The agent-facing listener should be a host adapter around the daemon/service,
+The agent-facing listener is a host adapter around the current MCP host and is
+being moved toward the daemon/service,
 not a second runtime. Its request path is:
 
 ```text
@@ -108,7 +133,10 @@ HTTP -> Origin check -> authentication -> caller policy
      -> daemon dispatcher -> session lane -> operation manager
 ```
 
-The authenticated caller, not the request body, must determine the default
+The current beta authenticates an opaque configured token and tracks MCP
+session IDs, but it does not yet bind an authenticated caller to a namespace,
+project or tool profile. The authenticated caller, not the request body, must
+determine the default
 namespace, project and allowed tool profile. Every request must have bounded
 body/result sizes and a deadline. Write-capable tools require the existing
 confirmation/policy path.
