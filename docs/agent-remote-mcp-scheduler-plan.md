@@ -16,10 +16,16 @@ The current branch has:
 - session lanes and a daemon dispatcher with queued and active cancellation;
 - a beta smoke pack covering the above.
 
-This branch adds the configuration contract for remote providers. It accepts
+This branch adds the configuration contract for remote providers and an
+outbound HTTP client behind the existing MCP tool-client interface. It accepts
 `url`, `token_env`, `allowed_tools`, transport-specific timeout values, and
-`max_result_bytes`. The HTTP client and inbound HTTP listener are deliberately
-not claimed complete until their transport and auth smokes exist.
+`max_result_bytes`. The local HTTP smoke proves initialize, Bearer auth,
+session-id retention, tool listing/call, resource listing/read, and bounded
+JSON responses. HTTPS still requires an OpenSSL-enabled cpp-httplib build.
+The current client uses configured connection/read timeouts; propagation of the
+caller operation deadline and active cancellation through the HTTP library is
+still a required follow-up. The inbound HTTP listener is deliberately not
+claimed complete yet.
 
 ## Standard transport and authorization
 

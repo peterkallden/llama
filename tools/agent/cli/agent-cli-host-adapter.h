@@ -22,7 +22,15 @@ struct common_agent_cli_tool_selection {
 
 struct agent_host_stdio_mcp_provider_request {
     std::string server_name = "mcp";
+    std::string transport = "stdio";
     std::vector<std::string> command_line;
+    std::string url;
+    std::string bearer_token;
+    std::vector<std::string> allowed_tools;
+    uint32_t connect_timeout_ms = 5000;
+    uint32_t request_timeout_ms = 30000;
+    uint32_t shutdown_timeout_ms = 2000;
+    size_t max_result_bytes = 1024 * 1024;
     std::string exposed_name_prefix;
 };
 
@@ -34,6 +42,9 @@ struct agent_host_tool_selection_request {
 };
 
 bool has_enabled_stdio_mcp_provider(
+    const std::vector<agent_host_mcp_provider_config> & providers);
+
+bool has_enabled_mcp_provider(
     const std::vector<agent_host_mcp_provider_config> & providers);
 
 void append_configured_stdio_mcp_providers(

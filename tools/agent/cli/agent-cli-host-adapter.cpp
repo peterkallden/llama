@@ -12,6 +12,7 @@
 #include <ctime>
 #include <filesystem>
 #include <memory>
+#include <cstdlib>
 
 namespace {
 
@@ -98,17 +99,40 @@ bool has_enabled_stdio_mcp_provider(
     return false;
 }
 
+bool has_enabled_mcp_provider(
+        const std::vector<agent_host_mcp_provider_config> & providers) {
+    for (const auto & provider : providers) {
+        if (provider.enabled && provider.type == "mcp") {
+            return true;
+        }
+    }
+    return false;
+}
+
 void append_configured_stdio_mcp_providers(
         const std::vector<agent_host_mcp_provider_config> & configured_providers,
         std::vector<agent_host_stdio_mcp_provider_request> & request_providers) {
     for (const auto & provider : configured_providers) {
-        if (!provider.enabled || provider.type != "mcp" || provider.transport != "stdio" || provider.command.empty()) {
+        if (!provider.enabled || provider.type != "mcp" ||
+                (provider.transport == "stdio" && provider.command.empty()) ||
+                (provider.transport != "stdio" && provider.url.empty())) {
             continue;
         }
         agent_host_stdio_mcp_provider_request request_provider;
         request_provider.server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+        request_provider.transport = provider.transport;
         request_provider.exposed_name_prefix = provider.prefix;
         request_provider.command_line = provider.command;
+        request_provider.url = provider.url;
+        request_provider.allowed_tools = provider.allowed_tools;
+        request_provider.connect_timeout_ms = provider.connect_timeout_ms;
+        request_provider.request_timeout_ms = provider.request_timeout_ms;
+        request_provider.shutdown_timeout_ms = provider.shutdown_timeout_ms;
+        request_provider.max_result_bytes = provider.max_result_bytes;
+        if (!provider.token_env.empty()) {
+            const char * token = std::getenv(provider.token_env.c_str());
+            if (token != nullptr) request_provider.bearer_token = token;
+        }
         request_providers.push_back(std::move(request_provider));
     }
 }
@@ -124,6 +148,7 @@ void append_legacy_stdio_mcp_provider(
     }
     agent_host_stdio_mcp_provider_request provider;
     provider.server_name = server_name;
+    provider.transport = "stdio";
     provider.exposed_name_prefix = prefix;
     provider.command_line.push_back(command);
     provider.command_line.insert(provider.command_line.end(), args.begin(), args.end());
@@ -225,15 +250,35 @@ bool resolve_agent_host_tool_selection(
 
     std::vector<std::unique_ptr<mcp_agent_tool_provider>> mcp_providers;
     for (const auto & provider_request : request.mcp_providers) {
-        if (provider_request.command_line.empty()) {
-            error = "MCP provider command line must not be empty";
-            return false;
+        std::unique_ptr<agent_mcp_tool_client> client;
+        if (provider_request.transport == "stdio") {
+            if (provider_request.command_line.empty()) {
+                error = "MCP provider command line must not be empty";
+                return false;
+            }
+            client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
+                provider_request.server_name,
+                provider_request.command_line,
+                {},
+                provider_request.request_timeout_ms,
+                provider_request.shutdown_timeout_ms,
+            });
+        } else {
+            if (provider_request.url.empty()) {
+                error = "HTTP MCP provider url must not be empty";
+                return false;
+            }
+            client = std::make_unique<agent_mcp_http_client>(agent_mcp_http_client_config{
+                provider_request.server_name,
+                provider_request.url,
+                provider_request.bearer_token,
+                provider_request.allowed_tools,
+                provider_request.connect_timeout_ms,
+                provider_request.request_timeout_ms,
+                provider_request.shutdown_timeout_ms,
+                provider_request.max_result_bytes,
+            });
         }
-        auto client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
-            provider_request.server_name,
-            provider_request.command_line,
-            {},
-        });
         auto provider = std::make_unique<mcp_agent_tool_provider>(
             provider_request.server_name,
             *client,

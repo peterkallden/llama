@@ -184,7 +184,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.repository_root = options.repository_root;
     tool_request.tool_context.allow_network =
         options.tool_profile == "research" ||
-        has_enabled_stdio_mcp_provider(options.mcp_providers) ||
+        has_enabled_mcp_provider(options.mcp_providers) ||
         !options.mcp_tool_command.empty();
     tool_request.tool_context.allow_policy_gated_writes =
         options.tool_profile == "memory" || options.tool_profile == "research";

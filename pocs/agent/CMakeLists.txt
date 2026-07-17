@@ -11,6 +11,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-http-client.cpp
     ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     ../../tools/agent/tooling/agent-tool-provider.cpp
@@ -43,6 +44,8 @@ set(AGENT_RUNTIME_SOURCES
     ../memory/memory-cli-memory.cpp
     ../../tools/agent/cli/agent-cli-selection.cpp
 )
+
+link_libraries(cpp-httplib)
 
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
@@ -193,6 +196,32 @@ add_executable(${TARGET}
     ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-memory
+    llama-common
+    llama
+    llama-agent-poc
+    server-context
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
+set(TARGET llama-agent-mcp-http-client-smoke)
+add_executable(${TARGET}
+    smoke/mcp/agent-mcp-http-client-smoke.cpp
+    ${AGENT_RUNTIME_SOURCES}
+)
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
@@ -572,6 +601,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-tool-runtime-smoke
     llama-agent-mcp-tool-provider-smoke
     llama-agent-mcp-stdio-client-smoke
+    llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
     llama-agent-mcp-stdio-server
     llama-agent-cli-mcp-selection-smoke
@@ -601,6 +631,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
 set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
     llama-agent-mcp-tool-provider-smoke
     llama-agent-mcp-stdio-client-smoke
+    llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
 )
 

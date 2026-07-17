@@ -275,6 +275,60 @@ private:
     std::unique_ptr<impl> state;
 };
 
+struct agent_mcp_http_client_config {
+    std::string server_name;
+    std::string url;
+    std::string bearer_token;
+    std::vector<std::string> allowed_tools;
+    uint32_t connect_timeout_ms = 5000;
+    uint32_t request_timeout_ms = 30000;
+    uint32_t shutdown_timeout_ms = 2000;
+    size_t max_result_bytes = 1024 * 1024;
+};
+
+class agent_mcp_http_client : public agent_mcp_tool_client {
+public:
+    explicit agent_mcp_http_client(agent_mcp_http_client_config config);
+    ~agent_mcp_http_client() override;
+
+    bool list_tools(
+        const agent_tool_context & context,
+        std::vector<mcp_agent_tool_definition> & tools,
+        std::string & error) override;
+
+    bool call_tool(
+        const agent_tool_context & context,
+        const mcp_agent_tool_definition & tool,
+        const std::string & arguments_json,
+        mcp_agent_tool_call_result & result,
+        std::string & error) override;
+
+    bool list_resources(
+        std::vector<mcp_agent_resource_definition> & resources,
+        std::string & error);
+
+    bool read_resource(
+        const std::string & uri,
+        mcp_agent_resource_read_result & result,
+        std::string & error);
+
+private:
+    bool initialize(std::string & error);
+    bool send_notification(
+        const std::string & method,
+        const nlohmann::ordered_json & params,
+        std::string & error);
+    bool send_request(
+        const std::string & method,
+        const nlohmann::ordered_json & params,
+        nlohmann::ordered_json & response,
+        std::string & error);
+
+    agent_mcp_http_client_config config;
+    struct impl;
+    std::unique_ptr<impl> state;
+};
+
 bool agent_dispatch_chat_tool_calls(
     common_chat_msg & assistant_message,
     agent_tool_view & tool_view,
