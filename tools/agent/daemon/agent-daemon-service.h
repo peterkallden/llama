@@ -38,6 +38,9 @@ struct common_agent_daemon_reload_result {
     uint64_t config_version = 1;
     std::vector<std::string> applied_fields;
     std::vector<std::string> restart_required;
+    std::vector<std::string> providers_added;
+    std::vector<std::string> providers_removed;
+    std::vector<std::string> providers_replaced;
     std::string warning;
 };
 

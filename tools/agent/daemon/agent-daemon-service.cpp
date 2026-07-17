@@ -907,6 +907,17 @@ bool common_agent_daemon_service::execute_outcome(
             outcome.ok = outcome.reload_result.restart_required.empty();
             outcome.event = outcome.ok ? "config.reload.completed" : "config.reload.rejected";
             outcome.error = outcome.ok ? std::string() : "configuration change requires daemon restart";
+            if (outcome.ok) {
+                for (const auto & provider : outcome.reload_result.providers_added) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_added, provider);
+                }
+                for (const auto & provider : outcome.reload_result.providers_removed) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_removed, provider);
+                }
+                for (const auto & provider : outcome.reload_result.providers_replaced) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_replaced, provider);
+                }
+            }
             command_events.emit(
                 outcome.ok
                     ? common_agent_daemon_event_type::config_reload_completed

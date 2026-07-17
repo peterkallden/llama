@@ -4,6 +4,8 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include <unordered_set>
+
 using json = nlohmann::ordered_json;
 
 namespace {
@@ -249,7 +251,6 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"command", provider.command},
         });
     }
-
     return {
         {"schema_version", config.schema_version},
         {"model", {
@@ -322,6 +323,17 @@ bool validate_agent_host_config(
     if (config.worker_count == 0) {
         error = "limits.worker_count must be greater than zero";
         return false;
+    }
+    std::unordered_set<std::string> provider_ids;
+    for (const auto & provider : config.mcp_providers) {
+        if (provider.id.empty()) {
+            error = "MCP provider is missing a stable id";
+            return false;
+        }
+        if (!provider_ids.insert(provider.id).second) {
+            error = "MCP provider ids must be unique: " + provider.id;
+            return false;
+        }
     }
     for (const auto & provider : config.mcp_providers) {
         if (!provider.enabled) {

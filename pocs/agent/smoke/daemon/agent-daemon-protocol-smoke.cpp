@@ -263,6 +263,15 @@ int main() {
             callback_error.clear();
             return true;
         }
+        if (path == "fake-provider-change.json") {
+            result.config_version = 3;
+            result.applied_fields = {"tools.providers"};
+            result.providers_added = {"new-provider"};
+            result.providers_removed = {"old-provider"};
+            result.providers_replaced = {"changed-provider"};
+            callback_error.clear();
+            return true;
+        }
         result.config_version = 2;
         result.applied_fields = {"limits.tool_timeout_ms"};
         callback_error.clear();
@@ -288,6 +297,15 @@ int main() {
             reload_result.events.size() != 2 ||
             reload_result.events[1].event_type != common_agent_daemon_event_type::config_reload_rejected) {
         std::fprintf(stderr, "fake restart-required reload was not rejected as expected: %s\n", error.c_str());
+        return 1;
+    }
+    reload_command.reload_path = "fake-provider-change.json";
+    if (!reload_service.execute(reload_command, reload_result, error) ||
+            reload_result.event != "config.reload.completed" ||
+            reload_result.reload_result.providers_added.size() != 1 ||
+            reload_result.reload_result.providers_removed.size() != 1 ||
+            reload_result.reload_result.providers_replaced.size() != 1) {
+        std::fprintf(stderr, "fake provider change did not complete as expected: %s\n", error.c_str());
         return 1;
     }
 

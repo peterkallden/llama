@@ -83,9 +83,12 @@ Configuration can be reloaded by the local JSONL administration channel:
 ```
 
 The daemon validates the complete candidate configuration before applying it.
-Timeouts, tool profile and bounded tool limits can be applied to new
-operations. Model/backend, stores, resource roots, worker/queue sizing,
-runtime assembly and MCP provider topology are restart-required for now. A
+Timeouts, tool profile, bounded tool limits and MCP providers can be applied
+to new operations. Provider IDs are stable: new IDs are added, missing IDs
+are removed for future operations, and changed IDs are replaced. Existing
+operations keep their provider clients until their tooling is destroyed.
+Model/backend, stores, resource roots, worker/queue sizing and runtime
+assembly are restart-required for now. A
 rejected reload returns `event: "config.reload.rejected"`, a
 `restart_required` array and a warning; it never partially applies a
 candidate. In-flight operations retain their existing configuration snapshot.
@@ -148,6 +151,6 @@ Prometheus text without making metrics an MCP tool.
 - no automatic restart or supervisor;
 - config reload is currently available only through local JSONL administration;
 - config reload does not restart the process or rebuild model, stores, workers,
-  HTTP listeners or MCP provider connections;
+  HTTP listeners or already-running MCP provider clients;
 - HTTPS support depends on an OpenSSL-enabled build for the current HTTP
   client/listener path; TLS termination is not part of the foreground daemon.

@@ -454,6 +454,9 @@ json make_agent_daemon_lifecycle_response(
         response["config_version"] = result.reload_result.config_version;
         response["applied_fields"] = result.reload_result.applied_fields;
         response["restart_required"] = result.reload_result.restart_required;
+        response["providers_added"] = result.reload_result.providers_added;
+        response["providers_removed"] = result.reload_result.providers_removed;
+        response["providers_replaced"] = result.reload_result.providers_replaced;
         if (!result.reload_result.warning.empty()) {
             response["warning"] = result.reload_result.warning;
         }

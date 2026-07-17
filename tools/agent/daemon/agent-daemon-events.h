@@ -57,6 +57,9 @@ enum class common_agent_daemon_event_type {
     config_reload_started,
     config_reload_completed,
     config_reload_rejected,
+    mcp_provider_added,
+    mcp_provider_removed,
+    mcp_provider_replaced,
     command_failed,
 };
 
@@ -113,6 +116,9 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::config_reload_started:   return "config.reload.started";
         case common_agent_daemon_event_type::config_reload_completed: return "config.reload.completed";
         case common_agent_daemon_event_type::config_reload_rejected:  return "config.reload.rejected";
+        case common_agent_daemon_event_type::mcp_provider_added:      return "mcp.provider.added";
+        case common_agent_daemon_event_type::mcp_provider_removed:    return "mcp.provider.removed";
+        case common_agent_daemon_event_type::mcp_provider_replaced:   return "mcp.provider.replaced";
         case common_agent_daemon_event_type::command_failed:          return "command.failed";
     }
     return "unknown";

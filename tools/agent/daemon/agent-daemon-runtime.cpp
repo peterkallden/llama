@@ -436,7 +436,7 @@ bool initialize_agent_daemon_environment(
     common_memory_store * memory_store = runtime.memory_store.get();
     common_plan_store * plan_store = runtime.plan_store.get();
     agent_resource_store * resource_store = runtime.resource_store.get();
-    runtime.tool_executor = [options, memory_store, plan_store, resource_store](
+    runtime.tool_executor = [&options, memory_store, plan_store, resource_store](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {

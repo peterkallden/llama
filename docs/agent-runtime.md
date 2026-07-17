@@ -42,10 +42,11 @@ The JSONL administration path now has a first configuration-reload contract.
 `reload_config` validates a complete host-config candidate and either applies
 the bounded mutable fields for new operations or returns a structured
 `config.reload.rejected` result with `restart_required` field paths. Model and
-backend resources, stores, worker/queue sizing, runtime assembly, and MCP
-provider topology remain restart-required. The current implementation keeps
-reload local to JSONL administration and does not rebuild listeners or live
-provider connections.
+backend resources, stores, worker/queue sizing, and runtime assembly remain
+restart-required. MCP providers are diffed by stable ID and added, removed, or
+replaced for new operations, while existing tooling retains its clients. The
+current implementation keeps reload local to JSONL administration and does not
+rebuild listeners or already-running provider clients.
 
 The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
 

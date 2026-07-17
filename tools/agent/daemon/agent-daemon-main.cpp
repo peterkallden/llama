@@ -8,6 +8,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 int main(int argc, char ** argv) {
@@ -60,29 +61,44 @@ int main(int argc, char ** argv) {
         require_restart(candidate.reflection_mode != options.reflection_mode, "runtime.reflection_mode");
         require_restart(candidate.memory_learn != options.memory_learn, "runtime.memory_learn");
         require_restart(candidate.agent_plan != options.agent_plan, "runtime.agent_plan");
-        bool providers_changed = candidate.mcp_providers.size() != options.mcp_providers.size();
-        if (!providers_changed) {
-            for (size_t i = 0; i < candidate.mcp_providers.size(); ++i) {
-                const auto & a = candidate.mcp_providers[i];
-                const auto & b = options.mcp_providers[i];
-                providers_changed = a.id != b.id || a.enabled != b.enabled ||
-                    a.transport != b.transport || a.command != b.command ||
-                    a.url != b.url || a.token_env != b.token_env ||
-                    a.allowed_tools != b.allowed_tools ||
-                    a.connect_timeout_ms != b.connect_timeout_ms ||
-                    a.request_timeout_ms != b.request_timeout_ms ||
-                    a.shutdown_timeout_ms != b.shutdown_timeout_ms ||
-                    a.max_result_bytes != b.max_result_bytes ||
-                    a.prefix != b.prefix || a.server_name != b.server_name;
-                if (providers_changed) break;
+        auto provider_equal = [](const auto & a, const auto & b) {
+            return a.id == b.id && a.enabled == b.enabled &&
+                a.type == b.type && a.transport == b.transport &&
+                a.command == b.command && a.url == b.url &&
+                a.token_env == b.token_env && a.allowed_tools == b.allowed_tools &&
+                a.connect_timeout_ms == b.connect_timeout_ms &&
+                a.request_timeout_ms == b.request_timeout_ms &&
+                a.shutdown_timeout_ms == b.shutdown_timeout_ms &&
+                a.max_result_bytes == b.max_result_bytes &&
+                a.prefix == b.prefix && a.server_name == b.server_name;
+        };
+        for (const auto & next : candidate.mcp_providers) {
+            auto current = std::find_if(options.mcp_providers.begin(), options.mcp_providers.end(),
+                [&](const auto & provider) { return provider.id == next.id; });
+            if (current == options.mcp_providers.end()) {
+                result.providers_added.push_back(next.id);
+            } else if (!provider_equal(*current, next)) {
+                result.providers_replaced.push_back(next.id);
             }
         }
-        require_restart(providers_changed, "tools.providers");
+        for (const auto & current : options.mcp_providers) {
+            auto next = std::find_if(candidate.mcp_providers.begin(), candidate.mcp_providers.end(),
+                [&](const auto & provider) { return provider.id == current.id; });
+            if (next == candidate.mcp_providers.end()) {
+                result.providers_removed.push_back(current.id);
+            }
+        }
 
         if (!result.restart_required.empty()) {
             result.warning = "configuration was not applied; restart the daemon to change the listed fields";
             reload_error.clear();
             return true;
+        }
+
+        if (!result.providers_added.empty() || !result.providers_removed.empty() ||
+                !result.providers_replaced.empty()) {
+            options.mcp_providers = candidate.mcp_providers;
+            result.applied_fields.emplace_back("tools.providers");
         }
 
         if (candidate.tool_profile != options.tool_profile) {
