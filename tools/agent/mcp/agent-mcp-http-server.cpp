@@ -19,26 +19,39 @@ agent_mcp_http_server::agent_mcp_http_server(
 
 bool agent_mcp_http_server::authorize(
         const httplib::Request & request,
-        httplib::Response & response) const {
+        httplib::Response & response,
+        agent_mcp_caller_policy & policy) const {
     const std::string origin = request.get_header_value("Origin");
     if (!origin.empty() && (options_.allowed_origin.empty() || origin != options_.allowed_origin)) {
         response.status = 403;
         response.set_content(R"({"error":"origin is not allowed"})", "application/json");
         return false;
     }
-    if (options_.bearer_token.empty() ||
+    std::string error;
+    if (options_.authenticator) {
+        if (!options_.authenticator->authenticate(
+                {request.get_header_value("Authorization")}, policy, error)) {
+            response.status = 401;
+            response.set_header("WWW-Authenticate", "Bearer");
+            response.set_content(R"({"error":"unauthorized"})", "application/json");
+            return false;
+        }
+    } else if (options_.bearer_token.empty() ||
             request.get_header_value("Authorization") != "Bearer " + options_.bearer_token) {
         response.status = 401;
         response.set_header("WWW-Authenticate", "Bearer");
         response.set_content(R"({"error":"unauthorized"})", "application/json");
         return false;
+    } else {
+        policy = options_.default_policy;
     }
     return true;
 }
 
 bool agent_mcp_http_server::validate_session(
         const httplib::Request & request,
-        httplib::Response & response) const {
+        httplib::Response & response,
+        agent_mcp_caller_policy & policy) const {
     const std::string session_id = request.get_header_value("Mcp-Session-Id");
     if (session_id.empty()) {
         response.status = 400;
@@ -46,23 +59,31 @@ bool agent_mcp_http_server::validate_session(
         return false;
     }
     std::lock_guard<std::mutex> lock(session_mutex_);
-    if (sessions_.find(session_id) == sessions_.end()) {
+    const auto it = sessions_.find(session_id);
+    if (it == sessions_.end()) {
         response.status = 404;
         response.set_content(R"({"error":"unknown MCP session"})", "application/json");
         return false;
     }
+    if (!policy.caller_id.empty() && policy.caller_id != it->second.caller_id) {
+        response.status = 403;
+        response.set_content(R"({"error":"MCP session belongs to another caller"})", "application/json");
+        return false;
+    }
+    policy = it->second;
     return true;
 }
 
 std::string agent_mcp_http_server::make_session_id() {
     std::lock_guard<std::mutex> lock(session_mutex_);
     const std::string id = options_.server_name + "-session-" + std::to_string(next_session_id_++);
-    sessions_.insert(id);
+    sessions_.emplace(id, agent_mcp_caller_policy{});
     return id;
 }
 
 bool agent_mcp_http_server::handle_message(
         const agent_mcp_json & message,
+        const agent_mcp_caller_policy & policy,
         agent_mcp_json & response,
         std::string & error) {
     if (!message.is_object() || message.value("jsonrpc", "") != "2.0") {
@@ -95,7 +116,17 @@ bool agent_mcp_http_server::handle_message(
         return true;
     }
     if (method == "tools/list") {
-        response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tools_list_result(registry_));
+        agent_mcp_json tools = agent_mcp_json::array();
+        for (const auto & tool : registry_.list_tools()) {
+            if (!agent_mcp_policy_allows_tool(policy, tool.name)) continue;
+            const auto schema = agent_mcp_json::parse(tool.input_schema_json, nullptr, false);
+            tools.push_back({
+                {"name", tool.name},
+                {"description", tool.description},
+                {"inputSchema", schema.is_discarded() ? agent_mcp_json::object() : schema},
+            });
+        }
+        response = agent_mcp_make_json_rpc_result(id, {{"tools", std::move(tools)}});
         return true;
     }
     if (method == "resources/list") {
@@ -130,7 +161,14 @@ bool agent_mcp_http_server::handle_message(
         const std::string name = params.value("name", "");
         const auto arguments = params.value("arguments", agent_mcp_json::object());
         agent_mcp_server_tool_result result;
-        if (!registry_.call_tool(name, arguments, result, error)) {
+        if (!agent_mcp_policy_allows_tool(policy, name)) {
+            error = "MCP tool is not allowed for caller policy: " + name;
+            result.ok = false;
+            result.failure_code = "tool.forbidden";
+            result.failure_class = "policy";
+            result.safe_summary = error;
+            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        } else if (!registry_.call_tool(name, arguments, result, error)) {
             result.ok = false;
             result.failure_code = error.rfind("unknown MCP server tool:", 0) == 0
                 ? "tool.not_found" : "tool.invalid_arguments";
@@ -149,7 +187,8 @@ bool agent_mcp_http_server::handle_message(
 void agent_mcp_http_server::install_routes() {
     server_.set_payload_max_length(options_.max_body_bytes);
     server_.Post(options_.path, [this](const httplib::Request & request, httplib::Response & response) {
-        if (!authorize(request, response)) return;
+        agent_mcp_caller_policy policy;
+        if (!authorize(request, response, policy)) return;
         const auto message = agent_mcp_json::parse(request.body, nullptr, false);
         if (message.is_discarded() || !message.is_object()) {
             response.status = 400;
@@ -157,10 +196,10 @@ void agent_mcp_http_server::install_routes() {
             return;
         }
         const bool is_initialize = message.value("method", "") == "initialize";
-        if (!is_initialize && !validate_session(request, response)) return;
+        if (!is_initialize && !validate_session(request, response, policy)) return;
         agent_mcp_json result;
         std::string error;
-        if (!handle_message(message, result, error)) {
+        if (!handle_message(message, policy, result, error)) {
             response.status = 400;
             response.set_content(agent_mcp_json{{"error", error}}.dump(), "application/json");
             return;
@@ -176,25 +215,37 @@ void agent_mcp_http_server::install_routes() {
             return;
         }
         if (message.value("method", "") == "initialize") {
-            response.set_header("Mcp-Session-Id", make_session_id());
+            const std::string session_id = make_session_id();
+            {
+                std::lock_guard<std::mutex> lock(session_mutex_);
+                sessions_[session_id] = policy;
+            }
+            response.set_header("Mcp-Session-Id", session_id);
         }
         response.set_content(body, "application/json");
     });
 
     server_.Delete(options_.path, [this](const httplib::Request & request, httplib::Response & response) {
-        if (!authorize(request, response)) return;
+        agent_mcp_caller_policy policy;
+        if (!authorize(request, response, policy)) return;
         const std::string session_id = request.get_header_value("Mcp-Session-Id");
         std::lock_guard<std::mutex> lock(session_mutex_);
-        if (session_id.empty() || sessions_.erase(session_id) == 0) {
+        const auto it = sessions_.find(session_id);
+        if (session_id.empty() || it == sessions_.end()) {
             response.status = 404;
             return;
         }
+        if (!policy.caller_id.empty() && policy.caller_id != it->second.caller_id) {
+            response.status = 403;
+            return;
+        }
+        sessions_.erase(it);
         response.status = 204;
     });
 }
 
 bool agent_mcp_http_server::bind(std::string & error) {
-    if (options_.bearer_token.empty()) {
+    if (options_.bearer_token.empty() && !options_.authenticator) {
         error = "inbound MCP HTTP server requires a bearer token";
         return false;
     }

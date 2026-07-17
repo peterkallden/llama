@@ -271,10 +271,11 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
-set(TARGET llama-agent-mcp-http-inbound-smoke-v2)
+set(TARGET llama-agent-mcp-http-inbound-smoke-v4)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-server-smoke.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../common/agent/schema-contract.cpp
@@ -360,6 +361,7 @@ add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -623,7 +625,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-mcp-stdio-client-smoke
     llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
-    llama-agent-mcp-http-inbound-smoke-v2
+    llama-agent-mcp-http-inbound-smoke-v4
     llama-agent-mcp-stdio-server
     llama-agent-cli-mcp-selection-smoke
     llama-agent-cli-run-mcp-smoke
@@ -654,7 +656,7 @@ set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
     llama-agent-mcp-stdio-client-smoke
     llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
-    llama-agent-mcp-http-inbound-smoke-v2
+    llama-agent-mcp-http-inbound-smoke-v4
 )
 
 set(AGENT_RUNTIME_SMOKE_CLI_TARGETS

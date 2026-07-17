@@ -42,6 +42,7 @@ struct server_http_options {
     std::string allowed_origin;
     std::string token_env;
     std::string bearer_token;
+    agent_mcp_caller_policy default_policy;
     size_t max_body_bytes = 1024 * 1024;
     size_t max_result_bytes = 1024 * 1024;
 };
@@ -766,6 +767,15 @@ int main(int argc, char ** argv) {
             };
 
     if (http_options.enabled) {
+        http_options.default_policy = {
+            "local-http",
+            "llama-agent",
+            options.memory_namespace,
+            options.memory_project,
+            options.tool_profile,
+            {},
+            options.tool_profile == "memory" || options.tool_profile == "research",
+        };
         agent_mcp_http_server http_server(
             std::move(registry),
             {
@@ -774,6 +784,8 @@ int main(int argc, char ** argv) {
                 http_options.path,
                 http_options.allowed_origin,
                 http_options.bearer_token,
+                nullptr,
+                {},
                 http_options.max_body_bytes,
                 http_options.max_result_bytes,
                 "llama-agent-mcp-http-server",

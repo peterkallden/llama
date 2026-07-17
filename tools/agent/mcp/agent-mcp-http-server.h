@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-mcp-server-tool-registry.h"
+#include "agent-mcp-auth.h"
 
 #include <cpp-httplib/httplib.h>
 
@@ -8,6 +9,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
+#include <memory>
 
 struct agent_mcp_http_server_options {
     std::string listen_address = "127.0.0.1";
@@ -15,6 +18,8 @@ struct agent_mcp_http_server_options {
     std::string path = "/mcp";
     std::string allowed_origin;
     std::string bearer_token;
+    std::shared_ptr<const agent_mcp_authenticator> authenticator;
+    agent_mcp_caller_policy default_policy;
     size_t max_body_bytes = 1024 * 1024;
     size_t max_result_bytes = 1024 * 1024;
     std::string server_name = "llama-agent-mcp";
@@ -36,9 +41,9 @@ public:
     int port() const { return port_; }
 
 private:
-    bool authorize(const httplib::Request & request, httplib::Response & response) const;
-    bool validate_session(const httplib::Request & request, httplib::Response & response) const;
-    bool handle_message(const agent_mcp_json & message, agent_mcp_json & response, std::string & error);
+    bool authorize(const httplib::Request & request, httplib::Response & response, agent_mcp_caller_policy & policy) const;
+    bool validate_session(const httplib::Request & request, httplib::Response & response, agent_mcp_caller_policy & policy) const;
+    bool handle_message(const agent_mcp_json & message, const agent_mcp_caller_policy & policy, agent_mcp_json & response, std::string & error);
     std::string make_session_id();
     void install_routes();
 
@@ -47,6 +52,6 @@ private:
     httplib::Server server_;
     int port_ = 0;
     mutable std::mutex session_mutex_;
-    std::unordered_set<std::string> sessions_;
+    std::unordered_map<std::string, agent_mcp_caller_policy> sessions_;
     uint64_t next_session_id_ = 1;
 };

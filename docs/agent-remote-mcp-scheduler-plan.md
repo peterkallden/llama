@@ -18,6 +18,8 @@ The current branch has:
 - an inbound Streamable HTTP MCP listener on the existing MCP server entrypoint,
   with local binding, bearer authentication, Origin checking, bounded request
   and response bodies, session IDs, and DELETE session cleanup;
+- a caller-policy contract for opaque bearer tokens, including caller identity,
+  audience, namespace, project, tool profile and tool allowlists;
 - a beta smoke pack covering the above.
 
 This branch adds the configuration contract for remote providers and an
@@ -133,10 +135,11 @@ HTTP -> Origin check -> authentication -> caller policy
      -> daemon dispatcher -> session lane -> operation manager
 ```
 
-The current beta authenticates an opaque configured token and tracks MCP
-session IDs, but it does not yet bind an authenticated caller to a namespace,
-project or tool profile. The authenticated caller, not the request body, must
-determine the default
+The current beta authenticates an opaque configured token, binds the session to
+the resulting caller policy, and tracks MCP session IDs. The single-token
+entrypoint uses a local caller policy derived from its host configuration;
+multi-token config and daemon-owned policy resolution remain follow-up work.
+The authenticated caller, not the request body, must determine the default
 namespace, project and allowed tool profile. Every request must have bounded
 body/result sizes and a deadline. Write-capable tools require the existing
 confirmation/policy path.
