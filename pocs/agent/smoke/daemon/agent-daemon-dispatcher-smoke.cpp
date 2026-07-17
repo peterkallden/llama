@@ -56,7 +56,8 @@ common_agent_daemon_command make_close_command() {
 common_agent_daemon_runtime make_waiting_runtime(
         common_agent_runtime_pending_operation_kind kind,
         const std::string & pending_detail,
-        const std::string & resolver_error) {
+        const std::string & resolver_error,
+        int ready_after_polls = 20) {
     auto memory_store = std::make_unique<common_memory_in_memory_store>();
     auto plan_store = std::make_unique<common_plan_in_memory_store>();
 
@@ -90,7 +91,7 @@ common_agent_daemon_runtime make_waiting_runtime(
         };
     auto poll_count = std::make_shared<int>(0);
     build_config.pending_operation_resolver =
-        [kind, pending_detail, poll_count](
+        [kind, pending_detail, poll_count, ready_after_polls](
                 const common_agent_runtime_session_host_turn_request & request,
                 std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
                 std::string & error) {
@@ -105,9 +106,11 @@ common_agent_daemon_runtime make_waiting_runtime(
                 pending_operation->waiting_disposition = common_agent_runtime_turn_disposition::wait_for_inference;
             }
             pending_operation->poll =
-                [poll_count](bool & ready, std::string & error) mutable {
+                [poll_count, ready_after_polls](bool & ready, std::string & error) mutable {
                     ++(*poll_count);
-                    ready = *poll_count > 1;
+                    // Keep the first turn pending long enough for the second
+                    // dispatcher thread to enter the bounded command queue.
+                    ready = *poll_count > ready_after_polls;
                     error.clear();
                     return true;
                 };
@@ -153,7 +156,8 @@ int main() {
         make_waiting_runtime(
             common_agent_runtime_pending_operation_kind::inference,
             "dispatcher smoke pending inference",
-            "dispatcher cancel resolver"),
+            "dispatcher cancel resolver",
+            1000),
         8);
 
     common_agent_daemon_command_result first_result;
@@ -206,6 +210,18 @@ int main() {
     std::string cancel_error;
     const bool cancel_ok = dispatcher.execute(cancel_command, cancel_result, cancel_error);
 
+    common_agent_daemon_command active_cancel_command;
+    active_cancel_command.request_id = "cancel-active-1";
+    active_cancel_command.type = common_agent_daemon_command_type::cancel_turn;
+    active_cancel_command.cancel = common_agent_daemon_cancel_payload{"turn-1", {}};
+
+    common_agent_daemon_command_result active_cancel_result;
+    std::string active_cancel_error;
+    const bool active_cancel_ok = dispatcher.execute(
+        active_cancel_command,
+        active_cancel_result,
+        active_cancel_error);
+
     if (first_thread.joinable()) first_thread.join();
     if (second_thread.joinable()) second_thread.join();
 
@@ -215,6 +231,12 @@ int main() {
     }
     if (cancel_result.event != "turn_cancelled" || cancel_result.target_request_id != "turn-2") {
         std::fprintf(stderr, "unexpected cancel result\n");
+        return 1;
+    }
+    if (!active_cancel_ok ||
+            active_cancel_result.event != "turn_cancel_requested" ||
+            active_cancel_result.target_request_id != "turn-1") {
+        std::fprintf(stderr, "active cancel request did not target turn-1: %s\n", active_cancel_error.c_str());
         return 1;
     }
     if (cancel_result.status.active_request_id != "turn-1" ||
@@ -235,7 +257,14 @@ int main() {
     if (first_ok ||
             !first_result.turn_result.cancelled ||
             first_result.turn_result.error != "turn cancelled by host") {
-        std::fprintf(stderr, "first turn did not preserve host cancellation\n");
+        std::fprintf(stderr, "first turn did not preserve host cancellation: queued_cancel_ok=%d active_cancel_ok=%d active_event=%s target=%s ok=%d cancelled=%d error='%s'\n",
+            cancel_ok,
+            active_cancel_ok,
+            active_cancel_result.event.c_str(),
+            active_cancel_result.target_request_id.c_str(),
+            first_ok,
+            first_result.turn_result.cancelled,
+            first_result.turn_result.error.c_str());
         return 1;
     }
     if (first_result.daemon_event_count < 2) {
