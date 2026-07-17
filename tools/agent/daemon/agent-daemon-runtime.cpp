@@ -432,6 +432,54 @@ bool initialize_agent_daemon_environment(
             std::move(session_manager_build_config.tooling_resolver),
             {},
         }));
+
+    common_memory_store * memory_store = runtime.memory_store.get();
+    common_plan_store * plan_store = runtime.plan_store.get();
+    agent_resource_store * resource_store = runtime.resource_store.get();
+    runtime.tool_executor = [options, memory_store, plan_store, resource_store](
+            const common_agent_daemon_tool_payload & payload,
+            agent_tool_result & result,
+            std::string & callback_error) mutable {
+        if (memory_store == nullptr || plan_store == nullptr || resource_store == nullptr) {
+            callback_error = "daemon tool executor stores are not initialized";
+            return false;
+        }
+        daemon_options call_options = options;
+        if (!payload.tool_profile.empty()) {
+            call_options.tool_profile = payload.tool_profile;
+        }
+        common_agent_runtime_session_host_turn_request request;
+        request.mode = common_agent_runtime_host_mode::chat;
+        request.session_id = payload.session.session_id;
+        request.namespace_id = payload.session.namespace_id;
+        request.project_id = payload.project_id;
+        request.turn_id = "mcp-tool";
+        request.memory_scope = common_memory_scope::session;
+        request.plan_scope = common_plan_scope::turn;
+
+        common_agent_runtime_tooling tooling;
+        if (!resolve_agent_daemon_tooling(
+                call_options,
+                nullptr,
+                request,
+                *memory_store,
+                *plan_store,
+                resource_store,
+                tooling,
+                callback_error)) {
+            return false;
+        }
+        if (tooling.tool_view == nullptr) {
+            callback_error = "daemon tool executor resolved no tool view";
+            return false;
+        }
+        agent_tool_call call{"daemon-mcp-tool", payload.tool_name, payload.arguments_json};
+        if (!tooling.tool_view->validate(call, callback_error)) {
+            return false;
+        }
+        result = tooling.tool_view->call(call, callback_error);
+        return result.ok;
+    };
     error.clear();
     return true;
 }
