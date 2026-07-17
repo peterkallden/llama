@@ -119,6 +119,33 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_host_config remote_config;
+    const json remote_config_json = {
+        {"schema_version", 1},
+        {"tools", { {"providers", json::array({ json{
+            {"type", "mcp"},
+            {"id", "remote-github"},
+            {"enabled", true},
+            {"transport", "streamable_http"},
+            {"url", "https://mcp.example.test/mcp"},
+            {"token_env", "REMOTE_GITHUB_MCP_TOKEN"},
+            {"allowed_tools", json::array({"search_issues"})},
+            {"connect_timeout_ms", 4000},
+            {"request_timeout_ms", 15000},
+            {"shutdown_timeout_ms", 2000},
+            {"max_result_bytes", 1048576},
+        }})}}},
+    };
+    if (!parse_agent_host_config_json(remote_config_json, remote_config, error) ||
+            remote_config.mcp_providers.size() != 1 ||
+            remote_config.mcp_providers[0].url != "https://mcp.example.test/mcp" ||
+            remote_config.mcp_providers[0].token_env != "REMOTE_GITHUB_MCP_TOKEN" ||
+            remote_config.mcp_providers[0].allowed_tools.size() != 1 ||
+            remote_config.mcp_providers[0].max_result_bytes != 1048576) {
+        std::fprintf(stderr, "remote MCP provider config contract failed: %s\n", error.c_str());
+        return 1;
+    }
+
     common_agent_daemon_runtime runtime;
     if (!initialize_agent_daemon_environment(options, runtime, error)) {
         std::fprintf(stderr, "daemon MCP environment init failed: %s\n", error.c_str());

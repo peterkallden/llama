@@ -55,6 +55,12 @@ bool read_mcp_provider(
     read_optional(value, "id", provider.id);
     read_optional(value, "enabled", provider.enabled);
     read_optional(value, "transport", provider.transport);
+    read_optional(value, "url", provider.url);
+    read_optional(value, "token_env", provider.token_env);
+    read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
+    read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
+    read_optional(value, "shutdown_timeout_ms", provider.shutdown_timeout_ms);
+    read_optional(value, "max_result_bytes", provider.max_result_bytes);
     read_optional(value, "prefix", provider.prefix);
     read_optional(value, "server_name", provider.server_name);
     if (provider.server_name.empty()) {
@@ -63,6 +69,20 @@ bool read_mcp_provider(
 
     if (value.contains("command") && !read_command_array(value["command"], provider.command, error)) {
         return false;
+    }
+    if (value.contains("allowed_tools")) {
+        if (!value["allowed_tools"].is_array()) {
+            error = "MCP provider allowed_tools must be an array of strings";
+            return false;
+        }
+        provider.allowed_tools.clear();
+        for (const auto & tool : value["allowed_tools"]) {
+            if (!tool.is_string()) {
+                error = "MCP provider allowed_tools entries must be strings";
+                return false;
+            }
+            provider.allowed_tools.push_back(tool.get<std::string>());
+        }
     }
 
     if (provider.type.empty()) {
@@ -216,6 +236,13 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"id", provider.id},
             {"enabled", provider.enabled},
             {"transport", provider.transport},
+            {"url", provider.url},
+            {"token_env", provider.token_env},
+            {"allowed_tools", provider.allowed_tools},
+            {"connect_timeout_ms", provider.connect_timeout_ms},
+            {"request_timeout_ms", provider.request_timeout_ms},
+            {"shutdown_timeout_ms", provider.shutdown_timeout_ms},
+            {"max_result_bytes", provider.max_result_bytes},
             {"prefix", provider.prefix},
             {"server_name", provider.server_name},
             {"command", provider.command},
@@ -300,6 +327,19 @@ bool validate_agent_host_config(
         }
         if (provider.transport == "stdio" && provider.command.empty()) {
             error = "enabled stdio MCP provider is missing a command";
+            return false;
+        }
+        if (provider.transport == "http" || provider.transport == "https" || provider.transport == "streamable_http") {
+            if (provider.url.empty()) {
+                error = "enabled HTTP MCP provider is missing a url";
+                return false;
+            }
+            if (provider.command.size() > 0) {
+                error = "HTTP MCP provider must not define a command";
+                return false;
+            }
+        } else if (provider.transport != "stdio") {
+            error = "unsupported MCP provider transport: " + provider.transport;
             return false;
         }
     }

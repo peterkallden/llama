@@ -219,6 +219,24 @@ The same direction has now been reinforced around the biggest JSON-heavy runtime
 
 That does not mean every JSON surface is now formalized. It means the highest-value runtime seams now have a named contract boundary, so later daemon/host/MCP work is less likely to hard-code behavior into scattered `.dump()` or `parse()` sites.
 
+## Next phase: remote MCP and global inference scheduling
+
+The completed resident-runtime slice is now followed by a separately bounded
+remote-MCP/scheduler phase. The branch has already pushed the operation manager,
+MCP schema validation, stdio hard-timeout handling, dispatcher cancellation fix,
+and beta smoke pack to `poc/agent-resident-inference`.
+
+The next branch adds the remote-provider configuration contract and documents
+the requirements for Streamable HTTP, authentication, inbound MCP, global
+session-lane scheduling, and inference microbatching. The detailed design and
+acceptance criteria live in [agent-remote-mcp-scheduler-plan.md](agent-remote-mcp-scheduler-plan.md).
+
+The key boundary is intentional: authenticated HTTP requests enter the existing
+daemon dispatcher and session lanes; a future global scheduler controls only
+inference capacity; batching remains an optimization behind the inference
+backend. No transport or scheduler is allowed to become the owner of
+conversation state, tool policy, resource authority, or operation lifecycle.
+
 The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation now lives under `tools/agent/resource`, and it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
 That contract is now also a little less ad hoc for tools. Native tool bindings no longer thread a raw `resource_store` plus separate namespace/session/project/turn fields through the host path. Instead they carry one scoped `agent_resource_runtime`, and helper functions derive read authority or stamp put-requests from that host-owned runtime scope.
