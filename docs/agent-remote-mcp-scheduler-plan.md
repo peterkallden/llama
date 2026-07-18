@@ -39,10 +39,14 @@ session-id retention, tool listing/call, resource listing/read, and bounded
 JSON responses. HTTPS still requires an OpenSSL-enabled cpp-httplib build.
 The current client uses configured connection/read timeouts; propagation of the
 caller operation deadline and active cancellation through the HTTP library is
-still a required follow-up. The inbound listener is not yet the full service
-integration: it currently exports the same host-resolved tool/resource surface
-as the stdio server and does not yet derive namespace, project, tool profile or
-confirmation scope from an authenticated caller.
+still a required follow-up. The inbound listener is now wired into the daemon
+host and dispatcher. It derives caller identity, namespace, project, tool
+profile, allowlists and write authority from the authenticated token profile
+or JWT policy template, then projects that policy onto the host-resolved tool
+catalog. Remaining remote-service work is limited to later hardening such as
+full operation-deadline propagation, active cancellation through the HTTP
+library, production TLS/service-host integration, and broader Streamable HTTP
+streaming support.
 
 ## Configuration examples
 
