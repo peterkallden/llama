@@ -50,6 +50,13 @@ streaming support.
 
 ## Configuration examples
 
+The inbound endpoint also has an explicit opt-in agent-to-agent MCP surface
+with `delegate_task`, `summarize`, and `review_plan`. These are host-adapter
+tools, not additions to the native tool catalog: calls reuse the daemon
+dispatcher/session manager and are constrained by the authenticated caller's
+MCP allowlist. Chained delegation-depth propagation and a richer dedicated
+delegation profile remain follow-up hardening.
+
 The complete examples are kept as JSON files so they can be copied and adapted:
 
 - [stdio host configuration](examples/agent-host-config-stdio.json)

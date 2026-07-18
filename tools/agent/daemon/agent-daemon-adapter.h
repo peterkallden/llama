@@ -61,6 +61,8 @@ struct daemon_options {
     uint32_t mcp_request_timeout_ms = 0;
     uint32_t mcp_shutdown_timeout_ms = 0;
     bool http_enabled = false;
+    bool http_agent_tools_enabled = false;
+    size_t http_max_delegation_depth = 1;
     std::string http_listen_address = "127.0.0.1";
     int http_port = 0;
     std::string http_path = "/mcp";

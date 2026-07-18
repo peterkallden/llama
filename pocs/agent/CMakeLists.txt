@@ -282,6 +282,7 @@ add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
     ../../tools/agent/mcp/agent-mcp-auth.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
@@ -305,6 +306,23 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
+set(TARGET llama-agent-mcp-agent-tools-smoke)
+add_executable(${TARGET}
+    smoke/mcp/agent-mcp-agent-tools-smoke.cpp
+    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
+    ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
+    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
+    ../../common/agent/schema-contract.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-common cpp-httplib ${CMAKE_THREAD_LIBS_INIT})
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-cli-mcp-selection-smoke)
 add_executable(${TARGET}
@@ -378,6 +396,7 @@ add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
     ../../tools/agent/mcp/agent-mcp-auth.cpp
 )
 target_include_directories(${TARGET} PRIVATE
@@ -620,6 +639,7 @@ add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-unix.cpp
     ${AGENT_RUNTIME_SOURCES}
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
     ../../tools/agent/mcp/agent-mcp-auth.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp

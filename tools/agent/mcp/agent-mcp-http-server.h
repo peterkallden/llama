@@ -33,6 +33,14 @@ struct agent_mcp_http_server_options {
         const agent_mcp_json & arguments,
         agent_mcp_server_tool_result & result,
         std::string & error)> execute_tool;
+    bool agent_tools_enabled = false;
+    size_t max_delegation_depth = 1;
+    std::function<bool(
+        const agent_mcp_caller_policy & policy,
+        const std::string & operation,
+        const agent_mcp_json & arguments,
+        agent_mcp_server_tool_result & result,
+        std::string & error)> execute_agent_tool;
 };
 
 class agent_mcp_http_server {

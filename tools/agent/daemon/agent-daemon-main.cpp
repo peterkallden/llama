@@ -355,6 +355,8 @@ int main(int argc, char ** argv) {
         http_options.max_body_bytes = options.http_max_body_bytes;
         http_options.max_result_bytes = options.http_max_result_bytes;
         http_options.server_name = "llama-agent-daemon-mcp";
+        http_options.agent_tools_enabled = options.http_agent_tools_enabled;
+        http_options.max_delegation_depth = options.http_max_delegation_depth;
         http_options.default_policy = {
             "daemon-http",
             "llama-agent",
@@ -397,6 +399,61 @@ int main(int argc, char ** argv) {
             result.safe_summary = daemon_result.tool_result.content_summary;
             result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
             callback_error = daemon_result.error;
+            return result.ok;
+        };
+        http_options.execute_agent_tool = [&dispatcher, &options](
+                const agent_mcp_caller_policy & policy,
+                const std::string & operation,
+                const agent_mcp_json & arguments,
+                agent_mcp_server_tool_result & result,
+                std::string & callback_error) {
+            const std::string input = arguments.value("task", arguments.value("text", std::string()));
+            if (input.empty()) {
+                callback_error = "agent delegation requires a non-empty task or text";
+                return false;
+            }
+            common_agent_daemon_command command;
+            command.request_id = "mcp-agent-delegation";
+            command.type = common_agent_daemon_command_type::run_turn;
+            command.turn = common_agent_daemon_turn_payload{};
+            command.turn->request.request_id = command.request_id;
+            command.turn->request.turn.mode = common_agent_runtime_host_mode::chat;
+            command.turn->request.turn.prompt = operation == "summarize"
+                ? "Summarize the following text concisely:\n\n" + input
+                : operation == "review_plan"
+                    ? "Review the following plan for risks, omissions, and next steps:\n\n" + input
+                    : input;
+            command.turn->request.turn.session_id = policy.caller_id + "-delegated";
+            command.turn->request.turn.namespace_id = policy.namespace_id;
+            command.turn->request.turn.project_id = policy.project_id;
+            command.turn->request.turn.turn_id = "delegated-" + operation;
+            command.turn->request.turn.n_predict = static_cast<int>(options.n_predict);
+            command.turn->request.turn.execution_control = make_common_agent_runtime_execution_control({
+                options.turn_timeout_ms,
+                options.inference_step_timeout_ms,
+                options.tool_timeout_ms,
+                options.mcp_connect_timeout_ms,
+                options.mcp_request_timeout_ms,
+                options.mcp_shutdown_timeout_ms,
+            });
+            common_agent_daemon_command_result command_result;
+            if (!dispatcher.execute(command, command_result, callback_error)) {
+                return false;
+            }
+            result.ok = command_result.turn_result.ok;
+            result.structured_content = {
+                {"operation", operation},
+                {"response", command_result.turn_result.response},
+                {"plan_id", command_result.turn_result.plan_id},
+            };
+            result.content = {{{"type", "text"}, {"text", command_result.turn_result.response}}};
+            result.safe_summary = command_result.turn_result.response;
+            if (!result.ok) {
+                result.failure_code = "agent.delegation_failed";
+                result.failure_class = command_result.turn_result.failure_class == common_agent_failure_class::timeout
+                    ? "timeout" : "execution";
+                callback_error = command_result.turn_result.error;
+            }
             return result.ok;
         };
         http_server = std::make_unique<agent_mcp_http_server>(std::move(http_registry), std::move(http_options));

@@ -66,7 +66,7 @@ Useful overrides are:
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
-| HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin` |
+| HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin`, `--http-agent-tools`, `--http-max-delegation-depth` |
 | JSONL TCP host | `--tcp-listen`, `--tcp-port`, `--tcp-max-line-bytes` |
 | JSONL Unix host | `--unix-socket`, `--unix-socket-mode` |
 | workers/limits | `--worker-count`/`--workers`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
@@ -228,6 +228,26 @@ The current listener selects one authorization mode at a time. A future
 composite authenticator may combine a local admin secret with enterprise JWT;
 that hybrid configuration is intentionally not presented as a working JSON
 example yet.
+
+### Agent-to-agent MCP (explicit opt-in)
+
+The daemon can expose a small agent-to-agent MCP surface with
+`--http-agent-tools`. It is separate from the native tool profiles and is
+never enabled by default:
+
+```powershell
+llama-agent-daemon.exe --model MODEL.gguf --tool-profile minimal `
+  --http-listen 127.0.0.1 --http-port 8080 `
+  --http-token-env LLAMA_AGENT_MCP_TOKEN --http-agent-tools `
+  --http-max-delegation-depth 1
+```
+
+The first bounded surface contains `delegate_task`, `summarize` and
+`review_plan`. Calls reuse the existing daemon dispatcher and session manager,
+inherit the authenticated caller namespace/project, and use the existing
+timeout and result contracts. `allowed_tools` still applies to these names.
+Propagation of depth across chained outbound MCP clients, richer delegation
+profiles and dedicated audit events remain follow-up work.
 
 ## Daemon lifecycle
 

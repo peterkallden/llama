@@ -1,4 +1,5 @@
 #include "agent-mcp-http-server.h"
+#include "agent-mcp-agent-tools.h"
 
 #include <algorithm>
 
@@ -14,6 +15,14 @@ agent_mcp_http_server::agent_mcp_http_server(
         agent_mcp_server_tool_registry registry,
         agent_mcp_http_server_options options)
     : registry_(std::move(registry)), options_(std::move(options)) {
+    if (options_.agent_tools_enabled) {
+        std::string error;
+        agent_mcp_register_agent_tools(registry_, {
+            options_.max_body_bytes,
+            options_.max_result_bytes,
+            options_.max_delegation_depth,
+        }, error);
+    }
     install_routes();
 }
 
@@ -231,6 +240,18 @@ bool agent_mcp_http_server::handle_message(
             result.failure_class = "validation";
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        } else if (agent_mcp_is_agent_tool(name) && options_.execute_agent_tool) {
+            const auto depth = params.value("delegation_depth", 0U);
+            if (depth >= options_.max_delegation_depth) {
+                error = "agent delegation depth limit exceeded";
+                result.ok = false;
+                result.failure_code = "agent.delegation_depth_exceeded";
+                result.failure_class = "policy";
+                result.safe_summary = error;
+                result.content = agent_mcp_json::array({{{"type", "text"}, {"text", error}}});
+            } else {
+                options_.execute_agent_tool(policy, name, params, result, error);
+            }
         } else if (options_.execute_tool) {
             options_.execute_tool(policy, name, arguments, result, error);
         } else if (!registry.call_tool(name, arguments, result, error)) {

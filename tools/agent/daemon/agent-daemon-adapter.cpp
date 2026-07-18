@@ -187,6 +187,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_allowed_origin = value;
         } else if (std::strcmp(argv[i], "--http-token-env") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.http_enabled = true; options.http_token_env = value;
+        } else if (std::strcmp(argv[i], "--http-agent-tools") == 0) {
+            options.http_enabled = true; options.http_agent_tools_enabled = true;
+        } else if (std::strcmp(argv[i], "--http-max-delegation-depth") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.http_max_delegation_depth = static_cast<size_t>(std::stoul(value));
         } else if (std::strcmp(argv[i], "--http-max-body-bytes") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.http_max_body_bytes = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--http-max-result-bytes") == 0) {
@@ -345,7 +349,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n"
-        "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN]\n"
+        "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN] [--http-agent-tools]\n"
         "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n"
         "         [--unix-socket PATH] [--unix-socket-mode OCTAL]\n",
         argv0);
