@@ -199,6 +199,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.tcp_max_line_bytes = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--tcp-idle-timeout-seconds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.tcp_idle_timeout_seconds = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--unix-socket") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.unix_socket_enabled = true; options.unix_socket_path = value;
+        } else if (std::strcmp(argv[i], "--unix-socket-mode") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.unix_socket_mode = std::stoi(value, nullptr, 8);
         } else if (std::strcmp(argv[i], "--max-turn-seconds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_turn_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -247,6 +251,21 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             std::fprintf(stderr, "TCP mode requires --http-token-env, configured token profiles, or JWT authorization\n");
             return false;
         }
+    }
+    if (options.unix_socket_enabled) {
+        if (options.unix_socket_path.empty() || options.unix_socket_mode < 0 || options.unix_socket_mode > 0777) {
+            std::fprintf(stderr, "Unix socket requires a path and mode between 0000 and 0777\n");
+            return false;
+        }
+        if (options.http_authorization_mode != "jwt" &&
+                options.http_token_profiles.empty() && options.http_token_env.empty()) {
+            std::fprintf(stderr, "Unix socket mode requires configured inbound authentication\n");
+            return false;
+        }
+    }
+    if (options.tcp_enabled && options.unix_socket_enabled) {
+        std::fprintf(stderr, "TCP and Unix socket JSONL transports cannot both be enabled\n");
+        return false;
     }
 
     if (options.default_mode != "chat" && options.default_mode != "mini") {
@@ -327,7 +346,8 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n"
         "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN]\n"
-        "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n",
+        "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n"
+        "         [--unix-socket PATH] [--unix-socket-mode OCTAL]\n",
         argv0);
 }
 

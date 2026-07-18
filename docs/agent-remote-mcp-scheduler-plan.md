@@ -26,6 +26,8 @@ The current branch has:
   routes both transports through the same dispatcher/runtime tool executor,
 - a transport-neutral JSONL stream seam with an optional authenticated TCP
   adapter for container/private-network administration,
+- a POSIX Unix-socket JSONL adapter and systemd `Type=simple` service example
+  for local background hosting,
   including the resolved tool-profile catalog and MCP boundary validation;
 - a beta smoke pack covering the above.
 

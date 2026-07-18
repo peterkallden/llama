@@ -85,6 +85,9 @@ struct daemon_options {
     int tcp_port = 0;
     size_t tcp_max_line_bytes = 1024 * 1024;
     size_t tcp_idle_timeout_seconds = 300;
+    bool unix_socket_enabled = false;
+    std::string unix_socket_path;
+    int unix_socket_mode = 0660;
 };
 
 class common_agent_daemon_dispatcher;

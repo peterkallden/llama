@@ -298,6 +298,13 @@ bool parse_agent_host_config_json(
         read_optional(tcp, "max_line_bytes", config.jsonl_tcp_max_line_bytes);
         read_optional(tcp, "idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds);
     }
+    if (parsed.contains("jsonl") && parsed["jsonl"].is_object() &&
+            parsed["jsonl"].contains("unix_socket") && parsed["jsonl"]["unix_socket"].is_object()) {
+        const auto & socket = parsed["jsonl"]["unix_socket"];
+        read_optional(socket, "enabled", config.jsonl_unix_socket_enabled);
+        read_optional(socket, "path", config.jsonl_unix_socket_path);
+        read_optional(socket, "mode", config.jsonl_unix_socket_mode);
+    }
 
     if (parsed.contains("limits") && parsed["limits"].is_object()) {
         const auto & limits = parsed["limits"];
@@ -455,6 +462,11 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"max_line_bytes", config.jsonl_tcp_max_line_bytes},
                 {"idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds},
             }},
+            {"unix_socket", {
+                {"enabled", config.jsonl_unix_socket_enabled},
+                {"path", config.jsonl_unix_socket_path},
+                {"mode", config.jsonl_unix_socket_mode},
+            }},
         }},
         {"limits", {
             {"queue_capacity", config.queue_capacity},
@@ -474,6 +486,10 @@ nlohmann::ordered_json agent_host_config_to_json(
 bool validate_agent_host_config(
         const agent_host_config & config,
         std::string & error) {
+    if (config.jsonl_tcp_enabled && config.jsonl_unix_socket_enabled) {
+        error = "jsonl.tcp and jsonl.unix_socket cannot both be enabled for one JSONL host";
+        return false;
+    }
     if (config.schema_version != 1) {
         error = "unsupported host config schema_version: " + std::to_string(config.schema_version);
         return false;
@@ -524,6 +540,20 @@ bool validate_agent_host_config(
         }
         if (config.inbound_mcp_tokens.empty() && config.inbound_mcp_authorization_mode != "jwt") {
             error = "jsonl.tcp reuses mcp.inbound authentication and requires opaque token profiles or jwt mode";
+            return false;
+        }
+    }
+    if (config.jsonl_unix_socket_enabled) {
+        if (config.jsonl_unix_socket_path.empty()) {
+            error = "jsonl.unix_socket requires a path";
+            return false;
+        }
+        if (config.jsonl_unix_socket_mode < 0 || config.jsonl_unix_socket_mode > 0777) {
+            error = "jsonl.unix_socket.mode must be an octal permission value between 0000 and 0777";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty() && config.inbound_mcp_authorization_mode != "jwt") {
+            error = "jsonl.unix_socket reuses mcp.inbound authentication and requires opaque token profiles or jwt mode";
             return false;
         }
     }
@@ -650,6 +680,9 @@ void apply_agent_host_config_to_daemon_options(
     options.tcp_port = config.jsonl_tcp_port;
     options.tcp_max_line_bytes = config.jsonl_tcp_max_line_bytes;
     options.tcp_idle_timeout_seconds = config.jsonl_tcp_idle_timeout_seconds;
+    options.unix_socket_enabled = config.jsonl_unix_socket_enabled;
+    options.unix_socket_path = config.jsonl_unix_socket_path;
+    options.unix_socket_mode = config.jsonl_unix_socket_mode;
 }
 
 void apply_agent_host_config_to_args(

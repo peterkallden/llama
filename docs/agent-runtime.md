@@ -426,6 +426,13 @@ the connection policy, and shares the configured worker pool. TCP framing
 limits and listener binding are restart-required; TLS is intentionally left to
 a sidecar or service mesh for this first container-oriented slice.
 
+The same host can now use a POSIX Unix domain socket for local background
+operation. This remains a foreground process from the operating-system point
+of view: systemd or another supervisor owns restart and logging, while the
+daemon owns its dispatcher, workers and graceful shutdown. Socket-file mode
+provides a local owner/group boundary and the existing caller policy remains
+the application-level authorization layer.
+
 That adapter loop is now a little thinner too. The outer loop still owns stream framing and lifetime, but one small helper now owns the "parse one JSONL request, run one daemon command, serialize one response" path. It is still synchronous and intentionally modest, but later foreground/socket/pipe adapters now have a cleaner seam above raw stdio framing.
 
 There is now also a first explicit foreground request/response contract above that helper. The adapter no longer treats "one foreground admin request" as only a transient local combination of parsed JSON plus immediate writeback. It now has a named host-owned foreground request/result seam that can later be reused by a socket/pipe/HTTP adapter without first inheriting the stdio loop structure itself.

@@ -11,6 +11,15 @@ adapter for the existing dispatcher, not a second daemon implementation. The
 stdin/stdout mode remains the simplest local administration mode. A copyable
 TCP configuration is [agent-host-config-jsonl-tcp.json](examples/agent-host-config-jsonl-tcp.json).
 
+For a background Linux service, use the Unix domain socket configuration
+[agent-host-config-jsonl-unix.json](examples/agent-host-config-jsonl-unix.json)
+and the systemd example [llama-agent-daemon.service](examples/llama-agent-daemon.service).
+The daemon remains a foreground process under systemd (`Type=simple`); systemd
+owns restart, logging and stop timeout while the daemon owns runtime shutdown.
+The socket file is created with the configured Unix mode, so its owner/group
+provides an additional local access boundary. Authentication policy still
+applies after the OS accepts the connection.
+
 ## Start from a host configuration file
 
 The recommended starting point is a config file rather than a long command
@@ -59,6 +68,7 @@ Useful overrides are:
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
 | HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin` |
 | JSONL TCP host | `--tcp-listen`, `--tcp-port`, `--tcp-max-line-bytes` |
+| JSONL Unix host | `--unix-socket`, `--unix-socket-mode` |
 | workers/limits | `--worker-count`/`--workers`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
 
 The config file is loaded first and explicit flags are the appropriate place
@@ -144,6 +154,9 @@ The current TCP adapter is intended for trusted container or private-network
 deployment. It does not provide TLS; use a TLS sidecar or service mesh for
 untrusted networks. TCP listener address, port and framing limits require a
 restart. Authentication and policy remain connection-scoped.
+
+Unix sockets are POSIX-only in this slice. Windows continues to use stdio or
+TCP; named pipes can be added later using the same JSONL stream boundary.
 
 The focused beta smoke can be run with:
 
@@ -245,3 +258,5 @@ Prometheus text without making metrics an MCP tool.
   HTTP listeners or already-running MCP provider clients;
 - HTTPS support depends on an OpenSSL-enabled build for the current HTTP
   client/listener path; TLS termination is not part of the foreground daemon.
+- Unix socket mode is a foreground service transport, not an internal
+  daemonization mechanism; systemd or another supervisor owns process lifetime.

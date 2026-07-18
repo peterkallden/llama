@@ -68,6 +68,9 @@ struct agent_host_config {
     int jsonl_tcp_port = 0;
     size_t jsonl_tcp_max_line_bytes = 1024 * 1024;
     size_t jsonl_tcp_idle_timeout_seconds = 300;
+    bool jsonl_unix_socket_enabled = false;
+    std::string jsonl_unix_socket_path;
+    int jsonl_unix_socket_mode = 0660;
 
     size_t queue_capacity = 8;
     size_t worker_count = 1;

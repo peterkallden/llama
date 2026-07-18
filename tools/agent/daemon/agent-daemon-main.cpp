@@ -1,6 +1,7 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-dispatcher.h"
 #include "agent-daemon-tcp.h"
+#include "agent-daemon-unix.h"
 #include "../mcp/agent-mcp-http-server.h"
 #include "../host/agent-host-config.h"
 
@@ -441,9 +442,11 @@ int main(int argc, char ** argv) {
         });
     }
 
-    const bool jsonl_ok = options.tcp_enabled
-        ? run_agent_daemon_tcp_adapter(options, config_store, dispatcher, inbound_authenticator, error)
-        : run_agent_daemon_jsonl_adapter(stdin, stdout, options, config_store, dispatcher, error);
+    const bool jsonl_ok = options.unix_socket_enabled
+        ? run_agent_daemon_unix_socket_adapter(options, config_store, dispatcher, inbound_authenticator, error)
+        : options.tcp_enabled
+            ? run_agent_daemon_tcp_adapter(options, config_store, dispatcher, inbound_authenticator, error)
+            : run_agent_daemon_jsonl_adapter(stdin, stdout, options, config_store, dispatcher, error);
     if (http_server) {
         http_server->stop();
         if (http_thread.joinable()) http_thread.join();
