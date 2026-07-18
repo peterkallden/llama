@@ -22,6 +22,10 @@ For a local stdio MCP provider, use
 [agent-host-config-stdio.json](examples/agent-host-config-stdio.json). For a
 remote provider, use
 [agent-host-config-remote-http.json](examples/agent-host-config-remote-http.json).
+For inbound MCP authentication, the home, lab and enterprise examples are
+[agent-host-config-inbound-mcp-home.json](examples/agent-host-config-inbound-mcp-home.json),
+[agent-host-config-inbound-mcp-auth.json](examples/agent-host-config-inbound-mcp-auth.json)
+and [agent-host-config-inbound-mcp-jwt.json](examples/agent-host-config-inbound-mcp-jwt.json).
 The model path and MCP command/URL in those files are examples and must be
 changed for the local machine.
 
@@ -120,6 +124,18 @@ $env:LLAMA_AGENT_ADMIN_TOKEN = "replace-with-admin-token"
 llama-agent-daemon.exe --config docs/examples/agent-host-config-inbound-mcp-auth.json
 ```
 
+For a single home/lab caller:
+
+```powershell
+$env:LLAMA_AGENT_HOME_TOKEN = "replace-with-a-long-random-secret"
+llama-agent-daemon.exe --config docs/examples/agent-host-config-inbound-mcp-home.json
+```
+
+For enterprise JWT, replace the issuer, audience and JWKS URL in
+[agent-host-config-inbound-mcp-jwt.json](examples/agent-host-config-inbound-mcp-jwt.json).
+The authorization server issues the access token; the daemon only verifies it
+and maps it to the configured native policy. Use an OpenSSL-enabled build.
+
 ```powershell
 $env:LLAMA_AGENT_MCP_TOKEN = "replace-with-a-local-secret"
 
@@ -148,6 +164,10 @@ snapshot. Configuration-driven token profiles are supported through
 `required_scopes`, `allowed_algorithms` and a native `tool_profile`. It
 requires an OpenSSL-enabled build for signature verification; otherwise the
 daemon rejects JWT authentication rather than accepting an unverified token.
+The current listener selects one authorization mode at a time. A future
+composite authenticator may combine a local admin secret with enterprise JWT;
+that hybrid configuration is intentionally not presented as a working JSON
+example yet.
 
 ## Daemon lifecycle
 

@@ -46,7 +46,9 @@ The complete examples are kept as JSON files so they can be copied and adapted:
 
 - [stdio host configuration](examples/agent-host-config-stdio.json)
 - [remote Streamable HTTP host configuration](examples/agent-host-config-remote-http.json)
+- [inbound MCP home/single-secret configuration](examples/agent-host-config-inbound-mcp-home.json)
 - [inbound MCP multi-token configuration](examples/agent-host-config-inbound-mcp-auth.json)
+- [inbound MCP enterprise/JWT configuration](examples/agent-host-config-inbound-mcp-jwt.json)
 
 For the remote example, provide the token before starting the agent. The token
 is intentionally referenced by environment name and is not stored in the JSON
@@ -84,6 +86,18 @@ command-line arguments, URLs, logs, event payloads or checked-in config.
 
 For the complete daemon startup, flag and JSONL command walkthrough, see
 [agent-daemon-usage.md](agent-daemon-usage.md).
+
+The intended deployment profiles are:
+
+| Profile | Authentication | Typical policy |
+| --- | --- | --- |
+| Home | One opaque secret via token_env | Localhost, minimal, read-only |
+| Lab | Multiple opaque secrets via mcp.inbound.tokens | Separate callers and tool profiles |
+| Enterprise | JWT access tokens plus JWKS | External issuer, audience and scopes |
+| Hybrid | Future composite authenticator | Local admin secret plus enterprise JWT |
+
+Hybrid is a design target rather than a current configuration. The current
+listener selects either opaque or jwt for one running endpoint.
 
 ## Standard transport and authorization
 

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "tools": {
+    "profile": "minimal",
+    "repository_root": "."
+  },
+  "mcp": {
+    "inbound": {
+      "enabled": true,
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "path": "/mcp",
+      "tokens": [
+        {
+          "id": "home-local",
+          "token_env": "LLAMA_AGENT_HOME_TOKEN",
+          "audience": "llama-agent",
+          "namespace": "home",
+          "project": "default",
+          "tool_profile": "minimal",
+          "allow_writes": false
+        }
+      ]
+    }
+  }
+}
