@@ -20,8 +20,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
-    ../../tools/agent/daemon/agent-daemon-tcp.cpp
-    ../../tools/agent/daemon/agent-daemon-unix.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
@@ -618,6 +616,8 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
+    ../../tools/agent/daemon/agent-daemon-tcp.cpp
+    ../../tools/agent/daemon/agent-daemon-unix.cpp
     ${AGENT_RUNTIME_SOURCES}
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
     ../../tools/agent/mcp/agent-mcp-auth.cpp

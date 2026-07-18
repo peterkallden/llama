@@ -219,12 +219,10 @@ Only compatible inference steps should be microbatched. Tool calls, planning,
 resource writes and session transitions remain lane-local. Batching is an
 optimization inside the inference backend, not a new session protocol.
 
-## Backlog activity: beta smoke pack and lane-aware worker pool
+## Verification activity: beta smoke pack
 
-This activity is deliberately staged. The beta smoke pack comes first and
-establishes evidence for the existing operation, transport, policy and lane
-contracts. The worker-pool slice then extends the current dispatcher rather
-than adding a second scheduler beside it.
+The beta smoke pack establishes evidence for the existing operation, transport,
+policy and lane contracts before scheduler work begins.
 
 The smoke pack should cover:
 
@@ -238,7 +236,10 @@ The smoke pack should cover:
    queued/active cancellation, reload and graceful shutdown;
 5. operation-manager transitions, deadlines, events and cleanup/reap.
 
-The worker-pool implementation should use the following ownership model:
+## Backlog activity: lane-aware worker pool
+
+The worker-pool implementation should extend the current dispatcher and use
+the following ownership model:
 
 ```text
 request -> lane mailbox -> ready-lane queue -> bounded workers

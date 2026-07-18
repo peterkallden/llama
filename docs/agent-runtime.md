@@ -256,11 +256,10 @@ inference capacity; batching remains an optimization behind the inference
 backend. No transport or scheduler is allowed to become the owner of
 conversation state, tool policy, resource authority, or operation lifecycle.
 
-### Backlog activity: beta smoke pack and lane-aware worker pool
+### Verification activity: beta smoke pack
 
-This is the next bounded activity after the transport/auth hardening. It has
-two related outputs: first prove the current seams end to end, then evolve the
-existing dispatcher worker pool without introducing a second runtime path.
+This is the current verification activity after the transport/auth hardening.
+It proves the existing seams end to end before a scheduler expansion.
 
 Smoke scope:
 
@@ -274,7 +273,10 @@ Smoke scope:
   active cancellation, reload and graceful shutdown;
 - operation manager: deadline, poll, cancel, terminal state, events and reap.
 
-Worker-pool target shape:
+### Backlog activity: lane-aware worker pool
+
+The worker-pool design remains backlog work and must extend the existing
+dispatcher without introducing a second runtime path. Its target shape is:
 
 ```text
 request -> session lane mailbox -> ready-lane queue -> bounded worker pool
