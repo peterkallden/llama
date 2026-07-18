@@ -66,6 +66,15 @@ struct daemon_options {
     std::string http_token_env;
     std::string http_bearer_token;
     std::vector<agent_host_mcp_inbound_token_config> http_token_profiles;
+    std::string http_authorization_mode = "opaque";
+    std::string http_jwt_issuer;
+    std::string http_jwt_audience;
+    std::string http_jwt_jwks_uri;
+    std::vector<std::string> http_jwt_allowed_algorithms = {"RS256"};
+    std::vector<std::string> http_jwt_required_scopes;
+    std::string http_jwt_tool_profile;
+    std::vector<std::string> http_jwt_allowed_tools;
+    bool http_jwt_allow_writes = false;
     size_t http_max_body_bytes = 1024 * 1024;
     size_t http_max_result_bytes = 1024 * 1024;
 };

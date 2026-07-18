@@ -44,6 +44,27 @@ bool read_command_array(
     return true;
 }
 
+bool read_string_array(
+        const json & value,
+        std::vector<std::string> & target,
+        const char * field,
+        std::string & error) {
+    if (!value.is_array()) {
+        error = std::string(field) + " must be an array of strings";
+        return false;
+    }
+    target.clear();
+    for (const auto & entry : value) {
+        if (!entry.is_string()) {
+            error = std::string(field) + " entries must be strings";
+            return false;
+        }
+        target.push_back(entry.get<std::string>());
+    }
+    error.clear();
+    return true;
+}
+
 bool read_mcp_provider(
         const json & value,
         agent_host_mcp_provider_config & provider,
@@ -242,6 +263,27 @@ bool parse_agent_host_config_json(
                     config.inbound_mcp_tokens.push_back(std::move(token));
                 }
             }
+            if (inbound.contains("authorization") && inbound["authorization"].is_object()) {
+                const auto & authorization = inbound["authorization"];
+                read_optional(authorization, "mode", config.inbound_mcp_authorization_mode);
+                read_optional(authorization, "issuer", config.inbound_mcp_jwt_issuer);
+                read_optional(authorization, "audience", config.inbound_mcp_jwt_audience);
+                read_optional(authorization, "jwks_uri", config.inbound_mcp_jwt_jwks_uri);
+                read_optional(authorization, "tool_profile", config.inbound_mcp_jwt_tool_profile);
+                read_optional(authorization, "allow_writes", config.inbound_mcp_jwt_allow_writes);
+                if (authorization.contains("allowed_algorithms") &&
+                        !read_string_array(authorization["allowed_algorithms"], config.inbound_mcp_jwt_allowed_algorithms, "mcp.inbound.authorization.allowed_algorithms", error)) {
+                    return false;
+                }
+                if (authorization.contains("required_scopes") &&
+                        !read_string_array(authorization["required_scopes"], config.inbound_mcp_jwt_required_scopes, "mcp.inbound.authorization.required_scopes", error)) {
+                    return false;
+                }
+                if (authorization.contains("allowed_tools") &&
+                        !read_string_array(authorization["allowed_tools"], config.inbound_mcp_jwt_allowed_tools, "mcp.inbound.authorization.allowed_tools", error)) {
+                    return false;
+                }
+            }
         }
     }
 
@@ -378,6 +420,17 @@ nlohmann::ordered_json agent_host_config_to_json(
                     }
                     return tokens;
                 }()},
+                {"authorization", {
+                    {"mode", config.inbound_mcp_authorization_mode},
+                    {"issuer", config.inbound_mcp_jwt_issuer},
+                    {"audience", config.inbound_mcp_jwt_audience},
+                    {"jwks_uri", config.inbound_mcp_jwt_jwks_uri},
+                    {"allowed_algorithms", config.inbound_mcp_jwt_allowed_algorithms},
+                    {"required_scopes", config.inbound_mcp_jwt_required_scopes},
+                    {"tool_profile", config.inbound_mcp_jwt_tool_profile},
+                    {"allowed_tools", config.inbound_mcp_jwt_allowed_tools},
+                    {"allow_writes", config.inbound_mcp_jwt_allow_writes},
+                }},
             }},
         }},
         {"limits", {
@@ -416,7 +469,22 @@ bool validate_agent_host_config(
             return false;
         }
         if (config.inbound_mcp_tokens.empty()) {
-            error = "mcp.inbound.tokens must not be empty when inbound MCP is enabled";
+            if (config.inbound_mcp_authorization_mode != "jwt") {
+                error = "mcp.inbound.tokens must not be empty when opaque inbound MCP is enabled";
+                return false;
+            }
+        }
+        if (config.inbound_mcp_authorization_mode != "opaque" &&
+                config.inbound_mcp_authorization_mode != "jwt") {
+            error = "mcp.inbound.authorization.mode must be opaque or jwt";
+            return false;
+        }
+        if (config.inbound_mcp_authorization_mode == "jwt" &&
+                (config.inbound_mcp_jwt_issuer.empty() ||
+                 config.inbound_mcp_jwt_audience.empty() ||
+                 config.inbound_mcp_jwt_jwks_uri.empty() ||
+                 config.inbound_mcp_jwt_tool_profile.empty())) {
+            error = "JWT inbound MCP authorization requires issuer, audience, jwks_uri and tool_profile";
             return false;
         }
     }
@@ -528,6 +596,15 @@ void apply_agent_host_config_to_daemon_options(
     options.http_max_body_bytes = config.inbound_mcp_max_body_bytes;
     options.http_max_result_bytes = config.inbound_mcp_max_result_bytes;
     options.http_token_profiles = config.inbound_mcp_tokens;
+    options.http_authorization_mode = config.inbound_mcp_authorization_mode;
+    options.http_jwt_issuer = config.inbound_mcp_jwt_issuer;
+    options.http_jwt_audience = config.inbound_mcp_jwt_audience;
+    options.http_jwt_jwks_uri = config.inbound_mcp_jwt_jwks_uri;
+    options.http_jwt_allowed_algorithms = config.inbound_mcp_jwt_allowed_algorithms;
+    options.http_jwt_required_scopes = config.inbound_mcp_jwt_required_scopes;
+    options.http_jwt_tool_profile = config.inbound_mcp_jwt_tool_profile;
+    options.http_jwt_allowed_tools = config.inbound_mcp_jwt_allowed_tools;
+    options.http_jwt_allow_writes = config.inbound_mcp_jwt_allow_writes;
 }
 
 void apply_agent_host_config_to_args(

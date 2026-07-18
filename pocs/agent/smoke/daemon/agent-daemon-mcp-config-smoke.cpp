@@ -1,6 +1,7 @@
 #include "tools/agent/daemon/agent-daemon-adapter.h"
 #include "tools/agent/daemon/agent-daemon-service.h"
 #include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/mcp/agent-mcp-auth.h"
 
 #include <nlohmann/json.hpp>
 #include <cstdio>
@@ -195,6 +196,51 @@ int main(int argc, char ** argv) {
             inbound_options.http_token_profiles.size() != 2 ||
             inbound_options.http_token_profiles[0].token_env != "LLAMA_AGENT_READ_TOKEN") {
         std::fprintf(stderr, "inbound MCP token config was not projected to daemon options\n");
+        return 1;
+    }
+    agent_host_config jwt_config;
+    const json jwt_config_json = {
+        {"mcp", {{"inbound", {
+            {"enabled", true},
+            {"authorization", {
+                {"mode", "jwt"},
+                {"issuer", "https://issuer.example.test/"},
+                {"audience", "https://agent.example.test/mcp"},
+                {"jwks_uri", "https://issuer.example.test/.well-known/jwks.json"},
+                {"allowed_algorithms", json::array({"RS256"})},
+                {"required_scopes", json::array({"agent:mcp"})},
+                {"tool_profile", "minimal"},
+                {"allowed_tools", json::array({"calculator"})},
+                {"allow_writes", false},
+            }},
+        }}}},
+    };
+    if (!parse_agent_host_config_json(jwt_config_json, jwt_config, error) ||
+            jwt_config.inbound_mcp_authorization_mode != "jwt" ||
+            !jwt_config.inbound_mcp_tokens.empty() ||
+            jwt_config.inbound_mcp_jwt_required_scopes.size() != 1) {
+        std::fprintf(stderr, "JWT inbound MCP config contract failed: %s\n", error.c_str());
+        return 1;
+    }
+    daemon_options jwt_options;
+    apply_agent_host_config_to_daemon_options(jwt_config, jwt_options);
+    if (jwt_options.http_authorization_mode != "jwt" ||
+            jwt_options.http_jwt_jwks_uri.empty()) {
+        std::fprintf(stderr, "JWT inbound MCP config projection failed\n");
+        return 1;
+    }
+    agent_mcp_jwt_authenticator jwt_authenticator({
+        "https://issuer.example.test/",
+        "https://agent.example.test/mcp",
+        "https://issuer.example.test/.well-known/jwks.json",
+        {"RS256"},
+        {"agent:mcp"},
+        {"jwt-caller", "https://agent.example.test/mcp", "local", "project-a", "minimal", {"calculator"}, false},
+    });
+    agent_mcp_caller_policy unused_policy;
+    if (jwt_authenticator.authenticate({"Bearer malformed-token"}, unused_policy, error) ||
+            error != "JWT must contain three segments") {
+        std::fprintf(stderr, "JWT malformed-token rejection contract failed: %s\n", error.c_str());
         return 1;
     }
 

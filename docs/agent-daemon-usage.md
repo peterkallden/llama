@@ -142,7 +142,12 @@ surface further: `allowed_tools` applies to both listing and calls, and
 `allow_writes: false` removes confirmation/write tools and is propagated to the
 native runtime gate. A successful provider reload atomically replaces this
 catalog for new HTTP requests; existing requests keep their registry/policy
-snapshot. Configuration-driven token profiles remain a follow-up.
+snapshot. Configuration-driven token profiles are supported through
+`mcp.inbound.tokens`. JWT mode is available through
+`mcp.inbound.authorization` with `issuer`, `audience`, `jwks_uri`,
+`required_scopes`, `allowed_algorithms` and a native `tool_profile`. It
+requires an OpenSSL-enabled build for signature verification; otherwise the
+daemon rejects JWT authentication rather than accepting an unverified token.
 
 ## Daemon lifecycle
 

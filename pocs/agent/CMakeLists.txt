@@ -519,6 +519,7 @@ set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-mcp-config-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE

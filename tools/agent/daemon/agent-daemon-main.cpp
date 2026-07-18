@@ -16,9 +16,29 @@ namespace {
 
 bool build_inbound_mcp_authenticator(
         const daemon_options & options,
-        std::shared_ptr<const agent_mcp_authenticator> & authenticator,
-        std::string & error) {
+    std::shared_ptr<const agent_mcp_authenticator> & authenticator,
+    std::string & error) {
     authenticator.reset();
+    if (options.http_authorization_mode == "jwt") {
+        agent_mcp_jwt_authenticator_options jwt_options;
+        jwt_options.issuer = options.http_jwt_issuer;
+        jwt_options.audience = options.http_jwt_audience;
+        jwt_options.jwks_uri = options.http_jwt_jwks_uri;
+        jwt_options.allowed_algorithms = options.http_jwt_allowed_algorithms;
+        jwt_options.required_scopes = options.http_jwt_required_scopes;
+        jwt_options.policy_template = {
+            "jwt-caller",
+            options.http_jwt_audience,
+            "local",
+            "",
+            options.http_jwt_tool_profile,
+            options.http_jwt_allowed_tools,
+            options.http_jwt_allow_writes,
+        };
+        authenticator = std::make_shared<agent_mcp_jwt_authenticator>(std::move(jwt_options));
+        error.clear();
+        return true;
+    }
     if (options.http_token_profiles.empty()) {
         error.clear();
         return true;
@@ -64,6 +84,21 @@ bool inbound_token_profiles_equal(
         }
     }
     return true;
+}
+
+bool inbound_auth_configuration_equal(
+        const daemon_options & left,
+        const daemon_options & right) {
+    return left.http_authorization_mode == right.http_authorization_mode &&
+        inbound_token_profiles_equal(left.http_token_profiles, right.http_token_profiles) &&
+        left.http_jwt_issuer == right.http_jwt_issuer &&
+        left.http_jwt_audience == right.http_jwt_audience &&
+        left.http_jwt_jwks_uri == right.http_jwt_jwks_uri &&
+        left.http_jwt_allowed_algorithms == right.http_jwt_allowed_algorithms &&
+        left.http_jwt_required_scopes == right.http_jwt_required_scopes &&
+        left.http_jwt_tool_profile == right.http_jwt_tool_profile &&
+        left.http_jwt_allowed_tools == right.http_jwt_allowed_tools &&
+        left.http_jwt_allow_writes == right.http_jwt_allow_writes;
 }
 
 } // namespace
@@ -251,14 +286,13 @@ int main(int argc, char ** argv) {
                 result.applied_fields.emplace_back("tools.repository_root");
             }
         }
-        const bool auth_profiles_changed = !inbound_token_profiles_equal(
-            candidate.http_token_profiles, options.http_token_profiles);
-        if (auth_profiles_changed && *refresh_http_auth) {
+        const bool auth_configuration_changed = !inbound_auth_configuration_equal(candidate, options);
+        if (auth_configuration_changed && *refresh_http_auth) {
             if (!(*refresh_http_auth)(candidate, reload_error)) {
                 result.warning = "inbound MCP authentication policy was not applied";
                 return false;
             }
-            result.applied_fields.emplace_back("mcp.inbound.tokens");
+            result.applied_fields.emplace_back("mcp.inbound.authorization");
         }
         if (candidate.turn_timeout_ms != options.turn_timeout_ms ||
                 candidate.max_turn_seconds != options.max_turn_seconds) {

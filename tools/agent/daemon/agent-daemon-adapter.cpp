@@ -192,7 +192,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
     }
     if (options.http_enabled) {
         if (options.http_path.empty() ||
-                (options.http_token_profiles.empty() && options.http_token_env.empty())) {
+                (options.http_authorization_mode != "jwt" &&
+                 options.http_token_profiles.empty() && options.http_token_env.empty())) {
             std::fprintf(stderr, "HTTP mode requires --http-path and either --http-token-env or configured token profiles\n");
             return false;
         }

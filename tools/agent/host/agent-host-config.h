@@ -53,6 +53,15 @@ struct agent_host_config {
     size_t inbound_mcp_max_body_bytes = 1024 * 1024;
     size_t inbound_mcp_max_result_bytes = 1024 * 1024;
     std::vector<agent_host_mcp_inbound_token_config> inbound_mcp_tokens;
+    std::string inbound_mcp_authorization_mode = "opaque";
+    std::string inbound_mcp_jwt_issuer;
+    std::string inbound_mcp_jwt_audience;
+    std::string inbound_mcp_jwt_jwks_uri;
+    std::vector<std::string> inbound_mcp_jwt_allowed_algorithms = {"RS256"};
+    std::vector<std::string> inbound_mcp_jwt_required_scopes;
+    std::string inbound_mcp_jwt_tool_profile;
+    std::vector<std::string> inbound_mcp_jwt_allowed_tools;
+    bool inbound_mcp_jwt_allow_writes = false;
 
     size_t queue_capacity = 8;
     size_t worker_count = 1;

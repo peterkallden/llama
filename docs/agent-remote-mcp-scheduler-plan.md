@@ -152,6 +152,12 @@ execution bindings; MCP auth supplies caller identity and narrower authority.
 The token profiles are now loaded from `mcp.inbound.tokens`; each profile uses
 `token_env`, so raw bearer secrets remain outside the config file. The legacy
 single-token CLI path remains available for compatibility.
+The same inbound authorization block now accepts `mode: "jwt"` with
+`issuer`, `audience`, `jwks_uri`, allowed algorithms, required scopes and a
+native policy template. JWT access tokens are parsed and claim-checked, and
+RS256 signatures are verified when the build has OpenSSL support enabled.
+Without a crypto-enabled build, JWT requests are rejected explicitly; opaque
+token mode remains usable.
 The authenticated caller, not the request body, must determine the default
 namespace, project and allowed tool profile. Every request must have bounded
 body/result sizes and a deadline. Write-capable tools require the existing
