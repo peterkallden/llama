@@ -62,6 +62,11 @@ struct agent_host_config {
     std::string inbound_mcp_jwt_tool_profile;
     std::vector<std::string> inbound_mcp_jwt_allowed_tools;
     bool inbound_mcp_jwt_allow_writes = false;
+    bool jsonl_tcp_enabled = false;
+    std::string jsonl_tcp_listen_address = "127.0.0.1";
+    int jsonl_tcp_port = 0;
+    size_t jsonl_tcp_max_line_bytes = 1024 * 1024;
+    size_t jsonl_tcp_idle_timeout_seconds = 300;
 
     size_t queue_capacity = 8;
     size_t worker_count = 1;

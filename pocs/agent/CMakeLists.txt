@@ -20,6 +20,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
+    ../../tools/agent/daemon/agent-daemon-tcp.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
@@ -79,6 +80,9 @@ target_link_libraries(${TARGET} PRIVATE
     server-context
     ${CMAKE_THREAD_LIBS_INIT}
 )
+if (WIN32)
+    target_link_libraries(${TARGET} PRIVATE ws2_32)
+endif()
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 

@@ -418,6 +418,14 @@ The daemon now also routes requests through explicit daemon commands plus a smal
 
 The foreground JSONL transport loop is now also explicitly owned by the daemon adapter rather than living inline inside `agent-daemon.cpp`. That is still a small step, but it matters: `main` is now closer to pure process bootstrap plus environment wiring, while the JSONL request/response loop has a named adapter seam that later transports can mirror without reintroducing daemon lifecycle logic into the entrypoint.
 
+That seam now has a concrete stream boundary as well. The stdin/stdout adapter
+and the optional TCP adapter both use the same JSONL read/write loop and the
+same foreground request parsing plus dispatcher execution path. TCP accepts
+multiple authenticated connections, binds caller namespace/project fields to
+the connection policy, and shares the configured worker pool. TCP framing
+limits and listener binding are restart-required; TLS is intentionally left to
+a sidecar or service mesh for this first container-oriented slice.
+
 That adapter loop is now a little thinner too. The outer loop still owns stream framing and lifetime, but one small helper now owns the "parse one JSONL request, run one daemon command, serialize one response" path. It is still synchronous and intentionally modest, but later foreground/socket/pipe adapters now have a cleaner seam above raw stdio framing.
 
 There is now also a first explicit foreground request/response contract above that helper. The adapter no longer treats "one foreground admin request" as only a transient local combination of parsed JSON plus immediate writeback. It now has a named host-owned foreground request/result seam that can later be reused by a socket/pipe/HTTP adapter without first inheriting the stdio loop structure itself.

@@ -14,6 +14,8 @@
 
 #include <cstdio>
 #include <memory>
+#include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -77,6 +79,11 @@ struct daemon_options {
     bool http_jwt_allow_writes = false;
     size_t http_max_body_bytes = 1024 * 1024;
     size_t http_max_result_bytes = 1024 * 1024;
+    bool tcp_enabled = false;
+    std::string tcp_listen_address = "127.0.0.1";
+    int tcp_port = 0;
+    size_t tcp_max_line_bytes = 1024 * 1024;
+    size_t tcp_idle_timeout_seconds = 300;
 };
 
 class common_agent_daemon_dispatcher;
@@ -88,6 +95,15 @@ struct agent_daemon_foreground_request {
 struct agent_daemon_foreground_response {
     common_agent_daemon_command_result result;
     bool shutdown_after = false;
+};
+
+class agent_daemon_jsonl_stream {
+public:
+    virtual ~agent_daemon_jsonl_stream() = default;
+
+    virtual bool read(nlohmann::ordered_json & message, std::string & error) = 0;
+    virtual bool write(const nlohmann::ordered_json & message, std::string & error) = 0;
+    virtual bool eof() const = 0;
 };
 
 bool parse_mode(
@@ -144,4 +160,14 @@ bool run_agent_daemon_jsonl_adapter(
     const daemon_options & options,
     const std::shared_ptr<common_agent_daemon_config_store> & config_store,
     common_agent_daemon_dispatcher & dispatcher,
+    std::string & error);
+
+bool run_agent_daemon_jsonl_stream(
+    agent_daemon_jsonl_stream & stream,
+    const daemon_options & options,
+    const std::shared_ptr<common_agent_daemon_config_store> & config_store,
+    common_agent_daemon_dispatcher & dispatcher,
+    const std::function<bool(
+        nlohmann::ordered_json &,
+        std::string &)> & prepare_request,
     std::string & error);

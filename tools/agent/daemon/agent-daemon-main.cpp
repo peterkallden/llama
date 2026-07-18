@@ -1,5 +1,6 @@
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-dispatcher.h"
+#include "agent-daemon-tcp.h"
 #include "../mcp/agent-mcp-http-server.h"
 #include "../host/agent-host-config.h"
 
@@ -329,19 +330,25 @@ int main(int argc, char ** argv) {
     }
     std::unique_ptr<agent_mcp_http_server> http_server;
     std::thread http_thread;
-    if (options.http_enabled) {
-        std::shared_ptr<const agent_mcp_authenticator> inbound_authenticator;
+    std::shared_ptr<const agent_mcp_authenticator> inbound_authenticator;
+    if (options.http_enabled || options.tcp_enabled) {
         if (!build_inbound_mcp_authenticator(options, inbound_authenticator, error)) {
-            std::fprintf(stderr, "failed to configure inbound MCP authentication: %s\n", error.c_str());
+            std::fprintf(stderr, "failed to configure inbound authentication: %s\n", error.c_str());
             return 2;
         }
+    }
+    if (options.tcp_enabled && !inbound_authenticator) {
+        std::fprintf(stderr, "TCP mode requires configured inbound authentication\n");
+        return 2;
+    }
+    if (options.http_enabled) {
         agent_mcp_http_server_options http_options;
         http_options.listen_address = options.http_listen_address;
         http_options.port = options.http_port;
         http_options.path = options.http_path;
         http_options.allowed_origin = options.http_allowed_origin;
         http_options.bearer_token = options.http_bearer_token;
-        http_options.authenticator = std::move(inbound_authenticator);
+        http_options.authenticator = inbound_authenticator;
         http_options.max_body_bytes = options.http_max_body_bytes;
         http_options.max_result_bytes = options.http_max_result_bytes;
         http_options.server_name = "llama-agent-daemon-mcp";
@@ -432,13 +439,9 @@ int main(int argc, char ** argv) {
         });
     }
 
-    const bool jsonl_ok = run_agent_daemon_jsonl_adapter(
-        stdin,
-        stdout,
-        options,
-        config_store,
-        dispatcher,
-        error);
+    const bool jsonl_ok = options.tcp_enabled
+        ? run_agent_daemon_tcp_adapter(options, config_store, dispatcher, inbound_authenticator, error)
+        : run_agent_daemon_jsonl_adapter(stdin, stdout, options, config_store, dispatcher, error);
     if (http_server) {
         http_server->stop();
         if (http_thread.joinable()) http_thread.join();

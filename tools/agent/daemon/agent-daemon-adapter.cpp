@@ -14,6 +14,25 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+class file_jsonl_stream final : public agent_daemon_jsonl_stream {
+public:
+    file_jsonl_stream(FILE * input, FILE * output) : input(input), output(output) {}
+
+    bool read(json & message, std::string & error) override {
+        return read_agent_daemon_jsonl_message(input, message, error);
+    }
+
+    bool write(const json & message, std::string & error) override {
+        return write_agent_daemon_jsonl_message(output, message, error);
+    }
+
+    bool eof() const override { return std::feof(input) != 0; }
+
+private:
+    FILE * input;
+    FILE * output;
+};
+
 const char * find_daemon_config_path(int argc, char ** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--config") == 0) {
@@ -172,6 +191,14 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.http_max_body_bytes = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--http-max-result-bytes") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.http_max_result_bytes = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--tcp-listen") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.tcp_enabled = true; options.tcp_listen_address = value;
+        } else if (std::strcmp(argv[i], "--tcp-port") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.tcp_enabled = true; options.tcp_port = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--tcp-max-line-bytes") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.tcp_max_line_bytes = (size_t) std::stoul(value);
+        } else if (std::strcmp(argv[i], "--tcp-idle-timeout-seconds") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.tcp_idle_timeout_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--max-turn-seconds") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_turn_seconds = (size_t) std::stoul(value);
         } else if (std::strcmp(argv[i], "--plan-show-summary") == 0) {
@@ -204,6 +231,21 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
                 return false;
             }
             options.http_bearer_token = token;
+        }
+    }
+    if (options.tcp_enabled) {
+        if (options.tcp_port <= 0 || options.tcp_port > 65535) {
+            std::fprintf(stderr, "--tcp-port must be between 1 and 65535\n");
+            return false;
+        }
+        if (options.tcp_max_line_bytes == 0) {
+            std::fprintf(stderr, "--tcp-max-line-bytes must be at least 1\n");
+            return false;
+        }
+        if (options.http_authorization_mode != "jwt" &&
+                options.http_token_profiles.empty() && options.http_token_env.empty()) {
+            std::fprintf(stderr, "TCP mode requires --http-token-env, configured token profiles, or JWT authorization\n");
+            return false;
         }
     }
 
@@ -284,7 +326,8 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n"
-        "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN]\n",
+        "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN]\n"
+        "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n",
         argv0);
 }
 
@@ -293,16 +336,40 @@ bool run_agent_daemon_jsonl_adapter(
     FILE * output,
     const daemon_options & options,
     const std::shared_ptr<common_agent_daemon_config_store> & config_store,
-    common_agent_daemon_dispatcher & dispatcher,
+        common_agent_daemon_dispatcher & dispatcher,
+        std::string & error) {
+    file_jsonl_stream stream(input, output);
+    return run_agent_daemon_jsonl_stream(
+        stream,
+        options,
+        config_store,
+        dispatcher,
+        {},
+        error);
+}
+
+bool run_agent_daemon_jsonl_stream(
+        agent_daemon_jsonl_stream & stream,
+        const daemon_options & options,
+        const std::shared_ptr<common_agent_daemon_config_store> & config_store,
+        common_agent_daemon_dispatcher & dispatcher,
+        const std::function<bool(json &, std::string &)> & prepare_request,
         std::string & error) {
     error.clear();
-    if (!emit_agent_daemon_jsonl_message(output, make_agent_daemon_ready_response(options), error)) {
+    if (!stream.write(make_agent_daemon_ready_response(options), error)) {
         return false;
     }
 
     std::string protocol_error;
     json parsed;
-    while (read_agent_daemon_jsonl_message(input, parsed, protocol_error)) {
+    while (stream.read(parsed, protocol_error)) {
+        if (prepare_request && !prepare_request(parsed, error)) {
+            if (!stream.write(make_agent_daemon_error_response(error), error)) {
+                return false;
+            }
+            continue;
+        }
+
         agent_daemon_foreground_request request;
         const auto current_options = config_store
             ? config_store->snapshot()
@@ -313,26 +380,16 @@ bool run_agent_daemon_jsonl_adapter(
                     dispatcher.default_mode(),
                     request,
                     error)) {
-            if (!emit_agent_daemon_jsonl_message(
-                        output,
-                        make_agent_daemon_error_response(error),
-                        error)) {
+            if (!stream.write(make_agent_daemon_error_response(error), error)) {
                 return false;
             }
             continue;
         }
         agent_daemon_foreground_response response;
-        if (!execute_agent_daemon_foreground_request(
-                    request,
-                    dispatcher,
-                    response,
-                    error)) {
+        if (!execute_agent_daemon_foreground_request(request, dispatcher, response, error)) {
             return false;
         }
-        if (!emit_agent_daemon_jsonl_message(
-                    output,
-                    make_agent_daemon_command_response(response.result),
-                    error)) {
+        if (!stream.write(make_agent_daemon_command_response(response.result), error)) {
             return false;
         }
         if (response.shutdown_after) {
@@ -340,15 +397,11 @@ bool run_agent_daemon_jsonl_adapter(
         }
     }
 
-    if (!protocol_error.empty() && !std::feof(input)) {
-        if (!emit_agent_daemon_jsonl_message(
-                    output,
-                    make_agent_daemon_error_response(protocol_error),
-                    error)) {
+    if (!protocol_error.empty() && !stream.eof()) {
+        if (!stream.write(make_agent_daemon_error_response(protocol_error), error)) {
             return false;
         }
     }
-
     error.clear();
     return true;
 }

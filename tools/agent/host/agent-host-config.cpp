@@ -287,6 +287,16 @@ bool parse_agent_host_config_json(
         }
     }
 
+    if (parsed.contains("jsonl") && parsed["jsonl"].is_object() &&
+            parsed["jsonl"].contains("tcp") && parsed["jsonl"]["tcp"].is_object()) {
+        const auto & tcp = parsed["jsonl"]["tcp"];
+        read_optional(tcp, "enabled", config.jsonl_tcp_enabled);
+        read_optional(tcp, "listen", config.jsonl_tcp_listen_address);
+        read_optional(tcp, "port", config.jsonl_tcp_port);
+        read_optional(tcp, "max_line_bytes", config.jsonl_tcp_max_line_bytes);
+        read_optional(tcp, "idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds);
+    }
+
     if (parsed.contains("limits") && parsed["limits"].is_object()) {
         const auto & limits = parsed["limits"];
         read_optional(limits, "queue_capacity", config.queue_capacity);
@@ -433,6 +443,15 @@ nlohmann::ordered_json agent_host_config_to_json(
                 }},
             }},
         }},
+        {"jsonl", {
+            {"tcp", {
+                {"enabled", config.jsonl_tcp_enabled},
+                {"listen", config.jsonl_tcp_listen_address},
+                {"port", config.jsonl_tcp_port},
+                {"max_line_bytes", config.jsonl_tcp_max_line_bytes},
+                {"idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds},
+            }},
+        }},
         {"limits", {
             {"queue_capacity", config.queue_capacity},
             {"worker_count", config.worker_count},
@@ -485,6 +504,22 @@ bool validate_agent_host_config(
                  config.inbound_mcp_jwt_jwks_uri.empty() ||
                  config.inbound_mcp_jwt_tool_profile.empty())) {
             error = "JWT inbound MCP authorization requires issuer, audience, jwks_uri and tool_profile";
+            return false;
+        }
+    }
+
+    if (config.jsonl_tcp_enabled) {
+        if (config.jsonl_tcp_listen_address.empty() ||
+                config.jsonl_tcp_port <= 0 || config.jsonl_tcp_port > 65535) {
+            error = "jsonl.tcp requires a valid listen address and port";
+            return false;
+        }
+        if (config.jsonl_tcp_max_line_bytes == 0) {
+            error = "jsonl.tcp.max_line_bytes must be at least 1";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty() && config.inbound_mcp_authorization_mode != "jwt") {
+            error = "jsonl.tcp reuses mcp.inbound authentication and requires opaque token profiles or jwt mode";
             return false;
         }
     }
@@ -605,6 +640,11 @@ void apply_agent_host_config_to_daemon_options(
     options.http_jwt_tool_profile = config.inbound_mcp_jwt_tool_profile;
     options.http_jwt_allowed_tools = config.inbound_mcp_jwt_allowed_tools;
     options.http_jwt_allow_writes = config.inbound_mcp_jwt_allow_writes;
+    options.tcp_enabled = config.jsonl_tcp_enabled;
+    options.tcp_listen_address = config.jsonl_tcp_listen_address;
+    options.tcp_port = config.jsonl_tcp_port;
+    options.tcp_max_line_bytes = config.jsonl_tcp_max_line_bytes;
+    options.tcp_idle_timeout_seconds = config.jsonl_tcp_idle_timeout_seconds;
 }
 
 void apply_agent_host_config_to_args(

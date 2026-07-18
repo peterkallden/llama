@@ -6,6 +6,11 @@ response is `ready`; diagnostics and warnings go to stderr. It can also host
 the inbound MCP HTTP listener in the same foreground process. It is not yet a
 detached Windows service or supervised production host.
 
+The same JSONL protocol can optionally be served over TCP. TCP is a transport
+adapter for the existing dispatcher, not a second daemon implementation. The
+stdin/stdout mode remains the simplest local administration mode. A copyable
+TCP configuration is [agent-host-config-jsonl-tcp.json](examples/agent-host-config-jsonl-tcp.json).
+
 ## Start from a host configuration file
 
 The recommended starting point is a config file rather than a long command
@@ -53,6 +58,7 @@ Useful overrides are:
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
 | HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin` |
+| JSONL TCP host | `--tcp-listen`, `--tcp-port`, `--tcp-max-line-bytes` |
 | workers/limits | `--worker-count`/`--workers`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
 
 The config file is loaded first and explicit flags are the appropriate place
@@ -107,6 +113,33 @@ parallel, while the session manager keeps turns within one session ordered.
 Workers are independent of the foreground/service-host choice: a future HTTP,
 named-pipe or supervised host should construct the same dispatcher with the
 same worker count.
+
+## JSONL over TCP
+
+Start the TCP adapter with the configuration example:
+
+```powershell
+$env:LLAMA_AGENT_TCP_TOKEN = "replace-with-a-long-random-secret"
+& .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe `
+    --config .\docs\examples\agent-host-config-jsonl-tcp.json
+```
+
+The first line after `ready` must authenticate the connection:
+
+```json
+{"authorization":"Bearer replace-with-a-long-random-secret"}
+```
+
+The daemon answers with a status response after successful authentication.
+Subsequent lines use the same JSONL commands as stdin/stdout. The authenticated
+caller policy supplies namespace and project binding; clients cannot override
+those fields. Multiple TCP connections are handled concurrently and share the
+configured daemon worker pool. Use a separate port from inbound MCP HTTP.
+
+The current TCP adapter is intended for trusted container or private-network
+deployment. It does not provide TLS; use a TLS sidecar or service mesh for
+untrusted networks. TCP listener address, port and framing limits require a
+restart. Authentication and policy remain connection-scoped.
 
 ## Inbound MCP HTTP in the daemon host
 
@@ -190,7 +223,8 @@ Prometheus text without making metrics an MCP tool.
 ## Current limitations
 
 - foreground process only;
-- JSONL remains the only administrative transport;
+- stdin/stdout remains the local administrative transport; JSONL TCP is
+  available as an explicitly enabled transport adapter;
 - no automatic restart or supervisor;
 - config reload is currently available only through local JSONL administration;
 - config reload does not restart the process or rebuild model, stores, workers,

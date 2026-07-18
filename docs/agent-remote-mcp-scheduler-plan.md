@@ -24,6 +24,8 @@ The current branch has:
   by the inbound HTTP end-to-end smoke;
 - daemon host assembly that starts inbound MCP HTTP beside the JSONL adapter and
   routes both transports through the same dispatcher/runtime tool executor,
+- a transport-neutral JSONL stream seam with an optional authenticated TCP
+  adapter for container/private-network administration,
   including the resolved tool-profile catalog and MCP boundary validation;
 - a beta smoke pack covering the above.
 
