@@ -219,6 +219,46 @@ Only compatible inference steps should be microbatched. Tool calls, planning,
 resource writes and session transitions remain lane-local. Batching is an
 optimization inside the inference backend, not a new session protocol.
 
+## Backlog activity: beta smoke pack and lane-aware worker pool
+
+This activity is deliberately staged. The beta smoke pack comes first and
+establishes evidence for the existing operation, transport, policy and lane
+contracts. The worker-pool slice then extends the current dispatcher rather
+than adding a second scheduler beside it.
+
+The smoke pack should cover:
+
+1. a hanging MCP stdio provider, including deadline expiry, subprocess
+   termination, reader-thread cleanup and daemon survival;
+2. remote HTTP MCP initialize, discovery, tool call, timeout and result bounds;
+3. inbound HTTP, TCP and Unix-socket authentication, scope binding, tool
+   allowlists, read-only write rejection, admin-command authorization and
+   credential non-leakage;
+4. same-session ordering, cross-session parallelism, `running_with_waiters`,
+   queued/active cancellation, reload and graceful shutdown;
+5. operation-manager transitions, deadlines, events and cleanup/reap.
+
+The worker-pool implementation should use the following ownership model:
+
+```text
+request -> lane mailbox -> ready-lane queue -> bounded workers
+                                      ^             |
+                                      |             v
+                              pending wakeup <- one lane step
+```
+
+Required invariants are one active turn per lane, parallel execution across
+different lanes, no worker occupied by pending external I/O, fair lane
+selection, prioritized cancellation/shutdown, bounded admission and explicit
+capacity metrics. `worker_count` controls scheduler concurrency; GPU/CPU
+inference capacity is a separate resource limit.
+
+The first scheduler must run without batching. It is complete when fairness,
+cross-session isolation, deadline expiry, cancellation, queue rejection,
+capacity recovery and deterministic shutdown pass with batching disabled.
+Microbatching is a later inference-backend activity and must not change lane
+ownership or the daemon command protocol.
+
 ## Required implementation order
 
 1. Transport-neutral MCP client seam.

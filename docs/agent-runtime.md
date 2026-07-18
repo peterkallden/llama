@@ -256,6 +256,44 @@ inference capacity; batching remains an optimization behind the inference
 backend. No transport or scheduler is allowed to become the owner of
 conversation state, tool policy, resource authority, or operation lifecycle.
 
+### Backlog activity: beta smoke pack and lane-aware worker pool
+
+This is the next bounded activity after the transport/auth hardening. It has
+two related outputs: first prove the current seams end to end, then evolve the
+existing dispatcher worker pool without introducing a second runtime path.
+
+Smoke scope:
+
+- hanging MCP stdio server: deadline, subprocess termination, reader cleanup,
+  and daemon survival;
+- remote HTTP MCP: initialize, tools/list, tools/call, timeout and bounded
+  result handling;
+- inbound HTTP/TCP/Unix auth: valid/invalid credentials, scope binding,
+  allowlist, read-only writes, admin commands and no credential leakage;
+- session lanes: same-session ordering, multiple sessions, waiters, queued and
+  active cancellation, reload and graceful shutdown;
+- operation manager: deadline, poll, cancel, terminal state, events and reap.
+
+Worker-pool target shape:
+
+```text
+request -> session lane mailbox -> ready-lane queue -> bounded worker pool
+                                      ^                    |
+                                      |                    v
+                              pending completion <- one lane step
+```
+
+The first implementation must preserve these invariants: one active turn per
+session lane, parallelism across different lanes, no worker held while waiting
+for external I/O, fairness between ready lanes, prioritized control commands,
+and explicit queue/capacity metrics. `worker_count` is scheduler concurrency,
+not automatically GPU inference concurrency; inference capacity should remain a
+separate backend/resource limit.
+
+Not part of this activity: distributed scheduling, public network exposure,
+full inference batching, or a second async runtime. Batching follows only after
+the non-batched scheduler passes the concurrency and cancellation smokes.
+
 The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation now lives under `tools/agent/resource`, and it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
 
 That contract is now also a little less ad hoc for tools. Native tool bindings no longer thread a raw `resource_store` plus separate namespace/session/project/turn fields through the host path. Instead they carry one scoped `agent_resource_runtime`, and helper functions derive read authority or stamp put-requests from that host-owned runtime scope.
