@@ -34,7 +34,7 @@ runtime host
                 +--> memory learning
 ```
 
-What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, one worker-driven execution lane behind a small in-process command queue, explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
+What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, a bounded configurable dispatcher worker pool (default one worker), explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
 That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
 
@@ -396,7 +396,7 @@ The new host-config slice is intentionally modest. It currently models:
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
 
-In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. Non-stdio transports are still deferred, but the host-owned config model no longer has to collapse back down to a single external tool provider before runtime assembly.
+In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting; transport-specific timeout, cancellation and broader streaming hardening remain follow-up work.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 
@@ -452,9 +452,9 @@ There are still a few obvious future candidates, but they are being deferred on 
 
 The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
 
-The practical daemon startup and JSONL examples now live in [agent-daemon-usage.md](agent-daemon-usage.md), with copyable host-config and request files under `docs/examples/`. This documents the current foreground lifecycle and flags without implying that the daemon is already a production service or inbound HTTP listener.
+The practical daemon startup and JSONL examples now live in [agent-daemon-usage.md](agent-daemon-usage.md), with copyable host-config and request files under `docs/examples/`. This documents the current foreground lifecycle and flags without implying that the daemon is already a production service. Inbound MCP HTTP is now an available host transport; detached supervision, TLS termination and production operations remain separate concerns.
 
-The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a very small dispatcher: stdin/JSON parsing still happens on the transport thread, but command execution now runs through one worker thread and a small bounded in-process queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol, streaming events, cancellation, or multiple workers. The important cleanup in the latest slice is ownership: the dispatcher no longer keeps its own parallel active-turn identity and cancellation handle. It now asks the service/session layer for the active request/turn descriptor and forwards active-turn cancellation back through that same session-owned seam.
+The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a bounded configurable dispatcher worker pool: stdin/JSON parsing still happens on the transport thread, while command execution runs through the queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol or full end-to-end cancellation. Multiple workers can process different session lanes in parallel; one lane remains ordered. The important cleanup in the latest slice is ownership: the dispatcher no longer keeps its own parallel active-turn identity and cancellation handle. It now asks the service/session layer for the active request/turn descriptor and forwards active-turn cancellation back through that same session-owned seam.
 
 The foreground JSONL transport loop is now also explicitly owned by the daemon adapter rather than living inline inside `agent-daemon.cpp`. That is still a small step, but it matters: `main` is now closer to pure process bootstrap plus environment wiring, while the JSONL request/response loop has a named adapter seam that later transports can mirror without reintroducing daemon lifecycle logic into the entrypoint.
 
@@ -688,7 +688,7 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
 4. `tools/agent/tooling/agent-tool-provider.cpp`
 
-   The provider/view boundary is structurally much better now, and the final success/failure payload shaping has been pulled behind named helper contracts. The remaining work here is mostly around richer typed normalization and eventual schema validation parity for MCP, rather than hand-built wrapper JSON at each provider return site.
+   The provider/view boundary is structurally much better now, and the final success/failure payload shaping has been pulled behind named helper contracts. The remaining work here is mostly around richer typed normalization and broader MCP capability parity, rather than hand-built wrapper JSON at each provider return site. MCP tool input schemas already use the shared bounded validator on native, outbound and inbound paths.
 
 5. `common/memory/memory-tool-service.cpp`
 
@@ -859,13 +859,13 @@ A useful provider shape is:
 - Call one tool with validated JSON arguments.
 - Return structured success/failure results.
 
-The native tool registry is the first concrete provider. There is now also a first MCP-shaped provider seam built on top of an abstract MCP client contract, plus a first stdio-based MCP client adapter that already exercises `initialize`, `tools/list` and `tools/call` against a subprocess. A later fuller MCP-client implementation can extend that path without changing the runtime loop.
+The native tool registry is the first concrete provider. There is now also an MCP-shaped provider seam built on top of an abstract MCP client contract, with stdio and Streamable HTTP client adapters covering `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. The daemon and MCP server also expose an inbound HTTP adapter above the same host-resolved tool/policy surface. Broader capability coverage and streaming remain separate follow-up work.
 
 That MCP-facing tool surface has now also been tightened slightly around naming and policy. Runtime filters treat the resolved model-visible name as the authority surface for exposed MCP tools, so prefixed MCP names are filtered the same way the model actually sees them rather than by an internal pre-prefix identifier.
 
 MCP tool arguments now use the same bounded JSON Schema subset as native tool calls. Required fields, additional-property policy, scalar types, enum/bounds and array bounds are validated against the advertised `inputSchema` before the provider is invoked. The agent's MCP server registry applies the same validation before invoking an inbound tool handler and passes the normalized arguments onward. Full JSON Schema and transport-specific schema dialects remain outside the current subset.
 
-Resources and prompts can follow the same pattern later. They should not be added directly to the agent loop as transport-specific concepts.
+Resources now follow the same host-owned pattern and are exposed through the MCP client/server seams where configured. Prompts and broader MCP capabilities can follow later; they should not be added directly to the agent loop as transport-specific concepts.
 
 ## Service Direction
 
@@ -877,9 +877,9 @@ The long-term target should look more like this:
 process host / transport adapter
         |
         +--> stdio foreground host
-        +--> future unix-socket host
+        +--> unix-socket host (POSIX)
         +--> future named-pipe host
-        +--> future HTTP host
+        +--> inbound MCP HTTP host
                 |
                 v
 agent daemon service
@@ -956,7 +956,7 @@ scheduler / dispatcher
         +--> ...
 ```
 
-The first implementation does not need multiple workers yet. One worker lane remains the right small step. The important part is that queueing, scheduling and worker ownership become explicit, so later concurrency is an extension of the same contract rather than a rewrite.
+The dispatcher already supports a configurable worker pool, with one worker as the compatibility default. The next missing layer is not basic daemon parallelism but a global inference scheduler that can enforce inference capacity, fairness, pending status and cancellation independently of session-lane ownership.
 
 That scheduler should eventually be able to enforce rules such as:
 
@@ -1003,7 +1003,7 @@ If the goal is a first beta that still feels structurally safe, the natural orde
 
 4. Keep the scheduler contract ahead of real concurrency.
 
-   Preserve one worker lane first, but make queue, dispatcher and active-command ownership explicit enough that multi-worker scheduling can be added later without moving session logic again.
+   The dispatcher worker pool is already present. The next scheduler slice should add inference admission, fairness, capacity, pending completion and cancellation without changing session ownership or introducing batching yet.
 
 5. Harden keyed session ownership before detached hosting.
 
@@ -1030,18 +1030,20 @@ Those are the minimum structural preparations, not a request to build the full p
 
 ## What Not To Build Yet
 
-These are intentionally deferred:
+These are intentionally deferred in the current branch:
 
 - Detached or OS-managed daemon/service lifecycle.
-- Named pipes, Unix sockets, or HTTP transport.
-- Concurrent session management.
+- Named pipes and detached/OS-managed service lifecycle.
+- A richer project object above the current namespace/session lane model.
 - Full `llama-server` integration.
-- MCP stdio or Streamable HTTP clients.
-- JSON-RPC lifecycle and capability negotiation.
-- Background tool workers or parallel tool execution.
-- A richer streamed event protocol.
+- Full Streamable HTTP GET/SSE streaming and broader MCP capabilities.
+- Full end-to-end cancellation through inference, native tools and MCP transports.
+- Global inference scheduling and batching.
+- A richer streamed event protocol and production observability.
 
-The current code should remain useful without any of these. The next steps should keep tightening the runtime/session contract so these pieces have somewhere clean to attach.
+The current code should remain useful without these deferred capabilities. The
+transport, auth, worker-pool and bounded schema seams already exist; the next
+steps should extend them without creating a second runtime path.
 
 ## Next Steps
 

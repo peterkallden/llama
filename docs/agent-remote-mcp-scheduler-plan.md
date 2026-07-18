@@ -188,7 +188,7 @@ confirmation/policy path.
 ## Global session/inference scheduler
 
 The daemon dispatcher now has a shared, configurable worker pool. The
-foreground JSONL host and a future service/HTTP host are expected to construct
+foreground JSONL host, inbound MCP HTTP host and future service hosts construct
 the same dispatcher; host lifetime and transport must not decide worker
 semantics. The default is one worker until a deployment opts into more.
 

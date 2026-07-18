@@ -120,9 +120,9 @@ work without mutating the snapshot already observed by an operation.
 `--worker-count N` enables a shared worker pool. The default remains `1` for
 compatibility. Multiple workers may process different session lanes in
 parallel, while the session manager keeps turns within one session ordered.
-Workers are independent of the foreground/service-host choice: a future HTTP,
-named-pipe or supervised host should construct the same dispatcher with the
-same worker count.
+Workers are independent of the foreground/service-host choice: the current
+inbound MCP HTTP host and future named-pipe or supervised hosts should
+construct the same dispatcher with the same worker count.
 
 ## JSONL over TCP
 
