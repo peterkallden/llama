@@ -670,6 +670,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
     llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-mcp-agent-tools-smoke
     llama-agent-mcp-stdio-server
     llama-agent-cli-mcp-selection-smoke
     llama-agent-cli-run-mcp-smoke
@@ -701,6 +702,7 @@ set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
     llama-agent-mcp-http-client-smoke
     llama-agent-mcp-stdio-server-smoke
     llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-mcp-agent-tools-smoke
 )
 
 set(AGENT_RUNTIME_SMOKE_CLI_TARGETS

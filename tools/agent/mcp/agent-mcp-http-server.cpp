@@ -241,7 +241,7 @@ bool agent_mcp_http_server::handle_message(
             result.safe_summary = error;
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
         } else if (agent_mcp_is_agent_tool(name) && options_.execute_agent_tool) {
-            const auto depth = params.value("delegation_depth", 0U);
+            const auto depth = arguments.value("delegation_depth", 0U);
             if (depth >= options_.max_delegation_depth) {
                 error = "agent delegation depth limit exceeded";
                 result.ok = false;
@@ -250,7 +250,7 @@ bool agent_mcp_http_server::handle_message(
                 result.safe_summary = error;
                 result.content = agent_mcp_json::array({{{"type", "text"}, {"text", error}}});
             } else {
-                if (!options_.execute_agent_tool(policy, name, params, result, error)) {
+                if (!options_.execute_agent_tool(policy, name, arguments, result, error)) {
                     result.ok = false;
                     result.failure_code = result.failure_code.empty() ? "agent.delegation_failed" : result.failure_code;
                     result.failure_class = result.failure_class.empty() ? "execution" : result.failure_class;

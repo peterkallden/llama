@@ -1126,6 +1126,36 @@ steps should extend them without creating a second runtime path.
 
   The intended direction is still a host/service process that owns the loaded-model manager, session manager, store manager, tool execution surface, policy decisions, and trace sink, with the CLI eventually acting as a client/admin tool against that daemon rather than a parallel owner of the agent loop.
 
+### Adding a new test or smoke
+
+When a new contract or externally visible seam is added, keep its first
+regression proof close to the owning layer and add it to the pack deliberately:
+
+1. Put a focused C++ smoke under `pocs/agent/smoke/<area>/` and keep reusable
+   contracts/implementation under `common/*` or `tools/agent/*`; `pocs/agent`
+   should remain the harness and migration/build-glue layer.
+2. Add an executable in `pocs/agent/CMakeLists.txt`, link only the existing
+   runtime sources needed by the seam, and add the target to
+   `AGENT_RUNTIME_TARGETS` plus its category list (`runtime`, `mcp`, `cli`,
+   `daemon`, or `resource`). This makes it available to both the category
+   smoke and `llama-agent-smoke-all`/`llama-agent-build-pack`.
+3. If the test needs a process, socket, filesystem, timeout, or platform
+   setup, add the corresponding step to both
+   `scripts/test-agent-daemon-beta-smoke.ps1` and
+   `scripts/test-agent-daemon-beta-smoke.sh`. Use the same stable suite name
+   in both runners, clean temporary state, avoid real credentials, and return
+   non-zero on failure.
+4. Run the focused binary first, then the relevant category target, the
+   non-smoke CTest label, and finally the beta pack. A smoke should assert
+   observable contract behavior and failure cleanup, not implementation-only
+   details.
+
+For a deterministic unit-style check, prefer CTest with the `agent` label. For
+daemon or transport behavior, prefer the platform runner because it owns child
+process cleanup, per-suite timeouts, and diagnostic logs. Update the
+verification baseline below when the new smoke has actually passed; do not
+claim coverage merely because the target exists in CMake.
+
 ## Current Verification Baseline
 
 The `poc/agent-remote-mcp-scheduler` branch has been validated with the smoke
@@ -1139,6 +1169,7 @@ The validated smoke and integration paths include:
 - `test-tool-adapters`
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
+- `llama-agent-mcp-agent-tools-smoke`, verifying the explicit opt-in `delegate_task`, `summarize`, and `review_plan` MCP tool profile, including tool filtering, write-policy rejection, delegation-depth bounds, and dispatcher callback failure mapping
 - `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke

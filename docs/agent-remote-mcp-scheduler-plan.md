@@ -247,6 +247,12 @@ The verification entry points are intentionally layered: CMake provides
 PowerShell and Bash execution. The wrappers share suite names, timeout/failure
 semantics, temporary-log cleanup, and machine-readable `suite=...` output.
 
+When adding a new test or smoke, follow the checklist in
+`docs/agent-runtime.md` under “Adding a new test or smoke”. In particular, add
+the target to its CMake category and to both platform beta runners; otherwise
+the test can exist and build successfully while remaining absent from the
+actual verification pack.
+
 The smoke pack should cover:
 
 1. a hanging MCP stdio provider, including deadline expiry, subprocess

@@ -64,6 +64,7 @@ smokes=(
     llama-agent-mcp-stdio-client-smoke
     llama-agent-mcp-http-client-smoke
     llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-mcp-agent-tools-smoke
     llama-agent-daemon-wait-events-smoke
 )
 
