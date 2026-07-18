@@ -252,6 +252,8 @@ bool parse_agent_host_config_json(
             read_optional(inbound, "allowed_origin", config.inbound_mcp_allowed_origin);
             read_optional(inbound, "max_body_bytes", config.inbound_mcp_max_body_bytes);
             read_optional(inbound, "max_result_bytes", config.inbound_mcp_max_result_bytes);
+            read_optional(inbound, "agent_tools", config.inbound_mcp_agent_tools_enabled);
+            read_optional(inbound, "max_delegation_depth", config.inbound_mcp_max_delegation_depth);
             if (inbound.contains("tokens")) {
                 if (!inbound["tokens"].is_array()) {
                     error = "mcp.inbound.tokens must be an array";
@@ -423,6 +425,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"allowed_origin", config.inbound_mcp_allowed_origin},
                 {"max_body_bytes", config.inbound_mcp_max_body_bytes},
                 {"max_result_bytes", config.inbound_mcp_max_result_bytes},
+                {"agent_tools", config.inbound_mcp_agent_tools_enabled},
+                {"max_delegation_depth", config.inbound_mcp_max_delegation_depth},
                 {"tokens", [&config]() {
                     json tokens = json::array();
                     for (const auto & token : config.inbound_mcp_tokens) {
@@ -664,6 +668,8 @@ void apply_agent_host_config_to_daemon_options(
     options.http_allowed_origin = config.inbound_mcp_allowed_origin;
     options.http_max_body_bytes = config.inbound_mcp_max_body_bytes;
     options.http_max_result_bytes = config.inbound_mcp_max_result_bytes;
+    options.http_agent_tools_enabled = config.inbound_mcp_agent_tools_enabled;
+    options.http_max_delegation_depth = config.inbound_mcp_max_delegation_depth;
     options.http_token_profiles = config.inbound_mcp_tokens;
     options.http_authorization_mode = config.inbound_mcp_authorization_mode;
     options.http_jwt_issuer = config.inbound_mcp_jwt_issuer;

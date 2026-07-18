@@ -250,7 +250,13 @@ bool agent_mcp_http_server::handle_message(
                 result.safe_summary = error;
                 result.content = agent_mcp_json::array({{{"type", "text"}, {"text", error}}});
             } else {
-                options_.execute_agent_tool(policy, name, params, result, error);
+                if (!options_.execute_agent_tool(policy, name, params, result, error)) {
+                    result.ok = false;
+                    result.failure_code = result.failure_code.empty() ? "agent.delegation_failed" : result.failure_code;
+                    result.failure_class = result.failure_class.empty() ? "execution" : result.failure_class;
+                    result.safe_summary = result.safe_summary.empty() ? error : result.safe_summary;
+                    result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+                }
             }
         } else if (options_.execute_tool) {
             options_.execute_tool(policy, name, arguments, result, error);

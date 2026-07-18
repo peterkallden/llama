@@ -64,6 +64,7 @@ The complete examples are kept as JSON files so they can be copied and adapted:
 - [inbound MCP home/single-secret configuration](examples/agent-host-config-inbound-mcp-home.json)
 - [inbound MCP multi-token configuration](examples/agent-host-config-inbound-mcp-auth.json)
 - [inbound MCP enterprise/JWT configuration](examples/agent-host-config-inbound-mcp-jwt.json)
+- [inbound MCP agent-to-agent configuration](examples/agent-host-config-inbound-mcp-agent.json)
 
 For the remote example, provide the token before starting the agent. The token
 is intentionally referenced by environment name and is not stored in the JSON

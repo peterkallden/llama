@@ -52,6 +52,8 @@ struct agent_host_config {
     std::string inbound_mcp_allowed_origin;
     size_t inbound_mcp_max_body_bytes = 1024 * 1024;
     size_t inbound_mcp_max_result_bytes = 1024 * 1024;
+    bool inbound_mcp_agent_tools_enabled = false;
+    size_t inbound_mcp_max_delegation_depth = 1;
     std::vector<agent_host_mcp_inbound_token_config> inbound_mcp_tokens;
     std::string inbound_mcp_authorization_mode = "opaque";
     std::string inbound_mcp_jwt_issuer;

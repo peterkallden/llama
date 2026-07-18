@@ -248,6 +248,8 @@ inherit the authenticated caller namespace/project, and use the existing
 timeout and result contracts. `allowed_tools` still applies to these names.
 Propagation of depth across chained outbound MCP clients, richer delegation
 profiles and dedicated audit events remain follow-up work.
+The copyable JSON variant is
+[agent-host-config-inbound-mcp-agent.json](examples/agent-host-config-inbound-mcp-agent.json).
 
 ## Daemon lifecycle
 
