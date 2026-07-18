@@ -307,6 +307,7 @@ if (LLAMA_AGENT_REFLECTION)
         ../tools/agent/cli/agent-cli-inference.cpp
         ../tools/agent/cli/agent-cli-runtime.cpp
         ../tools/agent/cli/agent-cli-selection.cpp
+        ../tools/agent/mcp/agent-mcp-http-client.cpp
         ../tools/agent/mcp/agent-mcp-protocol.cpp
         ../tools/agent/mcp/agent-mcp-stdio-client.cpp
         ../tools/agent/resource/agent-resource-catalog.cpp
@@ -330,7 +331,7 @@ if (LLAMA_AGENT_REFLECTION)
         ../pocs/memory/memory-cli-memory.cpp
     )
     target_include_directories(test-agent-inference PRIVATE ${PROJECT_SOURCE_DIR}/pocs ${PROJECT_SOURCE_DIR}/pocs/agent ${PROJECT_SOURCE_DIR}/pocs/memory ${PROJECT_SOURCE_DIR}/tools/agent/cli ${PROJECT_SOURCE_DIR}/tools/agent/runtime ${PROJECT_SOURCE_DIR}/tools/server ${PROJECT_SOURCE_DIR}/tools/mtmd)
-    target_link_libraries(test-agent-inference PRIVATE llama-agent-poc server-context)
+    target_link_libraries(test-agent-inference PRIVATE llama-agent-poc server-context cpp-httplib)
     if (LLAMA_MEMORY_COZO)
         target_include_directories(test-agent-inference PRIVATE ${COZO_INCLUDE_DIR})
         target_link_libraries(test-agent-inference PRIVATE ${COZO_LIBRARY})

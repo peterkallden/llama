@@ -1,7 +1,9 @@
 #include "agent/agent-runtime.h"
+#include "agent/tool-registry.h"
 #include "agent/memory-learning.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
+#include "test-tool-runtime-registry-adapter.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -59,6 +61,7 @@ void scenario_persistence_resume() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     common_registered_tool tool;
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
@@ -68,7 +71,7 @@ void scenario_persistence_resume() {
     resume_planner planner;
     draft_executor executor;
     accepting_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request first;
     first.prompt = "collect two facts";
     first.plan_scope = common_plan_scope::session;
@@ -139,6 +142,7 @@ void scenario_repair() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     int calls = 0;
     common_registered_tool tool;
     tool.name = "retry_lookup";
@@ -155,7 +159,7 @@ void scenario_repair() {
     repair_planner planner;
     draft_executor executor;
     repairing_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request request;
     request.prompt = "recover fact";
     request.max_iterations = 2;
@@ -175,6 +179,7 @@ void scenario_repair_with_iteration_tool_budget() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     int calls = 0;
     common_registered_tool tool;
     tool.name = "retry_lookup";
@@ -191,7 +196,7 @@ void scenario_repair_with_iteration_tool_budget() {
     repair_planner planner;
     draft_executor executor;
     repairing_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request request;
     request.prompt = "recover fact";
     request.max_iterations = 2;
@@ -260,6 +265,7 @@ void scenario_replace_repair() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     common_registered_tool tool;
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
@@ -269,7 +275,7 @@ void scenario_replace_repair() {
     replacement_repair_planner planner;
     draft_executor executor;
     replacing_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request request;
     request.prompt = "repair invalid lookup";
     request.max_iterations = 2;
@@ -350,6 +356,7 @@ void scenario_learning_promotion() {
     common_memory_post_turn_learner learner(memories, extractor,
         [](const std::string &, std::vector<float> & embedding, std::string & embed_error) { embedding = {1.0f}; embed_error.clear(); return true; });
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     common_registered_tool tool;
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
@@ -359,7 +366,7 @@ void scenario_learning_promotion() {
     learning_planner planner;
     draft_executor executor;
     accepting_reflector reflector;
-    common_agent_runtime runtime(plans, planner, executor, reflector, &tools, &learner);
+    common_agent_runtime runtime(plans, planner, executor, reflector, &tool_runtime, &learner);
     common_agent_request request;
     request.prompt = "run stable lookup";
     request.namespace_id = "local";
@@ -390,6 +397,7 @@ void scenario_learning_skipped_for_incomplete_plan() {
     common_memory_post_turn_learner learner(memories, extractor,
         [](const std::string &, std::vector<float> & embedding, std::string & embed_error) { embedding = {1.0f}; embed_error.clear(); return true; });
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     common_registered_tool tool;
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
@@ -399,7 +407,7 @@ void scenario_learning_skipped_for_incomplete_plan() {
     learning_planner planner;
     draft_executor executor;
     revise_without_completion_reflector reflector;
-    common_agent_runtime runtime(plans, planner, executor, reflector, &tools, &learner);
+    common_agent_runtime runtime(plans, planner, executor, reflector, &tool_runtime, &learner);
     common_agent_request request;
     request.prompt = "run stable lookup";
     request.namespace_id = "local";
@@ -474,6 +482,7 @@ void scenario_invalid_reflection_tool_degrades_to_reasoning() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     common_registered_tool tool;
     tool.name = "lookup";
     tool.executor_id = "test.lookup";
@@ -483,7 +492,7 @@ void scenario_invalid_reflection_tool_degrades_to_reasoning() {
     reflection_tool_degrade_planner planner;
     draft_executor executor;
     invalid_tool_add_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request request;
     request.prompt = "verify reflection fallback";
     request.max_iterations = 3;
@@ -526,6 +535,7 @@ void scenario_initial_missing_required_tool_degrades_to_reasoning() {
     common_plan_in_memory_store store;
     assert(store.open("", error));
     common_tool_registry tools;
+    test_tool_runtime_registry_adapter tool_runtime(tools);
     bool tool_called = false;
     common_registered_tool tool;
     tool.name = "lookup";
@@ -536,7 +546,7 @@ void scenario_initial_missing_required_tool_degrades_to_reasoning() {
     initial_tool_guardrail_planner planner;
     draft_executor executor;
     accepting_reflector reflector;
-    common_agent_runtime runtime(store, planner, executor, reflector, &tools);
+    common_agent_runtime runtime(store, planner, executor, reflector, &tool_runtime);
     common_agent_request request;
     request.prompt = "lookup something";
     request.enable_reflection = false;

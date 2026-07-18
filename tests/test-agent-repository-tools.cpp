@@ -1,6 +1,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/tool-adapters.h"
 #include "plan/plan-in-memory.h"
+#include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
 #include <filesystem>
@@ -73,10 +74,11 @@ int main() {
     bindings.repository_root = root.string();
     common_tool_adapter_result adapters;
     assert(common_register_native_tool_adapters(catalog, "research", bindings, registry, adapters, error));
+    test_tool_runtime_registry_adapter tool_runtime(registry);
     common_plan_in_memory_store store;
     assert(store.open("", error));
     planner p; executor e; reflector r;
-    common_agent_runtime runtime(store, p, e, r, &registry);
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
     common_agent_request request;
     request.prompt = "Find target-symbol";
     request.max_tool_batches = 2;

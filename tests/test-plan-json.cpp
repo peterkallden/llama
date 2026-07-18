@@ -2,6 +2,9 @@
 #include "plan/plan-bindings.h"
 #include "plan/plan-context.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <nlohmann/json.hpp>
 
