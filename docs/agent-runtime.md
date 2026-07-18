@@ -1191,6 +1191,24 @@ aggregate links the HTTP MCP client and the lifecycle/repository tests use the
 same provider-backed tool-runtime adapter as production code. This keeps a
 successful build meaningful after the registry-to-provider migration.
 
+The CMake test-pack targets provide the same layers when the agent options are
+enabled:
+
+```powershell
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-build-pack --parallel 1
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-ctest-pack --parallel 1
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-beta-test-pack --parallel 1
+```
+
+`llama-agent-build-pack` is the build gate, `llama-agent-ctest-pack` runs the
+non-smoke `agent` label, and `llama-agent-beta-test-pack` runs the structured
+deterministic/process pack. On Windows the latter uses
+`test-agent-daemon-beta-smoke.ps1`; Linux uses the matching
+`test-agent-daemon-beta-smoke.sh`. Both runners emit one `suite=...` result per
+step, capture failure logs, enforce per-suite timeouts, clean temporary logs by
+default, and return a non-zero exit code for any failed suite. Use
+`-KeepLogs` or `--keep-logs` when diagnosing a failure.
+
 Smoke binaries are grouped by the same category split already used in `pocs/agent/smoke`:
 
 - `llama-agent-smoke-runtime`

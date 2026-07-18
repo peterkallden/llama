@@ -739,6 +739,83 @@ llama_agent_add_smoke_group(
     ${AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS}
 )
 
+set(AGENT_TEST_PACK_CTEST_TARGETS
+    test-agent-contract
+    test-memory-store
+    test-memory-retrieval
+    test-memory-context
+    test-memory-policy
+    test-memory-tool-service
+    test-memory-cozo
+    test-plan-store
+    test-plan-context
+    test-plan-json
+    test-plan-goal
+    test-plan-memory
+    test-plan-blueprint
+    test-plan-scheduler
+    test-plan-template
+    test-plan-cozo
+    test-agent-bootstrap
+    test-cli-scope
+    test-agent-inference
+    test-agent-prepared-generation
+    test-memory-learning
+    test-agent-runtime-json
+    test-reflection-json
+    test-agent-loop
+    test-agent-lifecycle-scenarios
+    test-agent-tool-rounds
+    test-agent-repository-tools
+    test-agent-tool-failure
+    test-agent-memory-search-fallback
+    test-tool-registry
+    test-tool-catalog
+    test-tool-adapters
+    test-tool-chat-bridge
+)
+set(AGENT_TEST_PACK_AVAILABLE_TARGETS)
+foreach(TARGET ${AGENT_TEST_PACK_CTEST_TARGETS})
+    if (TARGET ${TARGET})
+        list(APPEND AGENT_TEST_PACK_AVAILABLE_TARGETS ${TARGET})
+    endif()
+endforeach()
+
+add_custom_target(llama-agent-build-pack
+    DEPENDS ${AGENT_RUNTIME_TARGETS} ${AGENT_TEST_PACK_AVAILABLE_TARGETS}
+)
+
+add_custom_target(llama-agent-ctest-pack
+    DEPENDS llama-agent-build-pack
+    COMMAND ${CMAKE_CTEST_COMMAND}
+            --test-dir ${CMAKE_BINARY_DIR}
+            -C $<CONFIG>
+            -L agent
+            --output-on-failure
+    USES_TERMINAL
+)
+
+if (WIN32)
+    add_custom_target(llama-agent-beta-test-pack
+        DEPENDS llama-agent-build-pack
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+                -File ${PROJECT_SOURCE_DIR}/scripts/test-agent-daemon-beta-smoke.ps1
+                -BuildDir ${CMAKE_BINARY_DIR}
+                -Configuration $<CONFIG>
+                -IncludeCTest
+        USES_TERMINAL
+    )
+elseif (UNIX)
+    add_custom_target(llama-agent-beta-test-pack
+        DEPENDS llama-agent-build-pack
+        COMMAND bash ${PROJECT_SOURCE_DIR}/scripts/test-agent-daemon-beta-smoke.sh
+                --build-dir ${CMAKE_BINARY_DIR}
+                --configuration $<CONFIG>
+                --include-ctest
+        USES_TERMINAL
+    )
+endif()
+
 if (LLAMA_MEMORY_COZO)
     foreach(TARGET ${AGENT_RUNTIME_TARGETS})
         llama_link_cozo(${TARGET})

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR="build-plan-resident-cozo-debug-3"
+CONFIGURATION="Release"
+TIMEOUT_SECONDS=120
+INCLUDE_CTEST=0
+KEEP_LOGS=0
+
+usage() {
+    echo "usage: $0 [--build-dir DIR] [--configuration CONFIG] [--include-ctest] [--keep-logs]"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build-dir) BUILD_DIR="$2"; shift 2 ;;
+        --configuration) CONFIGURATION="$2"; shift 2 ;;
+        --include-ctest) INCLUDE_CTEST=1; shift ;;
+        --keep-logs) KEEP_LOGS=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ "$BUILD_DIR" = /* ]]; then BUILD_ROOT="$BUILD_DIR"; else BUILD_ROOT="$REPO_ROOT/$BUILD_DIR"; fi
+BIN="$BUILD_ROOT/bin/$CONFIGURATION"
+LOG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/llama-agent-beta-test.XXXXXX")"
+declare -a RESULTS=()
+cleanup() {
+    if [[ "$KEEP_LOGS" -eq 1 ]]; then
+        echo "agent_test_pack_logs=$LOG_ROOT"
+    else
+        rm -rf "$LOG_ROOT"
+    fi
+}
+trap cleanup EXIT
+
+run_suite() {
+    local name="$1"; shift
+    local out="$LOG_ROOT/$name.stdout.log"
+    local err="$LOG_ROOT/$name.stderr.log"
+    local start=$SECONDS
+    if timeout --preserve-status "${TIMEOUT_SECONDS}s" "$@" >"$out" 2>"$err"; then
+        RESULTS+=("$name:passed")
+        echo "suite=$name status=passed duration_ms=$(( (SECONDS-start) * 1000 ))"
+    else
+        local code=$?
+        RESULTS+=("$name:failed")
+        echo "suite=$name status=failed exit_code=$code log=$err" >&2
+    fi
+}
+
+smokes=(
+    llama-agent-runtime-operation-manager-smoke
+    llama-agent-runtime-session-manager-smoke
+    llama-agent-daemon-dispatcher-smoke
+    llama-agent-daemon-protocol-smoke
+    llama-agent-daemon-jsonl-protocol-smoke
+    llama-agent-daemon-mcp-config-smoke
+    llama-agent-resource-store-smoke
+    llama-agent-mcp-tool-provider-smoke
+    llama-agent-mcp-stdio-client-smoke
+    llama-agent-mcp-http-client-smoke
+    llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-daemon-wait-events-smoke
+)
+
+for target in "${smokes[@]}"; do
+    executable="$BIN/$target"
+    [[ -x "$executable" ]] || { echo "Required executable not found: $executable" >&2; exit 1; }
+    run_suite "$target" "$executable"
+done
+
+if [[ "$INCLUDE_CTEST" -eq 1 ]]; then
+    ctest_bin="$(command -v ctest)"
+    run_suite ctest-agent "$ctest_bin" --test-dir "$BUILD_ROOT" -C "$CONFIGURATION" -L agent --output-on-failure
+fi
+
+failed=0
+for result in "${RESULTS[@]}"; do [[ "$result" == *:failed ]] && failed=$((failed + 1)); done
+echo "agent_test_pack_suites=${#RESULTS[@]}"
+echo "agent_test_pack_failed=$failed"
+if [[ "$failed" -ne 0 ]]; then echo "agent_test_pack=failed"; exit 1; fi
+echo "agent_test_pack=passed"

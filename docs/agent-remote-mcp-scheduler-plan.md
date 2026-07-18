@@ -229,6 +229,12 @@ The current branch has also completed the non-smoke agent CTest baseline:
 the existing contract, memory, plan, inference, lifecycle, and tooling seams;
 it does not imply that the future worker-pool acceptance criteria are complete.
 
+The verification entry points are intentionally layered: CMake provides
+`llama-agent-build-pack`, `llama-agent-ctest-pack`, and
+`llama-agent-beta-test-pack`; the platform wrappers provide the process-level
+PowerShell and Bash execution. The wrappers share suite names, timeout/failure
+semantics, temporary-log cleanup, and machine-readable `suite=...` output.
+
 The smoke pack should cover:
 
 1. a hanging MCP stdio provider, including deadline expiry, subprocess
