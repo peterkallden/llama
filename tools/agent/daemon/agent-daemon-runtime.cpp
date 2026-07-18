@@ -182,6 +182,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.memory_scope = request.memory_scope;
     tool_request.tool_context.plan_scope = request.plan_scope;
     tool_request.tool_context.profile_id = options.tool_profile;
+    tool_request.tool_context.allowed_exposed_tool_names = request.allowed_exposed_tool_names;
     tool_request.tool_context.repository_root = options.repository_root;
     tool_request.tool_context.allow_network =
         options.tool_profile == "research" ||
@@ -191,6 +192,8 @@ agent_host_tool_selection_request make_daemon_tool_request(
         options.tool_profile == "memory" || options.tool_profile == "research";
     if (allow_policy_gated_writes.has_value()) {
         tool_request.tool_context.allow_policy_gated_writes = *allow_policy_gated_writes;
+    } else if (request.allow_policy_gated_writes.has_value()) {
+        tool_request.tool_context.allow_policy_gated_writes = *request.allow_policy_gated_writes;
     }
     tool_request.tool_context.allow_memory_proposals =
         tool_request.tool_context.allow_policy_gated_writes;

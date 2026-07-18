@@ -35,6 +35,7 @@ bool build_inbound_mcp_authenticator(
             options.http_jwt_tool_profile,
             options.http_jwt_allowed_tools,
             options.http_jwt_allow_writes,
+            options.http_jwt_allow_admin,
         };
         authenticator = std::make_shared<agent_mcp_jwt_authenticator>(std::move(jwt_options));
         error.clear();
@@ -60,6 +61,7 @@ bool build_inbound_mcp_authenticator(
             configured.tool_profile,
             configured.allowed_tools,
             configured.allow_writes,
+            configured.allow_admin,
         };
         if (!next->register_token(token, std::move(policy), error)) {
             return false;

@@ -16,14 +16,26 @@
     "inbound": {
       "tokens": [
         {
-          "id": "container-client",
-          "token_env": "LLAMA_AGENT_TCP_TOKEN",
+          "id": "container-read",
+          "token_env": "LLAMA_AGENT_TCP_READ_TOKEN",
+          "audience": "llama-agent-jsonl-tcp",
+          "namespace": "container",
+          "project": "example",
+          "tool_profile": "minimal",
+          "allowed_tools": ["calculator"],
+          "allow_writes": false,
+          "allow_admin": false
+        },
+        {
+          "id": "container-admin",
+          "token_env": "LLAMA_AGENT_TCP_ADMIN_TOKEN",
           "audience": "llama-agent-jsonl-tcp",
           "namespace": "container",
           "project": "example",
           "tool_profile": "minimal",
           "allowed_tools": [],
-          "allow_writes": false
+          "allow_writes": true,
+          "allow_admin": true
         }
       ]
     }

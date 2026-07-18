@@ -40,6 +40,8 @@ struct common_agent_runtime_session_host_turn_request {
     int n_predict = 0;
     std::optional<common_memory_policy_pack> policy_pack;
     common_agent_runtime_execution_control execution_control;
+    std::optional<bool> allow_policy_gated_writes;
+    std::vector<std::string> allowed_exposed_tool_names;
 };
 
 struct common_agent_runtime_session_host_turn_result {

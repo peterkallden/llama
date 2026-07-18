@@ -119,7 +119,8 @@ same worker count.
 Start the TCP adapter with the configuration example:
 
 ```powershell
-$env:LLAMA_AGENT_TCP_TOKEN = "replace-with-a-long-random-secret"
+$env:LLAMA_AGENT_TCP_READ_TOKEN = "replace-with-a-long-random-read-secret"
+$env:LLAMA_AGENT_TCP_ADMIN_TOKEN = "replace-with-a-long-random-admin-secret"
 & .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe `
     --config .\docs\examples\agent-host-config-jsonl-tcp.json
 ```
@@ -127,19 +128,32 @@ $env:LLAMA_AGENT_TCP_TOKEN = "replace-with-a-long-random-secret"
 The first line after `ready` must authenticate the connection:
 
 ```json
-{"authorization":"Bearer replace-with-a-long-random-secret"}
+{"authorization":"Bearer replace-with-a-long-random-read-secret"}
 ```
 
 The daemon answers with a status response after successful authentication.
 Subsequent lines use the same JSONL commands as stdin/stdout. The authenticated
 caller policy supplies namespace and project binding; clients cannot override
-those fields. Multiple TCP connections are handled concurrently and share the
-configured daemon worker pool. Use a separate port from inbound MCP HTTP.
+those fields. `shutdown`, `drain` and `reload_config` additionally require
+`allow_admin: true`. `allowed_tools` and `allow_writes` are projected into the
+turn's tool view, so a read-only caller cannot use policy-gated writes. Multiple
+TCP connections are handled concurrently and share the configured daemon worker
+pool. Use a separate port from inbound MCP HTTP.
 
 The current TCP adapter is intended for trusted container or private-network
 deployment. It does not provide TLS; use a TLS sidecar or service mesh for
 untrusted networks. TCP listener address, port and framing limits require a
 restart. Authentication and policy remain connection-scoped.
+
+The focused beta smoke can be run with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-agent-daemon-beta-smoke.ps1 `
+    -ChatModel C:\Users\you\models\model.gguf
+```
+
+It covers MCP/config policy projection, restricted versus admin TCP callers,
+TCP status and graceful shutdown.
 
 ## Inbound MCP HTTP in the daemon host
 

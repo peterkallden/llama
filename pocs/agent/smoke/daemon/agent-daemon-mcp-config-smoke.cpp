@@ -178,6 +178,7 @@ int main(int argc, char ** argv) {
                     {"project", "project-a"},
                     {"tool_profile", "research"},
                     {"allow_writes", true},
+                    {"allow_admin", true},
                 },
             })},
         }}}},
@@ -186,7 +187,8 @@ int main(int argc, char ** argv) {
             !inbound_config.inbound_mcp_enabled ||
             inbound_config.inbound_mcp_tokens.size() != 2 ||
             inbound_config.inbound_mcp_tokens[0].allowed_tools.size() != 1 ||
-            inbound_config.inbound_mcp_tokens[1].allow_writes != true) {
+            inbound_config.inbound_mcp_tokens[1].allow_writes != true ||
+            inbound_config.inbound_mcp_tokens[1].allow_admin != true) {
         std::fprintf(stderr, "inbound MCP token config contract failed: %s\n", error.c_str());
         return 1;
     }
@@ -287,6 +289,35 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
         return 1;
     }
+
+    common_agent_runtime_session_host_turn_request restricted_request;
+    restricted_request.mode = common_agent_runtime_host_mode::chat;
+    restricted_request.prompt = "restricted policy";
+    restricted_request.session_id = "session-a";
+    restricted_request.namespace_id = "namespace-a";
+    restricted_request.project_id = "project-a";
+    restricted_request.turn_id = "turn-policy";
+    restricted_request.allow_policy_gated_writes = false;
+    restricted_request.allowed_exposed_tool_names = {"calculator"};
+    common_agent_runtime_tooling restricted_tooling;
+    if (!resolve_agent_daemon_tooling(
+            options,
+            nullptr,
+            restricted_request,
+            *runtime.memory_store,
+            *runtime.plan_store,
+            runtime.resource_store.get(),
+            restricted_tooling,
+            error) ||
+            restricted_tooling.tool_view == nullptr ||
+            !restricted_tooling.tool_view->exposes_tool("calculator") ||
+            restricted_tooling.tool_view->exposes_tool("github_search_issues") ||
+            restricted_tooling.tool_view->exposes_tool("github_create_issue")) {
+        std::fprintf(stderr, "restricted daemon tool policy projection failed: %s\n", error.c_str());
+        return 1;
+    }
+    restricted_tooling.tool_view = nullptr;
+    restricted_tooling.owned_resources.clear();
 
     auto calculator_result = tooling.tool_view->call({
         "call-1",

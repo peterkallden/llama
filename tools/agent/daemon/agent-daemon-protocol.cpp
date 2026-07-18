@@ -205,6 +205,23 @@ bool parse_agent_daemon_turn_request(
     request.namespace_id = parsed.value("namespace_id", "default-namespace");
     request.project_id = parsed.value("project_id", "");
     request.turn_id = parsed.value("turn_id", "");
+    if (parsed.contains("_caller_allow_policy_gated_writes") &&
+            parsed["_caller_allow_policy_gated_writes"].is_boolean()) {
+        request.allow_policy_gated_writes = parsed["_caller_allow_policy_gated_writes"].get<bool>();
+    }
+    if (parsed.contains("_caller_allowed_tools")) {
+        if (!parsed["_caller_allowed_tools"].is_array()) {
+            error = "_caller_allowed_tools must be an array";
+            return false;
+        }
+        for (const auto & tool : parsed["_caller_allowed_tools"]) {
+            if (!tool.is_string()) {
+                error = "_caller_allowed_tools must contain strings";
+                return false;
+            }
+            request.allowed_exposed_tool_names.push_back(tool.get<std::string>());
+        }
+    }
     request.n_predict = parsed.value("n_predict", 0);
     request.mode = default_mode;
     request.memory_scope = common_memory_scope::session;

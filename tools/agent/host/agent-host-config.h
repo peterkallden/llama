@@ -62,6 +62,7 @@ struct agent_host_config {
     std::string inbound_mcp_jwt_tool_profile;
     std::vector<std::string> inbound_mcp_jwt_allowed_tools;
     bool inbound_mcp_jwt_allow_writes = false;
+    bool inbound_mcp_jwt_allow_admin = false;
     bool jsonl_tcp_enabled = false;
     std::string jsonl_tcp_listen_address = "127.0.0.1";
     int jsonl_tcp_port = 0;

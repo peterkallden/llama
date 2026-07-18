@@ -29,4 +29,5 @@ struct agent_host_mcp_inbound_token_config {
     std::string tool_profile;
     std::vector<std::string> allowed_tools;
     bool allow_writes = false;
+    bool allow_admin = false;
 };
