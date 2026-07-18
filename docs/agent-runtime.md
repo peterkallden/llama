@@ -1126,7 +1126,12 @@ The current code should remain useful without any of these. The next steps shoul
 
 ## Current Verification Baseline
 
-The resident-inference branch has been validated with:
+The `poc/agent-remote-mcp-scheduler` branch has been validated with the smoke
+pack below and with the non-smoke agent CTest suite. The current Release
+baseline is 55/55 passing for `ctest -L agent`, including memory, plan,
+inference, lifecycle, and tooling tests.
+
+The validated smoke and integration paths include:
 
 - `test-agent-inference`
 - `test-tool-adapters`
@@ -1173,6 +1178,18 @@ The foreground daemon `mini` path is now part of the smoke baseline as well. One
 ### Running Agent Tests
 
 The current branch now supports a more targeted serial workflow for agent-heavy verification on this laptop.
+
+The non-smoke CTest baseline can be run as one serial sweep:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Release -L agent --output-on-failure
+```
+
+The current branch has completed this sweep with 55/55 tests passing. The
+CTest targets also retain explicit provider/runtime wiring: the inference
+aggregate links the HTTP MCP client and the lifecycle/repository tests use the
+same provider-backed tool-runtime adapter as production code. This keeps a
+successful build meaningful after the registry-to-provider migration.
 
 Smoke binaries are grouped by the same category split already used in `pocs/agent/smoke`:
 

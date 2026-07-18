@@ -224,6 +224,11 @@ optimization inside the inference backend, not a new session protocol.
 The beta smoke pack establishes evidence for the existing operation, transport,
 policy and lane contracts before scheduler work begins.
 
+The current branch has also completed the non-smoke agent CTest baseline:
+`ctest -L agent` passes 55/55 tests in the Release configuration. This covers
+the existing contract, memory, plan, inference, lifecycle, and tooling seams;
+it does not imply that the future worker-pool acceptance criteria are complete.
+
 The smoke pack should cover:
 
 1. a hanging MCP stdio provider, including deadline expiry, subprocess
