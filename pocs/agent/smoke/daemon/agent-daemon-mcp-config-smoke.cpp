@@ -435,6 +435,51 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    daemon_options custom_options = options;
+    custom_options.tool_profile = "custom-research";
+    custom_options.tool_capabilities = {
+        {"custom.utility", {"calculator"}},
+        {"custom.network-read", {"web_search"}},
+        {"custom.proposals", {"memory_remember"}},
+    };
+    common_tool_profile custom_profile;
+    custom_profile.id = "custom-research";
+    custom_profile.include_capabilities = {
+        "custom.utility",
+        "custom.network-read",
+        "custom.proposals",
+    };
+    custom_profile.allow_network = true;
+    custom_profile.allow_policy_gated_writes = false;
+    custom_options.tool_profiles = {{custom_profile.id, custom_profile}};
+    common_agent_runtime_tooling custom_tooling;
+    if (!resolve_agent_daemon_tooling(
+            custom_options,
+            nullptr,
+            {
+                common_agent_runtime_host_mode::chat,
+                "custom profile tooling",
+                "session-a",
+                "namespace-a",
+                "",
+                "turn-custom",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+            },
+            *runtime.memory_store,
+            *runtime.plan_store,
+            runtime.resource_store.get(),
+            custom_tooling,
+            error) ||
+            !custom_tooling.tool_view ||
+            !has_tool(custom_tooling.tools, "calculator") ||
+            !has_tool(custom_tooling.tools, "web_search") ||
+            has_tool(custom_tooling.tools, "memory_remember")) {
+        std::fprintf(stderr, "custom profile policy was not applied through daemon tooling\n");
+        return 1;
+    }
+
     common_agent_runtime_session_host_turn_request restricted_request;
     restricted_request.mode = common_agent_runtime_host_mode::chat;
     restricted_request.prompt = "restricted policy";
