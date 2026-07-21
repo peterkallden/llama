@@ -8,6 +8,7 @@
 #include <vector>
 
 enum class common_agent_sandbox_status {
+    backend_unavailable,
     completed,
     failed,
     cancelled,
@@ -16,6 +17,7 @@ enum class common_agent_sandbox_status {
 
 inline const char * common_agent_sandbox_status_name(common_agent_sandbox_status status) {
     switch (status) {
+        case common_agent_sandbox_status::backend_unavailable: return "backend_unavailable";
         case common_agent_sandbox_status::completed: return "completed";
         case common_agent_sandbox_status::failed: return "failed";
         case common_agent_sandbox_status::cancelled: return "cancelled";

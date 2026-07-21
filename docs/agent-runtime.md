@@ -152,6 +152,12 @@ shell details. Their executors are intentionally not installed in the native
 adapter yet. A later sandbox runtime will provide the execution backend while
 the model-facing schema remains stable.
 
+The backend-neutral sandbox runtime also has an explicit no-backend state.
+When Docker, Kubernetes or another executor is not configured, a validated
+request returns `sandbox.backend_unavailable`; it never falls back to an
+unsandboxed host process. This keeps the runtime seam testable before the
+first concrete backend is added.
+
 ## Thinking-mode escalation
 
 The requested thinking mode is not necessarily the final mode for a turn. A

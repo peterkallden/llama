@@ -2,6 +2,7 @@
 
 #include "agent/sandbox-contract.h"
 #include "agent/sandbox-policy.h"
+#include "agent/sandbox-runtime.h"
 #include "agent/tool-runtime-contract.h"
 
 #include <nlohmann/json.hpp>
@@ -37,6 +38,14 @@ public:
                 error);
         }
         if (result.status != common_agent_sandbox_status::completed) {
+            if (result.status == common_agent_sandbox_status::backend_unavailable) {
+                return common_tool_execution_result::failure(
+                    "sandbox.backend_unavailable",
+                    common_tool_failure_class::execution,
+                    false,
+                    "No sandbox execution backend is configured for this host.",
+                    result.error);
+            }
             const auto failure_class = result.status == common_agent_sandbox_status::timed_out
                 ? common_tool_failure_class::timeout
                 : common_tool_failure_class::execution;

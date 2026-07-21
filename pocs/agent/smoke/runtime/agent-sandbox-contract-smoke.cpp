@@ -36,6 +36,16 @@ int main() {
         return 1;
     }
 
+    common_agent_sandbox_unavailable_runtime unavailable_runtime;
+    common_agent_sandbox_tool_helper unavailable_helper(unavailable_runtime, policy);
+    request.network = common_agent_sandbox_network_scope::none;
+    const auto unavailable = unavailable_helper.run(request);
+    if (unavailable.ok || unavailable.failure_code != "sandbox.backend_unavailable" ||
+            unavailable.failure_class != common_tool_failure_class::execution) {
+        std::fprintf(stderr, "no-backend runtime did not return the expected result\n");
+        return 1;
+    }
+
     std::printf("sandbox_status=ok\n");
     std::printf("sandbox_backend=%s\n", runtime.last_request.command.program.c_str());
     return 0;
