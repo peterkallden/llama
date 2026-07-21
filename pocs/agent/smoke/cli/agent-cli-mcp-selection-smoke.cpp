@@ -45,8 +45,17 @@ int main(int argc, char ** argv) {
     common_memory_in_memory_store store;
     args options;
     options.command = "run";
-    options.tool_profile = "minimal";
+    options.tool_profile = "cli-research-read";
     options.tool_profile_explicit = true;
+    common_tool_profile profile;
+    profile.id = options.tool_profile;
+    profile.members = {
+        {"calculator", 1, true, "{}"},
+        {"time_now", 1, true, "{}"},
+    };
+    profile.allow_network = true;
+    profile.allow_policy_gated_writes = false;
+    options.tool_profiles = {{profile.id, profile}};
     options.mcp_tool_command = server_path.string();
     options.mcp_tool_server_name = "github";
     options.mcp_tool_prefix = "github";
