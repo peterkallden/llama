@@ -42,8 +42,17 @@ common_agent_runtime_policy make_agent_runtime_policy(common_agent_runtime_polic
     policy.max_iterations = 2;
     policy.max_reflection_rounds = 1;
     policy.max_tool_rounds = options.max_tool_rounds;
-    policy.allow_policy_gated_tool_proposals =
-    policy.tool_profile == "memory" || policy.tool_profile == "research" || policy.tool_profile == "all-configured";
+    common_tool_profile_snapshot profile_snapshot;
+    std::string profile_error;
+    if (resolve_common_tool_profile_snapshot(
+            policy.tool_profile,
+            options.tool_capabilities,
+            options.tool_profiles,
+            profile_snapshot,
+            profile_error)) {
+        policy.allow_policy_gated_tool_proposals =
+            profile_snapshot.allow_policy_gated_writes.value_or(false);
+    }
     return policy;
 }
 

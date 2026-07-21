@@ -63,13 +63,22 @@ common_tool_profile profile(const char * id, const char * description, std::init
     return value;
 }
 
+common_tool_profile policy_profile(
+        common_tool_profile value,
+        bool allow_network,
+        bool allow_policy_gated_writes) {
+    value.allow_network = allow_network;
+    value.allow_policy_gated_writes = allow_policy_gated_writes;
+    return value;
+}
+
 std::vector<common_tool_profile> builtin_profiles() {
     return {
-        profile("minimal", "Local deterministic utility tools.", {"calculator", "time_now"}),
-        profile("memory-read", "Read-only scoped memory and plan inspection.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "plan_get", "resource_read"}),
-        profile("memory", "Memory inspection plus policy-gated memory and plan proposals.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "memory_propose_update", "memory_propose_forget", "memory_link", "memory_compact_propose", "plan_get", "plan_propose", "resource_read"}),
-        profile("research", "Memory profile with repository inspection and safe network-read declarations.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "plan_get", "plan_propose", "repository_list", "repository_search", "repository_read", "repository_diff", "repository_log", "resource_read", "web_search", "web_fetch"}),
-        profile("all-configured", "All catalogued tools, still subject to host policy and confirmation.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "memory_propose_update", "memory_propose_forget", "memory_link", "memory_compact_propose", "plan_get", "plan_propose", "repository_list", "repository_search", "repository_read", "repository_diff", "repository_log", "resource_read", "web_search", "web_fetch"}),
+        policy_profile(profile("minimal", "Local deterministic utility tools.", {"calculator", "time_now"}), false, false),
+        policy_profile(profile("memory-read", "Read-only scoped memory and plan inspection.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "plan_get", "resource_read"}), false, false),
+        policy_profile(profile("memory", "Memory inspection plus policy-gated memory and plan proposals.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "memory_propose_update", "memory_propose_forget", "memory_link", "memory_compact_propose", "plan_get", "plan_propose", "resource_read"}), false, true),
+        policy_profile(profile("research", "Memory profile with repository inspection and safe network-read declarations.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "plan_get", "plan_propose", "repository_list", "repository_search", "repository_read", "repository_diff", "repository_log", "resource_read", "web_search", "web_fetch"}), true, true),
+        policy_profile(profile("all-configured", "All catalogued tools, still subject to host policy and confirmation.", {"calculator", "time_now", "memory_search", "memory_get", "memory_inspect", "memory_conflict_check", "memory_remember", "memory_propose_update", "memory_propose_forget", "memory_link", "memory_compact_propose", "plan_get", "plan_propose", "repository_list", "repository_search", "repository_read", "repository_diff", "repository_log", "resource_read", "web_search", "web_fetch"}), true, true),
     };
 }
 
@@ -223,4 +232,23 @@ bool common_tool_catalog::resolve_profile(
     error.clear();
     snapshot.tools = std::move(loaded);
     return true;
+}
+
+bool resolve_common_tool_profile_snapshot(
+        const std::string & profile_id,
+        const std::map<std::string, std::vector<std::string>> & configured_capabilities,
+        const std::map<std::string, common_tool_profile> & configured_profiles,
+        common_tool_profile_snapshot & snapshot,
+        std::string & error) {
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    if (!catalog.bootstrap(
+            profile_id,
+            bootstrap,
+            error,
+            configured_capabilities,
+            configured_profiles)) {
+        return false;
+    }
+    return catalog.resolve_profile(profile_id, snapshot, error);
 }

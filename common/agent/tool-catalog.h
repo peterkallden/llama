@@ -80,5 +80,12 @@ private:
     std::map<std::string, std::vector<std::string>> capabilities;
 };
 
+bool resolve_common_tool_profile_snapshot(
+    const std::string & profile_id,
+    const std::map<std::string, std::vector<std::string>> & configured_capabilities,
+    const std::map<std::string, common_tool_profile> & configured_profiles,
+    common_tool_profile_snapshot & snapshot,
+    std::string & error);
+
 const char * common_tool_risk_class_name(common_tool_risk_class value);
 

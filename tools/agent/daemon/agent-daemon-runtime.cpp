@@ -110,7 +110,17 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     policy.max_iterations = 2;
     policy.max_reflection_rounds = 1;
     policy.max_tool_rounds = options.max_tool_rounds;
-    policy.allow_policy_gated_tool_proposals = false;
+    common_tool_profile_snapshot profile_snapshot;
+    std::string profile_error;
+    if (resolve_common_tool_profile_snapshot(
+            options.tool_profile,
+            options.tool_capabilities,
+            options.tool_profiles,
+            profile_snapshot,
+            profile_error)) {
+        policy.allow_policy_gated_tool_proposals =
+            profile_snapshot.allow_policy_gated_writes.value_or(false);
+    }
     std::string deliberation_error;
     common_agent_deliberation_policy deliberation_policy;
     if (resolve_common_agent_deliberation_policy(
@@ -200,11 +210,9 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.allowed_exposed_tool_names = request.allowed_exposed_tool_names;
     tool_request.tool_context.repository_root = options.repository_root;
     tool_request.tool_context.allow_network =
-        options.tool_profile == "research" || options.tool_profile == "all-configured" ||
         has_enabled_mcp_provider(options.mcp_providers) ||
         !options.mcp_tool_command.empty();
-    tool_request.tool_context.allow_policy_gated_writes =
-        options.tool_profile == "memory" || options.tool_profile == "research" || options.tool_profile == "all-configured";
+    tool_request.tool_context.allow_policy_gated_writes = false;
     if (allow_policy_gated_writes.has_value()) {
         tool_request.tool_context.allow_policy_gated_writes = *allow_policy_gated_writes;
     } else if (request.allow_policy_gated_writes.has_value()) {

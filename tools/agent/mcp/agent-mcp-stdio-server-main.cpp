@@ -503,11 +503,8 @@ agent_tool_context make_tool_context(
     context.scope.memory_scope = context.memory_scope;
     context.scope.plan_scope = context.plan_scope;
     context.scope.memory_global_opt_in = options.memory_global_opt_in;
-    context.allow_network =
-        options.tool_profile == "research" || options.tool_profile == "all-configured" ||
-        has_enabled_stdio_mcp_provider(configured_mcp_providers);
-    context.allow_policy_gated_writes =
-        options.tool_profile == "memory" || options.tool_profile == "research" || options.tool_profile == "all-configured";
+    context.allow_network = has_enabled_stdio_mcp_provider(configured_mcp_providers);
+    context.allow_policy_gated_writes = false;
     context.allow_memory_proposals = context.allow_policy_gated_writes;
     context.allow_plan_proposals = context.allow_policy_gated_writes;
     context.max_calls = std::max<size_t>(options.max_tool_rounds, 1);
@@ -527,6 +524,8 @@ agent_host_tool_selection_request make_server_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    request.tool_capabilities = options.tool_capabilities;
+    request.tool_profiles = options.tool_profiles;
     append_configured_stdio_mcp_providers(configured_mcp_providers, request.mcp_providers);
     return request;
 }

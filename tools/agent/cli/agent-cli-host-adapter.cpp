@@ -45,8 +45,8 @@ agent_tool_context make_agent_cli_tool_context(
     tool_context.plan_scope = tool_context.scope.plan_scope;
     tool_context.profile_id = options.tool_profile;
     tool_context.repository_root = repository_root;
-    tool_context.allow_network = options.tool_profile == "research" || options.tool_profile == "all-configured" || !options.mcp_tool_command.empty();
-    tool_context.allow_policy_gated_writes = options.tool_profile == "memory" || options.tool_profile == "research" || options.tool_profile == "all-configured";
+    tool_context.allow_network = !options.mcp_tool_command.empty();
+    tool_context.allow_policy_gated_writes = false;
     tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
     tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
     tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
@@ -400,6 +400,8 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         options.plan_show_summary,
         options.agent_trace,
         static_cast<size_t>(options.max_tool_rounds),
+        options.tool_capabilities,
+        options.tool_profiles,
     });
     std::string deliberation_error;
     common_agent_deliberation_policy deliberation_policy;

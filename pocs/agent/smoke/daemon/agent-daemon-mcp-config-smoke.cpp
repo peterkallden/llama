@@ -61,7 +61,7 @@ int main(int argc, char ** argv) {
                 {"max_plan_revisions", 2},
             }},
             {"tools", {
-                {"profile", "minimal"},
+                {"profile", "research"},
                 {"providers", json::array({
                     json{
                         {"type", "mcp"},

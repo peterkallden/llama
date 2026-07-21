@@ -38,6 +38,8 @@ struct common_agent_runtime_policy_build_config {
     bool plan_show_summary = false;
     bool agent_trace = false;
     size_t max_tool_rounds = 0;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, common_tool_profile> tool_profiles;
 };
 
 common_agent_runtime_policy make_agent_runtime_policy(
