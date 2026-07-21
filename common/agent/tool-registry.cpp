@@ -1,0 +1,50 @@
+#include "agent/tool-registry.h"
+#include "agent/schema-contract.h"
+
+bool common_tool_registry::register_tool(common_registered_tool tool, std::string & error) {
+    if (tool.name.empty() || !tool.handler) { error = "registered tool requires a name and handler"; return false; }
+    if (tools.count(tool.name)) { error = "tool is already registered"; return false; }
+    const auto schema = common_json_contract_value::parse(tool.arguments_schema, nullptr, false);
+    if (tool.version == 0 || tool.executor_id.empty() || !schema.is_object() || schema.value("type", std::string()) != "object" ||
+            (schema.contains("required") && !schema["required"].is_array()) ||
+            (schema.contains("properties") && !schema["properties"].is_object())) {
+        error = "registered tool has invalid capability binding";
+        return false;
+    }
+    if (schema.contains("required")) for (const auto & field : schema["required"]) {
+        if (!field.is_string()) { error = "registered tool has invalid capability binding"; return false; }
+    }
+    tools.emplace(tool.name, std::move(tool)); error.clear(); return true;
+}
+
+bool common_tool_registry::validate(const common_registered_tool_call & call, std::string & error) const {
+    const auto it = tools.find(call.name); if (it == tools.end()) { error = "tool is not registered"; return false; }
+    std::string normalized;
+    return common_schema_normalize_and_validate_object(call.arguments_json, it->second.arguments_schema, normalized, error);
+}
+
+common_tool_execution_result common_tool_registry::execute(const common_registered_tool_call & call) const {
+    std::string error;
+    if (!validate(call, error)) return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
+    const auto it = tools.find(call.name);
+    return it->second.handler(call.arguments_json);
+}
+
+bool common_tool_registry::contains(const std::string & name) const {
+    return tools.count(name) != 0;
+}
+
+bool common_tool_registry::matches_binding(const std::string & name, uint32_t version, const std::string & executor_id) const {
+    const auto it = tools.find(name);
+    return it != tools.end() && it->second.version == version && it->second.executor_id == executor_id;
+}
+
+bool common_tool_registry::is_read_only(const std::string & name) const {
+    const auto it = tools.find(name);
+    return it != tools.end() && it->second.read_only;
+}
+
+bool common_tool_registry::is_policy_gated(const std::string & name) const {
+    const auto it = tools.find(name);
+    return it != tools.end() && it->second.policy_gated;
+}

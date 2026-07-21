@@ -1,0 +1,141 @@
+#include "agent/blueprint-selector.h"
+
+#include <algorithm>
+#include <cctype>
+#include <set>
+
+namespace {
+
+std::set<std::string> keyword_set(const std::string & text) {
+    static const std::set<std::string> ignored = {
+        "about", "after", "agent", "and", "answer", "before", "code", "for", "from", "into", "issue", "that", "the", "this", "with"
+    };
+    std::set<std::string> words;
+    std::string word;
+    for (const unsigned char ch : text) {
+        if (std::isalnum(ch)) {
+            word.push_back((char) std::tolower(ch));
+        } else if (!word.empty()) {
+            if (word.size() >= 4 && !ignored.count(word)) words.insert(std::move(word));
+            word.clear();
+        }
+    }
+    if (word.size() >= 4 && !ignored.count(word)) words.insert(std::move(word));
+    return words;
+}
+
+const common_blueprint_candidate * keyword_fallback(
+        const common_agent_request & request,
+        const std::vector<common_blueprint_candidate> & candidates) {
+    const auto request_words = keyword_set(request.prompt);
+    const common_blueprint_candidate * best = nullptr;
+    size_t best_score = 0;
+    bool tied = false;
+    for (const auto & candidate : candidates) {
+        auto candidate_words = keyword_set(candidate.logical_id + " " + candidate.description);
+        size_t score = 0;
+        for (const auto & word : request_words) score += candidate_words.count(word);
+        if (score > best_score) { best = &candidate; best_score = score; tied = false; }
+        else if (score != 0 && score == best_score) tied = true;
+    }
+    return best_score != 0 && !tied ? best : nullptr;
+}
+
+} // namespace
+
+common_explicit_blueprint_selector::common_explicit_blueprint_selector(std::string logical_id) : logical_id(std::move(logical_id)) {}
+
+common_blueprint_selection common_explicit_blueprint_selector::select(
+        const common_agent_request &,
+        const std::vector<common_blueprint_candidate> &,
+        std::string & error) {
+    error.clear();
+    return {common_blueprint_selection_decision::instantiate, logical_id, 1.0f, "explicitly selected"};
+}
+
+bool common_agent_select_and_instantiate_blueprint(
+        common_plan_store & plan_store,
+        const common_agent_request & request,
+        common_blueprint_selector & selector,
+        const std::vector<common_blueprint_candidate> & candidates,
+        const common_blueprint_selection_config & config,
+        common_blueprint_selection_result & result,
+        std::string & error) {
+    result = {};
+    error.clear();
+    if (config.task_plan_id.empty() || config.session_id.empty()) {
+        error = "blueprint selection requires task plan and session ids";
+        return false;
+    }
+    if (candidates.empty() || candidates.size() > config.maximum_candidates) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        result.reason = candidates.empty() ? "no installed blueprint candidates" : "too many blueprint candidates";
+        return true;
+    }
+
+    const auto existing = plan_store.get(config.task_plan_id, error);
+    if (!error.empty()) return false;
+    if (existing) {
+        if (existing->kind != common_plan_kind::task || existing->scope != config.scope || existing->session_id != config.session_id) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "existing plan is not a compatible task plan";
+            return true;
+        }
+        result.outcome = common_blueprint_selection_outcome::resumed;
+        result.reason = "existing task plan takes precedence";
+        return true;
+    }
+
+    std::string selection_error;
+    const auto choice = selector.select(request, candidates, selection_error);
+    result.confidence = choice.confidence;
+    result.reason = choice.reason.empty() ? selection_error : choice.reason;
+    if (!selection_error.empty() || choice.decision == common_blueprint_selection_decision::failed) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        return true;
+    }
+    const common_blueprint_candidate * candidate = nullptr;
+    if (choice.decision == common_blueprint_selection_decision::instantiate && choice.logical_id && choice.confidence >= config.minimum_confidence) {
+        const auto found = std::find_if(candidates.begin(), candidates.end(), [&](const auto & value) {
+            return value.logical_id == *choice.logical_id;
+        });
+        if (found == candidates.end()) {
+            result.outcome = common_blueprint_selection_outcome::failed_safely;
+            result.reason = "selector returned an unavailable blueprint";
+            return true;
+        }
+        candidate = &*found;
+    } else {
+        candidate = keyword_fallback(request, candidates);
+        if (candidate) {
+            result.confidence = 0.0f;
+            result.reason = "native keyword fallback after model declined or reported low confidence";
+        } else {
+            result.outcome = common_blueprint_selection_outcome::declined;
+            return true;
+        }
+    }
+    if (!candidate) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        return true;
+    }
+    const auto blueprint = plan_store.get(candidate->persisted_id, error);
+    if (!error.empty()) return false;
+    if (!blueprint || blueprint->kind != common_plan_kind::blueprint) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        result.reason = "installed candidate is not a blueprint";
+        return true;
+    }
+    common_plan_state instance;
+    if (!common_plan_instantiate_blueprint(*blueprint, config.task_plan_id, config.session_id, instance, error, config.scope, config.now)) return false;
+    // Blueprint templates deliberately contain no caller identity.  The
+    // instantiated task must inherit it before persistence, otherwise a
+    // turn- or project-scoped runtime cannot resume the plan it just made.
+    instance.namespace_id = request.namespace_id;
+    instance.project_id = request.project_id;
+    instance.turn_id = request.turn_id;
+    if (!plan_store.create(instance, error)) return false;
+    result.outcome = common_blueprint_selection_outcome::instantiated;
+    result.logical_id = candidate->logical_id;
+    return true;
+}

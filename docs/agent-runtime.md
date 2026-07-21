@@ -1,0 +1,1623 @@
+# Agent Runtime Architecture
+
+This note describes the current resident-agent runtime direction. The main completed step is the inference/runtime abstraction that now sits between agent behavior and the old CLI-local generation path, with a small foreground daemon layered on top as an admin/test transport.
+
+The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process, service, or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
+
+## Agent runtime modes
+
+The agent runtime deliberately has a smaller mode vocabulary than ordinary
+chat. `direct` remains a chat/runtime behavior; it is not an agent thinking
+mode. Agent turns start at `reflective` and may escalate to `deliberate` or
+`research`.
+
+```text
+runtime mode:  chat | agent
+thinking mode: reflective | deliberate | research
+```
+
+`reflective` is the minimum assurance loop:
+
+```text
+understand -> execute/reason -> draft -> bounded review -> optional revision -> answer
+```
+
+It does not require a persistent plan, plan revision, evidence extraction, or
+source cross-checking. Its normal policy is one bounded reflection round and
+no research iterations.
+
+`deliberate` is the structured multi-step loop:
+
+```text
+frame problem -> establish goal/constraints -> plan -> execute -> step review
+    -> revise plan when needed -> review draft -> answer
+```
+
+Its policy requires a plan, allows bounded plan revisions, and requires review
+of relevant work before final answer acceptance. The runtime now emits one
+typed step-review event for each completed plan step during the deliberate
+reflection pass, plus a typed answer-review event. Plan revisions remain
+bounded by the resolved deliberate policy.
+
+Deliberate alternatives and working decisions use the existing plan contract:
+constraints and assumptions are proposed through typed plan operations and
+remain attached to the plan history. This keeps them inspectable and
+revisable without introducing a second hypothesis or decision store.
+The bounded runtime plan context now renders their current valid/invalid state
+and confidence into the model-facing runtime context, so a later deliberate
+revision can explicitly preserve, challenge, or replace an assumption while
+remaining inside the active constraints.
+
+`research` is a deliberate runtime with an evidence-acquisition loop:
+
+```text
+knowledge gap -> query -> source fetch -> evidence extraction
+    -> source comparison -> synthesis -> verification -> stop/iterate
+```
+
+Research is not a special MCP tool. A controller uses host-approved tools such
+as web search/fetch, repository search, resource read, memory search, and
+remote MCP tools. Its temporary workspace composes existing plans,
+observations, resource references, trace entries, and turn/session state. It
+does not create a parallel persistence model.
+
+The first research contract slice now exists in `common/agent/research`. It is
+an ephemeral, scope-bound workspace model for objectives, gaps, tasks, sources,
+evidence, budgets, coverage, and a normalized result. Sources may point at the
+existing resource store through `common_runtime_resource_ref`; the workspace
+does not duplicate raw material or create a second durable memory store. The
+bounded controller now selects the highest-priority open gap, schedules one
+host-approved research task, consumes a typed task event, records returned
+evidence IDs, updates coverage, and stops on coverage, budget, no-progress,
+policy, or cancellation conditions. It deliberately does not execute tools,
+own resources, perform synthesis, or write memory.
+
+The first execution slice now exists beside the controller. A research runner
+drives the controller sequentially through the existing
+`common_agent_tool_runtime`; its adapter selects a host-approved research tool,
+normalizes the successful result into a workspace source and evidence item,
+and feeds the typed event back to the controller. User-supplied resources and
+memory hits are represented as sources and can be selected through bounded
+`resource_read` and `memory_get` tasks. Multiple objective success criteria
+become separate research gaps. The normalized result preserves source,
+evidence, comparison and provenance data for later verification.
+
+The bounded research slice now also includes source comparison, a bounded
+synthesis context, and a separate answer-verification contract. Tool success
+is distinct from gap completion: a typed assessment can be sufficient,
+insufficient, inconclusive or contradicted. The current default assessor uses
+bounded completion-criterion matching; a host can later provide a
+model-backed assessor through the same seam. The answer verifier checks draft
+coverage, evidence, plan observations, memory references and user resource
+references without creating another persistence layer. If verification asks
+for more evidence, the runtime can reopen the same turn-local workspace once,
+carry forward the prior evidence, run one additional bounded research task,
+update the synthesis context, regenerate the draft and verify it again. The
+reopen path has an explicit `research_reopened` event and does not recurse.
+
+Research now starts after the initial plan has been materialized. The runtime
+passes that plan identity into the research workspace and emits the
+`research_started` event with the associated `plan_id`; research remains a
+workspace/controller concern rather than expanding the plan into individual
+research tasks.
+
+`llama-agent-research-runtime-smoke` covers two gaps, tool execution,
+source/evidence creation, provenance, answer verification and cancellation
+without network access. The common runtime emits structured research events
+and a `research` trace stage. The initial and reopened research trace entries
+carry the associated `plan_id` and turn-local workspace id, so the existing
+session/daemon host can carry the research lifecycle without a separate
+progress channel.
+
+The following research capabilities remain intentionally incomplete:
+
+- model-driven gap decomposition and query reformulation;
+- model-backed semantic gap assessment;
+- structured claim extraction from the draft;
+
+All mode budgets are host-resolved. A user or caller may request a mode and
+bounded limits, but host policy remains the upper bound for reflection rounds,
+plan revisions, tool rounds, research iterations, tokens, and time.
+
+## Thinking-mode escalation
+
+The requested thinking mode is not necessarily the final mode for a turn. A
+host-owned deterministic escalation policy can resolve a bounded upward
+transition when the request contains signals such as multiple independent
+constraints, external uncertainty, user-resource comparison, or an explicit
+verification request:
+
+```text
+requested reflective
+    -> observed constraints/signals
+    -> host escalation policy
+    -> resolved deliberate or research
+```
+
+Escalation is monotonic and bounded. The policy controls whether escalation is
+allowed, the maximum mode and the maximum number of transitions. The runtime
+emits `thinking_mode_resolved`, `thinking_escalation_allowed`, and
+`thinking_escalation_denied` events with the reason code. The model does not
+select the final mode. `direct` remains a chat behavior and is not part of the
+agent escalation chain.
+
+Escalation can happen at two points in the same turn. Pre-run inspection is
+the primary path for signals visible in the request, resources and objective.
+After a draft, reflection may return a typed `assurance_action` requesting
+`escalate_deliberate` or `escalate_research`. The runtime submits that request
+to the same host-resolved policy; reflection does not change the mode itself.
+The provisional draft and reflection issues remain turn-local working context,
+not evidence, and the late transition is bounded to one use in the first
+version. The existing turn, plan, cancellation identity and event stream are
+preserved.
+
+## Event order by thinking mode
+
+The modes share one event model. A mode changes which events are expected and
+how many bounded loops may occur; it does not create a separate event channel.
+Events below are the logical order. Events in square brackets are conditional,
+and `*` means that the event may repeat within its configured budget.
+
+### Reflective
+
+```text
+thinking_mode_resolved
+  -> [plan_created]
+  -> [tool_executed / observation_recorded]*
+  -> reflection_completed
+  -> [thinking_escalation_requested -> thinking_escalation_allowed
+      -> thinking_mode_resolved]*
+  -> [response_revised]
+  -> terminal response
+```
+
+Reflective may use a plan and tools, but it does not require plan revision,
+step review, research gaps or source cross-checking. The terminal response is
+returned separately from the event stream by daemon/MCP transports.
+
+### Deliberate
+
+```text
+thinking_mode_resolved
+  -> plan_created
+  -> [plan_updated / plan_step_started / plan_step_completed]*
+  -> reflection_completed
+  -> [thinking_escalation_requested -> thinking_escalation_allowed
+      -> thinking_mode_resolved]*
+  -> step_reviewed*
+  -> answer_reviewed
+  -> [plan_revision_requested -> plan_updated]*
+  -> [response_revised]
+  -> terminal response
+```
+
+Deliberate always has a plan and bounded step/answer review. A plan revision
+re-enters the same plan and event stream; it does not start a second runtime.
+
+### Research
+
+```text
+thinking_mode_resolved
+  -> plan_created
+  -> research_started (with plan_id)
+  -> research_gap_opened*
+  -> research_task_scheduled -> research_task_started
+  -> research_task_completed
+  -> research_source_recorded* / research_evidence_recorded*
+  -> [research_sources_compared]
+  -> research_completed
+  -> answer_reviewed (research verification)
+  -> [research_reopened -> research_completed -> answer_reviewed]*
+  -> reflection_completed
+  -> step_reviewed*
+  -> answer_reviewed (deliberate answer review)
+  -> [response_revised]
+  -> terminal response
+```
+
+Research tasks remain in the ephemeral research workspace. The plan owns the
+overall research step and identity; the controller owns gap/task progression;
+the workspace owns sources and evidence. If answer verification requests more
+evidence, the bounded reopen emits `research_reopened` and may run one further
+research iteration before draft verification resumes.
+
+The late-escalation event sequence is part of the ordinary mode order, not a
+second turn:
+
+```text
+reflection_completed
+  -> thinking_escalation_requested
+  -> thinking_escalation_allowed | thinking_escalation_denied
+  -> [thinking_mode_resolved]
+  -> continue in the same turn
+```
+
+When policy denies the request, the runtime returns the provisional draft with
+the bounded limitation when no further revision budget remains. When allowed,
+the higher mode receives the remaining turn budget; it does not reset the
+turn's deadline, cancellation state or escalation count.
+
+## Current Shape
+
+The current implementation is still in-process and synchronous.
+
+```text
+llama-agent CLI / llama-memory chat compatibility
+        |
+        v
+CLI argument parsing and validation
+        |
+        v
+CLI host adapter
+        |
+        v
+runtime host
+        |
+        +--> inference session backend
+        |       +--> local CLI llama generation
+        |       +--> in-process server_context smoke backend
+        |
+        +--> chat runtime driver
+        |
+        +--> agent runtime driver
+                +--> planner
+                +--> scheduler
+                +--> registered tools
+                +--> reasoning / draft / reflection
+                +--> memory learning
+```
+
+What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, a bounded configurable dispatcher worker pool (default one worker), explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
+
+That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
+
+The JSONL administration path now has a first configuration-reload contract.
+`reload_config` validates a complete host-config candidate and either applies
+the bounded mutable fields for new operations or returns a structured
+`config.reload.rejected` result with `restart_required` field paths. Model and
+backend resources, stores, worker/queue sizing, and runtime assembly remain
+restart-required. MCP providers are diffed by stable ID and added, removed, or
+replaced for new operations. Native tool profile and repository-root changes
+also rebuild the host tool view for new operations, while existing tooling
+retains its clients. The
+current implementation keeps reload local to JSONL administration and does not
+rebuild listeners or already-running provider clients. When the daemon hosts
+inbound MCP HTTP, the resolved tool catalog is replaced atomically for new
+HTTP requests as part of the same provider reload.
+
+Daemon configuration now travels through a shared immutable snapshot store.
+Reload publishes a new snapshot instead of mutating the options object that
+worker, session and HTTP paths may already be reading. Requests and resolved
+tool views retain the snapshot they materialized for their own lifetime.
+
+The same daemon path is now also a little less transport-shaped around status reporting. Readiness/liveness, queue state, active request identity, and session descriptors now sit behind one daemon-status object first, and the current JSONL protocol mainly serializes that host-owned status surface rather than inventing it inline.
+
+That status surface now also preserves one small but important bit of lane-owned waiting state: when an active turn is parked behind a manager-owned pending operation, daemon status can report not only the active phase/disposition but also the pending operation kind/detail on both the top-level active turn and the keyed session descriptor. In practice that means admin/test callers can now distinguish "turn is awaiting inference" from "turn is awaiting inference because a specific pending lane operation is still unresolved" without scraping internal debug logs.
+
+The response side is now slightly less string-shaped too. The daemon command result carries an explicit response kind for `turn`, `status`, or lifecycle/session actions, so the current JSONL adapter no longer has to infer the response shape only from ad hoc event-string conventions before serializing it.
+
+The command side is now also a little less ad hoc. The transport still speaks the same JSONL command fields, but the host-owned daemon command contract now carries small typed payloads for turn execution, session actions and queued-turn cancellation instead of relying only on a flat bag of optional top-level fields.
+
+That command contract now also carries one shared execution-control seam end to end. Host config and daemon defaults still define the baseline timeout policy, but a JSONL/admin caller can now override turn timeout, inference-step timeout, native-tool timeout, and MCP connect/request/shutdown timeouts per turn without introducing a second cancellation/deadline mechanism. The same host-owned execution-control object continues to carry both the cancellation token and the resolved deadline.
+
+The JSONL client/transport seam is now moving in the same direction. It no longer only has a special turn-request helper plus an ad hoc shutdown helper; it now has named request builders for ordinary turn execution, `status`, queued-turn cancellation, session actions and shutdown, so the current stdio/JSONL adapter is a little less likely to grow one-off inline command JSON as the service surface expands.
+
+That same client/admin layer now also renders failed daemon turns through a small typed summary rather than only echoing raw error text. When a turn is rejected, cancelled, or times out, the current `daemon-chat` and `daemon-session` path can now surface the daemon `event` together with failure class, generation status, stop reason, and cancel state in one stable line.
+
+The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
+
+That turn surface now also carries a slightly clearer failure/result contract. A failed or cancelled turn no longer only has `error` plus a boolean cancel flag; the session/daemon path now preserves a stable `failure_class` together with generation `status` and `stop_reason`, so timeout-versus-cancel-versus-generic execution failure is visible at the host boundary before any later async worker or richer event streaming work lands. The same shaping now applies to early daemon-side rejections too, so a missing turn payload, lifecycle rejection, or pre-expired deadline does not fall back to a thinner one-off error shape.
+
+Turn results now also carry a first structured trace history. The current slice is intentionally modest: the trace is still a bounded execution summary rather than a streamed event protocol, but it already records host-safe facts such as plan creation/resume, step activation/completion, observation recording, tool success/failure, reflection decisions, memory-learning outcomes, and final response completion.
+
+Trace and events deliberately have different responsibilities. The trace is
+the ordered turn-local summary returned with the terminal result. The event
+stream is the detailed lifecycle channel used by daemon, JSONL and MCP/SSE
+clients. Research task, source and evidence milestones, deliberate step/answer
+reviews, and thinking-mode escalation are therefore primarily events; the trace
+keeps the bounded stage summary and its plan/step/tool/observation/workspace
+references. Neither surface contains raw chain-of-thought.
+
+Daemon command results still carry an internal daemon event list plus `daemon_event_count` inside the service/dispatcher result contract. The JSONL adapter now projects those events onto separate `message_type: "event"` lines and keeps the terminal `message_type: "response"` result free of event arrays and event counters.
+
+That event list is now also a little less ad hoc internally. The daemon has started to grow a typed internal event stream of its own, with explicit event kinds such as `command.queued`, `command.started`, `command.rejected`, `turn.accepted`, `turn.started`, `turn.rejected`, `turn.cancel_requested`, `turn.cancel_rejected`, `turn.waiting_for_tool`, `turn.waiting_for_inference`, `turn.completed`, `turn.failed`, `turn.cancelled`, `tool.started`, `tool.completed`, `tool.failed`, `memory.learned`, `plan.created`, `plan.updated`, `plan.step_started`, `plan.step_completed`, `observation.recorded`, `resource.created`, `resource.attached`, `session.reset_requested`, `session.reset`, `session.close_requested`, `session.closed`, `lane.drained`, `resources.listed`, `memories.listed`, `plans.listed`, `resource.read`, `daemon.drain_requested`, and `daemon.shutdown_requested`. Tool events now follow the trace outcome: a tool produces `tool.started` followed by exactly one terminal tool event (`tool.completed` or `tool.failed`). The current JSONL/admin path still returns these as part of the ordinary command result, but they are no longer only invented at the transport edge: session lanes can now emit host-owned internal events into a daemon sink, and the dispatcher merges that stream back into the final response as one projection of daemon activity rather than treating the response object itself as the only event source.
+
+The newest part of that projection is intentionally pragmatic rather than fully live-streamed from every runtime subsystem. Tool and memory events are still largely projected from the bounded turn trace/result surface, but planning/resource evidence has taken one step closer to the runtime core: the session host now preserves runtime-side agent events, and the daemon prefers those direct `plan.*`, `observation.recorded`, and `resource.*` signals before falling back to trace-only projection. Tool terminal outcomes are projected according to their trace kind, including failure. Step start/completion remains trace-driven for now. JSONL clients receive these as separate event messages while the terminal response remains result-only.
+
+The next small cleanup inside that seam is now in place too: daemon execution now has an internal split between command outcome and event log before anything is projected back to the current wire/result shape. In practice that means the service layer can produce a host-owned outcome payload without also being the long-term owner of the projected JSONL response envelope, while the dispatcher remains the place where queued/started/internal daemon events are merged and then projected to today's `common_agent_daemon_command_result`. The transport still sees the same response surface, but the core no longer has to treat "response object with embedded event vector" as its native execution model.
+
+That event projection is now also a little more internally consistent for fast service-owned replies. Status, drain, shutdown, resource/listing results, early turn-failure paths, and dispatcher-owned `command.queued` / `command.started` markers now preserve typed daemon event metadata directly instead of mixing the typed path with one-off raw string events for the same already-named event families. The same cleanup now also covers dispatcher-owned rejection and cancellation paths, so `command.rejected`, `turn.rejected`, `turn.cancel_requested`, `turn.cancel_rejected`, and queued-turn `turn.cancelled` no longer depend on raw string-only shaping at the final result seam. Service-owned admin/listing/resource failure paths have now moved the same way too, so `sessions.listed`, `session.found`, `session.not_found`, `session.lookup_failed`, `resources.list_failed`, `memories.list_failed`, `plans.list_failed`, `resource.not_found`, `resource.read_failed`, `session.reset_failed`, `session.close_failed`, and the fallback `command.failed` path all preserve typed event metadata before JSONL/client projection.
+
+That seam now also has a small event-emitter shape rather than only ad hoc `push_back(...)` or four-argument sink calls. The daemon event sink now takes a full event object, and session/service code can stamp request, turn, session, namespace, project, and optional operation context through a small `common_agent_event_emitter` before emitting typed events. The JSONL adapter now keeps this event channel separate from the terminal response, giving the host one clearer append path for lane/session/service events and a better place to centralize sequencing and later fan-out without forcing transport logic back into runtime code.
+
+That event seam now has its first explicit collector as well. The daemon service no longer owns raw `pending_events`, `next_event_sequence`, and event-buffer locking directly; that buffering/sequencing slice has been extracted into a small injected `common_agent_daemon_event_collector`. This is still intentionally a modest step: the service API continues to expose `emit_internal_event(...)` and `take_internal_events()` so the rest of the daemon does not need a wider rewrite just to gain a cleaner event seam.
+
+The intended follow-up is to move ownership of that collector upward, closer to dispatcher/service coordination rather than keeping it permanently inside the service executor. The reason is architectural rather than stylistic: sequencing, buffering, and projection are daemon concerns, while `common_agent_daemon_service` should trend toward "execute one command against runtime/session state" rather than also being an agent event store. Keeping Step A small lets the code move in that direction without forcing transport, session-manager, or JSONL protocol changes first.
+
+The JSONL/client side now mirrors that a little better as well. The parser no longer treats `events` as opaque leftover payload inside only a few response types; turn, status, lifecycle, listing, resource and event responses now all expose parsed `daemon_event_count` plus a small typed event-entry list with `type`, `event_type`, `sequence`, request/turn ids and detail when present. That keeps future client/admin work from having to re-open raw JSON just to inspect the daemon event surface.
+
+The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
+
+There is now also a first shared host-config slice above those flags. The foreground daemon and the real MCP stdio server can both accept `--config PATH` and load one small JSON host-owned configuration model for model/backend settings, runtime defaults, stores, resources, tool profile, MCP subprocess providers, and a few coarse limits. CLI flags still exist and still matter, but this is the first path where daemon/runtime construction does not have to start from a full CLI-style `args` object.
+
+The resource-store slice now follows the same host-owned backend pattern. The CLI and daemon argument surfaces accept:
+
+- `--resource-blob-backend auto|in-memory|fs|s3`
+- `--resource-blob-root PATH`
+- `--resource-metadata-backend auto|in-memory|cozo`
+- `--resource-metadata-db PATH`
+
+The current implementation supports `fs` and `in-memory` for blob storage, and `in-memory` and `cozo` for metadata. `s3` remains deferred. In the current default shape, blob storage resolves to `fs` and derives a default root if one is not supplied, while metadata resolves to `cozo` when a metadata DB path is present and otherwise stays `in-memory`.
+
+One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
+
+That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:
+
+- `llama-agent.exe`
+- `llama-agent-daemon.exe`
+- `llama-agent-cli-mcp-selection-smoke.exe`
+- `llama-agent-cli-run-mcp-smoke.exe`
+
+The two CLI/MCP smoke binaries also ran successfully after rebuild. A full-tree debug build can still surface broader workspace concerns such as UI asset provisioning or unrelated test churn, so the current documented verification strategy for this branch is "narrow serial target build plus targeted smoke execution" unless a wider sweep is the explicit goal.
+
+The resource path is also now split more cleanly internally:
+
+- blob storage owns raw bytes and content-addressed persistence
+- resource catalog owns descriptor/authority metadata and lookup
+- the composed resource store binds those two responsibilities together for runtime and tool callers
+
+## Target Layout
+
+The medium-term target is to separate durable domain contracts from host/runtime implementation more explicitly.
+
+```text
+common/
+  memory/      what the agent can remember
+  plan/        how the agent structures work
+  resource/    how larger working material is referenced
+  runtime/     host-neutral runtime DTOs and envelopes
+  agent/       agent orchestration contracts above memory/plan/resource/tools
+
+tools/
+  agent/
+    cli/       command-line entrypoints and CLI-only host adapters
+    daemon/    daemon admin/client/jsonl transport and related host-side protocol code
+    host/      host configuration and shared host-side policy/provider config
+    mcp/       MCP client/server transport, stdio server, and shared MCP protocol helpers
+    runtime/   resident runtime/session/inference assembly and host runtime plumbing
+    tooling/   tool-provider, tool-runtime adapter, and host-owned tool-selection/result contracts
+    resource/  resource-store implementation and host-owned resource plumbing
+    ...        future CLI, daemon, MCP host/server implementation modules
+
+pocs/
+  archive/     older experiments and superseded slices
+```
+
+Short responsibility summary:
+
+- `common/memory`: durable memory records, scopes, retrieval, and store contracts.
+- `common/plan`: plan structures, state transitions, evidence links, and plan stores.
+- `common/resource`: host-neutral resource references, authority descriptors, and later broader resource contracts for larger working material.
+- `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
+- `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
+- `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
+- `tools/agent/cli`: command-line entrypoints, selection/config parsing, and CLI-specific host adapters.
+- `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
+- `tools/agent/host`: shared host configuration and provider-selection contracts used by daemon and MCP-facing host entrypoints.
+- `tools/agent/mcp`: MCP client/server protocol code, stdio transport, and MCP-facing host/server entrypoints.
+- `tools/agent/runtime`: resident runtime/session assembly, runtime host/session contracts, and in-process inference/runtime plumbing shared by CLI/daemon/MCP-facing hosts.
+- `tools/agent/tooling`: host-owned tool provider/view code, tool-runtime adapters, and tool-related selection/result contracts shared by CLI/runtime/daemon/MCP hosts.
+- `tools/agent/resource`: concrete resource-store implementations and resource runtime plumbing used by agent hosts.
+- `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
+
+The practical rule is simple: reusable contracts move downward; executable host assembly moves upward; old experiments move aside.
+
+## Refactor Status and Migration Notes
+
+The repository split described here was implemented in small, buildable
+slices. The following is now the status of that migration rather than a
+future work plan:
+
+1. Target directories and their responsibilities are established.
+2. Neutral runtime contracts live under `common/runtime`.
+3. Host-owned resource-store implementations live under
+   `tools/agent/resource`.
+4. Active CLI, daemon, MCP, runtime and tooling hosts live under the
+   corresponding `tools/agent/*` areas.
+5. `common/agent` is kept for agent orchestration contracts and logic, while
+   neutral DTOs remain in lower common layers.
+6. `pocs/agent` is now primarily smoke assembly, helper binaries and
+   migration-era build glue; it is no longer the active owner of the runtime.
+
+The migration history is retained below because it explains why the current
+layout looks the way it does. These are completed transitions, not parallel
+implementation tracks:
+
+- neutral runtime headers were moved under `common/runtime`
+- resource-store implementations were moved under `tools/agent/resource`
+- the temporary compatibility-header bridge was retired for the active path
+
+The first correction kept `resource` itself as a domain contract. Traces and
+generic runtime envelopes belong in `common/runtime`, while resource
+references, authority and host-owned resource-store contracts fit under
+`common/resource`.
+
+The bounded daemon host slice is also complete: daemon client/admin helpers,
+JSONL protocol shaping, lifecycle/event/collector code, dispatcher/service/
+runtime assembly and the daemon entrypoint live under
+`tools/agent/daemon`.
+
+Host configuration and MCP-provider configuration were then moved toward
+`tools/agent/host` so daemon and MCP-facing entrypoints share the same
+host-owned configuration contracts.
+
+The MCP host-facing cleanup is complete as well. Client/server protocol
+helpers, stdio client/server support and the stdio MCP server entrypoint live
+under `tools/agent/mcp`.
+
+Resident runtime/session assembly, runtime host/session contracts and
+server-context runtime plumbing now live under `tools/agent/runtime`.
+
+The command-line entrypoints and adapters now live under
+`tools/agent/cli`.
+
+Tool-provider/view logic, tool-runtime adapters and host-owned tool
+selection/result contracts now live under `tools/agent/tooling`.
+
+That compatibility-header bridge has now effectively been retired for the active agent path. The branch no longer keeps a forwarder header layer under `pocs/agent`; active code, tests, and smoke binaries now include the concrete `tools/agent/...` locations directly. In practice that means `pocs/agent` is now much closer to its intended role in this phase: smoke harnesses, a few helper binaries, and migration-era build glue, rather than a second include tree pretending to own the runtime.
+
+## Design Constraints
+
+The runtime direction depends on keeping the layer boundaries boring and explicit.
+
+- `common/memory` should not depend on agent/runtime host code.
+- `common/plan` may depend on memory contracts and stores, but not on agent PoC host flow.
+- `common/agent` may depend on plan and memory, but should still prefer neutral runtime-facing contracts when a type does not need full agent semantics.
+- `common/runtime` should own host-neutral execution-control, pending-operation, trace, and other runtime DTO-style contracts that do not need full agent semantics.
+- `tools/agent/*` is now the owner of active agent host/runtime behavior: resident runtime assembly, daemon/service code, MCP transport, tool providers, resource stores, and CLI adapters live there.
+- `pocs/agent` may still depend on all lower layers, but it should now stay focused on smoke harnesses, fake backends, helper binaries, and migration-era build glue rather than regaining ownership of core runtime behavior.
+- `pocs/memory` should not become the owner of agent orchestration or resident host flow.
+
+In practice that means "almost production" shared types such as lightweight runtime DTOs, resource references, execution-control contracts, pending-operation descriptors, trace envelopes, or host/service contracts should move toward neutral common headers instead of being trapped inside one PoC adapter. The goal is to keep reusable contracts below the operational host layer, keep `tools/agent/*` responsible for concrete runtime behavior, and keep the PoC layer focused on smoke assembly rather than ownership of core abstractions.
+
+The practical JSON rule is now the same: if JSON crosses a subsystem boundary and is not just a short-lived local implementation detail, it should move behind a named parse/serialize/validate helper. JSON as a wire or storage format is fine; raw `ordered_json` plus string `.dump()` should not silently become the contract.
+
+The first concrete example of that constraint is now in place for tracing: the structured trace envelope lives in a neutral `common/runtime-trace.h` header, while `common/agent` populates it and `pocs/agent` only adapts or serializes it for CLI/daemon surfaces.
+
+The same cleanup has now started for tool execution contracts. The lightweight tool-call and execution-result DTOs used by runtime-side tool validation/execution no longer need to live in the heavier native registry header; they now have their own smaller neutral contract header. The native registry still exists and still owns handlers, but the runtime-facing contract is starting to separate from the older registry-era shape.
+
+The same direction has now been reinforced around the biggest JSON-heavy runtime edges:
+
+- native tool payloads now serialize through named result-contract helpers instead of ad hoc JSON literals at each return site
+- the older native chat-bridge path now also serializes tool success/failure payloads through named common-agent helpers instead of inlined JSON snippets
+- the runtime core now also routes its remaining bounded observation/default JSON seams through named runtime-contract helpers instead of open-coding request-tool default stamping and observation payload `.dump()` calls in `agent-runtime.cpp`
+- those runtime helpers now also expose one JSON-level safe-default shaping seam for tool arguments, plus a named reasoning-observation serializer, so tests and future adapters can validate the contract without going through a full runtime turn
+- daemon JSONL request/response shaping now goes through explicit daemon protocol helpers
+- the foreground daemon and its child-process client now also share named JSONL ready/event parsers instead of validating those protocol messages inline
+- MCP stdio transport still owns framing, but JSON-RPC request/notification construction and tool result parsing now live behind extracted protocol helpers
+- plan-step tool arguments now have a small named contract wrapper even though stored compatibility still remains `arguments_json`
+- host config now has an explicit `schema_version`, a validator, and a roundtrip JSON helper instead of only a one-way parse path
+
+That does not mean every JSON surface is now formalized. It means the highest-value runtime seams now have a named contract boundary, so later daemon/host/MCP work is less likely to hard-code behavior into scattered `.dump()` or `parse()` sites.
+
+## Remote MCP and global inference scheduling
+
+The resident-runtime foundation is followed by a separately bounded
+remote-MCP/scheduler phase. Operation management, MCP schema validation, stdio
+hard-timeout handling, dispatcher cancellation and the beta smoke pack are
+already part of the current implementation.
+
+The next branch adds the remote-provider configuration contract and documents
+the requirements for Streamable HTTP, authentication, inbound MCP, global
+session-lane scheduling, and inference microbatching. The detailed design and
+acceptance criteria live in [agent-remote-mcp-scheduler-plan.md](agent-remote-mcp-scheduler-plan.md).
+
+The key boundary is intentional: authenticated HTTP requests enter the existing
+daemon dispatcher and session lanes; a future global scheduler controls only
+inference capacity; batching remains an optimization behind the inference
+backend. No transport or scheduler is allowed to become the owner of
+conversation state, tool policy, resource authority, or operation lifecycle.
+
+### Verification activity: beta smoke pack
+
+This is the current verification activity after the transport/auth hardening.
+It proves the existing seams end to end before a scheduler expansion.
+
+Smoke scope:
+
+- hanging MCP stdio server: deadline, subprocess termination, reader cleanup,
+  and daemon survival;
+- remote HTTP MCP: initialize, tools/list, tools/call, timeout and bounded
+  result handling;
+- inbound HTTP/TCP/Unix auth: valid/invalid credentials, scope binding,
+  allowlist, read-only writes, admin commands and no credential leakage;
+- session lanes: same-session ordering, multiple sessions, waiters, queued and
+  active cancellation, reload and graceful shutdown;
+- operation manager: deadline, poll, cancel, terminal state, events and reap.
+
+### Backlog activity: lane-aware worker pool
+
+The worker-pool design remains backlog work and must extend the existing
+dispatcher without introducing a second runtime path. Its target shape is:
+
+```text
+request -> session lane mailbox -> ready-lane queue -> bounded worker pool
+                                      ^                    |
+                                      |                    v
+                              pending completion <- one lane step
+```
+
+The first implementation must preserve these invariants: one active turn per
+session lane, parallelism across different lanes, no worker held while waiting
+for external I/O, fairness between ready lanes, prioritized control commands,
+and explicit queue/capacity metrics. `worker_count` is scheduler concurrency,
+not automatically GPU inference concurrency; inference capacity should remain a
+separate backend/resource limit.
+
+Not part of this activity: distributed scheduling, public network exposure,
+full inference batching, or a second async runtime. Batching follows only after
+the non-batched scheduler passes the concurrency and cancellation smokes.
+
+The same direction has now started for host-owned resource references. The neutral `common/runtime-resource.h` contract no longer stops at lightweight resource refs; it also carries the first blob/resource store interfaces plus authority/descriptor DTOs. The current implementation now lives under `tools/agent/resource`, and it is no longer only an in-memory proof: resource blobs can now be stored on the filesystem through a content-addressed `fs` blob backend, and resource metadata can now be persisted through a first Cozo-backed metadata store. In the current default shape, resource blob storage prefers `fs`, while metadata remains `in-memory` unless a Cozo metadata database is selected explicitly or implied by `--resource-metadata-db`.
+
+That contract is now also a little less ad hoc for tools. Native tool bindings no longer thread a raw `resource_store` plus separate namespace/session/project/turn fields through the host path. Instead they carry one scoped `agent_resource_runtime`, and helper functions derive read authority or stamp put-requests from that host-owned runtime scope.
+
+That resource metadata is also starting to become more than a storage note. The current descriptor shape now has room for host-authored purpose, short content summary, usage hint, limitations, and lightweight semantic tags such as keywords or entity names. The intended meaning is practical rather than decorative: a resource row should answer what it is, why it was created, what it contains in short, how a later step can use it, and what its limits are.
+
+The same contract-cleanup pattern now also covers two older JSON-heavy seams that were still carrying more history than necessary:
+
+- plan tool-argument parsing/materialization now goes through the named `common_plan_tool_arguments_contract` path instead of reparsing and redumping ad hoc JSON inside `plan-bindings`
+- the plan argument serializer now re-applies the safe integer normalization pass, so wrapped or legacy small-model shapes cannot leak `"limit":"2"` style control fields back out after normalization
+- memory tool `search` and `remember` execution now parse JSON through named argument-contract helpers before business logic runs, instead of letting the service implementation read raw `ordered_json` directly
+- those memory tool contracts can now also be parsed from an already-owned JSON value, so host/runtime adapters do not need to round-trip through a string just to validate or normalize bounded memory-tool arguments
+
+That is still intentionally modest. The stored compatibility format remains `arguments_json` where older plan/runtime paths expect it, but the contract boundary is now explicit at parse/materialize/serialize time.
+
+The same "almost boring" rule now applies to symbolic memory. The clean first fit is not a second symbolic-memory subsystem beside the current memory path; it is the existing host-owned memory model with a few more durable kinds and a later typed overlay above it. `procedure` already fills one symbolic role today, so the next incremental expansion is to let `constraint` and `decision` travel through the same scope, retrieval, proposal, provenance, MCP, and store contracts. Overlay compaction for planning, reflection, and reasoning should sit above that durable store rather than replace it.
+
+That first overlay slice now exists in a deliberately narrow form. `common/memory` can render a compact symbolic overlay from already retrieved memories, grouping bounded `constraint`, `decision`, `procedure`, and a small amount of supporting `fact` context. The current planner, reasoning, draft, reflection, and memory-learning prompts still keep the older full memory context available, but they can now prepend this typed overlay so the model gets a cleaner symbolic summary without changing persistence, authority, or retrieval ownership.
+
+The next small refinement is now also in place: overlay selection is stage-aware before rendering. The current selector is still deterministic and intentionally simple, but it no longer treats every prompt phase the same. Planning prefers `constraint` and `decision`; reasoning still favors `procedure` while allowing relevant symbolic guidance to follow; reflection emphasizes `constraint` and `decision`; and memory-learning can bias back toward `decision` plus reusable `procedure` context. That keeps retrieval and persistence unchanged while giving each runtime phase a cleaner symbolic slice from the same authorized memory set.
+
+There is now also a first compacting pass inside that same host-owned rendering layer. It stays deliberately local to prompt shaping: before symbolic overlay or policy-pack text is rendered, repeated normalized items are deduplicated, oversized entries are trimmed to bounded per-item limits, and the retained set is capped by the existing section budgets. This is not a new store or a second compaction database. It is prompt-budget hygiene that fits the current model: keep durable memory unchanged, compact the rendered overlay/policy view when repetition or prompt pressure would otherwise waste context.
+
+There is now also a narrow post-reflection hook for session-owned policy packs. It is intentionally conservative: if a turn actually ran reflection and the active session policy-pack still shows obvious duplication or section overflow according to the existing host-owned compaction heuristic, the session host compacts that pack and re-seeds the resident runtime with the compacted version for later turns. If there is no sign of duplication or pressure, nothing happens.
+
+The next adjacent layer is now also explicit: a small host-owned policy-pack contract can be rendered ahead of the retrieval overlay. This follows the same broad shape as bootstrap blueprints and plan templates, but it is intentionally not a plan and not a second memory store. It is a compact declarative pack for purpose, goal, success criteria, constraints, decisions, and preferred procedures that a host or session can supply directly. The current prompt builders can derive a lightweight pack from caller-owned objective data or from the active plan's blueprint-like constraints, then prepend it before stage-selected symbolic memory.
+
+That policy-pack seam is now present in the runtime/session contracts as well, not only in prompt rendering. Resident/session configuration can carry a stable pack across turns, the agent runtime path now preserves that host-owned pack instead of dropping it while rebuilding `common_agent_request`, and the daemon resident-request builder can seed one small session-level pack from host configuration. Request/objective and active-plan derivation still remain as fallbacks, but the host path no longer depends on those fallbacks alone.
+
+The session layer now owns that seam a little more explicitly too. A session-host turn can provide a policy-pack override once, the host retains it as session state, later turns can omit it without losing the active pack, and daemon/session status can report the current `policy_pack_id` for diagnostics. The intent is still conservative: policy-pack identity is session state, not part of the resident model/inference reuse key.
+
+## Layer Responsibilities
+
+### CLI Adapter
+
+The CLI remains responsible for local command-line concerns:
+
+- Parse and validate `args`.
+- Resolve profiles and defaults that are meaningful only to CLI users.
+- Translate CLI backend flags and store paths into host-owned runtime/store configuration.
+- Bootstrap, import, export, and blueprint package setup.
+- Build the tool context for the selected profile and host-owned scope/policy.
+- Retrieve memory context and render any CLI debug output.
+
+The CLI should not own the agent loop. It should build runtime inputs and call the runtime host.
+
+### CLI Host Adapter
+
+`agent-cli-host-adapter` is the bridge between CLI state and the runtime host contract.
+
+It currently owns argument-derived wiring that is still local to CLI behavior:
+
+- Build chat and agent host inputs from CLI-owned state.
+- Attach the post-run episode-recording hook.
+- Resolve provider-backed tool exposure and execution for the selected tool profile.
+- Print the final response and decoded-token summary.
+
+This adapter is allowed to know about CLI `args`. The runtime/session host below it should not need to. The current daemon path now follows the same rule for policy/config assembly, even though its own option parsing is still local.
+
+The older explicit memory-tool flags have now been removed from `llama-agent`. Agent-side memory tool exposure goes through the catalog/provider path only: the CLI chooses a tool profile, the host resolves a scoped `agent_tool_view`, and execution stays behind the same provider boundary used by the rest of the runtime.
+
+`agent-cli-run` now also has a small adapter helper beside it. That helper owns CLI-only validation, default stamping, and agent/bootstrap/export setup so the top-level run function can stay focused on retrieval, tool wiring, and dispatch into the runtime host.
+
+The CLI runtime and CLI selection paths now also share one small generation-helper utility for trace IDs, request envelopes, generation options, and failure formatting. That keeps the resident/runtime contract shaping in one place instead of duplicating it across two CLI-facing files.
+
+The CLI tool path is now also shaped the same way. `agent-cli-run.cpp` no longer carries separate inlined assembly blocks for different tool wiring paths. A small CLI resolver now returns one `tools + tool_view + profile_tools_active` bundle, which lets the top-level run function stay focused on retrieval and runtime dispatch while the CLI adapter owns host-specific tool wiring.
+
+### Runtime Host
+
+The runtime host owns one prepared agent turn.
+
+It is responsible for:
+
+- Receiving already-built host inputs.
+- Selecting and initializing the inference backend.
+- Owning the runtime session lifecycle for the turn, including whether a prepared session is reused or reset after completion.
+- Dispatching to chat mode or agent-planning mode.
+- Running completion hooks and session reset policy.
+
+The runtime host does not parse CLI arguments. It should remain small enough that a future resident host can provide equivalent inputs directly.
+
+The host inputs now carry a CLI-free runtime turn request: request payload, scope, inference options, runtime policy, runtime config, orchestration config, generation options, and memory authority. The CLI adapter translates `args` into that request at the edge.
+
+The host/runtime path now also carries one small tooling contract instead of threading separate `tools + profile_tools_active + tool_view` fields through each layer. That keeps the provider-facing shape more explicit: one host-owned tooling bundle contains the model-visible `common_chat_tool` list plus the resolved `agent_tool_view` used for execution.
+
+That provider assembly is now a little less CLI-shaped internally as well. The CLI-facing resolver still exists, but it now sits on top of a smaller host-owned tool-selection request: resolved `agent_tool_context`, repository root, resource-store config, and optional MCP stdio provider command. The foreground daemon now uses that host-owned request directly instead of first synthesizing a temporary CLI `args` object just to reach the tool provider seam.
+
+The provider/view seam has also grown a first narrowly scoped async capability. A resolved `agent_tool_view` can still be used exactly as before through ordinary synchronous `call(...)`, but it can now also advertise per-tool async support and expose a small `begin_call_async(...)` / `poll_call_async(...)` contract for tools that a host marks as async-capable in the resolved tool context. The current slice is intentionally host-owned and opt-in per tool rather than a global mode switch: one tool can remain synchronous while another is allowed to run behind a pending operation, and the existing model-visible tool schema does not need to change first.
+
+Pending work now also has a neutral central registry in `common/runtime/runtime-operation.h`. The registry owns operation identity, deadlines, poll/cancel transitions, terminal state and cleanup; session lanes still own ordering and turn-phase decisions. This is deliberately an intermediate seam, not yet a global inference scheduler or GPU batcher.
+
+The new host-config slice is intentionally modest. It currently models:
+
+- model backend/path and optional embedding model
+- runtime defaults such as context size, `n_predict`, planning/reflection toggles, and trace/learning flags
+- memory/plan store backend and path
+- resource blob/metadata backend and path
+- tool profile, repository root, and a list of configured MCP providers
+- a few daemon-style limits such as queue capacity and max turn seconds
+
+In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting; transport-specific timeout, cancellation and broader streaming hardening remain follow-up work.
+
+A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
+
+There is now a small resident runtime layer on top of that wrapper. It owns the reusable resident host session plus the base runtime turn contract, and it can run either ordinary chat turns or agent planning turns against the same keepalive-backed model session. The thinner resident chat and agent helpers now delegate to that layer. Their job remains deliberately narrow: stamp per-turn prompt and turn identity onto the base request, run the turn, and in agent mode keep track of the active plan identity after completion.
+
+The resident path also now has small builder contracts above the raw runtime types: one for constructing a base resident turn request from host-owned model/session/scope settings, one for constructing the resident runtime config itself, and one lightweight daemon-facing turn request/result shape. That keeps the first daemon step focused on process and transport concerns instead of rediscovering how to assemble runtime state.
+
+There is now also a small generic resident session host above that builder layer. It owns the reusable resident runtime plus one small host-owned runtime-reuse key for session/scope matching, and can execute repeated chat or agent turns from a prepared host contract without carrying several parallel `active_*` identity fields.
+
+The `server-context` resident backend now also has its own extracted host layer instead of being assembled inline inside the generic runtime assembly file. That layer still uses the current coarse `server_context` API, but it now owns the backend-specific load key, context key, host config, derived load params, loop lifetime and inference-session construction in one place. It also now distinguishes host configuration from the active running instance that owns the live `server_context`, derived params and loop thread. The active host now materializes the inference session directly from that running instance instead of rebuilding backend-specific details out in the generic assembly layer. Runtime session ownership has also been tightened a little further: for the `server-context` backend, the long-lived resident host now sits in the session's loaded-model state, while the active inference-context state only owns the currently built inference session that uses that host. That gives the next model-versus-context lifetime split a more concrete home instead of leaving it buried inside generic assembly code.
+
+On top of that sits the first explicit session manager for the daemon/admin path. It now keys resident session hosts by namespace and session, while the currently bound project and scope remain part of the runtime state inside that session host. That means the foreground daemon can now treat the resident lane as `session A`, `session B`, `session A again` without baking project ownership directly into the manager key, while still rebuilding the resident runtime if a session changes project or scope.
+
+That manager has now also taken one small step toward an actor-like session shape. Each keyed session lane now owns its resident host plus a small turn-state record: queued-turn count, any currently active request/turn id plus phase/disposition, and the most recent completed/failed/cancelled turn phase plus disposition for diagnostics. The lane now also has a real internal mailbox plus a named turn-disposition seam, and lane draining advances the active turn through explicit internal phases rather than treating the whole lane step as one opaque call. A small but important follow-up in this slice is that the active-turn record now stays alive across those intermediate phase advances and is only released on a terminal disposition, so active-turn introspection and cancellation target the real in-flight lane instead of a dispatcher-local shadow. Processing still drains synchronously today, but the shape is now explicit enough that later async scheduling can introduce waiting states, multi-step advancement, and mailbox ownership without moving session bookkeeping back up into the daemon transport or dispatcher.
+
+The lane state model has also become a little more specific. Instead of reporting only `running` for every non-idle active lane, the manager now distinguishes a plain active lane from `running_with_waiters`, where one turn is already in flight and at least one later turn is queued behind it in the same session mailbox. That is still a small first slice, but it gives the host one explicit “mailbox has pressure behind the active turn” state before any real async worker split exists.
+
+That same slice also begins to separate command handling from event production a bit more cleanly. Queueing and command execution still end in one request/result response today, but the lane/session layer can now emit internal events without directly mutating the final daemon result object. The dispatcher collects those emitted events and attaches them when the command completes. That is still not a fully streamed event bus yet, but it is an important structural step: later async transports should be able to observe the same internal event flow without depending on a specific JSONL result envelope.
+
+The mailbox itself is now a little more explicit too. Session-lane messages carry a stable message id plus completion/result state as their own object rather than being only a transient deque entry, and lane draining now targets a specific enqueued message instead of relying on a more implicit "push then empty the whole deque" shape. That seam is now also waitable: when a second turn arrives for a lane that is already running, it can wait on its own mailbox message completion instead of failing immediately with a lane-local bookkeeping error. The implementation is still intentionally modest and still drains synchronously, but it now looks more like an actor mailbox with one active drainer plus queued waiters than like a plain recursive helper call.
+
+One small but important technical-debt cleanup landed in the same area: the lane message now owns its own completion result and error state instead of keeping raw pointers to caller-owned stack storage. The public `run_turn(...)` API still looks synchronous to current callers, but the internal mailbox object is now much safer to carry forward into later async scheduling or pending-operation completion without tying session state to the caller's stack lifetime.
+
+The lane also now owns one explicit current-message pointer alongside the active turn record, and its own processing state is now a named lane-state rather than a bare boolean. That means active request/turn identity, queued-vs-running observation, and host-side cancellation all have one clearer owner inside the lane itself instead of reconstructing the same identity from several partially overlapping fields. It is still the same single-lane synchronous flow, but the ownership model is now closer to "mailbox message plus lane execution state" and less like "deque entry plus a separately inferred active turn".
+
+The turn-state seam itself is also a little more future-proof now. The active turn can carry an explicit pending-operation descriptor in addition to phase/disposition, and the disposition enum has reserved room for `wait_for_inference` and `wait_for_tool` rather than only terminal outcomes plus `continue_immediately`. That does not yet mean the full resident agent loop pauses and resumes around tool calls in production; it means the lane/runtime seam now has a neutral place to describe those waits without redesigning the state model later.
+
+That seam now also emits an explicit "wait entered" internal event when a lane parks a turn behind either a manager-owned tool wait or the host-owned inference wait. The current slice keeps this intentionally narrow: it does not add a new external protocol surface, but it does give the host one clear event boundary between "turn started" and "turn resumed/completed" when a parked wait begins.
+
+That lane-state is now visible in the session diagnostics path as well. Session descriptors and daemon status snapshots can report the lane's processing state directly, so operators and later scheduler code do not have to infer "idle versus running" only from a mix of queue length and active-turn fields.
+
+The current lane-state list is still intentionally small, but it is no longer only a passive idle-versus-running flag:
+
+- `idle`
+  The lane has no current message in flight. It may still retain session/runtime state and last-turn diagnostics.
+- `running`
+  The lane currently owns one active mailbox message and is advancing its turn state machine. There may also be queued waiters behind it.
+- `resetting`
+  A host-side reset has taken ownership of the lane. New turns are rejected, queued waiters are completed with a reset error, and the current message is allowed to drain before the host reset clears lane-local runtime state.
+- `closing`
+  A host-side close has taken ownership of the lane. New turns are rejected, queued waiters are completed with a close error, and the current message is allowed to drain before the resident host is released and the lane is erased.
+
+That means `reset_session` and `close_session` now go through the same lane-owned lifecycle surface as ordinary turns instead of directly clearing or erasing session state from the side. The implementation is still synchronous and intentionally narrow, but the ownership boundary is now much cleaner: lifecycle actions first claim the lane state, then deal with queued work, then wait for any current message to finish, and only then mutate or remove the resident session.
+
+There are still a few obvious future candidates, but they are being deferred on purpose for now:
+
+- `stopping`
+  Still worth adding once daemon-wide drain/stop behavior starts flowing through the same lane/session model instead of staying mostly above it at service level.
+- `failed`
+  Deferred because terminal failure is currently better modeled as last-turn diagnostics plus lane return to `idle`. Making failure a lane-state now would blur "lane health" with "most recent turn outcome".
+- `waiting_for_tool` / `waiting_for_inference` / `cancelling`
+  These are better treated as turn phases or turn dispositions, not lane-states. The lane can remain `running` while the active turn moves through those finer-grained sub-states.
+
+The foreground daemon entrypoint is now also split a little more cleanly. `agent-daemon.cpp` is mostly the process loop, while a small daemon adapter layer owns daemon-only argument parsing, store and host assembly, and JSONL request/response translation.
+
+The practical daemon startup and JSONL examples now live in [agent-daemon-usage.md](agent-daemon-usage.md), with copyable host-config and request files under `docs/examples/`. This documents the current foreground lifecycle and flags without implying that the daemon is already a production service. Inbound MCP HTTP is now an available host transport; detached supervision, TLS termination and production operations remain separate concerns.
+
+The daemon now also routes requests through explicit daemon commands plus a small daemon service layer. On top of that sits a bounded configurable dispatcher worker pool: stdin/JSON parsing still happens on the transport thread, while command execution runs through the queue before reaching the runtime service. The shape is intentionally modest: it separates transport from execution without yet introducing a richer async protocol or full end-to-end cancellation. Multiple workers can process different session lanes in parallel; one lane remains ordered. The important cleanup in the latest slice is ownership: the dispatcher no longer keeps its own parallel active-turn identity and cancellation handle. It now asks the service/session layer for the active request/turn descriptor and forwards active-turn cancellation back through that same session-owned seam.
+
+The foreground JSONL transport loop is now also explicitly owned by the daemon adapter rather than living inline inside `agent-daemon.cpp`. That is still a small step, but it matters: `main` is now closer to pure process bootstrap plus environment wiring, while the JSONL request/response loop has a named adapter seam that later transports can mirror without reintroducing daemon lifecycle logic into the entrypoint.
+
+That seam now has a concrete stream boundary as well. The stdin/stdout adapter
+and the optional TCP adapter both use the same JSONL read/write loop and the
+same foreground request parsing plus dispatcher execution path. TCP accepts
+multiple authenticated connections, binds caller namespace/project fields to
+the connection policy, and shares the configured worker pool. TCP framing
+limits and listener binding are restart-required; TLS is intentionally left to
+a sidecar or service mesh for this first container-oriented slice.
+
+The same host can now use a POSIX Unix domain socket for local background
+operation. This remains a foreground process from the operating-system point
+of view: systemd or another supervisor owns restart and logging, while the
+daemon owns its dispatcher, workers and graceful shutdown. Socket-file mode
+provides a local owner/group boundary and the existing caller policy remains
+the application-level authorization layer.
+
+That adapter loop is now a little thinner too. The outer loop still owns stream framing and lifetime, but one small helper now owns the "parse one JSONL request, run one daemon command, serialize one response" path. It is still synchronous and intentionally modest, but later foreground/socket/pipe adapters now have a cleaner seam above raw stdio framing.
+
+There is now also a first explicit foreground request/response contract above that helper. The adapter no longer treats "one foreground admin request" as only a transient local combination of parsed JSON plus immediate writeback. It now has a named host-owned foreground request/result seam that can later be reused by a socket/pipe/HTTP adapter without first inheriting the stdio loop structure itself.
+
+The daemon adapter is now also slightly less CLI-shaped in its host construction path. It still uses the existing store-opening helpers, but it no longer has to synthesize a temporary full CLI `args` object just to build runtime policy, runtime config, orchestration config, or the resident session-host contract.
+
+That cleanup now extends one step further down the daemon path. The daemon runtime no longer synthesizes temporary CLI-style `args` just to open stores, build resource-store config, or resolve provider-backed tooling. Memory/plan store selection now follows the same host-owned backend/path values directly, including the old `auto` resolution rules, while tooling resolution receives a host-built tool-selection request instead of a CLI object.
+
+That service layer now understands a slightly broader host-oriented command surface:
+
+- `run_turn`
+- `cancel_turn`
+- `status`
+- `reset_session`
+- `close_session`
+- `shutdown`
+
+`status` reports a narrow readiness/liveness snapshot plus the currently tracked session keys and queued-command count. It now also exposes a few small lifecycle signals from the dispatcher itself, such as whether the worker thread is running, whether the daemon is still accepting new commands, whether shutdown has been requested, and the current queue capacity. The top-level status snapshot now also carries active turn id plus phase/disposition, and the daemon-status object has started to keep that as one small transport-neutral active-turn snapshot internally instead of only as loose protocol fields. `reset_session` and `close_session` go through the same keyed session manager as ordinary turns, which gives the admin/test path an explicit place to manage resident session state before a fuller queued daemon lifecycle exists.
+
+Session status is now slightly richer too. In addition to key, project, scope, and policy-pack identity, the daemon-side session descriptor can report queued-turn count plus active request/turn phase/disposition and last-turn phase/disposition details. The current JSONL admin path still uses this only as bounded diagnostics, but it gives later actor/scheduler work a stable place to expose per-session execution state without inventing a second status model beside the session manager itself.
+
+That lifecycle surface is now also enforced inside the service itself. Once shutdown or draining has been requested, `run_turn` is rejected with a host-owned lifecycle error instead of relying only on the dispatcher's outer acceptance window. That closes the small gap where a late turn could otherwise slip in after shutdown had conceptually started but before the queue had fully stopped accepting work.
+
+The dispatcher/protocol path now also carries a small status snapshot on non-status responses, including lifecycle replies such as `shutdown`. That means the current foreground/admin path can observe `draining` directly from the shutdown response instead of only inferring it later from booleans or stderr timing.
+
+`cancel_turn` now exists as a first dispatcher-level contract, and the daemon result contract distinguishes two cases explicitly: queued-turn cancellation succeeds and emits a `turn.cancelled` daemon event, while cancellation against the currently active turn now records a host-owned cancel request against that turn's execution-control state and returns `turn_cancel_requested` plus the active request/turn identity. In the current slice that active-turn identity is resolved from the session manager rather than from dispatcher-local side state, which is a small but important cleanup for later async/session-mailbox work. The follow-up in this sweep is that cancel/lifecycle replies now go back through the same dispatcher status-snapshot filling path as ordinary status responses, so queue state and active-turn metadata are no longer partly ad hoc on the cancellation path. The CLI/admin status renderer now also shows active turn id plus phase/disposition directly in its one-line summary. This is still intentionally narrow. The current runtime/inference/tool stack does not yet have a full end-to-end safe abort path, but the daemon/session seam now has one shared place for cancellation identity, turn deadlines, and later timeout propagation.
+
+One concrete "full current functionality" foreground run looks like this on Windows/PowerShell:
+
+```powershell
+@'
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "C:\\Users\\kalld\\models\\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    "embedding_model": "C:\\Users\\kalld\\models\\nomic-embed-text-v1.5.Q4_K_M.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "reflective",
+    "max_reflection_rounds": 1,
+    "max_plan_revisions": 0,
+    "max_research_iterations": 0,
+    "memory_learn": "post-turn",
+    "agent_plan": "auto",
+    "n_predict": 96
+  },
+  "stores": {
+    "memory": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-memory.cozo"
+    },
+    "plan": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-plan.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "fs",
+    "blob_root": ".\\work\\agent-resources",
+    "metadata_backend": "cozo",
+    "metadata_db": ".\\work\\agent-resources.cozo"
+  },
+  "tools": {
+    "profile": "minimal",
+    "repository_root": "C:\\Users\\kalld\\Documents\\Codex\\llama-dyn",
+    "providers": [
+      {
+        "type": "mcp",
+        "id": "local-mcp",
+        "enabled": true,
+        "transport": "stdio",
+        "command": [
+          ".\\build-plan-resident-cozo-debug-3\\bin\\Release\\llama-agent-mcp-stdio-fake-server.exe"
+        ],
+        "prefix": "local",
+        "server_name": "local"
+      }
+    ]
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "max_tool_rounds": 2,
+    "max_turn_seconds": 120,
+    "turn_timeout_ms": 120000,
+    "inference_step_timeout_ms": 30000,
+    "tool_timeout_ms": 5000,
+    "mcp_connect_timeout_ms": 3000,
+    "mcp_request_timeout_ms": 10000,
+    "mcp_shutdown_timeout_ms": 1000
+  }
+}
+'@ | Set-Content .\work\agent-host.json -Encoding utf8
+
+@(
+  '{"request_id":"status-1","command":"status"}',
+  '{"request_id":"turn-1","mode":"agent","prompt":"Plan how to inspect the repository tooling path.","session_id":"demo-session","namespace_id":"local","project_id":"llama-dyn","memory_scope":"project","plan_scope":"project"}',
+  '{"request_id":"shutdown-1","command":"shutdown"}'
+) | Set-Content .\work\agent-requests.jsonl -Encoding ascii
+
+Get-Content .\work\agent-requests.jsonl |
+  .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe --config .\work\agent-host.json
+```
+
+That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan stores, filesystem+Cozo resource storage, agent planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
+
+On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
+
+That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `list_sessions`, `get_session`, `list_resources`, `list_memories`, `list_plans`, `read_resource`, `drain`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
+
+The CLI-side diagnostics seam is a little cleaner now too. The child-process adapter still reads daemon stderr separately from protocol stdout, but it suppresses the high-volume routine model/bootstrap chatter in the ordinary admin/test path and only forwards warnings, errors, and unexpected lines by default. That keeps `daemon-chat` and `daemon-session` usable as foreground integration tools without making the protocol consumer scrape through several hundred lines of model-loader noise. For deeper debugging, the adapter still becomes more permissive when agent tracing is enabled.
+
+That foreground client path is now also slightly less ad hoc internally. It has a tiny JSONL transport wrapper around the child-process stdio pipes, and the admin/test command handlers no longer peel turn/session/status results straight out of raw `ordered_json` with repeated `response.value(...)` calls. Instead they consume a few small protocol-shaped result parsers for turn, status, and lifecycle/session events while still speaking the same external JSONL wire format.
+
+The `daemon-session` admin/test surface is now a little friendlier too. Its `/status` command no longer echoes the raw daemon JSON object back to stdout; it renders one compact typed summary of lifecycle state, queue health, active work, and bound sessions while still relying on the same parsed JSONL status contract underneath.
+
+That rendering is now its own small CLI-facing seam rather than another helper hidden in the wire-protocol file. The JSONL parser still owns the transport/status DTOs, while the foreground client owns the tiny status-summary contract and rendering policy that turns those DTOs into a stable human-facing admin/test line.
+
+The same split now exists for service-owned admin commands. The child-process session adapter still owns daemon process lifetime and stdio transport, but `status`, `list_sessions`, `get_session`, `list_resources`, `list_memories`, `list_plans`, `read_resource`, `drain`, `reset_session`, `close_session`, and `shutdown` now go through a small dedicated admin client layer above the JSONL request/response seam instead of being open-coded one by one inside the subprocess/session class.
+
+The same client path now also uses the lifecycle snapshot actively instead of only carrying it through the protocol. `reset`, `close`, and `shutdown` now parse lifecycle responses through the richer DTO and use the embedded state snapshot for rendering and shutdown validation rather than treating those replies as event strings alone.
+
+Those child-process adapters now also pass through the same daemon-owned tool configuration surface as the direct JSONL admin/test path: `--tool-profile`, `--repository-root`, and `--mcp-tool-command` all reach the foreground daemon when present. The chat-oriented daemon client path also now defaults its plan scope more conservatively when planning is off, so a simple session- or project-scoped admin/test chat turn does not accidentally force a synthetic turn-scoped contract.
+
+The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. The current session manager treats namespace plus session as the live resident lane, while status responses still report the currently bound project/scope for that lane. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
+
+There is now also a focused smoke for that foreground client seam itself: `scripts/test-agent-daemon-client-clean-io-smoke.ps1` checks that `daemon-session` keeps protocol-oriented output on stdout, keeps routine loader/bootstrap chatter off stderr in the ordinary path, preserves the small admin/test command surface (`/help`, `/status`, `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, `/quit`), and renders the typed `/status` summary instead of raw JSON. A separate `llama-agent-daemon-client-smoke` target now exercises the same subprocess seam against a fake JSONL daemon so `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource`, `/reset`, `/close`, and `/drain` are covered without needing a live model.
+
+Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
+
+The runtime surface is now split more explicitly in code as well:
+
+- turn contracts
+- resident runtime contracts
+- session-host contracts
+- host input/build contracts
+
+The backend-specific inference-session selection now also lives with runtime-session initialization rather than in the generic runtime-assembly layer. That keeps runtime assembly focused on agent behavior wiring while session initialization owns backend choice and resident inference-session reuse.
+
+That split is still structural rather than behavioral, but it makes the next service-facing step easier because the current single-active session host is no longer buried inside the same header as every other runtime layer.
+
+Inside the resident runtime session, ownership is now also expressed a little more explicitly. The session keeps separate state for:
+
+- loaded model ownership
+- active inference-context ownership
+
+In practice that means a resident session no longer presents one flat bag of `model + templates + inference session + reuse flags`. The first step toward a cleaner resident host is now visible in code: model-loading state and active inference-context state are separate sub-objects, runtime execution asks the session for its active inference session instead of reaching straight into one merged structure, and the `server-context` host itself now lives with the loaded-state side of that split rather than being hidden only inside the active session object.
+
+### Runtime Drivers
+
+The runtime drivers contain the agent behavior.
+
+The chat driver handles ordinary chat generation plus bounded synchronous tool follow-up rounds. The agent runtime driver handles planning, step scheduling, registered tool execution, reasoning, draft synthesis, reflection, and memory learning.
+
+These drivers should not know whether the caller was CLI, a resident process, or a future MCP-facing host.
+
+### Inference Backend
+
+`common_agent_inference` is the abstraction for model generation.
+
+The current backends are:
+
+- `cli`: local llama-backed generation using the existing CLI-style path.
+- `server-context`: an in-process resident smoke backend using `server_context`.
+
+The generation request/result contract is narrower than top-level CLI state. Requests carry purpose, trace metadata, scope, messages, tools, optional schema, and generation options. Results return content, decoded-token counts, status, stop reason, parser metadata, and errors in one shared envelope.
+
+Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
+
+The reuse logic is now split a little more explicitly inside the resident session as well. There is a small model-load key for properties that really affect model loading, and a separate inference-context key for properties that still require rebuilding the active inference session. In the current resident backends that means turn-shaped settings such as `n_predict` no longer look like model or context identity changes.
+
+The current split is still a pragmatic first slice rather than the final shape. It is good enough for resident smoke and the foreground daemon, but the longer-term split should distinguish:
+
+- model-load options
+- context/inference-context options
+- per-turn generation options
+
+That split now exists structurally for both the CLI-backed and `server-context` resident sessions, and the daemon/admin path now treats `n_predict` as a turn-level override instead of a resident-runtime identity change. The `server-context` path is still coarser in a deeper sense: its current host object still combines model load and inference-context lifetime, so the next cleanup there is to separate those lifetimes more explicitly rather than just removing turn-shaped fields from the reuse key.
+
+The resident `server-context` host no longer bakes `n_predict` into its own resident host config either. The decode limit is now only stamped onto per-turn server tasks, while the long-lived host keeps only load/context identity plus baseline runtime settings. That makes the reuse boundary line up better with the actual runtime behavior exercised by the resident and daemon `n_predict` reuse smokes.
+
+### Stores and Scope
+
+Memory and plan stores are runtime dependencies, not global singletons.
+
+Scope values are caller-provided authority:
+
+- namespace
+- session
+- project
+- turn
+- memory scope
+- plan scope
+- global-memory opt-in
+
+The model cannot choose these values. A future server or MCP host must derive them from authenticated caller/session context before constructing runtime inputs.
+
+For the current daemon/admin path, store location and backend are still chosen by the host process at startup. Clients can provide session/scope identifiers, but they should never be able to choose arbitrary persistence paths at turn time.
+
+## Remaining Informal JSON Surfaces
+
+The recent contract work removed several of the highest-friction JSON seams, but a number of important "still mostly implicit" JSON shapes remain. The most relevant near-term backlog looks roughly like this:
+
+1. `common/agent/agent-runtime.cpp`
+
+   This file is much cleaner now: request-tool safe defaults plus the bounded user-correction, failure-observation, reflection-hint, and reasoning-observation payload seams all go through named runtime JSON helpers. The remaining runtime-core cleanup is more about reducing mixed responsibilities than about raw JSON literals.
+
+2. `tools/agent/cli/agent-cli-selection.cpp`
+
+   This seam is narrower now too: selection schemas are requested through named schema-string helpers, and blueprint-binding tool arguments travel as a named plan tool-arguments contract instead of raw nested JSON until the final plan serializer step. The remaining work there is mostly around separating more assembly responsibility out of the CLI adapter, not about ad hoc nested selection payloads.
+
+3. `tools/agent/daemon/agent-daemon-adapter.cpp` plus `tools/agent/daemon/agent-daemon-client.cpp`
+
+   The daemon wire payload and the JSONL transport framing are now both explicit seams. The daemon protocol still owns the command/response objects, while the transport endpoints now reuse one small JSONL helper for line-oriented parsing and emission instead of open-coding request/shutdown JSON in each caller.
+
+4. `tools/agent/tooling/agent-tool-provider.cpp`
+
+   The provider/view boundary is structurally much better now, and the final success/failure payload shaping has been pulled behind named helper contracts. The remaining work here is mostly around richer typed normalization and broader MCP capability parity, rather than hand-built wrapper JSON at each provider return site. MCP tool input schemas already use the shared bounded validator on native, outbound and inbound paths.
+
+5. `common/memory/memory-tool-service.cpp`
+
+   Memory tool `search` and `remember` now parse through named argument-contract helpers before the service logic runs. The follow-up work here is mostly about extending that pattern to any additional memory tool surfaces rather than first extraction.
+
+6. `common/plan/cozo/plan-cozo.cpp`
+
+   Plan persistence and event rows still serialize and deserialize larger JSON payloads inline for Cozo storage. Some of this is legitimate persistence encoding, but the stored row/document shapes are still only implicit.
+
+7. `common/memory/cozo/memory-cozo.cpp`
+
+   The same pattern exists on the memory side: several metadata/result/row shapes are persisted and reloaded as raw JSON without a named storage contract layer.
+
+8. `common/chat.cpp`
+
+   This file intentionally owns a large amount of OpenAI-compatible chat/tool JSON mapping, so not all JSON use here is debt. Even so, there are still some model-facing parsed/normalized shapes here that could benefit from more explicit contract helpers over time, especially where argument strings are parsed and re-emitted.
+
+9. `tools/agent/runtime/agent-server-inference.cpp`
+
+   A few resident `server_context` result paths still parse response JSON blobs directly to interpret structured output. The scope is smaller than the files above, but it is still a live runtime seam.
+
+If we count "production-relevant, non-test JSON shapes that are still at least partly informal", there are about 8 to 9 meaningful clusters left. If we count every single `.dump()` or `parse()` site in persistence, chat compatibility, diagnostics, and tests, the raw number is much larger. The clustered backlog above is the useful planning unit.
+
+### Tools
+
+Tools currently have three layers:
+
+- Catalog: declares versioned metadata and profile membership.
+- Registry: owns executable handlers.
+- Adapter bindings: bind catalog definitions to local runtime resources such as memory store, plan id, repository root, and embedding provider.
+
+There is now also a small provider/view boundary above those native pieces:
+
+- `agent_tool_provider`: resolve tools for one host-owned runtime context.
+- `agent_tool_view`: expose model-facing `common_chat_tool` values and execute one validated tool call.
+
+The first implementation started native-only, and it still uses the existing catalog, registry, and adapter bindings underneath. The chat runtime no longer dispatches profile tools directly through a runtime-owned registry pointer. Instead, the host resolves a policy-bound, scope-bound `agent_tool_view`, passes `chat_tools()` into generation, and routes parsed assistant tool calls back through that view.
+
+The embedding callback that sits underneath memory-oriented native tools is also one step less CLI-bound now. There is still a CLI wrapper for convenience, but the underlying helper can now work from a host-owned model path plus `n_gpu_layers`, which lets the daemon and real MCP stdio server construct their own embedding providers without carrying full CLI option objects into that path.
+
+That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web_search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
+
+That evidence path now continues one step further into planning state. Tool observations can now retain resolved `resource_refs` alongside their bounded inline summary, and the read-only `resource_read` native tool gives later steps a host-owned way to load the deferred payload back by opaque URI instead of forcing the earlier tool to keep everything inline.
+
+There is now also a first MCP-shaped provider slice beside the native one. `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape.
+
+That seam now has two concrete test paths:
+
+- an in-process fake MCP client used to exercise provider filtering and result normalization
+- a first stdio-based MCP client adapter that speaks JSON-RPC-style `Content-Length` framed messages to a subprocess
+
+The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. Request deadlines now run the blocking read in a bounded helper and terminate the child process on expiry; reconnect logic, approval model, streaming event path, and broader capability surface remain deferred.
+
+On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
+
+That real MCP server can now also be bootstrapped through the same `--config PATH` host-config entrypoint as the daemon, and can run either its existing stdio transport or the bounded inbound HTTP transport selected with `--http-listen`. In practice that means the tool export seam is no longer tied only to per-process CLI flags; it can already be described through a shared host-owned config file, including enabled stdio MCP subprocess providers, even though the current server still exports tools rather than a full resident agent runtime.
+
+Its internal tool assembly is now also closer to the rest of the host/runtime stack. The server no longer hand-builds a separate native provider wiring path for export; instead it resolves its tool surface through the same host-owned tool-selection seam used by the CLI/daemon side, while still applying its own export policy to keep the MCP-visible tool surface intentionally narrower than a fully bound local runtime.
+
+That current subprocess story now has two intentionally different shapes:
+
+- fake/smoke MCP server: small hand-authored stub tools used to exercise protocol, namespacing, error mapping and resource-link normalization
+- real MCP stdio server: a host-resolved tool surface exported through the same provider/bindings path the host runtime already uses
+
+The important implication is that "available through MCP" now means "available through the real stdio server's resolved tool surface and bindings", not "everything mentioned anywhere in MCP smokes". The fake server remains a protocol/regression harness, not the exported host surface.
+
+### MCP Export Surface Today
+
+The current real MCP stdio server exports a host-resolved tool surface, not the whole agent runtime loop. In practice that means native tools from the selected profile can appear there, and configured external stdio MCP providers can also be forwarded into that same exported surface when the host config enables them.
+
+| Capability | Available through real MCP stdio server | What it requires today |
+| --- | --- | --- |
+| `calculator`, `time_now` | Yes | `--tool-profile minimal` or any broader native profile |
+| Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository_diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
+| Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, such as `research` or `all-configured`; host policy still decides whether network tools are exposed |
+| `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
+| `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads through the MCP resource capability |
+| Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus any host-owned memory store, including the default in-memory store or an explicit persistent backend such as `--memory-db PATH` |
+| External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | A host config or equivalent host-owned request that enables stdio MCP subprocess providers with a prefix and command |
+| Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory`, `research`, or `all-configured`, a host-owned memory store, and host policy that allows proposal-style writes |
+| Planning tools such as `plan_get` and `plan_propose` | Partly | A profile that includes them plus a real plan store; `plan_get` is only meaningful when a bound `--plan-id ID` exists |
+| Resource refs returned from native tools | Yes | The underlying native tool must materialize them through the host-owned resource store; `web_search`, `web_fetch` and `resource_read` are the first concrete examples |
+| Full agent/planning runtime, reflection loop, memory learning loop | No | Those are runtime behaviors, not MCP tools in the current slice |
+| Fake server tools such as `search_issues`, `search_recent_failures`, `create_issue` | No, not from the real server | Those remain test-only tools from the fake MCP server path |
+
+This is also the cleanest way to think about memory, planning and resources through MCP right now:
+
+- memory can be exported as native MCP-visible tools when the server process has any host-owned memory store, including the default in-memory store
+- planning can expose its native plan tools, but that is not the same thing as exporting the whole agent/planning runtime as an MCP tool surface
+- resources are the strongest fit so far because the real server always owns the resource store contract, can now expose `resources/list` and `resources/read`, and native tools can already return opaque resource refs for deferred payloads
+
+So the current MCP stdio server is best understood as "native tool export through an MCP transport seam", not yet as "the agent runtime itself exposed as an MCP server".
+
+Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
+
+The stdio client now also keeps a small stderr tail from the MCP child and appends it to transport-level failures when the subprocess exits early or emits malformed JSON-RPC data. That keeps the first real subprocess smoke debuggable without pulling in a larger async lifecycle or logging subsystem yet.
+
+There is now also a first thin integration into the ordinary CLI host-adapter path. When `llama-agent run` is given `--mcp-tool-command`, the CLI tool-selection layer resolves an MCP-backed `agent_tool_view` through the same host/runtime tooling contract used by native tools. This first slice is intentionally narrow: it covers the direct CLI host/runtime path, not the daemon adapters yet.
+
+That CLI path can now also compose native and MCP-backed tools in the same resolved view. If both `--tool-profile` and `--mcp-tool-command` are present, the host resolves them through one small composite provider surface and keeps model-visible tool names unique at the merge boundary.
+
+The subprocess-based MCP smokes now also declare their helper binaries explicitly at the build layer. Targets that launch `llama-agent-mcp-stdio-fake-server` or the real `llama-agent-mcp-stdio-server` now depend on those helper executables directly, which avoids a subtle stale-binary failure mode where a smoke would exercise an older helper build and appear to hang or regress in protocol behavior even though the caller target itself had rebuilt cleanly.
+
+The foreground daemon can now also resolve the same native and MCP-backed tool surface that the CLI host adapter already uses. Session-host execution now has a per-turn tooling resolver hook, and the daemon uses it to rebuild tooling from the current host-owned session/scope turn contract before each turn. In practice that means `--tool-profile`, `--repository-root`, and `--mcp-tool-command` can now participate in the same resolved daemon tool view instead of the daemon having a narrower MCP-only wiring path.
+
+The modern CLI profile-tool path also no longer builds a second parallel native registry just to derive model-facing tools. For profile-driven tools it now resolves one provider view and reuses that single host-owned surface for exposure and execution wiring.
+
+That keeps host authority in one place:
+
+- the model sees only `common_chat_tool`
+- the model requests tools only through parsed `tool_calls`
+- the runtime owns bindings, scope, repository root, memory authority, and policy
+- disallowed native tools are filtered before exposure instead of being shown and rejected later
+
+The first agent/planning migration is now also in place for blueprint binding. Auto-selected blueprint bindings no longer inspect the native registry directly; they validate against the resolved `agent_tool_view`, which means blueprint-binding now follows the same host-owned exposure and read-only policy surface as chat tool dispatch.
+
+The planning/orchestration edge is also a little less ad hoc now. Plan auto-selection and blueprint auto-selection no longer take a longer loose parameter list for inference, generation config, scope, plan state and tool-view details separately. Instead they can be driven from one small orchestration runtime context that carries the current host-owned planning inputs plus the optional tooling bundle used for blueprint binding.
+
+The older common agent runtime is now also structurally decoupled from the concrete registry type. Planned tool-step execution runs through a small `common_agent_tool_runtime` interface in `common/agent`, and the PoC runtime now adapts the resolved `agent_tool_view` into that interface through one shared provider-backed bridge. That means the common planning/runtime core no longer needs to know whether tool execution ultimately comes from native tools, a host-resolved provider view, or a future MCP-backed adapter.
+
+What still remains is mostly coverage and convergence work rather than contract churn. The provider-backed path is now the intended modern shape; the next cleanup is to keep broadening smoke and integration coverage around the same interface as more agent/runtime and daemon flows exercise it.
+
+There is now also a focused smoke for the planned-tool-step path itself. It runs a tiny `common_agent_runtime` scenario where the planner emits a calculator tool step and execution goes through a provider-backed tool-runtime adapter rather than a raw registry pointer. That gives the current refactor one concrete end-to-end proof point before broader resident/daemon agent smokes are added.
+
+The resident/session-host layer has also been trimmed a bit further: it now carries `agent_tool_view` for the modern profile-tool path, but no longer keeps threading a separate `tool_registry` field through its own configs just to pass it onward unused. That makes the resident host/session contracts slightly closer to the intended provider-first shape.
+
+The agent/runtime assembly path has also dropped its registry-backed tool-runtime fallback. Planned tool-step execution in that path now expects the modern provider-backed `agent_tool_view` when profile tools are active, and fails explicitly if a caller tries to run profile-tool planning without that resolved view. That narrows the remaining legacy surface and keeps the planned-tool runtime aligned with the provider-first direction already covered by smoke tests.
+
+The host/chat contracts have now been trimmed in the same direction. The runtime host, chat driver, CLI host adapter and resident host path no longer carry a parallel `tool_registry` field through their modern provider-backed contracts. Chat dispatch itself also no longer carries a separate legacy tool-handler branch. Modern agent-side tool execution now goes through `agent_tool_view`, with the host deciding which scoped provider view to resolve for the turn.
+
+The first shared memory-tool migration now sits underneath that provider path as well. Native `memory_search` and `memory_remember` execution both go through `common_memory_tool_service`, which keeps host-owned scope, embedding, store and policy bindings in one place while preserving the current synchronous behavior and result shapes.
+
+The remaining CLI coupling around embeddings has also been narrowed further. The CLI path still supplies one concrete embedding implementation, but profile-tool bindings and runtime memory-learning hooks now reach it through a small `agent_embedding_provider` seam rather than capturing CLI options directly inside the native tool bindings.
+
+Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
+
+The cancellation/timeout seam now also reaches a little deeper into the runtime-owned tool and inference paths. Resolved `agent_tool_context` values now carry the shared execution-control contract, native and MCP-backed tool views fail early when a host cancellation or turn deadline has already fired, and the current runtime checks the same seam again immediately after synchronous tool execution. That is still cooperative rather than preemptive, but it means the provider-backed tool surface now has one host-owned place to report `tool_call_cancelled`, `tool_call_deadline_exceeded`, or timeout-class failures instead of only treating those conditions as outer daemon concerns.
+
+The runtime now also starts mapping inference-step budgets into the existing generation request contract. CLI and resident/session-host assembly set `t_max_predict_ms` from `inference_step_timeout_ms` when configured, so the `server-context` path can begin enforcing bounded generation time through the same generation-options seam it already uses for `n_predict`. This is still only a first slice: active cancellation does not yet safely interrupt every in-flight inference or native tool body, and inference is not yet managed as a globally scheduled/batched operation.
+
+## MCP Direction
+
+An MCP integration should be built on top of the runtime host, not inside the core agent loop.
+
+The natural mapping is:
+
+```text
+MCP-facing llama-agent host
+        |
+        +--> runtime host
+        |       +--> inference backend
+        |       +--> stores
+        |       +--> scope and policy
+        |
+        +--> tool providers
+                +--> native registry provider
+                +--> future MCP client provider
+```
+
+For this codebase, "MCP support" should mean the application can act as an MCP host: it discovers tools/resources/prompts from MCP servers through MCP clients, applies local policy, exposes allowed capabilities to the model, dispatches model-requested tool calls, and feeds results back into the runtime.
+
+The runtime should first grow an internal tool-provider boundary before adding MCP transport details.
+
+A useful provider shape is:
+
+- List tools available to this runtime scope and policy.
+- Return model-visible schemas for allowed tools.
+- Call one tool with validated JSON arguments.
+- Return structured success/failure results.
+
+The native tool registry is the first concrete provider. There is now also an MCP-shaped provider seam built on top of an abstract MCP client contract, with stdio and Streamable HTTP client adapters covering `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. The daemon and MCP server also expose an inbound HTTP adapter above the same host-resolved tool/policy surface. Broader capability coverage and streaming remain separate follow-up work.
+
+That MCP-facing tool surface has now also been tightened slightly around naming and policy. Runtime filters treat the resolved model-visible name as the authority surface for exposed MCP tools, so prefixed MCP names are filtered the same way the model actually sees them rather than by an internal pre-prefix identifier.
+
+MCP tool arguments now use the same bounded JSON Schema subset as native tool calls. Required fields, additional-property policy, scalar types, enum/bounds and array bounds are validated against the advertised `inputSchema` before the provider is invoked. The agent's MCP server registry applies the same validation before invoking an inbound tool handler and passes the normalized arguments onward. Full JSON Schema and transport-specific schema dialects remain outside the current subset.
+
+Resources now follow the same host-owned pattern and are exposed through the MCP client/server seams where configured. Prompts and broader MCP capabilities can follow later; they should not be added directly to the agent loop as transport-specific concepts.
+
+## Service Direction
+
+The next daemon-facing step should be designed as a host/service core that can later be run as a Unix-style service even though current development happens on Windows. That should affect the shape of the code now, but not force immediate platform-specific daemonization work.
+
+The long-term target should look more like this:
+
+```text
+process host / transport adapter
+        |
+        +--> stdio foreground host
+        +--> unix-socket host (POSIX)
+        +--> future named-pipe host
+        +--> inbound MCP HTTP host
+                |
+                v
+agent daemon service
+        |
+        +--> lifecycle state
+        +--> command ingress
+        +--> scheduler / worker lanes
+        +--> session manager
+        +--> event/result sink
+                |
+                v
+agent runtime host
+        |
+        +--> inference provider
+        +--> tool provider
+        +--> stores
+        +--> policy and scope resolution
+                |
+                v
+resident inference backend
+        +--> local CLI generation adapter
+        +--> server_context host
+        +--> later remote or pooled backends
+```
+
+The important rule is that the service core should not know whether it is hosted from foreground stdio, a Unix service wrapper, a Windows process wrapper, or a later HTTP listener. Those are transport/process-host choices around the same command/session/runtime core, not separate daemon implementations.
+
+`llama-server` remains useful inspiration here, but mostly for responsibility boundaries rather than for direct reuse of its public REST surface. In practice the reusable ideas are:
+
+- transport threads should not run agent turns directly
+- requests should become commands/tasks that move through a queue or scheduler
+- readiness, drain and shutdown should be explicit service concerns
+- inference/context ownership should stay inside the inference side of the host rather than leaking into transport code
+
+For this branch that means `server_context` should be treated as an inference/backend building block under `llama-agent`, not as the outer service model. The agent daemon should own routing, session lifetime, tool policy and stores; the inference backend should own model/context execution.
+
+### Service States
+
+The service lifecycle should become explicit before new transports or real background hosting are added. A small target state model is:
+
+- `starting`
+- `ready`
+- `draining`
+- `stopping`
+- `stopped`
+- `failed`
+
+The corresponding host-facing operations should stay equally small:
+
+- `start()`
+- `request_shutdown(drain|cancel)`
+- `status()`
+- `accepting_commands()`
+
+Foreground stdio can keep using this lifecycle first. A later Unix-service or detached-process wrapper should only host the same service object and react to the same lifecycle/status contracts.
+
+### Scheduler Direction
+
+The daemon is still intentionally single-lane today, but the next design should already make room for asynchronous and multi-session execution.
+
+The intended shape is:
+
+```text
+transport adapters
+        |
+        v
+bounded command queue
+        |
+        v
+scheduler / dispatcher
+        |
+        +--> worker lane 1
+        +--> worker lane 2
+        +--> ...
+```
+
+The dispatcher already supports a configurable worker pool, with one worker as the compatibility default. A global inference admission scheduler now sits above the resident host execution path: it enforces `limits.inference_max_active` independently of worker count, admits named waiters using priority-aware FIFO ordering with bounded aging, and parks excess turns through the existing pending-operation/status/event seam. Backend slot and batch awareness remain deferred to the model-serving adapter.
+
+Admission priority is currently derived from the host turn: chat is
+interactive, normal agent work is normal, and research is background. Waiters
+remain FIFO within an effective priority; aging raises a waiter's effective
+priority after five seconds, capped at the interactive level. This is a
+bounded first policy, not yet a configurable QoS system.
+
+That scheduler should eventually be able to enforce rules such as:
+
+- different sessions may run in parallel when capacity exists
+- the same session should normally serialize turns
+- cancellation and deadlines should target queued or active commands by request/turn identity
+- inference-capacity limits should be separate from logical session ownership
+
+For a turn that must wait, the observable event order is:
+
+```text
+inference.queued
+  -> turn.waiting_for_inference
+  -> inference.capacity_granted
+  -> turn.waiting_for_inference       # backend execution is now active
+  -> turn.completed | turn.failed | turn.cancelled
+```
+
+The first waiting event describes admission waiting; the second describes the
+resident host execution that follows. A cancelled or expired waiter is removed
+from the admission queue before the turn becomes terminal.
+
+### Session and Lifetime Model
+
+The long-term host model should keep three identities distinct:
+
+- `namespace` as tenant/authority boundary
+- `project` as longer-lived shared work container
+- `session` as live runtime/conversation lane inside that project
+
+That aligns with the current daemon/session direction, but it should become more explicit over time. A future multi-session host should be able to keep several sessions alive inside one project without treating each session as a separate model owner.
+
+The same principle applies to runtime lifetime:
+
+- process lifetime
+- model lifetime
+- inference-context lifetime
+- agent-session lifetime
+- turn lifetime
+
+The current runtime/session split already moves in that direction. The
+remaining lifetime work is to carry that split through the concrete resident
+host so a host can unload one session, reset one context, or expire one lane
+without forcing a model reload.
+
+### Beta Readiness Status
+
+The structural preparation described in the original beta plan is now present
+in the current daemon/service core. It should be read as an implementation
+status, not as a list of unfinished prerequisites:
+
+| Seam | Current status | Remaining boundary |
+|---|---|---|
+| Service lifecycle | Implemented with explicit `starting`, `ready`, `draining`, `stopping`, `stopped` and `failed` states. | Detached or OS-managed hosting is still deferred. |
+| Command/result contract | Implemented as transport-neutral daemon command/result contracts, with JSONL as an adapter. | Additional transports must reuse the same core rather than create a second path. |
+| Status/readiness | Implemented through the same host-owned status snapshot used by daemon/admin flows. | Richer observability is deferred. |
+| Session ownership | Implemented in the keyed session manager, including resident state, scope and policy-pack identity. | A richer project object is still deferred. |
+| Lifetime split | Model, inference-context, session and turn identities are represented separately in the runtime/session contracts. | The resident server-context backend still has a coarser concrete ownership boundary. |
+| Bounded queue | Implemented with explicit capacity, worker lifecycle, queue state and shutdown behavior. | The inference gate provides admission control, but fairness and backend slot/batch scheduling remain deferred. |
+| Cancellation identity | Implemented for queued cancellation and active-turn cancel requests using request/turn/session identity. | End-to-end interruption of inference, native tools and MCP calls remains incomplete. |
+| Event/result seam | Implemented with typed internal daemon events and a separate terminal result projection. | Live cross-process streaming remains a later protocol capability. |
+
+These seams are therefore beta foundations already in use by the current
+smokes and daemon flows. The actual beta limitations are the boundaries in the
+last column, especially inference fairness and backend slot scheduling,
+complete abort propagation, detached hosting and production observability. The intended
+architecture remains one daemon/service core with foreground stdio as its
+first host.
+
+## What Not To Build Yet
+
+These are intentionally deferred in the current branch:
+
+- Detached or OS-managed daemon/service lifecycle.
+- Named pipes and detached/OS-managed service lifecycle.
+- A richer project object above the current namespace/session lane model.
+- Full `llama-server` integration.
+- Broader MCP capabilities beyond the current bounded Streamable HTTP GET/SSE
+  event projection and opt-in experimental Tasks polling.
+- Full end-to-end cancellation through inference, native tools and MCP transports.
+- Global inference scheduling and batching.
+- Production observability and a richer cross-process event protocol.
+
+The current code should remain useful without these deferred capabilities. The
+transport, auth, worker-pool and bounded schema seams already exist; the next
+steps should extend them without creating a second runtime path.
+
+## Next Steps
+
+1. Finish moving the last host callers away from CLI-shaped state.
+
+   The host builders now accept a CLI-free runtime turn request and CLI-free policy/runtime/orchestration contracts. The next cleanup is to move more callers onto those contracts directly, so non-CLI hosts can build prompt/messages, scope, policy, inference options, generation options, plan identity and hooks without routing through CLI-shaped helpers.
+
+2. Complete the remaining concrete lifetime separation in resident hosts.
+
+   `common_agent_runtime_session` already tracks loaded-model state and active
+   inference-context state separately. The remaining work is to carry that
+   separation through the concrete resident host so keyed agent sessions do
+   not implicitly own more model/context lifetime than they need.
+
+3. Converge the remaining CLI-shaped adapters around host construction.
+
+   The host/runtime contracts now carry a shared tooling bundle, and the runtime/orchestration modules no longer expose `args`-shaped builders. The next cleanup is to keep pushing that edge outward so more callers can assemble host turns, plan identity and hooks directly from host-owned contracts.
+
+4. Finish the remaining provider-surface convergence.
+
+   The runtime host now carries one tooling bundle instead of separate `tools + profile_tools_active + tool_view` fields, and chat/runtime dispatch uses that bundle consistently. The remaining cleanup is mostly convergence work: keep trimming older helper signatures and make sure blueprint/planning-related tool decisions continue to depend on the same host-owned provider view rather than drifting back toward registry-era wiring.
+
+5. Extend cancellation, timeout and event contracts before broader async tools.
+
+   Synchronous tools are still acceptable for the current slice. The daemon/session seam now has a shared execution-control contract plus active-turn cancellation requests, configured timeout budgets, and per-turn daemon request overrides, but workers should still wait until those controls propagate all the way into inference, tool execution, MCP requests, retry policy, ordering, and richer failure reporting.
+
+   The session-lane state machine now also has a first concrete pending-operation seam above that control contract. This is intentionally narrow: the keyed session manager can now park a lane behind a manager-owned pending operation, poll that operation, and then either resume the same turn or cancel/fail it through the same host-owned execution control. The same seam now covers both `wait_for_tool` and `wait_for_inference`; the difference is the parked phase/disposition and the point where the turn resumes. The important boundary is that this is still a lane/session seam, not a fully asynchronous resident runtime yet. `common_agent_runtime_session_host` still executes one turn synchronously once it is entered; the new waiting states exist so daemon/session orchestration can start behaving more like an actor without pretending the whole agent loop is already coroutine-shaped.
+
+6. Split model lifetime, inference context lifetime and agent-session lifetime more explicitly.
+
+   The current `server-context` path is a good resident smoke backend, but a real host should be able to keep models loaded while resetting or expiring individual agent sessions.
+
+7. Harden the first stdio MCP client before extending MCP capability breadth.
+
+   The first provider slice now exists behind an abstract MCP client contract and already has a small stdio transport adapter with basic shutdown and structured tool-error mapping. The next step is to harden that path further: clearer diagnostics, less forceful teardown, better request/response correlation under notifications, and then broader MCP capability support. Add resources and prompts only after tool discovery, session ownership, and policy are stable.
+
+## Backlog Notes
+
+- Keep symbolic memory inside the existing memory/store model, then add overlays above it.
+
+  The intended first symbolic slice is deliberately small:
+
+  - continue using the current host-owned memory stores, scopes, provenance, proposal policy, MCP exposure, and retrieval path
+  - treat `procedure`, `constraint`, and `decision` as the first symbolic memory kinds
+  - keep inferred post-turn learning conservative at first; new symbolic kinds should start as explicit proposal-backed memory rather than immediate auto-learn targets
+  - build later project/session overlays by compacting retrieved symbolic memories plus resource/evidence links instead of inventing a parallel persistence model
+
+  The next follow-up after this kind-level slice is a typed overlay builder for planning, reflection, and reasoning. That overlay should assemble a bounded block such as constraints, decisions, procedures, relevant facts, and evidence/resource references from already authorized memory retrieval. In other words: memory remains the durable source of truth, while overlays become a host-owned context-shaping view of that memory.
+
+  The current implementation is still intentionally conservative: the overlay is only a renderer over already retrieved memories, not a new retrieval path, scoring policy, or compaction store. The next useful step is therefore to make symbolic retrieval/selection a little smarter per stage, especially so planning and reflection can emphasize project-scoped constraints and decisions while reasoning can keep favoring procedure memories plus any directly relevant symbolic guidance.
+
+  The current stage-aware selector is still only the first cut. It uses bounded kind-based weighting on the already retrieved hit set rather than a new retrieval pass. A later refinement can add project/session affinity, tool/step metadata boosts, evidence reuse hints, and more explicit cross-links, but that should stay above the same host-owned memory authority and below prompt rendering.
+
+  The same principle applies to session policy. Blueprints are still the right inspiration for the declarative shape, but not the right runtime type to reuse directly. A later host/session layer can own stable policy packs per project or per resident lane, while retrieval overlays stay ephemeral and evidence-driven. That keeps executable plan structure, durable symbolic memory, and host/session policy related but distinct.
+
+- Keep tightening the session-versus-project split above the current manager key.
+
+  The current daemon/session layer now treats `namespace + session` as the resident lane key, while `project` remains part of the host-owned runtime scope bound within that lane. That is closer to the intended model, but it is still only a first cut: project-scoped memory and plans are still assembled through the same session-host contract, and there is not yet a richer host-owned project object above the resident runtime.
+
+  In practice the intended direction is still the same: `namespace` stays the tenant/authority boundary, `project` is the longer-lived shared work container, and `session` is the shorter-lived live runtime/conversation lane inside that project. That becomes more important once MCP-facing host state, external tool providers, and richer multi-session project workflows sit above the current daemon/admin path.
+
+- Revisit activity order after the current runtime/session cleanup wave.
+
+  The branch has now completed several structural extractions in a row: provider-first tools, resident runtime/session layering, daemon service/dispatcher split, CLI-free runtime builders, and removal of older daemon/session aliases. Before taking another deep refactor in the same area, it is reasonable to pause and choose between a new activity track such as event/cancellation contracts, deeper `server-context` lifetime splitting, or MCP/provider-facing host work.
+
+- Add host-owned resource references with turn/session/project lifetime.
+
+  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option, and `web_search` is now the first native tool that can materialize a full result payload there while returning a shorter inline answer plus `resources`. The next real step is to use that same path more broadly from runtime/tool flows and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+
+- Let planning and tool binding treat resource metadata as first-class evidence shape.
+
+  The next planning-facing slice should not be "blob store first, meaning later". Resource metadata should become one of the ways observations explain what a deferred payload is for: purpose, short content summary, usage hint, limitations, and lightweight semantic tags such as keywords or entity names. That gives later planner/tool-binding steps a host-owned bridge between a compact inline observation and a richer off-context payload, and it sets up later cross-references such as `observation -> resource`, `resource -> derived observation`, or project-scoped semantic lookup without forcing the model to carry the full content inline.
+
+- Maintain and deepen structured execution history without turning it into a second event system.
+
+  The first bounded trace slice is implemented. It makes a turn inspectable
+  through structured execution facts such as `plan -> step -> observation ->
+  tool result -> reflection decision -> final answer`, while the detailed
+  lifecycle remains in the typed event stream. Remaining work is limited to
+  deeper trace context, optional timing/sequence metadata, and broader
+  assertions in integration tests; raw reasoning must remain excluded.
+
+- Add a file-backed host configuration model above CLI flags.
+
+  CLI flags remain useful for PoC and admin overrides, but a near-production daemon should be constructible from a host config file that describes server settings, model load settings, profiles, storage backends, and safety/runtime limits. The runtime and daemon service layers should consume that host-owned configuration directly rather than depending on CLI `args`.
+
+- Keep the daemon target shape centered on a resident runtime service, not a bigger CLI.
+
+  The intended direction is still a host/service process that owns the loaded-model manager, session manager, store manager, tool execution surface, policy decisions, and trace sink, with the CLI eventually acting as a client/admin tool against that daemon rather than a parallel owner of the agent loop.
+
+### Adding a new test or smoke
+
+When a new contract or externally visible seam is added, keep its first
+regression proof close to the owning layer and add it to the pack deliberately:
+
+1. Put a focused C++ smoke under `pocs/agent/smoke/<area>/` and keep reusable
+   contracts/implementation under `common/*` or `tools/agent/*`; `pocs/agent`
+   should remain the harness and migration/build-glue layer.
+2. Add an executable in `pocs/agent/CMakeLists.txt`, link only the existing
+   runtime sources needed by the seam, and add the target to
+   `AGENT_RUNTIME_TARGETS` plus its category list (`runtime`, `mcp`, `cli`,
+   `daemon`, or `resource`). This makes it available to both the category
+   smoke and `llama-agent-smoke-all`/`llama-agent-build-pack`.
+3. If the test needs a process, socket, filesystem, timeout, or platform
+   setup, add the corresponding step to both
+   `scripts/test-agent-daemon-beta-smoke.ps1` and
+   `scripts/test-agent-daemon-beta-smoke.sh`. Use the same stable suite name
+   in both runners, clean temporary state, avoid real credentials, and return
+   non-zero on failure.
+4. Run the focused binary first, then the relevant category target, the
+   non-smoke CTest label, and finally the beta pack. A smoke should assert
+   observable contract behavior and failure cleanup, not implementation-only
+   details.
+
+For a deterministic unit-style check, prefer CTest with the `agent` label. For
+daemon or transport behavior, prefer the platform runner because it owns child
+process cleanup, per-suite timeouts, and diagnostic logs. Update the
+verification baseline below when the new smoke has actually passed; do not
+claim coverage merely because the target exists in CMake.
+
+## Current Verification Baseline
+
+The `poc/agent-remote-mcp-scheduler` branch has been validated with the smoke
+pack below and with the non-smoke agent CTest suite. The current Release
+baseline is 55/55 passing for `ctest -L agent`, including memory, plan,
+inference, lifecycle, and tooling tests.
+
+The validated smoke and integration paths include:
+
+- `test-agent-inference`
+- `test-tool-adapters`
+- `llama-agent-tool-provider-smoke`
+- `llama-agent-mcp-tool-provider-smoke`
+- `llama-agent-mcp-agent-tools-smoke`, verifying the explicit opt-in `delegate_task`, `summarize`, and `review_plan` MCP tool profile, including tool filtering, write-policy rejection, delegation-depth bounds, and dispatcher callback failure mapping
+- `llama-agent-mcp-http-vertical-smoke`, verifying the first complete inbound vertical path: MCP `delegate_task`, deliberate request with host escalation to research, plan creation, research gap/evidence acquisition through `memory_get` and `resource_read`, answer verification, a separate SSE event stream, and a result-only terminal response
+- `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
+- `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
+- MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
+- `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
+- `llama-agent-tool-runtime-smoke` also verifies the current reflection guardrail for incomplete `memory_get` repairs, so that an empty or underspecified `memory_get` tool step degrades to reasoning with a specific "requires an id from a prior memory_search or recorded memory reference" diagnostic instead of surfacing only the generic schema-contract error
+- `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
+- `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
+- `llama-agent-runtime-session-manager-smoke` also verifies that `reset_all()` now routes through lane-owned close semantics instead of bypassing the lane lifecycle with a raw map clear
+- `llama-agent-runtime-session-manager-smoke` now also verifies manager-owned parked states for both `awaiting_tool` and `awaiting_inference`, including `wait_for_tool`, `wait_for_inference`, host-driven cancellation out of the parked tool state, and resumption into host execution after the parked inference state is released
+  - that same parked-turn smoke now also checks that the lane/session descriptors preserve `pending_operation_kind` and `pending_operation_detail` while a turn is actually parked
+- that same parked-turn smoke now also verifies the new internal wait-entered events for both `turn.waiting_for_tool` and `turn.waiting_for_inference`
+- `llama-agent-daemon-wait-events-smoke`, verifying those same `turn.waiting_for_tool` and `turn.waiting_for_inference` events survive dispatcher/service projection and appear in the final daemon command result without needing a live model
+- that same daemon wait-events smoke now also checks typed `command.queued`, `command.started`, and typed wait-entered event metadata on the projected dispatcher result
+  - `llama-agent-daemon-jsonl-protocol-smoke`, verifying the JSONL/admin status contract now projects lane-owned pending operation kind/detail on both the top-level active turn and the keyed session binding summary
+  - `llama-agent-daemon-protocol-smoke`, verifying the daemon-side status serializer emits the same pending-operation fields before the JSONL/client parser ever sees them
+  - `llama-agent-daemon-protocol-smoke` now also verifies typed daemon event metadata for service-owned `status`, `drain`, `shutdown`, and early `turn.failed` result shaping
+  - that same protocol smoke now also verifies typed metadata on service-owned admin/listing/resource failure paths such as `turn.cancel_rejected`, `session.lookup_failed`, and `resource.read_failed`
+  - `llama-agent-daemon-dispatcher-smoke` now also verifies typed dispatcher-side rejection/cancellation metadata for `command.rejected`, queued `turn.rejected`, queued `turn.cancelled`, and active-turn `turn.cancel_requested`
+- `llama-agent-daemon-client-smoke`, verifying the child-process admin/client path renders the same pending active-turn and session-binding state through `/sessions`, `/session`, and lifecycle/admin summaries
+- ordinary chat smoke with local Qwen plus Nomic embedding
+- agent planning smoke with `--agent-inference-backend server-context`
+- `ctest --test-dir build-agent-deliberation-vs -C Release -L agent-deliberate --output-on-failure`
+- resident host multi-turn smoke with `llama-agent-resident-smoke`, verifying the same `server_context` keepalive across two turns
+- resident host `n_predict` keepalive smoke, verifying the same `server_context` keepalive survives when the second turn raises the decode limit
+- foreground daemon smoke with `llama-agent-daemon`, verifying ready/turn/reuse/shutdown over JSONL
+- Cozo-backed foreground daemon smoke, verifying the same daemon path can open persistent memory/plan stores through the existing Cozo store factories
+- daemon multi-session smoke, verifying keyed resident-lane reuse across `session A`, `session B`, `session A again`
+- daemon `n_predict` reuse smoke, verifying a resident session still reports runtime reuse when only the per-turn decode limit changes
+- `llama-agent-daemon-dispatcher-smoke` with a local Qwen model, verifying both queued-turn cancellation and session-lifecycle pruning of dispatcher-queued work for the same session, so `reset_session` no longer leaves a same-session queued turn waiting behind the global daemon queue
+- CLI-to-daemon smoke with `llama-agent daemon-chat`, verifying the CLI can drive the same resident backend through the foreground child-process adapter
+- multi-turn CLI-to-daemon smoke with `llama-agent daemon-session`, verifying the same child daemon can answer multiple prompts inside one session and scope envelope
+- `llama-agent-daemon-client-smoke`, verifying the child-process client seam itself against a fake JSONL daemon subprocess while exercising `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource`, `/reset`, `/close`, and `/drain` through the same stdin/stdout admin path as `daemon-session`
+- multi-turn CLI-to-daemon tooling smoke with `daemon-session`, verifying the child-process adapter can carry `--tool-profile`, `--repository-root`, and MCP stdio tool wiring through to the same resident daemon session
+- direct daemon integration harness with a live foreground process, verifying status, multi-turn chat reuse, reset/close-session lifecycle, project rebinding, native and MCP-configured tooling paths, and agent memory-learning flows against locally available models
+- multi-turn daemon `agent` smoke, verifying runtime reuse plus stable `plan_id` reuse across two planning turns in the same resident session
+- daemon `agent` learning smoke, verifying resident planning plus post-turn memory-learning summary over the same daemon session when an embedding model is supplied
+
+The foreground daemon `agent` path is now part of the smoke baseline as well. One stabilization issue in this layer was contract drift across wrappers: the daemon request builder was correctly seeded with `server-context`, but a later policy overwrite silently fell back to the default CLI backend, and a second host-execution scope duplication made resident `agent` fragile. The current shape keeps the daemon/backend wiring explicit and reuses `turn_request.scope` as the single host-execution scope source for agent turns.
+
+### Running Agent Tests
+
+The current branch now supports a more targeted serial workflow for agent-heavy verification on this laptop.
+
+The non-smoke CTest baseline can be run as one serial sweep:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Release -L agent --output-on-failure
+```
+
+The current branch has completed this sweep with 55/55 tests passing. The
+CTest targets also retain explicit provider/runtime wiring: the inference
+aggregate links the HTTP MCP client and the lifecycle/repository tests use the
+same provider-backed tool-runtime adapter as production code. This keeps a
+successful build meaningful after the registry-to-provider migration.
+
+The CMake test-pack targets provide the same layers when the agent options are
+enabled:
+
+```powershell
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-build-pack --parallel 1
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-ctest-pack --parallel 1
+cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-beta-test-pack --parallel 1
+```
+
+`llama-agent-build-pack` is the build gate, `llama-agent-ctest-pack` runs the
+non-smoke `agent` label, and `llama-agent-beta-test-pack` runs the structured
+deterministic/process pack. On Windows the latter uses
+`test-agent-daemon-beta-smoke.ps1`; Linux uses the matching
+`test-agent-daemon-beta-smoke.sh`. Both runners emit one `suite=...` result per
+step, capture failure logs, enforce per-suite timeouts, clean temporary logs by
+default, and return a non-zero exit code for any failed suite. Use
+`-KeepLogs` or `--keep-logs` when diagnosing a failure.
+
+Smoke binaries are grouped by the same category split already used in `pocs/agent/smoke`:
+
+- `llama-agent-smoke-runtime`
+- `llama-agent-smoke-mcp`
+- `llama-agent-smoke-cli`
+- `llama-agent-smoke-daemon`
+- `llama-agent-smoke-resource`
+- `llama-agent-smoke-all`
+
+That means the normal build entrypoint for smoke coverage can stay narrow and category-scoped:
+
+```powershell
+cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-daemon
+cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-mcp
+```
+
+The regular `tests/` side is now a little easier to slice as well. Agent-adjacent tests carry focused CTest labels such as:
+
+- `agent`
+- `agent-inference`
+- `agent-memory`
+- `agent-plan`
+- `agent-tooling`
+
+Example serial runs:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-inference --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-memory --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-plan --output-on-failure
+```
+
+`test-agent-inference` also keeps its aggregate executable run, but its internal scenarios are now exposed as individual CTest cases as well. That makes it possible to run just one inference/runtime scenario without paying for the whole aggregate sweep:
+
+```powershell
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-session-reuse --output-on-failure
+ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-host-agent-smoke --output-on-failure
+```
+
+That split is intentional: smoke groups stay category-oriented and close to the `pocs/agent/smoke/*` layout, while the longer-lived `tests/` binaries are driven through CTest labels and named scenarios.
+
+Another small runtime stabilization in the current slice is around incomplete `memory_get` planning/repair steps. The model still sometimes proposes `memory_get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
+
+The daemon/session seam also took another small actor-shaped step in the same sweep. Session lanes already owned their own mailbox and lifecycle once a turn had reached the keyed session manager, but the foreground daemon still had a global dispatcher queue in front of that seam. `cancel_turn` already knew how to remove a queued turn there; `reset_session` and `close_session` now do the equivalent for queued turns that belong to the same session before those turns ever reach the lane. That keeps session lifecycle actions from racing with stale same-session work that was still parked in the transport-side queue.
+
+The lane seam now also has first real parked-turn states instead of only placeholder enum values. `awaiting_tool` and the pre-host `wait_for_inference` path are still driven by a deliberately narrow manager-owned pending-operation hook rather than by a fully asynchronous runtime host, but they are enough to prove that the keyed session/lane layer can retain turn identity, expose parked dispositions in status/inspection surfaces, and resume or cancel the same turn without dropping out of the lane. That is the intended stepping stone before making tool execution or inference ownership itself more directly nonblocking.
+
+The daemon status surface is now a little more consistent as a result. Lifecycle responses already carried a status snapshot, but that snapshot now includes the current session descriptors as well instead of leaving populated `sessions` only to the dedicated `status` command. That keeps lane state, queued count, and active/last-turn diagnostics visible through the same host-owned status shape on both explicit status requests and lifecycle/admin replies.
+
+This baseline verifies that the runtime host and CLI adapter refactors preserve the existing synchronous behavior while making the next host boundary easier to grow.
+
+One remaining small diagnostics gap also showed up during this sweep: the dispatcher smoke still emits a large amount of model/server diagnostics when run against a live model. That does not invalidate the protocol assertions, but it is a reminder that smoke/integration harnesses still need a cleaner split between protocol-visible assertions and backend/model diagnostics as the daemon path becomes more service-like.
+
+### State ownership and lifecycle descriptors
+
+The runtime now uses a small common descriptor vocabulary for inspecting existing
+state without introducing a universal store or a second source of truth. The
+descriptor answers the same questions for each state type: identity, owner,
+scope/lifetime, persistence capability, and authoritative owner.
+
+The current state classes are:
+
+| State class | Current examples | Owner/source of truth | Cleanup boundary |
+|---|---|---|---|
+| `durable_domain` | memory, plan, resource | respective store | store policy, explicit deletion, or scope retention |
+| `resident_runtime` | session lane, pending operation | session manager or operation manager | session close, operation terminal cleanup, or process exit |
+| `turn_workspace` | research workspace, provisional turn work | runtime-owned workspace object | turn terminal; not persisted by default |
+| `event_projection` | daemon event history and subscriptions | event collector | bounded history, unsubscribe, or process exit |
+
+The descriptor is metadata only. It does not replace resource, plan, memory,
+session, operation, or event stores. Events describe transitions and are not the
+authoritative current state.
+
+Existing types expose read-only description helpers for this boundary:
+
+- `describe_common_plan(...)`
+- `describe_agent_resource(...)`
+- `describe_common_runtime_operation(...)`
+- `describe_agent_runtime_session(...)`
+- `describe_common_agent_research_workspace(...)`
+
+Research gap and task status changes use validated transition helpers. The
+helpers allow explicit retry/reopen paths and reject invalid jumps such as a
+failed task directly becoming completed or an abandoned gap becoming active.
+This is validation around the current vectors and controller; it is not yet a
+workspace persistence layer.
+
+The ownership rule remains:
+
+> One state object has one owner and one source of truth. Other layers keep IDs,
+> references, or bounded projections.
+
+The current cleanup policy is intentionally conservative. Turn research state
+is released with the turn, terminal operations are removed by operation-manager
+cleanup, session lanes are removed on session close, resources follow their
+scope and expiry metadata, plans and memory follow their stores' retention
+policy, and event history remains bounded by the collector. Checkpointing a
+research workspace is deliberately left for a later step.

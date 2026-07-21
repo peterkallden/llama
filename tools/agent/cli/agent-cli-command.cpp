@@ -1,0 +1,62 @@
+#include "agent-cli-command.h"
+
+#include "agent-cli-config.h"
+#include "agent-cli-run.h"
+#include "../daemon/agent-daemon-client.h"
+
+#include <cstdio>
+
+int run_memory_chat_command(const char * argv0, common_memory_store & store, args a) {
+    if (a.model.empty() || a.prompt.empty()) {
+        print_agent_usage(argv0, "chat");
+        return 1;
+    }
+
+    std::string error;
+    if (!validate_agent_memory_scope(a, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+
+    a.command = "chat";
+    return run_agent_cli(store, a);
+}
+
+int run_agent_command_main(const char * argv0, int argc, char ** argv) {
+    args a;
+    if (!parse_agent_run_args(argc, argv, a)) {
+        print_agent_usage(argv0);
+        return 1;
+    }
+
+    if (a.command == "daemon-chat") {
+        return run_daemon_chat_command(argv0, a);
+    }
+    if (a.command == "daemon-session") {
+        return run_daemon_session_command(argv0, a);
+    }
+
+    if (a.model.empty() || a.prompt.empty()) {
+        print_agent_usage(argv0);
+        return 1;
+    }
+
+    std::string error;
+    if (!validate_agent_memory_scope(a, error)) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+
+    auto store = make_memory_store(a, error);
+    if (!store) {
+        fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    if (!open_memory_store(*store, a, error)) {
+        fprintf(stderr, "failed to open memory store: %s\n", error.c_str());
+        return 1;
+    }
+
+    a.command = "chat";
+    return run_agent_cli(*store, a);
+}

@@ -332,3 +332,24 @@ if (TARGET gguf-model-data)
     target_link_libraries(test-export-graph-ops PRIVATE gguf-model-data)
     target_compile_definitions(test-export-graph-ops PRIVATE LLAMA_HF_FETCH)
 endif()
+
+if (LLAMA_AGENT_RUNTIME)
+    foreach(TEST_SOURCE
+        test-agent-contract.cpp
+        test-agent-research-contract.cpp
+        test-agent-runtime-json.cpp
+        test-agent-tool-rounds.cpp
+        test-memory-learning.cpp
+        test-memory-policy.cpp
+        test-plan-context.cpp
+        test-plan-json.cpp
+        test-reflection-json.cpp
+        test-tool-adapters.cpp
+        test-tool-catalog.cpp
+    )
+        get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+        llama_build_and_test(${TEST_SOURCE})
+        target_link_libraries(${TEST_NAME} PRIVATE llama-agent-poc)
+        set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+    endforeach()
+endif()
