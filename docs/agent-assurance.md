@@ -37,6 +37,9 @@ when the corresponding verification record contains evidence for it.
 - [x] Tool calls are validated against the resolved tool view
 - [x] Unknown tools fail safely
 - [x] Policy-gated tools cannot bypass host policy
+- [x] Host configuration resolves capabilities into an immutable tool profile snapshot
+- [x] Startup readiness reports the active profile and resolved tools
+- [x] Client profile/write-authority overrides are rejected at the daemon boundary
 - [x] User-supplied resources can flow through resource references
 - [x] Memory and resource authorities remain host-owned
 - [ ] Developer workspace tools are implemented
@@ -134,6 +137,18 @@ this file records the summarized result and the commit it belongs to.
   bounded functional smokes.
 - A test is not considered passing merely because its target builds; its
   executable or CTest case must also have run successfully.
+
+## Current tool-profile branch delta
+
+The `pocs/agent-tool-profiles` work adds host-owned capability/profile
+resolution, policy-bearing profile snapshots, startup `tooling` diagnostics and
+explicit rejection of client attempts to select or widen tool authority. The
+daemon reload contract treats `tools.profile`, `tools.capabilities` and
+`tools.profiles` as restart-required; this preserves one immutable host tool
+view for an instance instead of changing the exposed catalog during a live
+session. Docker/Kubernetes sandbox backends and developer/data-analysis tools
+remain future scope; the current sandbox slice is contracts plus a deterministic
+test backend.
 
 ## Exit decision
 

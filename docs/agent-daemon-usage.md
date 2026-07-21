@@ -42,6 +42,8 @@ For inbound MCP authentication, the home, lab and enterprise examples are
 and [agent-host-config-inbound-mcp-jwt.json](examples/agent-host-config-inbound-mcp-jwt.json).
 The model path and MCP command/URL in those files are examples and must be
 changed for the local machine.
+For a minimal custom capability/profile setup, use
+[agent-host-config-capabilities.json](examples/agent-host-config-capabilities.json).
 
 The host may use a separate embedding model for semantic memory or resource
 search. It is optional and is configured as an override alongside the
@@ -130,6 +132,38 @@ The built-in native profiles are `minimal`, `memory-read`, `memory`,
 `research`, and `all-configured`. `all-configured` includes every currently
 catalogued native tool; network access, proposal-style writes, confirmation,
 scope and provider allowlists remain host-controlled.
+
+The active profile is host-owned. A client may submit an objective, mode,
+resources and bounded limits, but it cannot select a profile or widen the
+tool surface. Public `run_turn` requests containing `tool_profile`,
+`allowed_tools`, `allow_writes` or `enable_shell` are rejected. Authenticated
+caller policy is a separate, narrower intersection applied by the host.
+
+Profiles can be defined in host configuration through capabilities:
+
+```json
+{
+  "tools": {
+    "profile": "local-developer",
+    "capabilities": {
+      "workspace.read": ["repository_list", "repository_read", "repository_search"],
+      "research.read": ["web_search", "web_fetch"]
+    },
+    "profiles": {
+      "local-developer": {
+        "include_capabilities": ["workspace.read"],
+        "allow_network": false,
+        "allow_policy_gated_writes": false
+      }
+    }
+  }
+}
+```
+
+The daemon `ready` response includes a `tooling` object with the active
+profile, configured capabilities, resolved tool names and effective
+network/write policy. This is the authoritative startup diagnostic for what
+the instance exposes.
 
 For a local subprocess provider, use the same model with
 `"transport": "stdio"` and a `command` array; see
@@ -266,13 +300,15 @@ Configuration can be reloaded by the local JSONL administration channel:
 ```
 
 The daemon validates the complete candidate configuration before applying it.
-Timeouts, tool profile, repository root, bounded tool limits and MCP providers
-can be applied to new operations. A repository root must resolve to a
-directory. Provider IDs are stable: new IDs are added, missing IDs
-are removed for future operations, and changed IDs are replaced. Existing
-operations keep their provider clients until their tooling is destroyed.
-Model/backend, stores, resource roots, worker/queue sizing and runtime
-assembly are restart-required for now. A
+Timeouts, repository root, bounded tool limits and MCP providers can be applied
+to new operations. A repository root must resolve to a directory. Provider IDs
+are stable: new IDs are added, missing IDs are removed for future operations,
+and changed IDs are replaced. Existing operations keep their provider clients
+until their tooling is destroyed. The active tool profile, capability map and
+profile definitions are restart-required so an instance never changes its
+host-owned tool snapshot halfway through a running session. Model/backend,
+stores, resource roots, worker/queue sizing and runtime assembly are also
+restart-required for now. A
 rejected reload returns `event: "config.reload.rejected"`, a
 `restart_required` array and a warning; it never partially applies a
 candidate. In-flight operations retain their existing configuration snapshot.
@@ -654,6 +690,8 @@ Prometheus text without making metrics an MCP tool.
 - config reload is currently available only through local JSONL administration;
 - config reload does not restart the process or rebuild model, stores, workers,
   HTTP listeners or already-running MCP provider clients;
+- changing `tools.profile`, `tools.capabilities` or `tools.profiles` through
+  reload requires a daemon restart;
 - HTTPS support depends on an OpenSSL-enabled build for the current HTTP
   client/listener path; TLS termination is not part of the foreground daemon.
 - Unix socket mode is a foreground service transport, not an internal

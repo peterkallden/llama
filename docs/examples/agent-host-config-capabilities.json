@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "reflective"
+  },
+  "tools": {
+    "profile": "local-minimal",
+    "capabilities": {
+      "utility.read": ["calculator", "time_now"],
+      "memory.read": ["memory_search", "memory_get"]
+    },
+    "profiles": {
+      "local-minimal": {
+        "include_capabilities": ["utility.read"],
+        "allow_network": false,
+        "allow_policy_gated_writes": false
+      }
+    },
+    "repository_root": "."
+  },
+  "limits": {
+    "worker_count": 1,
+    "inference_max_active": 1
+  }
+}

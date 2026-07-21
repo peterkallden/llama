@@ -22,6 +22,9 @@ The current branch has:
   and response bodies, session IDs, and DELETE session cleanup;
 - a caller-policy contract for opaque bearer tokens, including caller identity,
   audience, namespace, project, tool profile, tool allowlists and write authority;
+- host-owned capability/profile resolution with an immutable resolved tool view,
+  startup `tooling` diagnostics, and protocol rejection of client profile or
+  write-authority overrides;
 - a transport-neutral `execute_tool` daemon command and dispatcher bridge used
   by the inbound HTTP end-to-end smoke;
 - daemon host assembly that starts inbound MCP HTTP beside the JSONL adapter and
@@ -62,6 +65,7 @@ delegation profile remain follow-up hardening.
 The complete examples are kept as JSON files so they can be copied and adapted:
 
 - [stdio host configuration](examples/agent-host-config-stdio.json)
+- [capability/profile host configuration](examples/agent-host-config-capabilities.json)
 - [remote Streamable HTTP host configuration](examples/agent-host-config-remote-http.json)
 - [inbound MCP home/single-secret configuration](examples/agent-host-config-inbound-mcp-home.json)
 - [inbound MCP multi-token configuration](examples/agent-host-config-inbound-mcp-auth.json)
@@ -211,9 +215,12 @@ RS256 signatures are verified when the build has OpenSSL support enabled.
 Without a crypto-enabled build, JWT requests are rejected explicitly; opaque
 token mode remains usable.
 The authenticated caller, not the request body, must determine the default
-namespace, project and allowed tool profile. Every request must have bounded
-body/result sizes and a deadline. Write-capable tools require the existing
-confirmation/policy path.
+namespace, project and allowed tool profile. The daemon host profile is chosen
+by configuration/startup and is not client-selectable. Public turn requests
+that attempt to provide `tool_profile`, `allowed_tools`, `allow_writes` or
+`enable_shell` are rejected; authenticated caller policy is only a narrowing
+intersection. Every request must have bounded body/result sizes and a
+deadline. Write-capable tools require the existing confirmation/policy path.
 
 ## Global session/inference scheduler
 

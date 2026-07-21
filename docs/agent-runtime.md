@@ -119,6 +119,32 @@ All mode budgets are host-resolved. A user or caller may request a mode and
 bounded limits, but host policy remains the upper bound for reflection rounds,
 plan revisions, tool rounds, research iterations, tokens, and time.
 
+## Host-owned tool profiles and capabilities
+
+Tool authority is resolved by the host before a turn starts. The host selects
+one profile through configuration or the startup CLI option, resolves that
+profile against configured capabilities and available providers, and exposes
+an immutable tool snapshot to the runtime:
+
+```text
+host config / CLI
+    -> active profile
+    -> capability map and profile definition
+    -> resolved native/provider tools
+    -> immutable runtime tool view
+```
+
+Capabilities are configuration mappings from stable capability IDs to tool
+names. Profiles include or exclude those capabilities and may carry effective
+network and policy-gated-write flags. The built-in profiles remain available,
+but custom profiles do not require a code change. Caller policy may narrow the
+resolved view; it cannot select a profile or expand it.
+
+The daemon `ready` response includes a `tooling` diagnostic with the active
+profile, configured capabilities, resolved tool names and effective policy.
+Public turn requests that try to provide `tool_profile`, `allowed_tools`,
+`allow_writes` or `enable_shell` are rejected at the protocol boundary.
+
 ## Thinking-mode escalation
 
 The requested thinking mode is not necessarily the final mode for a turn. A
@@ -275,15 +301,15 @@ The JSONL administration path now has a first configuration-reload contract.
 `reload_config` validates a complete host-config candidate and either applies
 the bounded mutable fields for new operations or returns a structured
 `config.reload.rejected` result with `restart_required` field paths. Model and
-backend resources, stores, worker/queue sizing, and runtime assembly remain
-restart-required. MCP providers are diffed by stable ID and added, removed, or
-replaced for new operations. Native tool profile and repository-root changes
-also rebuild the host tool view for new operations, while existing tooling
-retains its clients. The
-current implementation keeps reload local to JSONL administration and does not
-rebuild listeners or already-running provider clients. When the daemon hosts
-inbound MCP HTTP, the resolved tool catalog is replaced atomically for new
-HTTP requests as part of the same provider reload.
+backend resources, stores, worker/queue sizing, runtime assembly, the active
+tool profile, capability map and profile definitions remain restart-required.
+MCP providers are diffed by stable ID and added, removed, or replaced for new
+operations. Repository-root and provider changes do not alter the immutable
+profile snapshot of an already-running operation. The current implementation
+keeps reload local to JSONL administration and does not rebuild listeners or
+already-running provider clients. When the daemon hosts inbound MCP HTTP, the
+resolved provider catalog is replaced atomically for new HTTP requests as part
+of the same provider reload.
 
 Daemon configuration now travels through a shared immutable snapshot store.
 Reload publishes a new snapshot instead of mutating the options object that
