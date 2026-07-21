@@ -446,7 +446,9 @@ int main() {
     const json ready = make_agent_daemon_ready_response(options);
     if (!ready.value("ok", false) ||
             ready.value("event", "") != "ready" ||
-            ready.value("protocol_version", 0) != 1) {
+            ready.value("protocol_version", 0) != 1 ||
+            ready.value("tooling", json::object()).value("profile", "") != "minimal" ||
+            ready.value("tooling", json::object()).value("tools", json::array()).size() != 2) {
         std::fprintf(stderr, "ready response mismatch\n");
         return 1;
     }

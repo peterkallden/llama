@@ -634,7 +634,7 @@ bool parse_agent_daemon_command(
 }
 
 json make_agent_daemon_ready_response(const daemon_options & options) {
-    return {
+    json response = {
         {"ok", true},
         {"event", "ready"},
         {"default_mode", options.default_mode},
@@ -648,6 +648,36 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
             "scoped_sessions",
         })},
     };
+    common_tool_profile_snapshot snapshot;
+    std::string tooling_error;
+    if (resolve_common_tool_profile_snapshot(
+            options.tool_profile,
+            options.tool_capabilities,
+            options.tool_profiles,
+            snapshot,
+            tooling_error)) {
+        json tools = json::array();
+        for (const auto & definition : snapshot.tools) {
+            tools.push_back(definition.name);
+        }
+        json capabilities = json::object();
+        for (const auto & [id, names] : options.tool_capabilities) {
+            capabilities[id] = names;
+        }
+        response["tooling"] = {
+            {"profile", snapshot.id},
+            {"capabilities", std::move(capabilities)},
+            {"tools", std::move(tools)},
+            {"allow_network", snapshot.allow_network.value_or(false)},
+            {"allow_policy_gated_writes", snapshot.allow_policy_gated_writes.value_or(false)},
+        };
+    } else {
+        response["tooling"] = {
+            {"profile", options.tool_profile.empty() ? "minimal" : options.tool_profile},
+            {"error", tooling_error},
+        };
+    }
+    return response;
 }
 
 json make_agent_daemon_error_response(const std::string & error) {
