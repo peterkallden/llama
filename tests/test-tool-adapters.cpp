@@ -3,6 +3,7 @@
 #include "plan/plan-in-memory.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -63,6 +64,8 @@ int main() {
     const auto repository = std::filesystem::temp_directory_path() / "llama-agent-repository-tool-test";
     std::filesystem::create_directories(repository / "src");
     { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
+    const auto git_init = "git -C \"" + repository.string() + "\" init -q";
+    assert(std::system(git_init.c_str()) == 0);
     common_tool_catalog research_catalog;
     assert(research_catalog.bootstrap("research", bootstrap, error));
     common_tool_registry repository_registry;
@@ -93,6 +96,22 @@ int main() {
     assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos);
     result = repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+
+    common_tool_catalog developer_catalog;
+    assert(developer_catalog.bootstrap("developer-read", bootstrap, error));
+    common_tool_registry developer_registry;
+    common_tool_adapter_result developer_adapters;
+    assert(common_register_native_tool_adapters(developer_catalog, "developer-read", repository_bindings, developer_registry, developer_adapters, error));
+    result = developer_registry.execute({"workspace_list", R"({"path":"src","depth":1})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = developer_registry.execute({"workspace_search", R"({"query":"needle","path":"src"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = developer_registry.execute({"workspace_read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
+    assert(result.ok && result.output.find("alpha") != std::string::npos);
+    result = developer_registry.execute({"repository_status", "{}"});
+    assert(result.ok && result.output.find("src") != std::string::npos);
+    result = developer_registry.execute({"repository_changed_files", "{}"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));

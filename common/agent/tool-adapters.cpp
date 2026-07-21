@@ -698,6 +698,44 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"commits", log}});
             }, error);
+        } else if (definition.executor_id == "builtin.repository_status" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.empty()) {
+                    if (err.empty()) err = "repository_status takes no arguments";
+                    return tool_validation_failure("tool.repository_status.invalid_arguments", std::move(err), "Repository status does not take arguments.");
+                }
+                std::string status;
+                if (!git_read(bindings.repository_root, "status --short --branch", status, err)) {
+                    return tool_execution_failure("tool.repository_status.git_failed", std::move(err), "Git status could not be read.");
+                }
+                return tool_success_json({{"status", status}});
+            }, error);
+        } else if (definition.executor_id == "builtin.repository_changed_files" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.empty()) {
+                    if (err.empty()) err = "repository_changed_files takes no arguments";
+                    return tool_validation_failure("tool.repository_changed_files.invalid_arguments", std::move(err), "Changed files does not take arguments.");
+                }
+                std::string status;
+                if (!git_read(bindings.repository_root, "status --short --untracked-files=all", status, err)) {
+                    return tool_execution_failure("tool.repository_changed_files.git_failed", std::move(err), "Changed files could not be read.");
+                }
+                json files = json::array();
+                std::istringstream lines(status);
+                std::string line;
+                while (std::getline(lines, line) && files.size() < 512) {
+                    if (line.size() < 3) continue;
+                    files.push_back({
+                        {"status", line.substr(0, 2)},
+                        {"path", line.substr(3)},
+                    });
+                }
+                return tool_success_json({{"files", files}});
+            }, error);
         } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
