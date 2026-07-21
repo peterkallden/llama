@@ -167,13 +167,26 @@ const common_tool_profile * common_tool_catalog::find_profile(const std::string 
 }
 
 std::vector<common_tool_definition> common_tool_catalog::load_profile(const std::string & id, std::string & error) const {
+    common_tool_profile_snapshot snapshot;
+    if (!resolve_profile(id, snapshot, error)) return {};
+    return snapshot.tools;
+}
+
+bool common_tool_catalog::resolve_profile(
+        const std::string & id,
+        common_tool_profile_snapshot & snapshot,
+        std::string & error) const {
+    snapshot = {};
     const auto * profile = find_profile(id);
-    if (!profile || !profile->enabled) { error = "tool profile is unavailable"; return {}; }
+    if (!profile || !profile->enabled) { error = "tool profile is unavailable"; return false; }
+    snapshot.id = profile->id;
+    snapshot.allow_network = profile->allow_network;
+    snapshot.allow_policy_gated_writes = profile->allow_policy_gated_writes;
     std::vector<common_tool_definition> loaded;
     for (const auto & member : profile->members) {
         if (!member.enabled) continue;
         const auto * definition = find_definition(member.tool_name, member.tool_version);
-        if (!definition || !definition->enabled) { error = "tool profile references an unavailable tool"; return {}; }
+        if (!definition || !definition->enabled) { error = "tool profile references an unavailable tool"; return false; }
         loaded.push_back(*definition);
     }
     std::set<std::string> loaded_names;
@@ -182,13 +195,13 @@ std::vector<common_tool_definition> common_tool_catalog::load_profile(const std:
         const auto capability = capabilities.find(capability_id);
         if (capability == capabilities.end()) {
             error = "tool profile references an unavailable capability";
-            return {};
+            return false;
         }
         for (const auto & tool_name : capability->second) {
             const auto * definition = find_definition(tool_name);
             if (!definition || !definition->enabled) {
                 error = "tool capability references an unavailable tool";
-                return {};
+                return false;
             }
             if (loaded_names.insert(definition->name).second) loaded.push_back(*definition);
         }
@@ -199,7 +212,7 @@ std::vector<common_tool_definition> common_tool_catalog::load_profile(const std:
             const auto capability = capabilities.find(capability_id);
             if (capability == capabilities.end()) {
                 error = "tool profile references an unavailable excluded capability";
-                return {};
+                return false;
             }
             excluded_names.insert(capability->second.begin(), capability->second.end());
         }
@@ -208,5 +221,6 @@ std::vector<common_tool_definition> common_tool_catalog::load_profile(const std:
         }), loaded.end());
     }
     error.clear();
-    return loaded;
+    snapshot.tools = std::move(loaded);
+    return true;
 }

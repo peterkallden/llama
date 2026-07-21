@@ -821,7 +821,16 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         return nullptr;
     }
 
-    const auto definitions = catalog.load_profile(context.profile_id, error);
+    std::vector<common_tool_definition> definitions;
+    if (context.profile_snapshot) {
+        if (context.profile_snapshot->id != context.profile_id) {
+            error = "tool profile snapshot id does not match runtime profile";
+            return nullptr;
+        }
+        definitions = context.profile_snapshot->tools;
+    } else {
+        definitions = catalog.load_profile(context.profile_id, error);
+    }
     if (!error.empty()) {
         return nullptr;
     }

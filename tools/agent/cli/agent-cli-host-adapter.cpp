@@ -216,7 +216,13 @@ bool resolve_agent_host_tool_selection(
             error = "tool bootstrap failed: " + error;
             return false;
         }
+        auto profile_snapshot = std::make_shared<common_tool_profile_snapshot>();
+        if (!tool_catalog.resolve_profile(tool_profile, *profile_snapshot, error)) {
+            error = "tool profile snapshot resolution failed: " + error;
+            return false;
+        }
         const auto * resolved_profile = tool_catalog.find_profile(tool_profile);
+        resolved_tool_context.profile_snapshot = profile_snapshot;
         if (resolved_profile != nullptr) {
             if (resolved_profile->allow_network.has_value()) {
                 resolved_tool_context.allow_network = *resolved_profile->allow_network;

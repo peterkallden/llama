@@ -45,6 +45,13 @@ struct common_tool_profile {
     std::optional<bool> allow_policy_gated_writes;
 };
 
+struct common_tool_profile_snapshot {
+    std::string id;
+    std::vector<common_tool_definition> tools;
+    std::optional<bool> allow_network;
+    std::optional<bool> allow_policy_gated_writes;
+};
+
 struct common_tool_bootstrap_result {
     std::vector<std::string> definitions_created;
     std::vector<std::string> definitions_unchanged;
@@ -64,6 +71,7 @@ public:
         const std::map<std::string, common_tool_profile> & configured_profiles = {});
     const common_tool_definition * find_definition(const std::string & name, uint32_t version = 1) const;
     const common_tool_profile * find_profile(const std::string & id) const;
+    bool resolve_profile(const std::string & id, common_tool_profile_snapshot & snapshot, std::string & error) const;
     std::vector<common_tool_definition> load_profile(const std::string & id, std::string & error) const;
 
 private:

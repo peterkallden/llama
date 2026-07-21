@@ -259,6 +259,16 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "configured capability profile did not resolve its tools\n");
         return 1;
     }
+    common_tool_profile_snapshot configured_snapshot;
+    if (!configured_catalog.resolve_profile(
+            capability_config.tool_profile, configured_snapshot, error) ||
+            configured_snapshot.id != "local-developer" ||
+            configured_snapshot.tools.size() != 4 ||
+            configured_snapshot.allow_network.value_or(true) ||
+            !configured_snapshot.allow_policy_gated_writes.value_or(false)) {
+        std::fprintf(stderr, "configured immutable profile snapshot was not resolved\n");
+        return 1;
+    }
 
     agent_host_config remote_config;
     const json remote_config_json = {

@@ -29,6 +29,7 @@ struct agent_tool_context {
     common_plan_scope plan_scope = common_plan_scope::turn;
 
     std::string profile_id = "minimal";
+    std::shared_ptr<const common_tool_profile_snapshot> profile_snapshot;
     std::string repository_root;
     // Model-visible tool names allowed for this resolved runtime view. Native
     // tools use their definition name directly; MCP tools use their exposed
