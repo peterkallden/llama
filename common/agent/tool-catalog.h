@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,8 @@ struct common_tool_profile {
     std::vector<common_tool_profile_member> members;
     std::vector<std::string> include_capabilities;
     std::vector<std::string> exclude_capabilities;
+    std::optional<bool> allow_network;
+    std::optional<bool> allow_policy_gated_writes;
 };
 
 struct common_tool_bootstrap_result {

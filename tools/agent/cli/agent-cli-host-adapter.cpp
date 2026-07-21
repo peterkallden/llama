@@ -204,6 +204,7 @@ bool resolve_agent_host_tool_selection(
 
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
+    agent_tool_context resolved_tool_context = request.tool_context;
     if (!tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(
@@ -214,6 +215,17 @@ bool resolve_agent_host_tool_selection(
                 request.tool_profiles)) {
             error = "tool bootstrap failed: " + error;
             return false;
+        }
+        const auto * resolved_profile = tool_catalog.find_profile(tool_profile);
+        if (resolved_profile != nullptr) {
+            if (resolved_profile->allow_network.has_value()) {
+                resolved_tool_context.allow_network = *resolved_profile->allow_network;
+            }
+            if (resolved_profile->allow_policy_gated_writes.has_value()) {
+                resolved_tool_context.allow_policy_gated_writes = *resolved_profile->allow_policy_gated_writes;
+                resolved_tool_context.allow_memory_proposals = *resolved_profile->allow_policy_gated_writes;
+                resolved_tool_context.allow_plan_proposals = *resolved_profile->allow_policy_gated_writes;
+            }
         }
 
         common_native_tool_bindings bindings;
@@ -303,7 +315,7 @@ bool resolve_agent_host_tool_selection(
             provider.add_provider(*mcp_provider);
         }
 
-        if (!(selection.tool_view = provider.resolve_tools(request.tool_context, error))) {
+        if (!(selection.tool_view = provider.resolve_tools(resolved_tool_context, error))) {
             error = "tool provider resolution failed: " + error;
             return false;
         }

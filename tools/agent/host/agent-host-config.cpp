@@ -264,6 +264,20 @@ bool parse_agent_host_config_json(
                             (std::string("tools.profiles.") + it.key() + ".exclude_capabilities").c_str(), error)) {
                     return false;
                 }
+                if (it.value().contains("allow_network")) {
+                    if (!it.value()["allow_network"].is_boolean()) {
+                        error = "tools.profiles.allow_network must be a boolean";
+                        return false;
+                    }
+                    profile.allow_network = it.value()["allow_network"].get<bool>();
+                }
+                if (it.value().contains("allow_policy_gated_writes")) {
+                    if (!it.value()["allow_policy_gated_writes"].is_boolean()) {
+                        error = "tools.profiles.allow_policy_gated_writes must be a boolean";
+                        return false;
+                    }
+                    profile.allow_policy_gated_writes = it.value()["allow_policy_gated_writes"].get<bool>();
+                }
                 config.tool_profiles.emplace(it.key(), std::move(profile));
             }
         }
@@ -422,10 +436,17 @@ nlohmann::ordered_json agent_host_config_to_json(
     }
     json profiles = json::object();
     for (const auto & entry : config.tool_profiles) {
-        profiles[entry.first] = {
+        json profile = {
             {"include_capabilities", entry.second.include_capabilities},
             {"exclude_capabilities", entry.second.exclude_capabilities},
         };
+        if (entry.second.allow_network.has_value()) {
+            profile["allow_network"] = *entry.second.allow_network;
+        }
+        if (entry.second.allow_policy_gated_writes.has_value()) {
+            profile["allow_policy_gated_writes"] = *entry.second.allow_policy_gated_writes;
+        }
+        profiles[entry.first] = std::move(profile);
     }
     return {
         {"schema_version", config.schema_version},

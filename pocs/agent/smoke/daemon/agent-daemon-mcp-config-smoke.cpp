@@ -205,6 +205,8 @@ int main(int argc, char ** argv) {
                 {"local-developer", {
                     {"include_capabilities", json::array({"workspace.read", "repository.inspect"})},
                     {"exclude_capabilities", json::array()},
+                    {"allow_network", false},
+                    {"allow_policy_gated_writes", true},
                 }},
             }},
         }},
@@ -217,9 +219,16 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
         return 1;
     }
+    if (!capability_config.tool_profiles.at("local-developer").allow_network.has_value() ||
+            capability_config.tool_profiles.at("local-developer").allow_network.value() ||
+            !capability_config.tool_profiles.at("local-developer").allow_policy_gated_writes.value_or(false)) {
+        std::fprintf(stderr, "profile policy fields were not parsed\n");
+        return 1;
+    }
     const json capability_roundtrip = agent_host_config_to_json(capability_config);
     if (capability_roundtrip["tools"]["capabilities"]["workspace.read"].size() != 2 ||
-            capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2) {
+            capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2 ||
+            capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>()) {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
         return 1;
     }
