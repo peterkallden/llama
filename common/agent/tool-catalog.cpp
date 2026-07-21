@@ -250,5 +250,8 @@ bool resolve_common_tool_profile_snapshot(
             configured_profiles)) {
         return false;
     }
-    return catalog.resolve_profile(profile_id, snapshot, error);
+    return catalog.resolve_profile(
+        profile_id.empty() ? std::string("minimal") : profile_id,
+        snapshot,
+        error);
 }
