@@ -34,6 +34,17 @@
 
 namespace {
 
+bool configured_profile_allows_policy_gated_writes(const args & options) {
+    common_tool_profile_snapshot snapshot;
+    std::string error;
+    if (!resolve_common_tool_profile_snapshot(
+            options.tool_profile, options.tool_capabilities, options.tool_profiles,
+            snapshot, error)) {
+        return false;
+    }
+    return snapshot.allow_policy_gated_writes.value_or(false);
+}
+
 struct server_http_options {
     bool enabled = false;
     std::string listen_address = "127.0.0.1";
@@ -778,7 +789,7 @@ int main(int argc, char ** argv) {
             options.memory_project,
             options.tool_profile,
             {},
-            options.tool_profile == "memory" || options.tool_profile == "research" || options.tool_profile == "all-configured",
+            configured_profile_allows_policy_gated_writes(options),
         };
         agent_mcp_http_server http_server(
             std::move(registry),

@@ -200,6 +200,12 @@ bool parse_agent_daemon_turn_request(
         common_agent_runtime_session_host_turn_request & request,
         std::string & error) {
     request = {};
+    for (const char * field : {"tool_profile", "allowed_tools", "allow_writes", "enable_shell"}) {
+        if (parsed.contains(field)) {
+            error = std::string("client-controlled field is not allowed: ") + field;
+            return false;
+        }
+    }
     request.prompt = parsed.value("prompt", "");
     request.session_id = parsed.value("session_id", "default-session");
     request.namespace_id = parsed.value("namespace_id", "default-namespace");

@@ -216,6 +216,20 @@ int main() {
         return 1;
     }
 
+    for (const auto & field : {"tool_profile", "allowed_tools", "allow_writes", "enable_shell"}) {
+        common_agent_daemon_command rejected_command;
+        if (parse_agent_daemon_command(
+                json{{"request_id", "turn-rejected"}, {"command", "run_turn"},
+                     {"prompt", "hello"}, {field, field == "allowed_tools" ? json::array() : json(true)}},
+                options,
+                common_agent_runtime_host_mode::chat,
+                rejected_command,
+                error) || error.find("client-controlled field is not allowed") == std::string::npos) {
+            std::fprintf(stderr, "client override field was not rejected: %s\n", field);
+            return 1;
+        }
+    }
+
     common_agent_daemon_command default_timeout_command;
     if (!parse_agent_daemon_command(
             json{

@@ -173,6 +173,54 @@ bool inbound_auth_configuration_equal(
         left.http_jwt_allow_writes == right.http_jwt_allow_writes;
 }
 
+bool tool_profile_equal(const common_tool_profile & left, const common_tool_profile & right) {
+    if (left.id != right.id || left.description != right.description ||
+            left.enabled != right.enabled || left.include_capabilities != right.include_capabilities ||
+            left.exclude_capabilities != right.exclude_capabilities ||
+            left.allow_network != right.allow_network ||
+            left.allow_policy_gated_writes != right.allow_policy_gated_writes ||
+            left.members.size() != right.members.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < left.members.size(); ++i) {
+        const auto & a = left.members[i];
+        const auto & b = right.members[i];
+        if (a.tool_name != b.tool_name || a.tool_version != b.tool_version ||
+                a.enabled != b.enabled || a.config_override_json != b.config_override_json) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool tool_profiles_equal(
+        const std::map<std::string, common_tool_profile> & left,
+        const std::map<std::string, common_tool_profile> & right) {
+    if (left.size() != right.size()) return false;
+    for (const auto & [id, profile] : left) {
+        const auto next = right.find(id);
+        if (next == right.end() || !tool_profile_equal(profile, next->second)) return false;
+    }
+    return true;
+}
+
+bool tool_capabilities_equal(
+        const std::map<std::string, std::vector<std::string>> & left,
+        const std::map<std::string, std::vector<std::string>> & right) {
+    return left == right;
+}
+
+bool configured_profile_allows_policy_gated_writes(const daemon_options & options) {
+    common_tool_profile_snapshot snapshot;
+    std::string error;
+    if (!resolve_common_tool_profile_snapshot(
+            options.tool_profile, options.tool_capabilities, options.tool_profiles,
+            snapshot, error)) {
+        return false;
+    }
+    return snapshot.allow_policy_gated_writes.value_or(false);
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -305,6 +353,11 @@ int main(int argc, char ** argv) {
         require_restart(candidate.max_research_iterations != options.max_research_iterations, "runtime.max_research_iterations");
         require_restart(candidate.memory_learn != options.memory_learn, "runtime.memory_learn");
         require_restart(candidate.agent_plan != options.agent_plan, "runtime.agent_plan");
+        require_restart(candidate.tool_profile != options.tool_profile, "tools.profile");
+        require_restart(!tool_capabilities_equal(candidate.tool_capabilities, options.tool_capabilities),
+            "tools.capabilities");
+        require_restart(!tool_profiles_equal(candidate.tool_profiles, options.tool_profiles),
+            "tools.profiles");
         auto provider_equal = [](const auto & a, const auto & b) {
             return a.id == b.id && a.enabled == b.enabled &&
                 a.type == b.type && a.transport == b.transport &&
@@ -342,7 +395,6 @@ int main(int argc, char ** argv) {
         const bool providers_changed = !result.providers_added.empty() ||
             !result.providers_removed.empty() || !result.providers_replaced.empty();
         const bool native_catalog_changed = providers_changed ||
-            candidate.tool_profile != options.tool_profile ||
             candidate.repository_root != options.repository_root;
         if (native_catalog_changed) {
             if (*refresh_http_catalog) {
@@ -353,9 +405,6 @@ int main(int argc, char ** argv) {
             }
             if (providers_changed) {
                 result.applied_fields.emplace_back("tools.providers");
-            }
-            if (candidate.tool_profile != options.tool_profile) {
-                result.applied_fields.emplace_back("tools.profile");
             }
             if (candidate.repository_root != options.repository_root) {
                 result.applied_fields.emplace_back("tools.repository_root");
@@ -439,7 +488,7 @@ int main(int argc, char ** argv) {
             "",
             options.tool_profile,
             {},
-            options.tool_profile == "memory" || options.tool_profile == "research" || options.tool_profile == "all-configured",
+            configured_profile_allows_policy_gated_writes(options),
         };
         http_options.execute_tool = [&dispatcher](
                 const agent_mcp_caller_policy & policy,
@@ -657,7 +706,7 @@ int main(int argc, char ** argv) {
                 "",
                 current_options.tool_profile,
                 {},
-                current_options.tool_profile == "memory" || current_options.tool_profile == "research" || current_options.tool_profile == "all-configured",
+                configured_profile_allows_policy_gated_writes(current_options),
             });
             refresh_error.clear();
             return true;
