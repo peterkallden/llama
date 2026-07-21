@@ -7,9 +7,15 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <map>
 #include <vector>
 
 struct daemon_options;
+
+struct agent_host_tool_profile_config {
+    std::vector<std::string> include_capabilities;
+    std::vector<std::string> exclude_capabilities;
+};
 
 struct agent_host_config {
     int schema_version = 1;
@@ -45,6 +51,8 @@ struct agent_host_config {
     std::string resource_metadata_db;
 
     std::string tool_profile;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, agent_host_tool_profile_config> tool_profiles;
     std::string repository_root;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     bool inbound_mcp_enabled = false;

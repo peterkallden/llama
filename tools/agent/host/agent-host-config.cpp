@@ -228,6 +228,44 @@ bool parse_agent_host_config_json(
         const auto & tools = parsed["tools"];
         read_optional(tools, "profile", config.tool_profile);
         read_optional(tools, "repository_root", config.repository_root);
+        if (tools.contains("capabilities")) {
+            if (!tools["capabilities"].is_object()) {
+                error = "tools.capabilities must be an object mapping capability ids to tool arrays";
+                return false;
+            }
+            config.tool_capabilities.clear();
+            for (auto it = tools["capabilities"].begin(); it != tools["capabilities"].end(); ++it) {
+                if (!read_string_array(it.value(), config.tool_capabilities[it.key()],
+                        (std::string("tools.capabilities.") + it.key()).c_str(), error)) {
+                    return false;
+                }
+            }
+        }
+        if (tools.contains("profiles")) {
+            if (!tools["profiles"].is_object()) {
+                error = "tools.profiles must be an object mapping profile ids to profile definitions";
+                return false;
+            }
+            config.tool_profiles.clear();
+            for (auto it = tools["profiles"].begin(); it != tools["profiles"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "tools.profiles entries must be objects";
+                    return false;
+                }
+                agent_host_tool_profile_config profile;
+                if (it.value().contains("include_capabilities") &&
+                        !read_string_array(it.value()["include_capabilities"], profile.include_capabilities,
+                            (std::string("tools.profiles.") + it.key() + ".include_capabilities").c_str(), error)) {
+                    return false;
+                }
+                if (it.value().contains("exclude_capabilities") &&
+                        !read_string_array(it.value()["exclude_capabilities"], profile.exclude_capabilities,
+                            (std::string("tools.profiles.") + it.key() + ".exclude_capabilities").c_str(), error)) {
+                    return false;
+                }
+                config.tool_profiles.emplace(it.key(), std::move(profile));
+            }
+        }
         if (tools.contains("providers")) {
             if (!tools["providers"].is_array()) {
                 error = "tools.providers must be an array";
@@ -377,6 +415,17 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"command", provider.command},
         });
     }
+    json capabilities = json::object();
+    for (const auto & entry : config.tool_capabilities) {
+        capabilities[entry.first] = entry.second;
+    }
+    json profiles = json::object();
+    for (const auto & entry : config.tool_profiles) {
+        profiles[entry.first] = {
+            {"include_capabilities", entry.second.include_capabilities},
+            {"exclude_capabilities", entry.second.exclude_capabilities},
+        };
+    }
     return {
         {"schema_version", config.schema_version},
         {"model", {
@@ -420,6 +469,8 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"tools", {
             {"profile", config.tool_profile},
             {"repository_root", config.repository_root},
+            {"capabilities", std::move(capabilities)},
+            {"profiles", std::move(profiles)},
             {"providers", std::move(providers)},
         }},
         {"mcp", {
@@ -594,6 +645,55 @@ bool validate_agent_host_config(
         }
     }
     std::unordered_set<std::string> provider_ids;
+    for (const auto & capability : config.tool_capabilities) {
+        if (capability.first.empty()) {
+            error = "tools.capabilities ids must not be empty";
+            return false;
+        }
+        std::unordered_set<std::string> tool_names;
+        for (const auto & tool : capability.second) {
+            if (tool.empty()) {
+                error = "tools.capabilities entries must not contain empty tool names";
+                return false;
+            }
+            if (!tool_names.insert(tool).second) {
+                error = "tools.capabilities entries must not contain duplicate tools: " + tool;
+                return false;
+            }
+        }
+    }
+    for (const auto & profile : config.tool_profiles) {
+        if (profile.first.empty()) {
+            error = "tools.profiles ids must not be empty";
+            return false;
+        }
+        std::unordered_set<std::string> included;
+        for (const auto & capability : profile.second.include_capabilities) {
+            if (!config.tool_capabilities.count(capability)) {
+                error = "tool profile references an unknown included capability: " + capability;
+                return false;
+            }
+            if (!included.insert(capability).second) {
+                error = "tool profile includes a duplicate capability: " + capability;
+                return false;
+            }
+        }
+        std::unordered_set<std::string> excluded;
+        for (const auto & capability : profile.second.exclude_capabilities) {
+            if (!config.tool_capabilities.count(capability)) {
+                error = "tool profile references an unknown excluded capability: " + capability;
+                return false;
+            }
+            if (!excluded.insert(capability).second) {
+                error = "tool profile excludes a duplicate capability: " + capability;
+                return false;
+            }
+            if (included.count(capability)) {
+                error = "tool profile cannot both include and exclude capability: " + capability;
+                return false;
+            }
+        }
+    }
     for (const auto & provider : config.mcp_providers) {
         if (provider.id.empty()) {
             error = "MCP provider is missing a stable id";

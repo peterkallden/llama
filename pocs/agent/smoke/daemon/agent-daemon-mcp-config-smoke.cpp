@@ -192,6 +192,45 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_host_config capability_config;
+    const json capability_config_json = {
+        {"schema_version", 1},
+        {"tools", {
+            {"profile", "local-developer"},
+            {"capabilities", {
+                {"workspace.read", json::array({"repository_list", "repository_read"})},
+                {"repository.inspect", json::array({"repository_search", "repository_diff"})},
+            }},
+            {"profiles", {
+                {"local-developer", {
+                    {"include_capabilities", json::array({"workspace.read", "repository.inspect"})},
+                    {"exclude_capabilities", json::array()},
+                }},
+            }},
+        }},
+    };
+    if (!parse_agent_host_config_json(capability_config_json, capability_config, error) ||
+            capability_config.tool_profile != "local-developer" ||
+            capability_config.tool_capabilities.size() != 2 ||
+            capability_config.tool_profiles.size() != 1 ||
+            capability_config.tool_profiles.at("local-developer").include_capabilities.size() != 2) {
+        std::fprintf(stderr, "capability/profile host config was not parsed\n");
+        return 1;
+    }
+    const json capability_roundtrip = agent_host_config_to_json(capability_config);
+    if (capability_roundtrip["tools"]["capabilities"]["workspace.read"].size() != 2 ||
+            capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2) {
+        std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
+        return 1;
+    }
+    agent_host_config invalid_capability_config = capability_config;
+    invalid_capability_config.tool_profiles.at("local-developer").include_capabilities.push_back("missing.capability");
+    if (validate_agent_host_config(invalid_capability_config, error) ||
+            error.find("unknown included capability") == std::string::npos) {
+        std::fprintf(stderr, "unknown profile capability was accepted\n");
+        return 1;
+    }
+
     agent_host_config remote_config;
     const json remote_config_json = {
         {"schema_version", 1},
