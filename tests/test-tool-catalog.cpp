@@ -24,6 +24,6 @@ int main() {
     assert(second.definitions_created.empty());
     assert(second.definitions_unchanged.size() >= first.definitions_created.size());
     assert(!catalog.bootstrap("not-a-profile", second, error));
-    assert(error == "unknown built-in tool profile: not-a-profile");
+    assert(error == "tool profile is unavailable: not-a-profile");
     return 0;
 }
