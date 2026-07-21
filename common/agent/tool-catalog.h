@@ -9,7 +9,7 @@
 
 // Declarative metadata only. A catalog entry never supplies executable code;
 // executor_id must be matched by the native runtime's registry.
-enum class common_tool_risk_class { local_read, memory_proposal, plan_proposal, network_read };
+enum class common_tool_risk_class { local_read, memory_proposal, plan_proposal, network_read, sandbox_execution };
 
 struct common_tool_definition {
     std::string name;

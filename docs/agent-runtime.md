@@ -145,6 +145,13 @@ profile, configured capabilities, resolved tool names and effective policy.
 Public turn requests that try to provide `tool_profile`, `allowed_tools`,
 `allow_writes` or `enable_shell` are rejected at the protocol boundary.
 
+The catalog also defines the first semantic developer execution contracts:
+`build_target` and `test_run`. They accept a target-oriented request and carry
+host-owned sandbox policy metadata; they do not accept Docker, Kubernetes or
+shell details. Their executors are intentionally not installed in the native
+adapter yet. A later sandbox runtime will provide the execution backend while
+the model-facing schema remains stable.
+
 ## Thinking-mode escalation
 
 The requested thinking mode is not necessarily the final mode for a turn. A

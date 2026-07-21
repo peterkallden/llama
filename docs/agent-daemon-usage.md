@@ -165,6 +165,12 @@ profile, configured capabilities, resolved tool names and effective
 network/write policy. This is the authoritative startup diagnostic for what
 the instance exposes.
 
+The tool catalog includes semantic `build_target` and `test_run` contracts for
+the developer path. They are confirmation-gated and describe a
+`developer-build` sandbox policy, but remain unavailable until a sandbox
+executor is configured. Clients should send a target and bounded options, not
+container commands or shell strings.
+
 For a local subprocess provider, use the same model with
 `"transport": "stdio"` and a `command` array; see
 [agent-host-config-stdio.json](examples/agent-host-config-stdio.json).
