@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../common/cli-config.h"
+#include "agent/tool-catalog.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../runtime/agent-plan-orchestration.h"
@@ -14,6 +15,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <map>
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -37,6 +39,8 @@ struct daemon_options {
     std::string memory_learn = "off";
     std::string agent_plan = "off";
     std::string tool_profile;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, common_tool_profile> tool_profiles;
     std::string repository_root;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;

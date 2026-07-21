@@ -1,6 +1,7 @@
 #pragma once
 
 #include "memory/memory-retrieval.h"
+#include "agent/tool-catalog.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-store.h"
@@ -8,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -72,6 +74,8 @@ struct args {
     bool agent_trace = false;
     bool memory_global_opt_in = false;
     bool tool_profile_explicit = false;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, common_tool_profile> tool_profiles;
     bool thinking_mode_explicit = false;
     bool memory_learn_explicit = false;
     bool agent_profile_explicit = false;

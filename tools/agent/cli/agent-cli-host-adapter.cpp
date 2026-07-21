@@ -75,6 +75,8 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    request.tool_capabilities = options.tool_capabilities;
+    request.tool_profiles = options.tool_profiles;
     append_legacy_stdio_mcp_provider(
         options.mcp_tool_command,
         options.mcp_tool_args,
@@ -204,7 +206,12 @@ bool resolve_agent_host_tool_selection(
     std::unique_ptr<native_agent_tool_provider> native_provider;
     if (!tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
-        if (!tool_catalog.bootstrap(tool_profile, bootstrap, error)) {
+        if (!tool_catalog.bootstrap(
+                tool_profile,
+                bootstrap,
+                error,
+                request.tool_capabilities,
+                request.tool_profiles)) {
             error = "tool bootstrap failed: " + error;
             return false;
         }

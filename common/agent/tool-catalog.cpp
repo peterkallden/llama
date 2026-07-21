@@ -2,6 +2,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <set>
+
 using json = nlohmann::ordered_json;
 
 namespace {
@@ -91,14 +94,16 @@ const char * common_tool_risk_class_name(common_tool_risk_class value) {
     return "unknown";
 }
 
-bool common_tool_catalog::bootstrap(const std::string & profile_id, common_tool_bootstrap_result & result, std::string & error) {
+bool common_tool_catalog::bootstrap(
+        const std::string & profile_id,
+        common_tool_bootstrap_result & result,
+        std::string & error,
+        const std::map<std::string, std::vector<std::string>> & configured_capabilities,
+        const std::map<std::string, common_tool_profile> & configured_profiles) {
     result = {};
     const auto all_definitions = builtin_definitions();
     const auto all_profiles = builtin_profiles();
     const auto selected = profile_id.empty() ? "minimal" : profile_id;
-    bool known_profile = false;
-    for (const auto & profile : all_profiles) if (profile.id == selected) known_profile = true;
-    if (!known_profile) { error = "unknown built-in tool profile: " + selected; return false; }
     for (const auto & definition : all_definitions) {
         if (!validate(definition, error)) return false;
         const auto key = definition.name + "@" + std::to_string(definition.version);
@@ -108,6 +113,44 @@ bool common_tool_catalog::bootstrap(const std::string & profile_id, common_tool_
     for (const auto & profile : all_profiles) {
         if (profiles.count(profile.id)) result.profiles_unchanged.push_back(profile.id);
         else { profiles.emplace(profile.id, profile); result.profiles_created.push_back(profile.id); }
+    }
+    for (const auto & capability : configured_capabilities) {
+        if (capability.first.empty()) {
+            error = "configured tool capability id must not be empty";
+            return false;
+        }
+        for (const auto & tool_name : capability.second) {
+            if (tool_name.empty() || find_definition(tool_name) == nullptr) {
+                error = "configured tool capability references an unavailable tool: " + tool_name;
+                return false;
+            }
+        }
+        capabilities[capability.first] = capability.second;
+    }
+    for (const auto & configured : configured_profiles) {
+        common_tool_profile profile = configured.second;
+        profile.id = configured.first;
+        if (profile.id.empty()) {
+            error = "configured tool profile id must not be empty";
+            return false;
+        }
+        for (const auto & capability : profile.include_capabilities) {
+            if (!capabilities.count(capability)) {
+                error = "configured tool profile references an unavailable capability: " + capability;
+                return false;
+            }
+        }
+        for (const auto & capability : profile.exclude_capabilities) {
+            if (!capabilities.count(capability)) {
+                error = "configured tool profile references an unavailable capability: " + capability;
+                return false;
+            }
+        }
+        profiles[profile.id] = std::move(profile);
+    }
+    if (!find_profile(selected)) {
+        error = "tool profile is unavailable: " + selected;
+        return false;
     }
     error.clear();
     return true;
@@ -132,6 +175,37 @@ std::vector<common_tool_definition> common_tool_catalog::load_profile(const std:
         const auto * definition = find_definition(member.tool_name, member.tool_version);
         if (!definition || !definition->enabled) { error = "tool profile references an unavailable tool"; return {}; }
         loaded.push_back(*definition);
+    }
+    std::set<std::string> loaded_names;
+    for (const auto & definition : loaded) loaded_names.insert(definition.name);
+    for (const auto & capability_id : profile->include_capabilities) {
+        const auto capability = capabilities.find(capability_id);
+        if (capability == capabilities.end()) {
+            error = "tool profile references an unavailable capability";
+            return {};
+        }
+        for (const auto & tool_name : capability->second) {
+            const auto * definition = find_definition(tool_name);
+            if (!definition || !definition->enabled) {
+                error = "tool capability references an unavailable tool";
+                return {};
+            }
+            if (loaded_names.insert(definition->name).second) loaded.push_back(*definition);
+        }
+    }
+    if (!profile->exclude_capabilities.empty()) {
+        std::set<std::string> excluded_names;
+        for (const auto & capability_id : profile->exclude_capabilities) {
+            const auto capability = capabilities.find(capability_id);
+            if (capability == capabilities.end()) {
+                error = "tool profile references an unavailable excluded capability";
+                return {};
+            }
+            excluded_names.insert(capability->second.begin(), capability->second.end());
+        }
+        loaded.erase(std::remove_if(loaded.begin(), loaded.end(), [&excluded_names](const common_tool_definition & definition) {
+            return excluded_names.count(definition.name) != 0;
+        }), loaded.end());
     }
     error.clear();
     return loaded;

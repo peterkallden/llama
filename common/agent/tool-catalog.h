@@ -17,6 +17,7 @@ struct common_tool_definition {
     std::string input_schema_json;
     std::string result_schema_json;
     std::string executor_id;
+    std::vector<std::string> capabilities;
     common_tool_risk_class risk_class = common_tool_risk_class::local_read;
     bool enabled = true;
     bool requires_confirmation = false;
@@ -37,6 +38,8 @@ struct common_tool_profile {
     std::string description;
     bool enabled = true;
     std::vector<common_tool_profile_member> members;
+    std::vector<std::string> include_capabilities;
+    std::vector<std::string> exclude_capabilities;
 };
 
 struct common_tool_bootstrap_result {
@@ -50,7 +53,12 @@ class common_tool_catalog {
 public:
     // Adds missing built-ins. Existing definitions and profiles are deliberately
     // left alone: upgrades need an explicit future migration path.
-    bool bootstrap(const std::string & profile_id, common_tool_bootstrap_result & result, std::string & error);
+    bool bootstrap(
+        const std::string & profile_id,
+        common_tool_bootstrap_result & result,
+        std::string & error,
+        const std::map<std::string, std::vector<std::string>> & configured_capabilities = {},
+        const std::map<std::string, common_tool_profile> & configured_profiles = {});
     const common_tool_definition * find_definition(const std::string & name, uint32_t version = 1) const;
     const common_tool_profile * find_profile(const std::string & id) const;
     std::vector<common_tool_definition> load_profile(const std::string & id, std::string & error) const;
@@ -58,6 +66,7 @@ public:
 private:
     std::map<std::string, common_tool_definition> definitions;
     std::map<std::string, common_tool_profile> profiles;
+    std::map<std::string, std::vector<std::string>> capabilities;
 };
 
 const char * common_tool_risk_class_name(common_tool_risk_class value);

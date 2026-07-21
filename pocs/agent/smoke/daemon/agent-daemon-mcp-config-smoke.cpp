@@ -230,6 +230,26 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "unknown profile capability was accepted\n");
         return 1;
     }
+    common_tool_catalog configured_catalog;
+    common_tool_bootstrap_result configured_bootstrap;
+    if (!configured_catalog.bootstrap(
+            capability_config.tool_profile,
+            configured_bootstrap,
+            error,
+            capability_config.tool_capabilities,
+            capability_config.tool_profiles)) {
+        std::fprintf(stderr, "configured capability profile bootstrap failed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto configured_tools = configured_catalog.load_profile(
+        capability_config.tool_profile, error);
+    if (configured_tools.size() != 4 ||
+            error.size() != 0 ||
+            configured_tools[0].name != "repository_list" ||
+            configured_tools[3].name != "repository_diff") {
+        std::fprintf(stderr, "configured capability profile did not resolve its tools\n");
+        return 1;
+    }
 
     agent_host_config remote_config;
     const json remote_config_json = {

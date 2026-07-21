@@ -9,6 +9,7 @@
 #include "../tooling/agent-tool-provider.h"
 
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,8 @@ struct agent_host_tool_selection_request {
     std::string repository_root;
     agent_resource_store_config resource_store_config;
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, common_tool_profile> tool_profiles;
 };
 
 bool has_enabled_stdio_mcp_provider(

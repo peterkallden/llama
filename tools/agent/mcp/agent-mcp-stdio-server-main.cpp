@@ -672,7 +672,12 @@ int main(int argc, char ** argv) {
 
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
-    if (!catalog.bootstrap(options.tool_profile, bootstrap, error)) {
+    if (!catalog.bootstrap(
+            options.tool_profile,
+            bootstrap,
+            error,
+            options.tool_capabilities,
+            options.tool_profiles)) {
         std::fprintf(stderr, "failed to bootstrap MCP stdio server tool profile: %s\n", error.c_str());
         return 1;
     }

@@ -252,7 +252,8 @@ bool parse_agent_host_config_json(
                     error = "tools.profiles entries must be objects";
                     return false;
                 }
-                agent_host_tool_profile_config profile;
+                common_tool_profile profile;
+                profile.id = it.key();
                 if (it.value().contains("include_capabilities") &&
                         !read_string_array(it.value()["include_capabilities"], profile.include_capabilities,
                             (std::string("tools.profiles.") + it.key() + ".include_capabilities").c_str(), error)) {
@@ -753,6 +754,8 @@ void apply_agent_host_config_to_daemon_options(
     options.plan_backend = config.plan_backend;
     options.plan_db = config.plan_db;
     options.tool_profile = config.tool_profile;
+    options.tool_capabilities = config.tool_capabilities;
+    options.tool_profiles = config.tool_profiles;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;
@@ -824,6 +827,8 @@ void apply_agent_host_config_to_args(
     options.n_predict = config.n_predict;
     options.n_gpu_layers = config.n_gpu_layers;
     options.tool_profile = config.tool_profile;
+    options.tool_capabilities = config.tool_capabilities;
+    options.tool_profiles = config.tool_profiles;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;
