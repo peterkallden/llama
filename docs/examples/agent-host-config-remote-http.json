@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "C:/Users/kalld/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "research",
+    "n_predict": 64
+  },
+  "tools": {
+    "profile": "research",
+    "providers": [
+      {
+        "type": "mcp",
+        "id": "remote-github",
+        "enabled": true,
+        "transport": "streamable_http",
+        "url": "https://mcp.example.com/mcp",
+        "token_env": "REMOTE_GITHUB_MCP_TOKEN",
+        "allowed_tools": [
+          "search_issues",
+          "read_issue"
+        ],
+        "connect_timeout_ms": 5000,
+        "request_timeout_ms": 30000,
+        "shutdown_timeout_ms": 2000,
+        "max_result_bytes": 1048576,
+        "prefix": "github",
+        "server_name": "github"
+      }
+    ]
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "turn_timeout_ms": 120000,
+    "mcp_request_timeout_ms": 30000,
+    "mcp_shutdown_timeout_ms": 2000
+  }
+}

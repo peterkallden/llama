@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "C:/Users/kalld/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "reflective",
+    "n_predict": 64
+  },
+  "tools": {
+    "profile": "minimal",
+    "providers": []
+  },
+  "mcp": {
+    "inbound": {
+      "tokens": [
+        {
+          "id": "container-read",
+          "token_env": "LLAMA_AGENT_TCP_READ_TOKEN",
+          "audience": "llama-agent-jsonl-tcp",
+          "namespace": "container",
+          "project": "example",
+          "tool_profile": "minimal",
+          "allowed_tools": ["calculator"],
+          "allow_writes": false,
+          "allow_admin": false
+        },
+        {
+          "id": "container-admin",
+          "token_env": "LLAMA_AGENT_TCP_ADMIN_TOKEN",
+          "audience": "llama-agent-jsonl-tcp",
+          "namespace": "container",
+          "project": "example",
+          "tool_profile": "minimal",
+          "allowed_tools": [],
+          "allow_writes": true,
+          "allow_admin": true
+        }
+      ]
+    }
+  },
+  "jsonl": {
+    "tcp": {
+      "enabled": true,
+      "listen": "127.0.0.1",
+      "port": 8090,
+      "max_line_bytes": 1048576,
+      "idle_timeout_seconds": 300
+    }
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "turn_timeout_ms": 120000
+  }
+}

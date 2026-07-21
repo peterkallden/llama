@@ -119,6 +119,64 @@ option(LLAMA_TESTS_INSTALL "llama: install tests" ON)
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
 
+option(LLAMA_MEMORY      "llama: build native memory PoC support" OFF)
+option(LLAMA_MEMORY_COZO "llama-memory: build optional CozoDB backend" OFF)
+option(LLAMA_PLAN "llama: build native dynamic plan PoC support" OFF)
+option(LLAMA_PLAN_COZO "llama-plan: build optional CozoDB backend" OFF)
+option(LLAMA_AGENT_RUNTIME "llama: build the bounded agent runtime" OFF)
+
+if (LLAMA_MEMORY_COZO AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_MEMORY_COZO=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_PLAN=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN_COZO AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_PLAN_COZO=ON requires LLAMA_PLAN=ON")
+endif()
+if (LLAMA_AGENT_RUNTIME AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_AGENT_RUNTIME=ON requires LLAMA_PLAN=ON")
+endif()
+
+set(LLAMA_COZO_RELEASE_COMPAT OFF)
+if (MSVC)
+    if (DEFINED COZO_LIBRARY AND COZO_LIBRARY)
+        string(TOLOWER "${COZO_LIBRARY}" LLAMA_COZO_LIBRARY_LOWER)
+        if (LLAMA_COZO_LIBRARY_LOWER MATCHES "cozo-release")
+            set(LLAMA_COZO_RELEASE_COMPAT ON)
+        endif()
+    elseif (EXISTS "${CMAKE_SOURCE_DIR}/work/cozo-release")
+        set(LLAMA_COZO_RELEASE_COMPAT ON)
+    endif()
+endif()
+
+if (LLAMA_COZO_RELEASE_COMPAT)
+    message(STATUS "Cozo release library detected on MSVC; using release CRT/iterator mode for compatibility")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    add_compile_definitions(
+        $<$<CONFIG:Debug>:_HAS_ITERATOR_DEBUGGING=0>
+        $<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=0>
+    )
+endif()
+
+function(llama_link_cozo TARGET_NAME)
+    if (NOT COZO_INCLUDE_DIR)
+        message(FATAL_ERROR "llama_link_cozo(${TARGET_NAME}) requires COZO_INCLUDE_DIR to be set")
+    endif()
+    if (NOT COZO_LIBRARY)
+        message(FATAL_ERROR "llama_link_cozo(${TARGET_NAME}) requires COZO_LIBRARY to be set")
+    endif()
+
+    target_include_directories(${TARGET_NAME} PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(${TARGET_NAME} PRIVATE ${COZO_LIBRARY})
+
+    if (WIN32)
+        target_link_libraries(${TARGET_NAME} PRIVATE ws2_32 bcrypt ntdll rpcrt4 uuid shlwapi crypt32)
+    endif()
+
+endfunction()
+
+
 
 # Required for relocatable CMake package
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)

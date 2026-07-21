@@ -1,0 +1,136 @@
+#include "plan/plan-json.h"
+#include "plan/plan-bindings.h"
+#include "plan/plan-context.h"
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <cassert>
+#include <nlohmann/json.hpp>
+
+int main() {
+    common_plan_state plan;
+    plan.id = "p";
+    std::vector<common_plan_operation> operations;
+    std::string error;
+    auto same_json_object = [](const std::string & lhs, const std::string & rhs) {
+        return nlohmann::json::parse(lhs, nullptr, false) ==
+               nlohmann::json::parse(rhs, nullptr, false);
+    };
+
+    const auto compact = R"({"purpose":"inspect the current implementation","goal":"inspect bindings","steps":[{"id":"search","contribution":"find the relevant implementation","tool":"repository_search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository_read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
+    assert(common_plan_parse_proposal_json(compact, plan, operations, error));
+    assert(operations.size() == 3);
+    assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"query":"plan bindings"})"));
+    assert(plan.purpose == "inspect the current implementation");
+    assert(operations[0].step->intended_contribution == "find the relevant implementation");
+    assert(operations[1].step->depends_on == std::vector<std::string>{"search"});
+    assert(common_plan_step_effective_mode(*operations[2].step) == common_plan_step_mode::final_response);
+
+    const auto normalized = R"({"goal":"calculate","steps":[{"id":"calculate","tool":"calculator","args":{"operation":"multiply","operands":[{"value":17},{"value":23}]}}]})";
+    assert(common_plan_parse_proposal_json(normalized, plan, operations, error));
+    assert(operations.size() == 2); // native final synthesis
+    assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
+    assert(operations[1].step->id == "answer");
+
+    const auto repaired_integer = R"({"goal":"inspect","steps":[{"id":"search","tool":"repository_search","args":{"query":"plan","max_results":"16"}}]})";
+    assert(common_plan_parse_proposal_json(repaired_integer, plan, operations, error));
+    const auto repaired_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
+    assert(repaired_actual.is_object());
+    assert(repaired_actual.value("query", std::string()) == "plan");
+    assert(repaired_actual.contains("max_results"));
+    assert(repaired_actual["max_results"].is_number_integer());
+    assert(repaired_actual["max_results"].get<int>() == 16);
+
+    const auto wrapped_tool_arguments = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":{"name":"memory_search","arguments":{"query":"regression procedure","limit":"2"}}}}]})";
+    assert(common_plan_parse_proposal_json(wrapped_tool_arguments, plan, operations, error));
+    const auto wrapped_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
+    assert(wrapped_actual.is_object());
+    assert(wrapped_actual.value("query", std::string()) == "regression procedure");
+    assert(wrapped_actual.contains("limit"));
+    assert(wrapped_actual["limit"].is_number_integer());
+    assert(wrapped_actual["limit"].get<int>() == 2);
+
+    const auto sibling_tool_argument = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":"memory_search","query":"regression procedure","limit":"2"}}]})";
+    assert(common_plan_parse_proposal_json(sibling_tool_argument, plan, operations, error));
+    const auto sibling_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
+    assert(sibling_actual.is_object());
+    assert(sibling_actual.value("query", std::string()) == "regression procedure");
+    assert(sibling_actual.contains("limit"));
+    assert(sibling_actual["limit"].is_number_integer());
+    assert(sibling_actual["limit"].get<int>() == 2);
+
+    const auto compact_without_ids = R"({"goal":"inspect","steps":[{"tool":"repository_search","args":{"query":"planner"}},{"tool":{"name":"repository_read","arguments":{"path":{"$from_step":"step_1","$json_pointer":"/matches/0/path"}}}},{"mode":"reasoning"}]})";
+    assert(common_plan_parse_proposal_json(compact_without_ids, plan, operations, error));
+    assert(operations.size() == 4); // native final synthesis
+    assert(operations[0].step->id == "step_1");
+    assert(operations[1].step->id == "step_2");
+    assert(operations[2].step->id == "step_3");
+    assert(operations[1].step->depends_on == std::vector<std::string>{"step_1"});
+    assert(operations[2].step->depends_on == std::vector<std::string>{"step_2"});
+    assert(operations[3].step->id == "answer");
+    assert(operations[3].step->depends_on == std::vector<std::string>({"step_1", "step_2", "step_3"}));
+
+    // The prior full proposal format remains accepted for persisted or older callers.
+    const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
+    assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
+    assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository_search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
+    assert(error == "duplicate step id");
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"answer","tool":"calculator","args":{"expression":"6 * 7"}}]})", plan, operations, error));
+    assert(error == "native final step id conflicts with proposed step");
+    assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
+    assert(common_plan_proposal_json_schema().find(R"("required":["id"])") == std::string::npos);
+    assert(common_plan_proposal_json_schema().find("oneOf") == std::string::npos);
+
+    common_plan_state materialize_plan;
+    common_plan_step completed_search{"search", "Search", "Find evidence"};
+    completed_search.status = common_plan_step_status::completed;
+    materialize_plan.steps.push_back(completed_search);
+    common_plan_observation search_observation;
+    search_observation.id = "tool:search:1";
+    search_observation.source = "tool:search:1";
+    search_observation.summary = R"({"matches":[{"path":"pocs/agent/agent-runtime-host.cpp"}]})";
+    search_observation.confidence = 1.0f;
+    materialize_plan.observations.push_back(search_observation);
+    common_plan_step read_step{"read", "Read", "Open the file"};
+    read_step.tool_call = common_plan_tool_call{
+        "repository_read",
+        R"({"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}})",
+    };
+    std::string materialized_arguments_json;
+    assert(common_plan_materialize_tool_arguments(
+        materialize_plan,
+        read_step,
+        read_step.tool_call->arguments_json,
+        materialized_arguments_json,
+        error));
+    assert(same_json_object(materialized_arguments_json, R"({"path":"pocs/agent/agent-runtime-host.cpp"})"));
+
+    common_plan_state context_plan;
+    context_plan.goal = "Use only relevant evidence";
+    common_plan_step search{"search", "Search", "Find evidence"};
+    search.result_summary = "matching file found";
+    context_plan.steps.push_back(search);
+    common_plan_step reasoning{"reason", "Reason", "Use the selected search result."};
+    reasoning.depends_on = {"search"};
+    context_plan.steps.push_back(reasoning);
+    common_plan_observation matching_observation;
+    matching_observation.id = "tool:search";
+    matching_observation.source = "tool:search";
+    matching_observation.summary = "matching file found";
+    matching_observation.confidence = 1.0f;
+    context_plan.observations.push_back(matching_observation);
+    common_plan_observation unrelated_observation;
+    unrelated_observation.id = "tool:other";
+    unrelated_observation.source = "tool:other";
+    unrelated_observation.summary = "unrelated result";
+    unrelated_observation.confidence = 1.0f;
+    context_plan.observations.push_back(unrelated_observation);
+    const auto step_context = common_plan_render_step_context(context_plan, context_plan.steps.back());
+    assert(step_context.find("matching file found") != std::string::npos);
+    assert(step_context.find("unrelated result") == std::string::npos);
+    return 0;
+}

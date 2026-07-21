@@ -1,0 +1,171 @@
+#include "agent-daemon-events.h"
+#include "agent-daemon-event-collector.h"
+#include "agent-daemon-jsonl-protocol.h"
+
+#include <chrono>
+#include <cstdio>
+
+int main() {
+    const auto event = make_common_agent_daemon_event(
+        common_agent_daemon_event_type::tool_completed,
+        "request-1",
+        "turn-1",
+        "tool completed",
+        7,
+        {
+            "namespace-1",
+            "project-1",
+            "session-1",
+            "request-1",
+            "turn-1",
+            "operation-1",
+        });
+
+    common_agent_event_stream_subscription subscription;
+    subscription.subscription_id = "subscription-1";
+    subscription.filter.session_id = "session-1";
+    subscription.filter.request_id = "request-1";
+    subscription.cursor.after_sequence = 6;
+
+    if (!subscription.filter.matches(event) || event.sequence <= subscription.cursor.after_sequence) {
+        std::fprintf(stderr, "event stream contract did not match the expected event\n");
+        return 1;
+    }
+
+    const auto failed_event = make_common_agent_daemon_event(
+        common_agent_daemon_event_type::tool_failed,
+        "request-1",
+        "turn-1",
+        "tool failed",
+        8,
+        {
+            "namespace-1",
+            "project-1",
+            "session-1",
+            "request-1",
+            "turn-1",
+            "operation-1",
+        });
+    if (failed_event.event_type != common_agent_daemon_event_type::tool_failed ||
+            std::string(failed_event.type) != "tool.failed") {
+        std::fprintf(stderr, "tool failure event contract was not preserved\n");
+        return 1;
+    }
+
+    subscription.filter.turn_id = "other-turn";
+    if (subscription.filter.matches(event)) {
+        std::fprintf(stderr, "event stream contract ignored a turn filter\n");
+        return 1;
+    }
+
+    const common_agent_event_stream_delivery delivery{
+        common_agent_event_stream_delivery_kind::event,
+        event,
+        {event.sequence},
+    };
+    if (delivery.kind != common_agent_event_stream_delivery_kind::event ||
+            delivery.cursor.after_sequence != event.sequence ||
+            delivery.event.event_type != common_agent_daemon_event_type::tool_completed) {
+        std::fprintf(stderr, "event stream delivery contract was not preserved\n");
+        return 1;
+    }
+
+    common_agent_daemon_event_collector collector;
+    common_agent_event_stream_subscription live_subscription;
+    live_subscription.filter.session_id = "session-live";
+    live_subscription.max_pending_events = 2;
+    const auto live_id = collector.subscribe(live_subscription);
+
+    collector.append(make_common_agent_daemon_event(
+        common_agent_daemon_event_type::turn_started,
+        "request-live",
+        "turn-live",
+        {},
+        0,
+        {"namespace-live", "project-live", "session-live", "request-live", "turn-live", {}}));
+    common_agent_event_stream_delivery live_delivery;
+    if (collector.wait_next(live_id, live_delivery, std::chrono::milliseconds(10)) !=
+            common_agent_event_stream_wait_status::delivered ||
+            live_delivery.event.event_type != common_agent_daemon_event_type::turn_started) {
+        std::fprintf(stderr, "event stream collector did not deliver a matching event\n");
+        return 1;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        collector.append(make_common_agent_daemon_event(
+            common_agent_daemon_event_type::tool_completed,
+            "request-live",
+            "turn-live",
+            "queued",
+            0,
+            {"namespace-live", "project-live", "session-live", "request-live", "turn-live", {}}));
+    }
+    if (collector.wait_next(live_id, live_delivery, std::chrono::milliseconds(10)) !=
+            common_agent_event_stream_wait_status::delivered ||
+            live_delivery.kind != common_agent_event_stream_delivery_kind::overflow) {
+        std::fprintf(stderr, "event stream collector did not report bounded overflow\n");
+        return 1;
+    }
+
+    collector.unsubscribe(live_id);
+    if (collector.wait_next(live_id, live_delivery, std::chrono::milliseconds(10)) !=
+            common_agent_event_stream_wait_status::closed) {
+        std::fprintf(stderr, "event stream collector did not close a subscription\n");
+        return 1;
+    }
+
+    common_agent_daemon_event_collector replay_collector(8);
+    common_agent_event_stream_subscription first_subscription;
+    first_subscription.filter.session_id = "session-replay";
+    const auto first_id = replay_collector.subscribe(first_subscription);
+    replay_collector.append(make_common_agent_daemon_event(
+        common_agent_daemon_event_type::turn_started,
+        "request-replay",
+        "turn-replay",
+        "first",
+        0,
+        {"namespace-replay", "project-replay", "session-replay", "request-replay", "turn-replay", {}}));
+    common_agent_event_stream_delivery first_delivery;
+    if (replay_collector.wait_next(first_id, first_delivery, std::chrono::milliseconds(10)) !=
+            common_agent_event_stream_wait_status::delivered) {
+        std::fprintf(stderr, "event stream replay setup did not deliver the first event\n");
+        return 1;
+    }
+    replay_collector.unsubscribe(first_id);
+    replay_collector.append(make_common_agent_daemon_event(
+        common_agent_daemon_event_type::turn_completed,
+        "request-replay",
+        "turn-replay",
+        "second",
+        0,
+        {"namespace-replay", "project-replay", "session-replay", "request-replay", "turn-replay", {}}));
+    common_agent_event_stream_subscription resumed_subscription;
+    resumed_subscription.filter.session_id = "session-replay";
+    resumed_subscription.cursor.after_sequence = first_delivery.cursor.after_sequence;
+    const auto resumed_id = replay_collector.subscribe(resumed_subscription);
+    common_agent_event_stream_delivery resumed_delivery;
+    if (replay_collector.wait_next(resumed_id, resumed_delivery, std::chrono::milliseconds(10)) !=
+            common_agent_event_stream_wait_status::delivered ||
+            resumed_delivery.event.event_type != common_agent_daemon_event_type::turn_completed) {
+        std::fprintf(stderr, "event stream replay did not resume from the cursor\n");
+        return 1;
+    }
+
+    const auto jsonl_event = make_agent_daemon_jsonl_event_message("subscription-1", delivery);
+    if (jsonl_event.value("message_type", "") != "event" ||
+            jsonl_event.value("subscription_id", "") != "subscription-1" ||
+            jsonl_event["event"].value("event_type", "") != "tool.completed") {
+        std::fprintf(stderr, "JSONL event projection did not preserve the contract\n");
+        return 1;
+    }
+    const auto jsonl_failed_event = make_agent_daemon_jsonl_event_message(
+        "subscription-1",
+        {common_agent_event_stream_delivery_kind::event, failed_event, {failed_event.sequence}});
+    if (jsonl_failed_event["event"].value("event_type", "") != "tool.failed") {
+        std::fprintf(stderr, "JSONL tool failure projection did not preserve the contract\n");
+        return 1;
+    }
+
+    std::printf("agent_event_stream_contract=ok\n");
+    return 0;
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "model": {"backend": "server-context", "path": "/var/lib/llama-agent/models/model.gguf"},
+  "runtime": {"default_mode": "agent", "thinking_mode": "reflective", "n_predict": 64},
+  "tools": {"profile": "minimal", "providers": []},
+  "mcp": {"inbound": {"tokens": [{
+    "id": "local-admin",
+    "token_env": "LLAMA_AGENT_UNIX_TOKEN",
+    "audience": "llama-agent-local",
+    "namespace": "local",
+    "project": "local",
+    "tool_profile": "minimal",
+    "allow_writes": true,
+    "allow_admin": true
+  }]}},
+  "jsonl": {"unix_socket": {
+    "enabled": true,
+    "path": "/run/llama-agent/agent.sock",
+    "mode": 432
+  }},
+  "limits": {"queue_capacity": 8, "worker_count": 2, "inference_max_active": 1, "turn_timeout_ms": 120000}
+}
