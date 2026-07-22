@@ -115,6 +115,31 @@ native adapter emits semantic commands such as `agent.build_target` and
 `agent.test_run`; Docker translates those requests into container execution
 details. Kubernetes translates the same semantic request into a Job.
 
+CTest och smoke
+
+The backend checks are split into a model-free contract smoke and backend
+smokes:
+
+```powershell
+ctest --test-dir build-agent-tool-profiles-debug -C Debug -R sandbox-contract
+ctest --test-dir build-agent-tool-profiles-debug -C Debug -L sandbox-docker
+ctest --test-dir build-agent-tool-profiles-debug -C Debug -L sandbox-kubernetes
+```
+
+The Docker test is skipped when Docker is not reachable. The Kubernetes test
+always runs its contract checks, but only creates a real Job when explicitly
+enabled:
+
+```powershell
+$env:LLAMA_AGENT_KUBERNETES_SMOKE = "1"
+$env:LLAMA_AGENT_KUBERNETES_IMAGE = "alpine:3.20"
+$env:LLAMA_AGENT_KUBERNETES_NAMESPACE = "llama-agent-jobs"
+ctest --test-dir build-agent-tool-profiles-debug -C Debug -L sandbox-kubernetes
+```
+
+The real Kubernetes smoke assumes that `kubectl`, the configured namespace,
+the image and hostPath-visible workspace are available to the current host.
+
 Operation directories are host-created and may be ephemeral. Source is
 normally read-only, the writable directory is used for build/analysis work,
 and artifacts are returned through explicit artifact/resource references.
