@@ -114,6 +114,14 @@ bool run_kubectl(
         std::string & error) {
     std::vector<std::string> args;
     args.push_back(config.executable.empty() ? "kubectl" : config.executable);
+    if (!config.kubeconfig.empty()) {
+        args.push_back("--kubeconfig");
+        args.push_back(config.kubeconfig);
+    }
+    if (!config.context.empty()) {
+        args.push_back("--context");
+        args.push_back(config.context);
+    }
     args.insert(args.end(), arguments.begin(), arguments.end());
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
@@ -270,7 +278,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
             {"restartPolicy", "Never"},
             {"containers", json::array({{{
                 {"name", "staging"},
-                {"image", request.image},
+                {"image", config.staging_image},
                 {"command", json::array({"sh", "-c"})},
                 {"args", json::array({staging_command})},
                 {"volumeMounts", json::array({
@@ -303,7 +311,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     auto wait_staging = namespace_args();
     wait_staging.insert(wait_staging.end(), {"wait", "--for=condition=Ready", "pod/" + staging_pod, "--timeout=60s"});
-    if (!run_kubectl(config, wait_staging, 70000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
+    if (!run_kubectl(config, wait_staging, config.staging_timeout_ms, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
         result.error = error.empty() ? output : error;
         cleanup_manifest();
         return false;
@@ -455,6 +463,17 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
         std::string ignored_output;
         bool ignored_timeout = false;
         run_kubectl(config, delete_args, 10000, 4096, ignored_output, exit_code, ignored_timeout, error);
+    }
+    const bool project_scope = !request.project_id.empty();
+    const bool delete_claims = config.pvc_retention == "operation" ||
+        (config.pvc_retention == "session" && !project_scope);
+    if (delete_claims) {
+        auto delete_claim_args = namespace_args();
+        delete_claim_args.insert(delete_claim_args.end(), {"delete", "pvc", workspace_claim, artifact_claim,
+            "--ignore-not-found=true", "--wait=false"});
+        std::string ignored_output;
+        bool ignored_timeout = false;
+        run_kubectl(config, delete_claim_args, 10000, 4096, ignored_output, exit_code, ignored_timeout, error);
     }
     cleanup_manifest();
     error.clear();

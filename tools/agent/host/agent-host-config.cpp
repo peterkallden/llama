@@ -316,12 +316,17 @@ bool parse_agent_host_config_json(
             if (!sandbox["kubernetes"].is_object()) { error = "sandbox.kubernetes must be an object"; return false; }
             const auto & kubernetes = sandbox["kubernetes"];
             read_optional(kubernetes, "executable", config.sandbox.kubernetes_executable);
+            read_optional(kubernetes, "kubeconfig", config.sandbox.kubernetes_kubeconfig);
+            read_optional(kubernetes, "context", config.sandbox.kubernetes_context);
             read_optional(kubernetes, "namespace", config.sandbox.kubernetes_namespace);
             read_optional(kubernetes, "service_account", config.sandbox.kubernetes_service_account);
             read_optional(kubernetes, "runtime_class", config.sandbox.kubernetes_runtime_class);
             read_optional(kubernetes, "storage_class", config.sandbox.kubernetes_storage_class);
             read_optional(kubernetes, "workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size);
             read_optional(kubernetes, "artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size);
+            read_optional(kubernetes, "staging_image", config.sandbox.kubernetes_staging_image);
+            read_optional(kubernetes, "pvc_retention", config.sandbox.kubernetes_pvc_retention);
+            read_optional(kubernetes, "staging_timeout_ms", config.sandbox.kubernetes_staging_timeout_ms);
             read_optional(kubernetes, "cleanup", config.sandbox.kubernetes_cleanup);
         }
         if (sandbox.contains("workspace")) {
@@ -664,12 +669,17 @@ nlohmann::ordered_json agent_host_config_to_json(
             }},
             {"kubernetes", {
                 {"executable", config.sandbox.kubernetes_executable},
+                {"kubeconfig", config.sandbox.kubernetes_kubeconfig},
+                {"context", config.sandbox.kubernetes_context},
                 {"namespace", config.sandbox.kubernetes_namespace},
                 {"service_account", config.sandbox.kubernetes_service_account},
                 {"runtime_class", config.sandbox.kubernetes_runtime_class},
                 {"storage_class", config.sandbox.kubernetes_storage_class},
                 {"workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size},
                 {"artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size},
+                {"staging_image", config.sandbox.kubernetes_staging_image},
+                {"pvc_retention", config.sandbox.kubernetes_pvc_retention},
+                {"staging_timeout_ms", config.sandbox.kubernetes_staging_timeout_ms},
                 {"cleanup", config.sandbox.kubernetes_cleanup},
             }},
             {"workspace", {
@@ -891,8 +901,18 @@ bool validate_agent_host_config(
     }
     if (config.sandbox.backend == "kubernetes" &&
             (config.sandbox.kubernetes_workspace_storage_size.empty() ||
-             config.sandbox.kubernetes_artifact_storage_size.empty())) {
-        error = "sandbox.kubernetes storage sizes must not be empty";
+             config.sandbox.kubernetes_artifact_storage_size.empty() ||
+             config.sandbox.kubernetes_staging_image.empty() ||
+             config.sandbox.kubernetes_staging_timeout_ms == 0)) {
+        error = "sandbox.kubernetes storage sizes, staging image and staging timeout must be configured";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" &&
+            config.sandbox.kubernetes_pvc_retention != "operation" &&
+            config.sandbox.kubernetes_pvc_retention != "session" &&
+            config.sandbox.kubernetes_pvc_retention != "project" &&
+            config.sandbox.kubernetes_pvc_retention != "never") {
+        error = "sandbox.kubernetes.pvc_retention must be operation, session, project or never";
         return false;
     }
     if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {

@@ -7,12 +7,17 @@
 
 struct common_agent_kubernetes_sandbox_config {
     std::string executable = "kubectl";
+    std::string kubeconfig;
+    std::string context;
     std::string namespace_name = "default";
     std::string service_account;
     std::string runtime_class;
     std::string storage_class;
     std::string workspace_storage_size = "4Gi";
     std::string artifact_storage_size = "1Gi";
+    std::string staging_image = "alpine:3.20";
+    std::string pvc_retention = "project";
+    uint32_t staging_timeout_ms = 120000;
     bool cleanup = true;
 };
 

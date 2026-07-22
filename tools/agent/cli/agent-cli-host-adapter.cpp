@@ -294,12 +294,17 @@ bool resolve_agent_host_tool_selection(
             auto kubernetes_runtime = std::make_shared<common_agent_sandbox_kubernetes_runtime>(
                 common_agent_kubernetes_sandbox_config{
                     request.sandbox.kubernetes_executable,
+                    request.sandbox.kubernetes_kubeconfig,
+                    request.sandbox.kubernetes_context,
                     request.sandbox.kubernetes_namespace,
                     request.sandbox.kubernetes_service_account,
                     request.sandbox.kubernetes_runtime_class,
                     request.sandbox.kubernetes_storage_class,
                     request.sandbox.kubernetes_workspace_storage_size,
                     request.sandbox.kubernetes_artifact_storage_size,
+                    request.sandbox.kubernetes_staging_image,
+                    request.sandbox.kubernetes_pvc_retention,
+                    request.sandbox.kubernetes_staging_timeout_ms,
                     request.sandbox.kubernetes_cleanup,
                 });
             bindings.sandbox_execute = [backend, docker_runtime, kubernetes_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](

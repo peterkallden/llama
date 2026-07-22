@@ -97,6 +97,9 @@ waits for completion through `kubectl`. Its host configuration is:
       "storage_class": "",
       "workspace_storage_size": "4Gi",
       "artifact_storage_size": "1Gi",
+      "staging_image": "alpine:3.20",
+      "pvc_retention": "project",
+      "staging_timeout_ms": 120000,
       "cleanup": true
     }
   }
@@ -110,10 +113,8 @@ The default claim sizes are `4Gi` for workspace data and `1Gi` for artifacts;
 an empty `storage_class` uses the cluster default. PVCs are retained across
 operations and are not deleted by normal Job cleanup.
 The Kubernetes executable, namespace, service account, runtime class, storage
-class, claim sizes and cleanup/retention policy are host-owned and cannot be
-selected by a client or tool request. Planned follow-up settings include
-`staging_image`, `kubeconfig`, `context`, `pvc_retention` and
-`staging_timeout_ms`.
+class, claim sizes, staging image, kubeconfig/context and cleanup/retention
+policy are host-owned and cannot be selected by a client or tool request.
 
 PVC names, `ReadWriteOnce`, operation `subPath` values and the container paths
 `/workspace/source`, `/workspace/writable` and `/workspace/artifacts` remain
