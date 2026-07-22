@@ -183,6 +183,34 @@ provider-backed tool may register resources in the store. Tool metadata must
 therefore keep execution class separate from capability, effect, risk and
 artifact production.
 
+## Tool catalog
+
+The current foundation catalog is intentionally small and semantic. Host
+configuration selects which definitions are exposed through a profile; clients
+do not select implementations or host paths.
+
+| Tool | Boundary | Current foundation behavior |
+| --- | --- | --- |
+| `workspace.list` | Host-native | Bounded directory listing inside the controlled repository root |
+| `workspace.read` | Host-native | Bounded text-file line reads |
+| `workspace.search` | Host-native | Bounded text search over readable files |
+| `workspace.patch` | Host-native mutation | Hash-token checked line operations; confirmation-gated |
+| `repository.diff` | Host-native | Bounded Git working-tree diff summary |
+| `development.build` | Sandbox-backed | Declarative target request through the configured sandbox backend |
+| `development.test` | Sandbox-backed | Declarative test request through the configured sandbox backend |
+| `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output |
+| `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root |
+| `dataset.inspect` | Host-native | Returns bounded path, format and size metadata |
+| `dataset.schema` | Host-native | Returns a first CSV column schema; richer inference is future work |
+| `dataset.sample` | Host-native | Returns a bounded CSV head sample |
+| `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store |
+
+The first data foundation deliberately supports safe discovery and bounded
+materialization. SQL/Cozo queries, statistical analysis, charts, formatters,
+semantic symbol analysis and richer artifact conversion belong behind the
+data-runtime or sandbox seams and are not represented as fake host-native
+implementations.
+
 The namespaced names are canonical in the catalog, native registry and
 resolved profile snapshots. Host configuration, profiles and model-visible
 tool views must use these names directly.

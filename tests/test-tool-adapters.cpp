@@ -7,6 +7,20 @@
 #include <filesystem>
 #include <fstream>
 
+class test_resource_store final : public agent_resource_store {
+public:
+    bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string &) override {
+        out.uri = "resource://test/" + request.name;
+        out.name = request.name;
+        out.mime_type = request.mime_type;
+        out.scope = request.scope;
+        return true;
+    }
+    bool read_text(const std::string &, const agent_resource_read_authority &, size_t, std::string &, std::string &) const override { return false; }
+    bool stat(const std::string &, const agent_resource_read_authority &, agent_resource_descriptor &, std::string &) const override { return false; }
+    bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
+};
+
 int main() {
     std::string error;
     common_memory_in_memory_store memories;
@@ -112,6 +126,46 @@ int main() {
     assert(result.ok && result.output.find("src") != std::string::npos);
     result = developer_registry.execute({"repository_changed_files", "{}"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+
+    std::filesystem::create_directories(repository / "datasets");
+    { std::ofstream file(repository / "datasets" / "sample.csv"); file << "name,value\nalpha,1\nbeta,2\n"; }
+    common_tool_profile foundation_profile;
+    foundation_profile.id = "developer-foundation";
+    foundation_profile.members = {
+        {"workspace.patch", 1, true, "{}"},
+        {"diagnostics.compile", 1, true, "{}"},
+        {"dataset.list", 1, true, "{}"},
+        {"dataset.inspect", 1, true, "{}"},
+        {"dataset.schema", 1, true, "{}"},
+        {"dataset.sample", 1, true, "{}"},
+        {"artifact.export", 1, true, "{}"},
+    };
+    foundation_profile.allow_policy_gated_writes = true;
+    std::map<std::string, common_tool_profile> foundation_profiles;
+    foundation_profiles.emplace(foundation_profile.id, foundation_profile);
+    common_tool_catalog foundation_catalog;
+    assert(foundation_catalog.bootstrap(foundation_profile.id, bootstrap, error, {}, foundation_profiles));
+    common_tool_registry foundation_registry;
+    common_native_tool_bindings foundation_bindings = repository_bindings;
+    test_resource_store foundation_resources;
+    foundation_bindings.resource_runtime.store = &foundation_resources;
+    foundation_bindings.resource_runtime.namespace_id = "test";
+    foundation_bindings.resource_runtime.session_id = "session-1";
+    assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
+    assert(result.ok && result.output.find("content_hash") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});
+    assert(result.ok && result.output.find("missing symbol") != std::string::npos);
+    result = foundation_registry.execute({"dataset.list", R"({"path":"datasets"})"});
+    assert(result.ok && result.output.find("sample.csv") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"path":"datasets/sample.csv"})"});
+    assert(result.ok && result.output.find("csv") != std::string::npos);
+    result = foundation_registry.execute({"dataset.schema", R"({"path":"datasets/sample.csv"})"});
+    assert(result.ok && result.output.find("name") != std::string::npos && result.output.find("value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"path":"datasets/sample.csv","rows":1})"});
+    assert(result.ok && result.output.find("alpha") != std::string::npos);
+    result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
+    assert(result.ok && result.output.find("resource://") != std::string::npos);
 
     common_tool_profile execution_profile;
     execution_profile.id = "developer-execution";

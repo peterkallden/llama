@@ -292,6 +292,44 @@ bool text_file(const std::filesystem::path & path) {
     return input.good() || input.eof() ? std::find(buffer, buffer + input.gcount(), '\0') == buffer + input.gcount() : false;
 }
 
+std::string workspace_content_token(const std::string & content) {
+    return "host:" + std::to_string(std::hash<std::string>{}(content));
+}
+
+std::string lower_copy(std::string value);
+
+std::vector<std::string> split_csv(const std::string & line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool quoted = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '"') {
+            if (quoted && i + 1 < line.size() && line[i + 1] == '"') { field += '"'; ++i; }
+            else quoted = !quoted;
+        } else if (c == ',' && !quoted) {
+            fields.push_back(field); field.clear();
+        } else field += c;
+    }
+    fields.push_back(std::move(field));
+    return fields;
+}
+
+bool dataset_file(const common_native_tool_bindings & bindings, const std::string & relative,
+        std::filesystem::path & path, std::string & error) {
+    if (!repository_path(bindings.repository_root, relative, path, error)) return false;
+    const auto extension = lower_copy(path.extension().string());
+    if (extension != ".csv" && extension != ".json" && extension != ".parquet") {
+        error = "dataset format is not supported by the host-native foundation tool";
+        return false;
+    }
+    if (extension != ".parquet" && !text_file(path)) {
+        error = "dataset path is not a readable regular text file";
+        return false;
+    }
+    return true;
+}
+
 bool git_read(const std::string & root, const std::string & arguments, std::string & output, std::string & error) {
     if (root.find_first_of("\"&|;<>`") != std::string::npos) { error = "repository root cannot be represented safely for Git"; return false; }
     const std::string command = "git -C \"" + root + "\" " + arguments + " 2>&1";
@@ -724,6 +762,116 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
                 return tool_success_json({{"matches", matches}});
+            }, error);
+        } else if (definition.executor_id == "builtin.workspace.patch" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string() ||
+                        !arguments.contains("operations") || !arguments["operations"].is_array()) {
+                    return tool_validation_failure("tool.workspace.patch.invalid_arguments", "workspace.patch requires path and operations");
+                }
+                std::filesystem::path path;
+                if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) {
+                    return tool_validation_failure("tool.workspace.patch.invalid_path", std::move(err));
+                }
+                std::string content;
+                if (std::filesystem::exists(path)) {
+                    if (!std::filesystem::is_regular_file(path) || !text_file(path)) return tool_validation_failure("tool.workspace.patch.not_text", "workspace.patch target is not a text file");
+                    std::ifstream file(path); content.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+                }
+                if (arguments.contains("expected_hash") && arguments["expected_hash"].is_string() &&
+                        arguments["expected_hash"].get<std::string>() != workspace_content_token(content)) {
+                    return tool_failure("tool.workspace.patch.conflict", common_tool_failure_class::policy, false, "Workspace content changed since it was read.", "expected_hash does not match current workspace content");
+                }
+                std::vector<std::string> lines;
+                std::istringstream stream(content); std::string line;
+                while (std::getline(stream, line)) lines.push_back(line);
+                for (const auto & operation : arguments["operations"]) {
+                    if (!operation.is_object() || !operation.contains("type") || !operation["type"].is_string()) return tool_validation_failure("tool.workspace.patch.invalid_operation", "workspace.patch operation is invalid");
+                    const auto type = operation["type"].get<std::string>();
+                    const int start = operation.value("start_line", 1), end = operation.value("end_line", start);
+                    const auto replacement = operation.value("content", std::string());
+                    if (start < 1 || end < start || static_cast<size_t>(end) > lines.size() + 1 || (type != "create_file" && static_cast<size_t>(start) > lines.size())) return tool_validation_failure("tool.workspace.patch.invalid_range", "workspace.patch line range is invalid");
+                    if (type == "create_file") { if (std::filesystem::exists(path)) return tool_validation_failure("tool.workspace.patch.file_exists", "workspace.patch create_file target already exists"); lines = {replacement}; }
+                    else if (type == "replace_range") lines.erase(lines.begin() + start - 1, lines.begin() + std::min<int>(end, static_cast<int>(lines.size()))), lines.insert(lines.begin() + start - 1, replacement);
+                    else if (type == "insert_before") lines.insert(lines.begin() + start - 1, replacement);
+                    else if (type == "insert_after") lines.insert(lines.begin() + std::min<int>(end, static_cast<int>(lines.size())), replacement);
+                    else if (type == "delete_range") lines.erase(lines.begin() + start - 1, lines.begin() + std::min<int>(end, static_cast<int>(lines.size())));
+                    else return tool_validation_failure("tool.workspace.patch.unsupported_operation", "workspace.patch operation type is unsupported");
+                }
+                std::ofstream file(path, std::ios::trunc);
+                if (!file) return tool_execution_failure("tool.workspace.patch.write_failed", "workspace.patch could not open target for writing", "Workspace patch could not be written.");
+                for (size_t i = 0; i < lines.size(); ++i) { if (i > 0) file << '\n'; file << lines[i]; }
+                if (!file) return tool_execution_failure("tool.workspace.patch.write_failed", "workspace.patch write failed", "Workspace patch could not be written.");
+                std::ifstream updated(path); const std::string updated_content((std::istreambuf_iterator<char>(updated)), std::istreambuf_iterator<char>());
+                return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"content_hash", workspace_content_token(updated_content)}, {"changed", true}});
+            }, error, false, true);
+        } else if (definition.executor_id == "builtin.diagnostics.compile") {
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) return tool_validation_failure("tool.diagnostics.compile.invalid_output", "diagnostics.compile requires compiler output");
+                json diagnostics = json::array();
+                const std::regex gcc(R"(^(.+):(\d+):(\d+):\s*(error|warning|note):\s*(.*)$)");
+                const std::regex msvc(R"(^(.+)\((\d+),(\d+)\):\s*(error|warning|note)\s*[^:]*:\s*(.*)$)");
+                std::istringstream lines(arguments["output"].get<std::string>()); std::string line;
+                while (std::getline(lines, line) && diagnostics.size() < 256) {
+                    std::smatch match;
+                    if (std::regex_match(line, match, gcc) || std::regex_match(line, match, msvc)) diagnostics.push_back({{"path", match[1].str()}, {"line", std::stoi(match[2].str())}, {"column", std::stoi(match[3].str())}, {"severity", match[4].str()}, {"message", match[5].str()}});
+                }
+                return tool_success_json({{"diagnostics", diagnostics}, {"count", diagnostics.size()}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.list" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.list.invalid_arguments", std::move(err));
+                std::filesystem::path root;
+                if (!repository_path(bindings.repository_root, arguments.value("path", std::string("datasets")), root, err) || !std::filesystem::is_directory(root)) return tool_not_found_failure("tool.dataset.list.path_not_found", "dataset list directory was not found", "Dataset directory was not found.");
+                const int limit = arguments.value("max_results", 128); json datasets = json::array();
+                for (const auto & entry : std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied)) {
+                    if (datasets.size() >= static_cast<size_t>(limit)) break;
+                    if (!entry.is_regular_file()) continue;
+                    const auto ext = lower_copy(entry.path().extension().string());
+                    if (ext == ".csv" || ext == ".json" || ext == ".parquet") datasets.push_back({{"path", std::filesystem::relative(entry.path(), bindings.repository_root).generic_string()}, {"format", ext.substr(1)}, {"size_bytes", entry.file_size()}});
+                }
+                return tool_success_json({{"datasets", datasets}, {"truncated", datasets.size() >= static_cast<size_t>(limit)}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.inspect" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", "dataset.inspect requires path");
+                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.inspect.unavailable", std::move(err), "Dataset is unavailable.");
+                return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"format", lower_copy(path.extension().string()).substr(1)}, {"size_bytes", std::filesystem::file_size(path)}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.schema" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.schema.invalid_arguments", "dataset.schema requires path");
+                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.schema.unavailable", std::move(err), "Dataset is unavailable.");
+                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.schema.unsupported_format", "dataset.schema currently supports CSV");
+                std::ifstream file(path); std::string line; if (!std::getline(file, line)) return tool_success_json({{"columns", json::array()}});
+                const auto names = split_csv(line); json columns = json::array(); for (const auto & name : names) columns.push_back({{"name", name}, {"type", "string"}, {"nullable", true}});
+                return tool_success_json({{"columns", columns}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.sample" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.sample.invalid_arguments", "dataset.sample requires path");
+                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.sample.unavailable", std::move(err), "Dataset is unavailable.");
+                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.sample.unsupported_format", "dataset.sample currently supports CSV");
+                const int limit = arguments.value("rows", 20); std::ifstream file(path); std::string line; json rows = json::array(); json columns = json::array();
+                if (std::getline(file, line)) { const auto names = split_csv(line); for (const auto & name : names) columns.push_back(name); }
+                while (rows.size() < static_cast<size_t>(limit) && std::getline(file, line)) { const auto fields = split_csv(line); json row = json::object(); for (size_t i = 0; i < fields.size() && i < columns.size(); ++i) row[columns[i].get<std::string>()] = fields[i]; rows.push_back(std::move(row)); }
+                return tool_success_json({{"columns", columns}, {"rows", rows}});
+            }, error);
+        } else if (definition.executor_id == "builtin.artifact.export" && bindings.resource_runtime.store != nullptr) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("name") || !arguments["name"].is_string() || !arguments.contains("content") || !arguments["content"].is_string()) return tool_validation_failure("tool.artifact.export.invalid_arguments", "artifact.export requires name and content");
+                common_runtime_resource_ref resource;
+                const auto mime = arguments.value("mime_type", std::string("text/plain"));
+                if (!persist_tool_resource(bindings, arguments["name"].get<std::string>(), "Exported tool artifact", mime, arguments["content"].get<std::string>(), "artifact.export", make_tool_resource_metadata("artifact", "Exported tool result", "Read as an artifact resource", "Bounded host-owned export"), resource, err)) return tool_execution_failure("tool.artifact.export.failed", std::move(err), "Artifact export failed.");
+                return tool_success_json({{"resource", resource.uri}, {"name", resource.name}, {"mime_type", resource.mime_type}});
             }, error);
         } else if (definition.executor_id == "builtin.repository.diff" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
