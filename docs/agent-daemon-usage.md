@@ -213,6 +213,24 @@ Useful overrides are:
 | JSONL Unix host | `--unix-socket`, `--unix-socket-mode` |
 | workers/limits | `--worker-count`/`--workers`, `--inference-max-active`, `--queue-capacity`, `--max-turn-seconds`, `--max-tool-rounds` |
 
+Structured data storage is configured independently from memory and plan:
+
+```json
+{
+  "stores": {
+    "data": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-data.cozo"
+    }
+  }
+}
+```
+
+`backend: auto` disables the data store when no path is configured. A Cozo
+path requires a build with `LLAMA_MEMORY_COZO=ON`. When the data store is not
+available, store-backed data tools are removed from the model-visible resolved
+tool snapshot rather than exposed as tools that fail on every call.
+
 ## Agent runtime modes
 
 The agent runtime has three thinking modes. They describe how much control and

@@ -216,10 +216,11 @@ do not select implementations or host paths.
 | `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store |
 
 The first data foundation deliberately supports safe discovery and bounded
-materialization. SQL/Cozo queries, statistical analysis, charts, formatters,
-semantic symbol analysis and richer artifact conversion belong behind the
-data-runtime or sandbox seams. The data-tool seam is now present, but no
-backend is implicitly selected when the host has not configured one.
+materialization. Cozo-backed queries, filtering, aggregation, joins,
+transformations and descriptive statistics now belong behind the data-store
+seam. Charts, richer artifact conversion, formatters and semantic symbol
+analysis remain follow-up work. No data backend is implicitly selected when the
+host has not configured one.
 
 The namespaced names are canonical in the catalog, native registry and
 resolved profile snapshots. Host configuration, profiles and model-visible
@@ -548,7 +549,7 @@ The intended follow-up is to move ownership of that collector upward, closer to 
 
 The JSONL/client side now mirrors that a little better as well. The parser no longer treats `events` as opaque leftover payload inside only a few response types; turn, status, lifecycle, listing, resource and event responses now all expose parsed `daemon_event_count` plus a small typed event-entry list with `type`, `event_type`, `sequence`, request/turn ids and detail when present. That keeps future client/admin work from having to re-open raw JSON just to inspect the daemon event surface.
 
-The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH` and `--plan-backend cozo --plan-db PATH` so daemon-based runs exercise the same memory/plan persistence layer.
+The daemon can now open the same store backends as the CLI path. In addition to the default in-memory stores, a build with Cozo support can use `--backend cozo --memory-db PATH`, `--plan-backend cozo --plan-db PATH` and `--data-backend cozo --data-db PATH`. The data store is a separate host-owned Cozo database for structured rows and data-tool queries.
 
 There is now also a first shared host-config slice above those flags. The foreground daemon and the real MCP stdio server can both accept `--config PATH` and load one small JSON host-owned configuration model for model/backend settings, runtime defaults, stores, resources, tool profile, MCP subprocess providers, and a few coarse limits. CLI flags still exist and still matter, but this is the first path where daemon/runtime construction does not have to start from a full CLI-style `args` object.
 
@@ -865,7 +866,7 @@ The new host-config slice is intentionally modest. It currently models:
 
 - model backend/path and optional embedding model
 - runtime defaults such as context size, `n_predict`, planning/reflection toggles, and trace/learning flags
-- memory/plan store backend and path
+- memory/plan/data store backend and path
 - resource blob/metadata backend and path
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
@@ -1056,7 +1057,7 @@ Get-Content .\work\agent-requests.jsonl |
   .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe --config .\work\agent-host.json
 ```
 
-That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan stores, filesystem+Cozo resource storage, agent planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
+That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan/data stores, filesystem+Cozo resource storage, agent planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 

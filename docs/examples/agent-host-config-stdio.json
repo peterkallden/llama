@@ -9,6 +9,12 @@
     "thinking_mode": "research",
     "n_predict": 64
   },
+  "stores": {
+    "data": {
+      "backend": "cozo",
+      "path": "C:/agent-data/structured.cozo"
+    }
+  },
   "tools": {
     "profile": "research",
     "providers": [
