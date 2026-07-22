@@ -5,6 +5,19 @@
 #include <cassert>
 #include <filesystem>
 
+class smoke_resource_store final : public agent_resource_store {
+public:
+    bool put_text(const agent_resource_put_request &, agent_resource_descriptor &, std::string &) override { return false; }
+    bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t, std::string & out, std::string & error) const override {
+        if (uri != "resource://input.txt") { error = "resource not found"; return false; }
+        out = "input from research\n";
+        error.clear();
+        return true;
+    }
+    bool stat(const std::string &, const agent_resource_read_authority &, agent_resource_descriptor &, std::string &) const override { return false; }
+    bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
+};
+
 int main() {
     common_agent_request request;
     request.prompt = "Inspect the project";
@@ -29,5 +42,16 @@ int main() {
     assert(std::filesystem::is_directory(operation.writable_path));
     assert(std::filesystem::is_directory(operation.artifact_path));
     assert(operation.operation_id == "build/op-1");
+
+    smoke_resource_store resources;
+    common_runtime_resource_ref input;
+    input.uri = "resource://input.txt";
+    std::string materialized_path;
+    assert(manager.materialize_text_resource(
+        operation, input, resources, {}, "input.txt", 4096, materialized_path, error));
+    std::ifstream materialized(materialized_path);
+    std::string line;
+    std::getline(materialized, line);
+    assert(line == "input from research");
     return 0;
 }

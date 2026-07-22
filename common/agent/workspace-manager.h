@@ -3,6 +3,7 @@
 #include "workspace-contract.h"
 
 #include <filesystem>
+#include <fstream>
 
 class common_agent_workspace_manager {
 public:
@@ -51,6 +52,42 @@ public:
         operation.source_path = (operation_root / "source").string();
         operation.writable_path = (operation_root / "writable").string();
         operation.artifact_path = artifact_root.string();
+        error.clear();
+        return true;
+    }
+
+    bool materialize_text_resource(
+            const common_agent_workspace_operation & operation,
+            const common_runtime_resource_ref & resource,
+            agent_resource_store & store,
+            const agent_resource_read_authority & authority,
+            const std::string & file_name,
+            size_t max_bytes,
+            std::string & output_path,
+            std::string & error) const {
+        if (operation.source_path.empty() || resource.uri.empty() || file_name.empty()) {
+            error = "workspace resource materialization requires an operation, resource and file name";
+            return false;
+        }
+        const auto safe_file_name = safe_name(file_name);
+        if (safe_file_name.empty()) {
+            error = "workspace resource file name is invalid";
+            return false;
+        }
+        std::string text;
+        if (!store.read_text(resource.uri, authority, max_bytes, text, error)) return false;
+        const std::filesystem::path path = std::filesystem::path(operation.source_path) / safe_file_name;
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            error = "workspace resource file could not be opened for writing";
+            return false;
+        }
+        output.write(text.data(), static_cast<std::streamsize>(text.size()));
+        if (!output) {
+            error = "workspace resource file could not be written";
+            return false;
+        }
+        output_path = path.string();
         error.clear();
         return true;
     }
