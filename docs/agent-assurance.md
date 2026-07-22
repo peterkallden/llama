@@ -146,9 +146,10 @@ explicit rejection of client attempts to select or widen tool authority. The
 daemon reload contract treats `tools.profile`, `tools.capabilities` and
 `tools.profiles` as restart-required; this preserves one immutable host tool
 view for an instance instead of changing the exposed catalog during a live
-session. Docker/Kubernetes sandbox backends and developer/data-analysis tools
-remain future scope; the current sandbox slice is contracts plus a deterministic
-test backend.
+session. The Docker sandbox backend is covered by a real container smoke; the
+Kubernetes backend and broader network scopes remain future scope. Developer
+and data-analysis execution classes are represented by host configuration, but
+full operation-manager integration remains a separate verification gate.
 
 ## Exit decision
 

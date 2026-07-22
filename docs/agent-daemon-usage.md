@@ -167,9 +167,11 @@ the instance exposes.
 
 The tool catalog includes semantic `build_target` and `test_run` contracts for
 the developer path. They are confirmation-gated and describe a
-`developer-build` sandbox policy, but remain unavailable until a sandbox
-executor is configured. Clients should send a target and bounded options, not
-container commands or shell strings.
+`developer-build` sandbox policy. When Docker is configured as the host
+backend, the host resolves `sandbox.defaults` and the class overrides before
+execution. Clients should send a target and bounded options, not container
+commands or shell strings. With `backend: none`, the tools remain unavailable
+with `sandbox.backend_unavailable`.
 
 For a local subprocess provider, use the same model with
 `"transport": "stdio"` and a `command` array; see

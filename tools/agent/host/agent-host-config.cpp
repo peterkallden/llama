@@ -124,6 +124,10 @@ json sandbox_class_to_json(const common_agent_sandbox_policy & policy) {
     };
 }
 
+json sandbox_defaults_to_json(const common_agent_sandbox_policy & policy) {
+    return sandbox_class_to_json(policy);
+}
+
 bool read_mcp_provider(
         const json & value,
         agent_host_mcp_provider_config & provider,
@@ -298,12 +302,25 @@ bool parse_agent_host_config_json(
             read_optional(workspace, "root", config.sandbox.workspace.workspace_root);
             read_optional(workspace, "artifact_root", config.sandbox.workspace.artifact_root);
         }
+        if (sandbox.contains("defaults")) {
+            if (!sandbox["defaults"].is_object()) { error = "sandbox.defaults must be an object"; return false; }
+            const auto & defaults = sandbox["defaults"];
+            read_optional(defaults, "image", config.sandbox.defaults.image);
+            if (defaults.contains("timeout_ms")) read_optional(defaults, "timeout_ms", config.sandbox.defaults.limits.timeout_ms);
+            if (defaults.contains("memory_bytes")) read_optional(defaults, "memory_bytes", config.sandbox.defaults.limits.memory_bytes);
+            if (defaults.contains("cpu_count")) read_optional(defaults, "cpu_count", config.sandbox.defaults.limits.cpu_count);
+            if (defaults.contains("process_count")) read_optional(defaults, "process_count", config.sandbox.defaults.limits.process_count);
+            if (defaults.contains("max_output_bytes")) read_optional(defaults, "max_output_bytes", config.sandbox.defaults.limits.max_output_bytes);
+            if (defaults.contains("network") && !read_sandbox_network(defaults["network"], config.sandbox.defaults.network, error)) return false;
+            if (defaults.contains("filesystem") && !read_sandbox_filesystem(defaults["filesystem"], config.sandbox.defaults.filesystem, error)) return false;
+            read_optional(defaults, "allow_artifacts", config.sandbox.defaults.allow_artifacts);
+        }
         if (sandbox.contains("classes")) {
             if (!sandbox["classes"].is_object()) { error = "sandbox.classes must be an object"; return false; }
             config.sandbox.classes.clear();
             for (auto it = sandbox["classes"].begin(); it != sandbox["classes"].end(); ++it) {
                 if (!it.value().is_object()) { error = "sandbox.classes entries must be objects"; return false; }
-                common_agent_sandbox_policy policy;
+                common_agent_sandbox_policy policy = config.sandbox.defaults;
                 policy.execution_class = it.key();
                 const auto & value = it.value();
                 read_optional(value, "image", policy.image);
@@ -604,6 +621,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"root", config.sandbox.workspace.workspace_root},
                 {"artifact_root", config.sandbox.workspace.artifact_root},
             }},
+            {"defaults", sandbox_defaults_to_json(config.sandbox.defaults)},
             {"classes", std::move(sandbox_classes)},
         }},
         {"mcp", {

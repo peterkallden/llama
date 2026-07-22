@@ -33,31 +33,40 @@ Workspace roots and execution classes belong in host configuration:
   "sandbox": {
     "backend": "docker",
     "docker": {
-      "executable": "docker",
       "default_image": "llama-agent-dev:latest"
     },
     "workspace": {
       "root": "C:/agent-workspaces",
       "artifact_root": "C:/agent-artifacts"
     },
+    "defaults": {
+      "timeout_ms": 60000,
+      "cpu_count": 1,
+      "max_output_bytes": 65536,
+      "network": "none",
+      "filesystem": "readonly",
+      "allow_artifacts": true
+    },
     "classes": {
       "developer-build": {
         "image": "llama-agent-dev:latest",
-        "timeout_ms": 120000,
-        "memory_bytes": 8589934592,
+        "timeout_ms": 1200000,
         "cpu_count": 4,
-        "network": "none",
-        "filesystem": "workspace_write",
-        "allow_artifacts": true
+        "memory_bytes": 8589934592,
+        "filesystem": "workspace_write"
       }
     }
   }
 }
 ```
 
-An execution class may provide its own image. If it is omitted, the Docker
+The values in `sandbox.defaults` are copied to every execution class when the
+host configuration is loaded. A class may override only the values it needs.
+An execution class may provide its own image; if it is omitted, the Docker
 backend uses `sandbox.docker.default_image`. The request itself may not
-override this host-owned selection.
+override this host-owned selection. A value of zero is invalid for CPU,
+timeout and output limits; zero means no configured limit only for memory and
+process count.
 
 The Docker backend runs each operation as an ephemeral container with a
 read-only root filesystem, no network by default, bounded resource limits,

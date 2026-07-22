@@ -20,6 +20,7 @@ struct agent_host_sandbox_config {
     std::string docker_executable = "docker";
     std::string docker_default_image;
     common_agent_workspace_roots workspace;
+    common_agent_sandbox_policy defaults;
     std::map<std::string, common_agent_sandbox_policy> classes;
 };
 

@@ -220,13 +220,21 @@ int main(int argc, char ** argv) {
                 {"root", "C:/agent-workspaces"},
                 {"artifact_root", "C:/agent-artifacts"},
             }},
+            {"defaults", {
+                {"image", "llama-agent-default:latest"},
+                {"timeout_ms", 300000},
+                {"cpu_count", 2},
+                {"max_output_bytes", 131072},
+                {"network", "none"},
+                {"filesystem", "readonly"},
+                {"allow_artifacts", true},
+            }},
             {"classes", {
                 {"developer-build", {
                     {"image", "llama-agent-dev:latest"},
                     {"timeout_ms", 120000},
                     {"memory_bytes", 8589934592ull},
                     {"cpu_count", 4},
-                    {"max_output_bytes", 65536},
                     {"network", "none"},
                     {"filesystem", "workspace_write"},
                     {"allow_artifacts", true},
@@ -243,6 +251,7 @@ int main(int argc, char ** argv) {
             capability_config.sandbox.docker_executable != "docker" ||
             capability_config.sandbox.docker_default_image != "llama-agent-dev:latest" ||
             capability_config.sandbox.classes.at("developer-build").image != "llama-agent-dev:latest" ||
+            capability_config.sandbox.classes.at("developer-build").limits.max_output_bytes != 131072 ||
             capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
             capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
@@ -260,6 +269,7 @@ int main(int argc, char ** argv) {
             capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>() ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write" ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["image"] != "llama-agent-dev:latest" ||
+            capability_roundtrip["sandbox"]["defaults"]["image"] != "llama-agent-default:latest" ||
             capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
         return 1;
