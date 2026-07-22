@@ -10,6 +10,8 @@ common_agent_inference_options make_agent_inference_options(common_agent_inferen
 common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build_config build_config) {
     common_agent_runtime_config config;
     config.generation_config = std::move(build_config.generation_config);
+    config.context_budgets = build_config.context_budgets;
+    config.generation_config.context_budgets = config.context_budgets;
     config.enable_memory_learning = build_config.enable_memory_learning;
     config.memory_learning_config = std::move(build_config.memory_learning_config);
     config.embed_memory = std::move(build_config.embed_memory);
@@ -59,6 +61,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         *assembly.executor,
         *assembly.reflector,
         assembly.tool_runtime.get(),
-        assembly.memory_learner.get());
+        assembly.memory_learner.get(),
+        nullptr,
+        runtime_config.context_budgets);
     return assembly;
 }

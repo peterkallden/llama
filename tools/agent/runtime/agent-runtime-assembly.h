@@ -2,6 +2,7 @@
 
 #include "../tooling/agent-tool-provider.h"
 #include "agent/agent-inference.h"
+#include "agent/agent-context-budgets.h"
 #include "agent/agent-runtime.h"
 #include "agent/memory-learning.h"
 
@@ -23,6 +24,7 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
 
 struct common_agent_generation_config {
     int n_predict = 0;
+    common_agent_context_budget_config context_budgets;
 };
 
 struct common_agent_inference_options {
@@ -34,6 +36,7 @@ struct common_agent_inference_options {
 
 struct common_agent_runtime_config {
     common_agent_generation_config generation_config;
+    common_agent_context_budget_config context_budgets;
     bool enable_memory_learning = false;
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
@@ -41,6 +44,7 @@ struct common_agent_runtime_config {
 
 struct common_agent_runtime_build_config {
     common_agent_generation_config generation_config;
+    common_agent_context_budget_config context_budgets;
     bool enable_memory_learning = false;
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;

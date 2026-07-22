@@ -141,6 +141,8 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
 common_agent_runtime_config make_daemon_runtime_config(const daemon_options & options) {
     common_agent_runtime_config config;
     config.generation_config.n_predict = options.n_predict;
+    config.generation_config.context_budgets = options.context_budgets;
+    config.context_budgets = options.context_budgets;
     config.enable_memory_learning = options.memory_learn == "post-turn";
     config.memory_learning_config.min_confidence = options.memory_learn_min_confidence;
     config.memory_learning_config.min_expected_reuse = options.memory_learn_min_reuse;

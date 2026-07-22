@@ -249,6 +249,22 @@ bool parse_agent_host_config_json(
         const auto & runtime = parsed["runtime"];
         read_optional(runtime, "context_size", config.runtime_context_size);
         read_optional(runtime, "n_predict", config.n_predict);
+        if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
+            const auto & budgets = runtime["context_budgets"];
+            read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
+            read_optional(budgets, "step_chars", config.context_budgets.step_chars);
+            read_optional(budgets, "tool_observation_chars", config.context_budgets.tool_observation_chars);
+            read_optional(budgets, "input_resources_chars", config.context_budgets.input_resources_chars);
+            read_optional(budgets, "deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars);
+            read_optional(budgets, "memory_chars", config.context_budgets.memory_chars);
+            read_optional(budgets, "memory_per_item_chars", config.context_budgets.memory_per_item_chars);
+            read_optional(budgets, "overlay_chars", config.context_budgets.overlay_chars);
+            read_optional(budgets, "overlay_per_item_chars", config.context_budgets.overlay_per_item_chars);
+            read_optional(budgets, "deliberate_memory_chars", config.context_budgets.deliberate_memory_chars);
+            read_optional(budgets, "deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars);
+            read_optional(budgets, "deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars);
+            read_optional(budgets, "deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars);
+        }
         read_optional(runtime, "n_gpu_layers", config.n_gpu_layers);
         read_optional(runtime, "default_mode", config.default_mode);
         read_optional(runtime, "thinking_mode", config.thinking_mode);
@@ -576,6 +592,21 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"runtime", {
             {"context_size", config.runtime_context_size},
             {"n_predict", config.n_predict},
+            {"context_budgets", {
+                {"plan_chars", config.context_budgets.plan_chars},
+                {"step_chars", config.context_budgets.step_chars},
+                {"tool_observation_chars", config.context_budgets.tool_observation_chars},
+                {"input_resources_chars", config.context_budgets.input_resources_chars},
+                {"deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars},
+                {"memory_chars", config.context_budgets.memory_chars},
+                {"memory_per_item_chars", config.context_budgets.memory_per_item_chars},
+                {"overlay_chars", config.context_budgets.overlay_chars},
+                {"overlay_per_item_chars", config.context_budgets.overlay_per_item_chars},
+                {"deliberate_memory_chars", config.context_budgets.deliberate_memory_chars},
+                {"deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars},
+                {"deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars},
+                {"deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars},
+            }},
             {"n_gpu_layers", config.n_gpu_layers},
             {"default_mode", config.default_mode},
             {"thinking_mode", config.thinking_mode},
@@ -721,6 +752,17 @@ bool validate_agent_host_config(
     }
     if (config.inference_max_active == 0) {
         error = "limits.inference_max_active must be greater than zero";
+        return false;
+    }
+    const auto & budgets = config.context_budgets;
+    if (budgets.plan_chars == 0 || budgets.step_chars == 0 ||
+            budgets.tool_observation_chars == 0 || budgets.input_resources_chars == 0 ||
+            budgets.deliberate_input_resources_chars == 0 || budgets.memory_chars == 0 ||
+            budgets.memory_per_item_chars == 0 || budgets.overlay_chars == 0 ||
+            budgets.overlay_per_item_chars == 0 || budgets.deliberate_memory_chars == 0 ||
+            budgets.deliberate_memory_per_item_chars == 0 || budgets.deliberate_overlay_chars == 0 ||
+            budgets.deliberate_overlay_per_item_chars == 0) {
+        error = "runtime.context_budgets values must be greater than zero";
         return false;
     }
     common_agent_thinking_request thinking_request;
@@ -926,6 +968,7 @@ void apply_agent_host_config_to_daemon_options(
     options.max_plan_revisions = config.max_plan_revisions;
     options.max_research_iterations = config.max_research_iterations;
     options.n_predict = config.n_predict;
+    options.context_budgets = config.context_budgets;
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
@@ -1006,6 +1049,7 @@ void apply_agent_host_config_to_args(
     options.backend = config.memory_backend;
     options.memory_db = config.memory_db;
     options.n_predict = config.n_predict;
+    options.context_budgets = config.context_budgets;
     options.n_gpu_layers = config.n_gpu_layers;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;

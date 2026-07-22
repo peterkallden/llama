@@ -159,6 +159,57 @@ unsandboxed host process. This keeps the runtime seam testable before the
 unsandboxed host process. This keeps the no-backend mode explicit even though
 Docker execution is now available when selected by host configuration.
 
+## Runtime context budgets
+
+Prompt- och observationsbudgetar ligger i host-konfigurationen under
+`runtime.context_budgets`. Defaults finns i runtime-koden och kan justeras för
+den modell och det `runtime.context_size` som instansen använder. Värdena är
+teckenbudgetar om inget annat anges:
+
+```json
+{
+  "runtime": {
+    "context_size": 8192,
+    "n_predict": 256,
+    "context_budgets": {
+      "plan_chars": 4096,
+      "step_chars": 2400,
+      "tool_observation_chars": 8192,
+      "input_resources_chars": 4096,
+      "deliberate_input_resources_chars": 2400,
+      "memory_chars": 4096,
+      "memory_per_item_chars": 1000,
+      "overlay_chars": 1600,
+      "overlay_per_item_chars": 240,
+      "deliberate_memory_chars": 1800,
+      "deliberate_memory_per_item_chars": 500,
+      "deliberate_overlay_chars": 1200,
+      "deliberate_overlay_per_item_chars": 300
+    }
+  }
+}
+```
+
+Se även [`docs/examples/agent-runtime-context-budgets.json`](examples/agent-runtime-context-budgets.json).
+
+Budgetarna används så här:
+
+| Fält | Användning | Begränsningstyp |
+| --- | --- | --- |
+| `plan_chars`, `step_chars` | plan- och stegcontext för planner, draft och reflection | bounded rendering med slutlig truncering |
+| `tool_observation_chars` | tool-resultat som sparas i planobservationen | truncering av inline-resultat; resource/artifact refs bevaras separat |
+| `input_resources_chars` | host-godkända input resources i normal prompt | truncering av renderad katalog |
+| `deliberate_input_resources_chars` | input resources i deliberate reasoning | truncering av renderad katalog |
+| `memory_chars`, `memory_per_item_chars` | vanlig memory-context | memory-renderern väljer poster inom total- och per-postbudget |
+| `overlay_chars`, `overlay_per_item_chars` | symboliskt memory-overlay | stage-aware urval och compaction före rendering |
+| `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | reasoning-context | memory-renderern väljer poster inom budgeten |
+| `deliberate_overlay_chars`, `deliberate_overlay_per_item_chars` | deliberate symbolic overlay | stage-aware urval och compaction före rendering |
+
+`context_size` är modellens token-context och bör sättas separat från
+teckenbudgetarna. Runtime använder fortfarande hårda hostägda tak för
+transport-, resurs-, sandbox- och resultatstorlekar; dessa budgetar ger inte
+klienten rätt att överskrida sådana tak.
+
 ## Thinking-mode escalation
 
 The requested thinking mode is not necessarily the final mode for a turn. A

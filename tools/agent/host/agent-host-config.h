@@ -27,6 +27,7 @@ struct agent_host_config {
 
     int runtime_context_size = 0;
     int n_predict = 64;
+    common_agent_context_budget_config context_budgets;
     int n_gpu_layers = 0;
     std::string default_mode = "chat";
     std::string thinking_mode = "reflective";

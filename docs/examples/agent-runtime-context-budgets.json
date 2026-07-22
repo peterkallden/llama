@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "context_size": 8192,
+    "n_predict": 256,
+    "context_budgets": {
+      "plan_chars": 4096,
+      "step_chars": 2400,
+      "tool_observation_chars": 8192,
+      "input_resources_chars": 4096,
+      "deliberate_input_resources_chars": 2400,
+      "memory_chars": 4096,
+      "memory_per_item_chars": 1000,
+      "overlay_chars": 1600,
+      "overlay_per_item_chars": 240,
+      "deliberate_memory_chars": 1800,
+      "deliberate_memory_per_item_chars": 500,
+      "deliberate_overlay_chars": 1200,
+      "deliberate_overlay_per_item_chars": 300
+    }
+  }
+}

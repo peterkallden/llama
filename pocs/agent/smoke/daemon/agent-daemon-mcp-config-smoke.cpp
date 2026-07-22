@@ -59,6 +59,10 @@ int main(int argc, char ** argv) {
                 {"thinking_mode", "deliberate"},
                 {"max_reflection_rounds", 3},
                 {"max_plan_revisions", 2},
+                {"context_budgets", {
+                    {"plan_chars", 4096},
+                    {"tool_observation_chars", 8192},
+                }},
             }},
             {"tools", {
                 {"profile", "research"},
@@ -147,6 +151,11 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "host config worker_count mismatch\n");
         return 1;
     }
+    if (loaded_config.context_budgets.plan_chars != 4096 ||
+            loaded_config.context_budgets.tool_observation_chars != 8192) {
+        std::fprintf(stderr, "host context budgets mismatch\n");
+        return 1;
+    }
     if (loaded_config.inference_max_active != 1) {
         std::fprintf(stderr, "host config inference_max_active mismatch\n");
         return 1;
@@ -189,6 +198,11 @@ int main(int argc, char ** argv) {
             !roundtrip.contains("tools") ||
             !roundtrip["tools"].is_object()) {
         std::fprintf(stderr, "host config roundtrip serialization mismatch\n");
+        return 1;
+    }
+    if (roundtrip["runtime"]["context_budgets"]["plan_chars"] != 4096 ||
+            roundtrip["runtime"]["context_budgets"]["tool_observation_chars"] != 8192) {
+        std::fprintf(stderr, "host context budgets roundtrip mismatch\n");
         return 1;
     }
 

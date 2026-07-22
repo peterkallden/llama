@@ -40,6 +40,24 @@ std::string build_memory_prompt_context(
     return overlay + "\n" + memory_context;
 }
 
+common_memory_context_config make_memory_context_config(
+        const common_agent_context_budget_config & budgets,
+        bool deliberate = false) {
+    return {
+        deliberate ? budgets.deliberate_memory_chars : budgets.memory_chars,
+        deliberate ? budgets.deliberate_memory_per_item_chars : budgets.memory_per_item_chars,
+    };
+}
+
+common_memory_symbolic_overlay_config make_overlay_config(
+        const common_agent_context_budget_config & budgets,
+        bool deliberate = false) {
+    common_memory_symbolic_overlay_config config;
+    config.char_budget = deliberate ? budgets.deliberate_overlay_chars : budgets.overlay_chars;
+    config.per_item_char_budget = deliberate ? budgets.deliberate_overlay_per_item_chars : budgets.overlay_per_item_chars;
+    return config;
+}
+
 std::optional<common_memory_policy_pack> derive_request_policy_pack(
         const common_agent_request & request) {
     if (request.policy_pack.has_value()) {
@@ -174,12 +192,14 @@ public:
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt +
-            common_agent_render_input_resource_context(request.input_resources) + "\n" +
+            common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n" +
             build_staged_memory_prompt_context(
                 derive_request_policy_pack(request),
                 std::nullopt,
                 request.memories,
-                common_memory_overlay_stage::planning);
+                common_memory_overlay_stage::planning,
+                make_memory_context_config(generation_config.context_budgets),
+                make_overlay_config(generation_config.context_budgets));
         const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
             request,
             common_agent_generation_purpose::planner,
@@ -254,8 +274,8 @@ public:
             derive_plan_policy_pack(plan),
             request.memories,
             common_memory_overlay_stage::general) +
-            "\n" + common_plan_render_context(plan) + "\n[User request]\n" + request.prompt +
-            common_agent_render_input_resource_context(request.input_resources);
+            "\n" + common_plan_render_context(plan, {generation_config.context_budgets.plan_chars}) + "\n[User request]\n" + request.prompt +
+            common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars);
         if (!guidance.empty()) {
             user.content += "\n[Revision guidance]\n";
             for (const auto & item : guidance) user.content += "- " + item + "\n";
@@ -288,13 +308,13 @@ public:
         common_chat_msg user;
         user.role = "user";
         common_plan_context_config step_context_config;
-        step_context_config.char_budget = 1400;
+        step_context_config.char_budget = generation_config.context_budgets.step_chars;
         common_memory_context_config memory_context_config;
-        memory_context_config.char_budget = 900;
-        memory_context_config.per_memory_char_budget = 300;
+        memory_context_config.char_budget = generation_config.context_budgets.deliberate_memory_chars;
+        memory_context_config.per_memory_char_budget = generation_config.context_budgets.deliberate_memory_per_item_chars;
         common_memory_symbolic_overlay_config overlay_config;
-        overlay_config.char_budget = 700;
-        overlay_config.per_item_char_budget = 220;
+        overlay_config.char_budget = generation_config.context_budgets.deliberate_overlay_chars;
+        overlay_config.per_item_char_budget = generation_config.context_budgets.deliberate_overlay_per_item_chars;
         overlay_config.max_constraints = 2;
         overlay_config.max_decisions = 2;
         overlay_config.max_procedures = 3;
@@ -303,7 +323,7 @@ public:
                 select_reasoning_memories(request.memories, plan, step),
                 memory_context_config,
                 overlay_config) + "\n" + common_plan_render_step_context(plan, step, step_context_config) +
-            common_agent_render_input_resource_context(request.input_resources, 1200);
+            common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.deliberate_input_resources_chars);
         const std::string policy = render_policy_prefix(
             derive_request_policy_pack(request),
             derive_plan_policy_pack(plan));
@@ -361,8 +381,8 @@ public:
             derive_plan_policy_pack(plan),
             request.memories,
             common_memory_overlay_stage::reflection) +
-            "\n" + common_plan_render_context(plan) + "\n[User request]\n" + request.prompt +
-            common_agent_render_input_resource_context(request.input_resources) + "\n[Draft]\n" + draft;
+            "\n" + common_plan_render_context(plan, {generation_config.context_budgets.plan_chars}) + "\n[User request]\n" + request.prompt +
+            common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n[Draft]\n" + draft;
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
             request,
@@ -457,8 +477,8 @@ public:
             request.memories,
             common_memory_overlay_stage::memory_learning) +
             "\n[User request]\n" + request.prompt +
-            common_agent_render_input_resource_context(request.input_resources) + "\n" +
-            common_plan_render_context(plan) + "\n[Final response]\n" + result.response;
+            common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n" +
+            common_plan_render_context(plan, {generation_config.context_budgets.plan_chars}) + "\n[Final response]\n" + result.response;
         if (!result.learning_signals.empty()) {
             user.content += "\n[Native learning signals]\n";
             for (const auto & signal : result.learning_signals) {

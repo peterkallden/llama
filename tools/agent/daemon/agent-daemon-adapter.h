@@ -35,6 +35,7 @@ struct daemon_options {
     int max_plan_revisions = 0;
     size_t max_research_iterations = 0;
     int n_predict = 64;
+    common_agent_context_budget_config context_budgets;
     int n_gpu_layers = 0;
     std::string memory_learn = "off";
     std::string agent_plan = "off";

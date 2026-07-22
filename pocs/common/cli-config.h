@@ -2,6 +2,7 @@
 
 #include "memory/memory-retrieval.h"
 #include "agent/tool-catalog.h"
+#include "agent/agent-context-budgets.h"
 #include "agent/sandbox-host-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
@@ -41,6 +42,7 @@ struct args {
     size_t memory_token_budget = 768;
     size_t max_tool_rounds = 1;
     int n_predict = 128;
+    common_agent_context_budget_config context_budgets;
     int n_gpu_layers = 99;
     bool record_episode = false;
     bool enable_memory_search_tool = false;

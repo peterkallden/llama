@@ -1,5 +1,6 @@
 #pragma once
 #include "agent/agent-contract.h"
+#include "agent/agent-context-budgets.h"
 #include "agent/tool-runtime-contract.h"
 #include "plan/plan-store.h"
 #include "runtime/runtime-operation.h"
@@ -105,4 +106,4 @@ public:
         return evaluate(request, plan, draft, error);
     }
 };
-class common_agent_runtime { public: common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools = nullptr, common_memory_post_turn_learner * memory_learner = nullptr, const common_agent_research_answer_verifier * research_verifier = nullptr); common_agent_result run(const common_agent_request & request); private: common_plan_store & store; common_planner & planner; common_action_executor & executor; common_reflection_engine & reflector; const common_agent_tool_runtime * tools; common_memory_post_turn_learner * memory_learner; const common_agent_research_answer_verifier * research_verifier; common_agent_research_bounded_verifier default_research_verifier; };
+class common_agent_runtime { public: common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools = nullptr, common_memory_post_turn_learner * memory_learner = nullptr, const common_agent_research_answer_verifier * research_verifier = nullptr, common_agent_context_budget_config context_budgets = {}); common_agent_result run(const common_agent_request & request); private: common_plan_store & store; common_planner & planner; common_action_executor & executor; common_reflection_engine & reflector; const common_agent_tool_runtime * tools; common_memory_post_turn_learner * memory_learner; const common_agent_research_answer_verifier * research_verifier; common_agent_context_budget_config context_budgets; common_agent_research_bounded_verifier default_research_verifier; };
