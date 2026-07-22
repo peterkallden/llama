@@ -94,6 +94,9 @@ waits for completion through `kubectl`. Its host configuration is:
       "namespace": "llama-agent-jobs",
       "service_account": "llama-agent-runner",
       "runtime_class": "standard",
+      "storage_class": "",
+      "workspace_storage_size": "4Gi",
+      "artifact_storage_size": "1Gi",
       "cleanup": true
     }
   }
@@ -106,6 +109,15 @@ operation into the workspace claim and copies artifacts back after the Job.
 The default claim sizes are `4Gi` for workspace data and `1Gi` for artifacts;
 an empty `storage_class` uses the cluster default. PVCs are retained across
 operations and are not deleted by normal Job cleanup.
+The Kubernetes executable, namespace, service account, runtime class, storage
+class, claim sizes and cleanup/retention policy are host-owned and cannot be
+selected by a client or tool request. Planned follow-up settings include
+`staging_image`, `kubeconfig`, `context`, `pvc_retention` and
+`staging_timeout_ms`.
+
+PVC names, `ReadWriteOnce`, operation `subPath` values and the container paths
+`/workspace/source`, `/workspace/writable` and `/workspace/artifacts` remain
+backend implementation details.
 The backend currently supports `network: none` by applying a deny-egress
 `NetworkPolicy` alongside the Job; the cluster's CNI must enforce
 NetworkPolicy. It also applies non-root and read-only-rootfs security settings,

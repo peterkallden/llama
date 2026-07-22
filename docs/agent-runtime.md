@@ -153,15 +153,23 @@ sandbox binding while the model-facing schema remains stable. Docker is the
 first concrete backend and Kubernetes now uses the same seam through
 ephemeral Jobs.
 
+Kubernetes deployment settings belong to host configuration, not to agent
+requests. This includes the `kubectl` executable, namespace, service account,
+runtime class, storage class, PVC sizes and cleanup/retention policy. The
+current defaults are `4Gi` for workspace data and `1Gi` for artifacts; an
+empty storage class uses the cluster default. PVC identity is derived from
+`project_id` when present and otherwise from the session workspace identity.
+Operation directories are created below that PVC. Clients cannot choose PVC
+names, mount paths or Kubernetes Job details.
+
 The backend-neutral sandbox runtime also has an explicit no-backend state.
 When Docker, Kubernetes or another executor is not configured, sandbox-backed
 tools are omitted from the effective model-visible tool view during host
 startup. A directly validated sandbox request still returns
 `sandbox.backend_unavailable`; it never falls back to an unsandboxed host
 process. Docker and Kubernetes execution become visible only when selected by
-host configuration. Kubernetes currently assumes hostPath-visible
-workspaces; shared-volume materialization for remote clusters remains a later
-slice.
+host configuration. Kubernetes uses PVC-backed workspace materialization;
+shared-volume materialization for remote clusters remains a later slice.
 
 ## Runtime context budgets
 
