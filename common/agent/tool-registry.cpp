@@ -17,17 +17,6 @@ bool common_tool_registry::register_tool(common_registered_tool tool, std::strin
     tools.emplace(tool.name, std::move(tool)); error.clear(); return true;
 }
 
-bool common_tool_registry::register_alias(const std::string & alias, const std::string & target, std::string & error) {
-    const auto target_it = tools.find(target);
-    if (target_it == tools.end()) { error = "tool alias target is not registered"; return false; }
-    if (alias.empty() || tools.count(alias)) { error = "tool alias is already registered or empty"; return false; }
-    auto aliased = target_it->second;
-    aliased.name = alias;
-    tools.emplace(alias, std::move(aliased));
-    error.clear();
-    return true;
-}
-
 bool common_tool_registry::validate(const common_registered_tool_call & call, std::string & error) const {
     const auto it = tools.find(call.name); if (it == tools.end()) { error = "tool is not registered"; return false; }
     std::string normalized;

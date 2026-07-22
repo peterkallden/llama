@@ -15,11 +15,11 @@ int main() {
     assert(catalog.find_definition("web_search")->executor_id == "builtin.web_search");
     assert(catalog.find_definition("web_fetch")->executor_id == "builtin.web_fetch");
 
-    const auto * build = catalog.find_definition("build_target");
-    const auto * test = catalog.find_definition("test_run");
+    const auto * build = catalog.find_definition("development.build");
+    const auto * test = catalog.find_definition("development.test");
     assert(build && test);
-    assert(build->executor_id == "sandbox.build_target");
-    assert(test->executor_id == "sandbox.test_run");
+    assert(build->executor_id == "sandbox.development.build");
+    assert(test->executor_id == "sandbox.development.test");
     assert(build->risk_class == common_tool_risk_class::sandbox_execution);
     assert(test->risk_class == common_tool_risk_class::sandbox_execution);
     assert(build->requires_confirmation && test->requires_confirmation);

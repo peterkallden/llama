@@ -183,13 +183,9 @@ provider-backed tool may register resources in the store. Tool metadata must
 therefore keep execution class separate from capability, effect, risk and
 artifact production.
 
-The namespaced names are canonical in the catalog and in resolved profile
-snapshots. During this migration the native adapter also accepts these legacy
-aliases: `repository_diff`, `workspace_list`, `workspace_read`,
-`workspace_search`, `build_target` and `test_run`. The aliases are compatibility
-inputs only; new host configuration, profiles and model-visible tool views
-should use the namespaced names. A later migration sweep will remove the
-aliases after remaining repository references have been updated.
+The namespaced names are canonical in the catalog, native registry and
+resolved profile snapshots. Host configuration, profiles and model-visible
+tool views must use these names directly.
 
 The following constraints apply:
 

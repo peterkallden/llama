@@ -102,11 +102,11 @@ int main() {
     common_tool_registry developer_registry;
     common_tool_adapter_result developer_adapters;
     assert(common_register_native_tool_adapters(developer_catalog, "developer-read", repository_bindings, developer_registry, developer_adapters, error));
-    result = developer_registry.execute({"workspace_list", R"({"path":"src","depth":1})"});
+    result = developer_registry.execute({"workspace.list", R"({"path":"src","depth":1})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
-    result = developer_registry.execute({"workspace_search", R"({"query":"needle","path":"src"})"});
+    result = developer_registry.execute({"workspace.search", R"({"query":"needle","path":"src"})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
-    result = developer_registry.execute({"workspace_read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
+    result = developer_registry.execute({"workspace.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
     assert(result.ok && result.output.find("alpha") != std::string::npos);
     result = developer_registry.execute({"repository_status", "{}"});
     assert(result.ok && result.output.find("src") != std::string::npos);
@@ -115,7 +115,7 @@ int main() {
 
     common_tool_profile execution_profile;
     execution_profile.id = "developer-execution";
-    execution_profile.members = {{"build_target", 1, true, "{}"}, {"test_run", 1, true, "{}"}};
+    execution_profile.members = {{"development.build", 1, true, "{}"}, {"development.test", 1, true, "{}"}};
     execution_profile.allow_policy_gated_writes = true;
     std::map<std::string, common_tool_profile> configured_profiles;
     configured_profiles.emplace(execution_profile.id, execution_profile);
@@ -129,12 +129,12 @@ int main() {
         return common_tool_execution_result::success(R"({"status":"completed","exit_code":0})");
     };
     assert(common_register_native_tool_adapters(execution_catalog, "developer-execution", execution_bindings, execution_registry, adapters, error));
-    assert(execution_registry.is_policy_gated("build_target"));
-    result = execution_registry.execute({"build_target", R"({"target":"llama-agent","configuration":"Debug"})"});
-    assert(result.ok && captured_request.command.program == "agent.build_target" && captured_request.command.arguments[0] == "llama-agent");
-    result = execution_registry.execute({"test_run", R"({"target":"agent-smoke","filter":"workspace"})"});
-    assert(result.ok && captured_request.command.program == "agent.test_run" && captured_request.command.arguments[1] == "workspace");
-    result = execution_registry.execute({"test_run", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
+    assert(execution_registry.is_policy_gated("development.build"));
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","configuration":"Debug"})"});
+    assert(result.ok && captured_request.command.program == "agent.development.build" && captured_request.command.arguments[0] == "llama-agent");
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","filter":"workspace"})"});
+    assert(result.ok && captured_request.command.program == "agent.development.test" && captured_request.command.arguments[1] == "workspace");
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
     assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
             captured_request.workspace.input_resources[0].uri == "resource://input.txt");
     common_tool_registry native_network_registry;

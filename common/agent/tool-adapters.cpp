@@ -28,16 +28,6 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-std::string legacy_tool_alias(const std::string & name) {
-    if (name == "repository.diff") return "repository_diff";
-    if (name == "workspace.list") return "workspace_list";
-    if (name == "workspace.read") return "workspace_read";
-    if (name == "workspace.search") return "workspace_search";
-    if (name == "development.build") return "build_target";
-    if (name == "development.test") return "test_run";
-    return {};
-}
-
 class calculator_parser {
 public:
     explicit calculator_parser(const std::string & text) : text(text) {}
@@ -258,17 +248,17 @@ bool make_sandbox_request(
         return false;
     }
     request = {};
-    const bool is_test = tool_name == "development.test" || tool_name == "test_run";
+    const bool is_test = tool_name == "development.test";
     request.operation_id = tool_name + "/" + target;
     request.execution_class = "developer-build";
-    request.command.program = is_test ? "agent.test_run" : "agent.build_target";
+    request.command.program = is_test ? "agent.development.test" : "agent.development.build";
     request.command.arguments.push_back(target);
     if (arguments.contains("configuration")) {
         if (!arguments["configuration"].is_string()) { error = tool_name + " configuration must be a string"; return false; }
         request.command.arguments.push_back(arguments["configuration"].get<std::string>());
     }
     if (is_test && arguments.contains("filter")) {
-        if (!arguments["filter"].is_string()) { error = "test_run filter must be a string"; return false; }
+        if (!arguments["filter"].is_string()) { error = "development.test filter must be a string"; return false; }
         request.command.arguments.push_back(arguments["filter"].get<std::string>());
     }
     request.limits.timeout_ms = arguments.value("timeout_ms", 120000u);
@@ -735,17 +725,17 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
                 return tool_success_json({{"matches", matches}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_diff" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.repository.diff" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err) || !arguments.empty()) {
-                    if (err.empty()) err = "repository_diff takes no arguments";
-                    return tool_validation_failure("tool.repository_diff.invalid_arguments", std::move(err), "Repository diff does not take arguments.");
+                    if (err.empty()) err = "repository.diff takes no arguments";
+                    return tool_validation_failure("tool.repository.diff.invalid_arguments", std::move(err), "Repository diff does not take arguments.");
                 }
                 std::string diff;
                 if (!git_read(bindings.repository_root, "diff --no-ext-diff --stat", diff, err)) {
-                    return tool_execution_failure("tool.repository_diff.git_failed", std::move(err), "Git diff could not be read.");
+                    return tool_execution_failure("tool.repository.diff.git_failed", std::move(err), "Git diff could not be read.");
                 }
                 return tool_success_json({{"summary", diff}});
             }, error);
@@ -800,7 +790,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"files", files}});
             }, error);
-        } else if ((definition.executor_id == "sandbox.build_target" || definition.executor_id == "sandbox.test_run") && bindings.sandbox_execute) {
+        } else if ((definition.executor_id == "sandbox.development.build" || definition.executor_id == "sandbox.development.test") && bindings.sandbox_execute) {
             installed = register_definition(definition, registry, [bindings, tool_name = definition.name](const std::string & input) {
                 common_agent_sandbox_request request;
                 std::string err;
@@ -1133,11 +1123,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             }, error);
         }
         if (!error.empty()) return false;
-        if (installed) {
-            const auto alias = legacy_tool_alias(definition.name);
-            if (!alias.empty() && !registry.register_alias(alias, definition.name, error)) return false;
-            result.registered.push_back(definition.name);
-        }
+        if (installed) result.registered.push_back(definition.name);
         else result.unavailable.push_back(definition.name);
     }
     error.clear();
