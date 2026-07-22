@@ -31,9 +31,12 @@ int main() {
             result.status != common_agent_sandbox_status::completed ||
             result.exit_code != 0 || result.stdout_excerpt.find("docker-ok") == std::string::npos ||
             result.artifacts.empty()) {
-        if (error == "unable to start Docker process" ||
-                error.find("permission denied while trying to connect") != std::string::npos ||
-                error.find("Cannot connect to the Docker daemon") != std::string::npos) {
+        const std::string diagnostic = error + "\n" + result.error;
+        if (diagnostic == "unable to start Docker process" ||
+                diagnostic.find("permission denied while trying to connect") != std::string::npos ||
+                diagnostic.find("Cannot connect to the Docker daemon") != std::string::npos ||
+                diagnostic.find("Access is denied") != std::string::npos ||
+                diagnostic.find("access is denied") != std::string::npos) {
             std::printf("docker_sandbox_smoke=skipped\n");
             return 77;
         }
