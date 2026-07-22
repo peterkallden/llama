@@ -21,6 +21,25 @@ public:
     bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
 };
 
+class test_data_store final : public common_agent_data_store {
+public:
+    bool execute(const std::string & operation, const std::string & request_json, std::string & result, std::string & error) override {
+        last_operation = operation;
+        last_request = request_json;
+        if (operation == "data.query") { result = R"({"columns":["name"],"rows":[["alpha"]],"row_count":1,"truncated":false})"; return true; }
+        if (operation == "data.filter") { result = R"({"rows":[{"name":"alpha"}],"row_count":1})"; return true; }
+        if (operation == "data.aggregate") { result = R"({"rows":[{"group":"all","count":2}]})"; return true; }
+        if (operation == "data.join") { result = R"({"rows":[{"id":"1","name":"alpha"}]})"; return true; }
+        if (operation == "data.transform") { result = R"({"dataset":"dataset://derived/1"})"; return true; }
+        if (operation == "statistics.describe") { result = R"({"columns":[{"name":"value","count":2,"mean":1.5}]})"; return true; }
+        error = "unexpected data operation";
+        return false;
+    }
+
+    std::string last_operation;
+    std::string last_request;
+};
+
 int main() {
     std::string error;
     common_memory_in_memory_store memories;
@@ -138,6 +157,16 @@ int main() {
         {"dataset.inspect", 1, true, "{}"},
         {"dataset.schema", 1, true, "{}"},
         {"dataset.sample", 1, true, "{}"},
+        {"dataset.validate", 1, true, "{}"},
+        {"data.query", 1, true, "{}"},
+        {"data.filter", 1, true, "{}"},
+        {"data.aggregate", 1, true, "{}"},
+        {"data.join", 1, true, "{}"},
+        {"data.transform", 1, true, "{}"},
+        {"statistics.describe", 1, true, "{}"},
+        {"diagnostics.test_failures", 1, true, "{}"},
+        {"diagnostics.format", 1, true, "{}"},
+        {"diagnostics.include_graph", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
     };
     foundation_profile.allow_policy_gated_writes = true;
@@ -149,6 +178,8 @@ int main() {
     common_native_tool_bindings foundation_bindings = repository_bindings;
     test_resource_store foundation_resources;
     foundation_bindings.resource_runtime.store = &foundation_resources;
+    test_data_store foundation_data;
+    foundation_bindings.data_store = &foundation_data;
     foundation_bindings.resource_runtime.namespace_id = "test";
     foundation_bindings.resource_runtime.session_id = "session-1";
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
@@ -156,6 +187,12 @@ int main() {
     assert(result.ok && result.output.find("content_hash") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});
     assert(result.ok && result.output.find("missing symbol") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"PASS one\nFAILED two: assertion\n"})"});
+    assert(result.ok && result.output.find("assertion") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});
+    assert(result.ok && result.output.find("formatted") != std::string::npos && result.output.find("sample.cpp") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"a.h -> b.h\nb.h -> c.h\n"})"});
+    assert(result.ok && result.output.find("a.h") != std::string::npos && result.output.find("c.h") != std::string::npos);
     result = foundation_registry.execute({"dataset.list", R"({"path":"datasets"})"});
     assert(result.ok && result.output.find("sample.csv") != std::string::npos);
     result = foundation_registry.execute({"dataset.inspect", R"({"path":"datasets/sample.csv"})"});
@@ -164,6 +201,20 @@ int main() {
     assert(result.ok && result.output.find("name") != std::string::npos && result.output.find("value") != std::string::npos);
     result = foundation_registry.execute({"dataset.sample", R"({"path":"datasets/sample.csv","rows":1})"});
     assert(result.ok && result.output.find("alpha") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"tool-events","conditions":[{"field":"status","operator":"=","value":"failed"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.filter");
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"tool-events","measures":[{"function":"count","column":"*"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate");
+    result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":[{"left":"id","right":"id"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.join");
+    result = foundation_registry.execute({"data.transform", R"({"dataset":"a","operations":[{"type":"rename","from":"x","to":"y"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.transform");
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","columns":["value"]})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe");
     result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
     assert(result.ok && result.output.find("resource://") != std::string::npos);
 

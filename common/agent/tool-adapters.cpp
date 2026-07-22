@@ -101,6 +101,39 @@ common_tool_execution_result tool_success_text(std::string value) {
     return common_tool_execution_result::success(std::move(value));
 }
 
+common_tool_execution_result tool_execution_failure(
+    std::string code,
+    std::string raw_diagnostic,
+    std::string safe_summary);
+
+common_tool_execution_result execute_data_backend(
+        const common_native_tool_bindings & bindings,
+        const std::string & operation,
+        const std::string & input) {
+    if (bindings.data_store == nullptr) {
+        return tool_execution_failure(
+            "tool.data.backend_unavailable",
+            "structured data backend is unavailable",
+            "The configured data backend is unavailable.");
+    }
+    std::string result;
+    std::string error;
+    if (!bindings.data_store->execute(operation, input, result, error)) {
+        return tool_execution_failure(
+            "tool.data.backend_failed",
+            error.empty() ? "structured data backend failed" : std::move(error),
+            "The structured data operation failed.");
+    }
+    const auto parsed = json::parse(result, nullptr, false);
+    if (!parsed.is_object() && !parsed.is_array()) {
+        return tool_execution_failure(
+            "tool.data.invalid_backend_result",
+            "structured data backend returned invalid JSON",
+            "The structured data backend returned an invalid result.");
+    }
+    return tool_success_json(parsed);
+}
+
 common_runtime_resource_metadata make_tool_resource_metadata(
         std::string purpose,
         std::string content_summary,
@@ -820,6 +853,87 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     if (std::regex_match(line, match, gcc) || std::regex_match(line, match, msvc)) diagnostics.push_back({{"path", match[1].str()}, {"line", std::stoi(match[2].str())}, {"column", std::stoi(match[3].str())}, {"severity", match[4].str()}, {"message", match[5].str()}});
                 }
                 return tool_success_json({{"diagnostics", diagnostics}, {"count", diagnostics.size()}});
+            }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.test_failures") {
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("result") || !arguments["result"].is_string()) {
+                    return tool_validation_failure("tool.diagnostics.test_failures.invalid_result", "diagnostics.test_failures requires a bounded test result");
+                }
+                const auto text = arguments["result"].get<std::string>();
+                json groups = json::array();
+                std::istringstream lines(text); std::string line;
+                while (std::getline(lines, line) && groups.size() < 64) {
+                    const auto marker = line.find("FAILED");
+                    if (marker == std::string::npos && line.find("failed") == std::string::npos) continue;
+                    groups.push_back({{"classification", "test_failure"}, {"message", line}});
+                }
+                return tool_success_json({{"failure_groups", groups}, {"count", groups.size()}});
+            }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.format") {
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) {
+                    return tool_validation_failure("tool.diagnostics.format.invalid_output", "diagnostics.format requires formatter output");
+                }
+                const auto text = arguments["output"].get<std::string>();
+                json files = json::array();
+                std::istringstream lines(text); std::string line;
+                while (std::getline(lines, line) && files.size() < 256) {
+                    if (line.find("would reformat") != std::string::npos || line.find("needs formatting") != std::string::npos) files.push_back(line);
+                }
+                return tool_success_json({{"formatted", files.empty()}, {"files", files}, {"raw_output", text.substr(0, 65536)}});
+            }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.include_graph") {
+            installed = register_definition(definition, registry, [](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) {
+                    return tool_validation_failure("tool.diagnostics.include_graph.invalid_output", "diagnostics.include_graph requires dependency output");
+                }
+                json nodes = json::array(), edges = json::array(); std::set<std::string> seen;
+                std::istringstream lines(arguments["output"].get<std::string>()); std::string line;
+                while (std::getline(lines, line) && edges.size() < 512) {
+                    const auto separator = line.find(" -> ");
+                    if (separator == std::string::npos) continue;
+                    const auto from = line.substr(0, separator), to = line.substr(separator + 4);
+                    if (from.empty() || to.empty()) continue;
+                    if (seen.insert(from).second) nodes.push_back(from);
+                    if (seen.insert(to).second) nodes.push_back(to);
+                    edges.push_back({{"from", from}, {"to", to}});
+                }
+                return tool_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.validate" && !bindings.repository_root.empty()) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("dataset") || !arguments["dataset"].is_string() || !arguments.contains("rules") || !arguments["rules"].is_array()) {
+                    return tool_validation_failure("tool.dataset.validate.invalid_arguments", "dataset.validate requires dataset and rules");
+                }
+                std::filesystem::path path;
+                if (!dataset_file(bindings, arguments["dataset"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.validate.unavailable", std::move(err), "Dataset is unavailable.");
+                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.validate.unsupported_format", "dataset.validate currently supports CSV");
+                std::ifstream file(path); std::string line;
+                if (!std::getline(file, line)) return tool_success_json({{"valid", true}, {"violations", json::array()}});
+                const auto columns = split_csv(line); std::vector<std::string> rows;
+                while (rows.size() < 100000 && std::getline(file, line)) rows.push_back(line);
+                json violations = json::array();
+                for (const auto & rule : arguments["rules"]) {
+                    if (!rule.is_object() || !rule.contains("type") || !rule["type"].is_string() || !rule.contains("column") || !rule["column"].is_string()) continue;
+                    const auto type = rule["type"].get<std::string>();
+                    const auto it = std::find(columns.begin(), columns.end(), rule["column"].get<std::string>());
+                    if (it == columns.end()) { violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", rows.size()}, {"message", "column not found"}}); continue; }
+                    const auto index = static_cast<size_t>(std::distance(columns.begin(), it)); size_t count = 0; std::set<std::string> values;
+                    for (const auto & row_text : rows) { const auto fields = split_csv(row_text); const auto value = index < fields.size() ? fields[index] : std::string(); if ((type == "not_null" && value.empty()) || (type == "unique" && !values.insert(value).second)) ++count; }
+                    if (count > 0) violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", count}});
+                }
+                return tool_success_json({{"valid", violations.empty()}, {"violations", violations}});
+            }, error);
+        } else if (definition.executor_id == "builtin.data.query" || definition.executor_id == "builtin.data.filter" || definition.executor_id == "builtin.data.aggregate" || definition.executor_id == "builtin.data.join" || definition.executor_id == "builtin.data.transform" || definition.executor_id == "builtin.statistics.describe") {
+            const auto operation = definition.name;
+            installed = register_definition(definition, registry, [bindings, operation](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.data.invalid_arguments", std::move(err));
+                return execute_data_backend(bindings, operation, arguments.dump());
             }, error);
         } else if (definition.executor_id == "builtin.dataset.list" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {

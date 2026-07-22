@@ -6,6 +6,7 @@
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 #include "resource/resource-contract.h"
+#include "agent/data-store.h"
 
 #include <functional>
 #include <string>
@@ -28,6 +29,9 @@ struct common_native_tool_bindings {
     // Optional host-owned resource runtime for large tool payloads that should
     // be referenced without forcing the full content inline into model context.
     agent_resource_runtime resource_runtime;
+    // Optional host-owned structured data backend. The backend is selected by
+    // host configuration; tools only submit bounded semantic requests.
+    common_agent_data_store * data_store = nullptr;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;

@@ -203,13 +203,23 @@ do not select implementations or host paths.
 | `dataset.inspect` | Host-native | Returns bounded path, format and size metadata |
 | `dataset.schema` | Host-native | Returns a first CSV column schema; richer inference is future work |
 | `dataset.sample` | Host-native | Returns a bounded CSV head sample |
+| `dataset.validate` | Host-native | Validates bounded CSV data against declarative `not_null` and `unique` rules |
+| `data.query` | Store-backed | Executes a bounded backend-neutral structured query |
+| `data.filter` | Store-backed | Applies declarative predicates through the configured data store |
+| `data.aggregate` | Store-backed | Applies bounded grouping and aggregate operations through the configured data store |
+| `data.join` | Store-backed | Joins two host-approved datasets through the configured data store |
+| `data.transform` | Store-backed | Applies host-approved column transformations through the configured data store |
+| `statistics.describe` | Store-backed | Produces bounded descriptive statistics through the configured data store |
+| `diagnostics.test_failures` | Host-native analysis | Groups bounded failure lines from an existing test result |
+| `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting |
+| `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output |
 | `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store |
 
 The first data foundation deliberately supports safe discovery and bounded
 materialization. SQL/Cozo queries, statistical analysis, charts, formatters,
 semantic symbol analysis and richer artifact conversion belong behind the
-data-runtime or sandbox seams and are not represented as fake host-native
-implementations.
+data-runtime or sandbox seams. The data-tool seam is now present, but no
+backend is implicitly selected when the host has not configured one.
 
 The namespaced names are canonical in the catalog, native registry and
 resolved profile snapshots. Host configuration, profiles and model-visible
@@ -229,6 +239,20 @@ The following constraints apply:
 * Artifact tools publish explicit, bounded outputs with resource references,
   provenance and size limits. Text in a tool result is not implicitly an
   artifact.
+
+Structured data tools use the host-owned `common_agent_data_store` interface. The
+tool layer submits semantic JSON operations and does not select CozoDB, DuckDB or
+another backend. A backend is supplied by host configuration and can be replaced
+without changing tool schemas. The current tool adapter reports the data tools as
+unavailable when no backend is bound. CozoDB is the intended first persistent
+backend for internal relations, provenance and graph-style queries; file-oriented
+CSV/JSON/Parquet analysis can use another backend later.
+
+The first diagnostic/data implementations are intentionally bounded. CSV
+validation currently supports `not_null` and `unique`, compiler diagnostics parse
+existing output, formatter diagnostics inspect formatter output, and include-graph
+diagnostics consume normalized `source -> include` lines. They do not invoke an
+unbounded compiler, formatter or shell command themselves.
 * Provider-backed tools are enabled only through host configuration and
   caller policy. Credentials, endpoints and transport details remain outside
   the model-facing schema.
