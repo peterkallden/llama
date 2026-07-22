@@ -6,7 +6,7 @@
 #include <string>
 
 int main() {
-    common_agent_sandbox_kubernetes_runtime runtime({"kubectl", "llama-agent", {}, {}, true});
+    common_agent_sandbox_kubernetes_runtime runtime({"kubectl", "llama-agent", {}, {}, {}, "4Gi", "1Gi", true});
     common_agent_sandbox_request request;
     request.operation_id = "kubernetes-contract-smoke";
     request.command.program = "sh";
@@ -45,7 +45,7 @@ int main() {
     common_agent_sandbox_kubernetes_runtime backend({
         "kubectl",
         namespace_name == nullptr ? "default" : namespace_name,
-        {}, {}, true});
+        {}, {}, {}, "4Gi", "1Gi", true});
     request.operation_id = "kubernetes-smoke-1";
     request.image = image == nullptr ? "alpine:3.20" : image;
     request.command.arguments = {"-c", "printf kubernetes-ok > /workspace/artifacts/result.txt; printf kubernetes-ok"};

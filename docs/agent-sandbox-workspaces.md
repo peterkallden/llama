@@ -100,13 +100,12 @@ waits for completion through `kubectl`. Its host configuration is:
 }
 ```
 
-The first slice uses `hostPath` volumes for the logical source, writable and
-artifact mounts. This is suitable for a local Kubernetes installation where
-the workspace is visible on the worker node. A remote cluster needs a shared
-volume or object-store materializer before these mounts can be used safely.
-The planned PVC-backed workspace uses a `4Gi` claim for workspace data and a
-separate `1Gi` claim for artifacts. Those values are the host-policy defaults
-for the PVC backend; the current hostPath slice does not create PVCs yet.
+The Kubernetes backend uses project- or session-scoped PVCs for the logical
+source, writable and artifact mounts. A staging pod copies the host-created
+operation into the workspace claim and copies artifacts back after the Job.
+The default claim sizes are `4Gi` for workspace data and `1Gi` for artifacts;
+an empty `storage_class` uses the cluster default. PVCs are retained across
+operations and are not deleted by normal Job cleanup.
 The backend currently supports `network: none` by applying a deny-egress
 `NetworkPolicy` alongside the Job; the cluster's CNI must enforce
 NetworkPolicy. It also applies non-root and read-only-rootfs security settings,
@@ -143,7 +142,8 @@ ctest --test-dir build-agent-tool-profiles-debug -C Debug -L sandbox-kubernetes
 ```
 
 The real Kubernetes smoke assumes that `kubectl`, the configured namespace,
-the image and hostPath-visible workspace are available to the current host.
+the image, a usable StorageClass and a trusted kubeconfig are available to the
+current host.
 
 Operation directories are host-created and may be ephemeral. Source is
 normally read-only, the writable directory is used for build/analysis work,

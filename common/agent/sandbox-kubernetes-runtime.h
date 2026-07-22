@@ -10,15 +10,15 @@ struct common_agent_kubernetes_sandbox_config {
     std::string namespace_name = "default";
     std::string service_account;
     std::string runtime_class;
-    std::string storage_class = "standard";
+    std::string storage_class;
     std::string workspace_storage_size = "4Gi";
     std::string artifact_storage_size = "1Gi";
     bool cleanup = true;
 };
 
 // Kubernetes Job-backed implementation of the host-owned sandbox contract.
-// The first slice uses hostPath mounts, making it suitable for a local
-// Kubernetes installation where the workspace is visible to the worker node.
+// Workspaces are materialized into project- or session-scoped PVCs; Jobs use
+// operation-specific subPaths so the host does not need to be node-visible.
 class common_agent_sandbox_kubernetes_runtime final : public common_agent_sandbox_runtime {
 public:
     explicit common_agent_sandbox_kubernetes_runtime(common_agent_kubernetes_sandbox_config config = {})

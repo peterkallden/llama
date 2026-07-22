@@ -16,7 +16,7 @@ struct common_agent_sandbox_host_config {
     std::string kubernetes_namespace = "default";
     std::string kubernetes_service_account;
     std::string kubernetes_runtime_class;
-    std::string kubernetes_storage_class = "standard";
+    std::string kubernetes_storage_class;
     std::string kubernetes_workspace_storage_size = "4Gi";
     std::string kubernetes_artifact_storage_size = "1Gi";
     bool kubernetes_cleanup = true;

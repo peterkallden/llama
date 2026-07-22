@@ -69,6 +69,40 @@ bool add_host_path_volume(
     return true;
 }
 
+std::string safe_volume_name(const std::string & value) {
+    std::string name;
+    for (const char character : value) {
+        const bool safe =
+            (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') || character == '-';
+        name.push_back(safe ? character : '-');
+    }
+    while (!name.empty() && name.front() == '-') name.erase(name.begin());
+    while (!name.empty() && name.back() == '-') name.pop_back();
+    if (name.empty()) name = "workspace";
+    if (name.size() > 40) name.resize(40);
+    while (!name.empty() && name.back() == '-') name.pop_back();
+    return name;
+}
+
+json pvc_manifest(
+        const std::string & name,
+        const std::string & namespace_name,
+        const std::string & storage_class,
+        const std::string & size) {
+    json spec = {
+        {"accessModes", json::array({"ReadWriteOnce"})},
+        {"resources", {{"requests", {{"storage", size}}}}},
+    };
+    if (!storage_class.empty()) spec["storageClassName"] = storage_class;
+    return {
+        {"apiVersion", "v1"},
+        {"kind", "PersistentVolumeClaim"},
+        {"metadata", {{"name", name}, {"namespace", namespace_name}}},
+        {"spec", spec},
+    };
+}
+
 bool run_kubectl(
         const common_agent_kubernetes_sandbox_config & config,
         const std::vector<std::string> & arguments,
@@ -174,20 +208,135 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
         return false;
     }
 
-    json volumes = json::array();
-    json mounts = json::array();
-    if (!add_host_path_volume(volumes, mounts, request.workspace.source_path,
-            "source", "/workspace/source", true, error) ||
-            !add_host_path_volume(volumes, mounts, request.workspace.writable_path,
-            "writable", "/workspace/writable",
-            request.filesystem != common_agent_sandbox_filesystem_scope::workspace_write, error) ||
-            !add_host_path_volume(volumes, mounts, request.workspace.artifact_path,
-            "artifacts", "/workspace/artifacts",
-            request.filesystem != common_agent_sandbox_filesystem_scope::artifact_write &&
-                request.filesystem != common_agent_sandbox_filesystem_scope::workspace_write, error)) {
+    if (request.workspace.source_path.empty() || request.workspace.writable_path.empty() ||
+            request.workspace.artifact_path.empty() ||
+            !fs::is_directory(request.workspace.source_path) ||
+            !fs::is_directory(request.workspace.writable_path) ||
+            !fs::is_directory(request.workspace.artifact_path)) {
+        error = "Kubernetes sandbox requires host workspace directories for PVC materialization";
         result.error = error;
         return false;
     }
+    const std::string identity = safe_volume_name(
+        request.project_id.empty() ? request.workspace_id : request.project_id);
+    const std::string workspace_claim = "llama-agent-workspace-" + identity;
+    const std::string artifact_claim = "llama-agent-artifacts-" + identity;
+    const std::string operation_path = identity + "/" + safe_volume_name(request.operation_id);
+    const std::string staging_pod = safe_job_name(request.operation_id + "-stage");
+
+    const json claims = {
+        {"apiVersion", "v1"},
+        {"kind", "List"},
+        {"items", json::array({
+            pvc_manifest(workspace_claim, config.namespace_name, config.storage_class, config.workspace_storage_size),
+            pvc_manifest(artifact_claim, config.namespace_name, config.storage_class, config.artifact_storage_size),
+        })},
+    };
+    const auto manifest_path = fs::temp_directory_path() / (job + ".json");
+    {
+        std::ofstream file(manifest_path);
+        if (!file) {
+            error = "unable to create Kubernetes PVC manifest";
+            result.error = error;
+            return false;
+        }
+        file << claims.dump(2);
+    }
+    const auto cleanup_manifest = [&]() { std::error_code ignored; fs::remove(manifest_path, ignored); };
+    const auto namespace_args = [&]() {
+        return std::vector<std::string>{"-n", config.namespace_name};
+    };
+    std::string output;
+    int exit_code = -1;
+    bool timed_out = false;
+    auto apply_claims = namespace_args();
+    apply_claims.insert(apply_claims.end(), {"apply", "-f", manifest_path.string()});
+    if (!run_kubectl(config, apply_claims, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
+        result.error = error.empty() ? output : error;
+        cleanup_manifest();
+        return false;
+    }
+
+    const std::string staging_command =
+        "mkdir -p /mnt/work/" + operation_path + "/source /mnt/work/" + operation_path +
+        "/writable /mnt/artifacts/" + operation_path +
+        " && chown -R 65532:65532 /mnt/work/" + operation_path + "/writable /mnt/artifacts/" + operation_path +
+        " && sleep 3600";
+    const json staging_manifest = {
+        {"apiVersion", "v1"},
+        {"kind", "Pod"},
+        {"metadata", {{"name", staging_pod}, {"namespace", config.namespace_name}}},
+        {"spec", {
+            {"restartPolicy", "Never"},
+            {"containers", json::array({{{
+                {"name", "staging"},
+                {"image", request.image},
+                {"command", json::array({"sh", "-c"})},
+                {"args", json::array({staging_command})},
+                {"volumeMounts", json::array({
+                    {{"name", "workspace"}, {"mountPath", "/mnt/work"}},
+                    {{"name", "artifacts"}, {"mountPath", "/mnt/artifacts"}},
+                })},
+            }}})},
+            {"volumes", json::array({
+                {{"name", "workspace"}, {"persistentVolumeClaim", {{"claimName", workspace_claim}}}},
+                {{"name", "artifacts"}, {"persistentVolumeClaim", {{"claimName", artifact_claim}}}},
+            })},
+        }},
+    };
+    {
+        std::ofstream file(manifest_path);
+        if (!file) {
+            error = "unable to create Kubernetes staging manifest";
+            result.error = error;
+            cleanup_manifest();
+            return false;
+        }
+        file << staging_manifest.dump(2);
+    }
+    auto apply_staging = namespace_args();
+    apply_staging.insert(apply_staging.end(), {"apply", "-f", manifest_path.string()});
+    if (!run_kubectl(config, apply_staging, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
+        result.error = error.empty() ? output : error;
+        cleanup_manifest();
+        return false;
+    }
+    auto wait_staging = namespace_args();
+    wait_staging.insert(wait_staging.end(), {"wait", "--for=condition=Ready", "pod/" + staging_pod, "--timeout=60s"});
+    if (!run_kubectl(config, wait_staging, 70000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
+        result.error = error.empty() ? output : error;
+        cleanup_manifest();
+        return false;
+    }
+    auto copy_to_pvc = [&](const std::string & local, const std::string & remote) {
+        auto args = namespace_args();
+        args.insert(args.end(), {"cp", local + "/.", staging_pod + ":" + remote});
+        return run_kubectl(config, args, 120000, request.limits.max_output_bytes, output, exit_code, timed_out, error) && exit_code == 0;
+    };
+    if (!copy_to_pvc(request.workspace.source_path, "/mnt/work/" + operation_path + "/source")) {
+        result.error = error.empty() ? output : error;
+        cleanup_manifest();
+        return false;
+    }
+    auto copy_from_pvc = [&](const std::string & remote, const std::string & local) {
+        auto args = namespace_args();
+        args.insert(args.end(), {"cp", staging_pod + ":" + remote + "/.", local});
+        return run_kubectl(config, args, 120000, request.limits.max_output_bytes, output, exit_code, timed_out, error) && exit_code == 0;
+    };
+    cleanup_manifest();
+
+    json volumes = json::array({
+        {{"name", "workspace"}, {"persistentVolumeClaim", {{"claimName", workspace_claim}}}},
+        {{"name", "artifacts"}, {"persistentVolumeClaim", {{"claimName", artifact_claim}}}},
+    });
+    json mounts = json::array({
+        {{"name", "workspace"}, {"mountPath", "/workspace/source"}, {"subPath", operation_path + "/source"}, {"readOnly", true}},
+        {{"name", "workspace"}, {"mountPath", "/workspace/writable"}, {"subPath", operation_path + "/writable"},
+            {"readOnly", request.filesystem != common_agent_sandbox_filesystem_scope::workspace_write}},
+        {{"name", "artifacts"}, {"mountPath", "/workspace/artifacts"}, {"subPath", operation_path + "/artifacts"},
+            {"readOnly", request.filesystem != common_agent_sandbox_filesystem_scope::artifact_write &&
+                request.filesystem != common_agent_sandbox_filesystem_scope::workspace_write}},
+    });
 
     json container = {
         {"name", "sandbox"},
@@ -249,24 +398,17 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
         {"items", json::array({job_manifest, network_policy})},
     };
 
-    const auto manifest_path = fs::temp_directory_path() / (job + ".json");
+    const auto started = std::chrono::steady_clock::now();
     {
         std::ofstream file(manifest_path);
         if (!file) {
             error = "unable to create Kubernetes Job manifest";
             result.error = error;
+            cleanup_manifest();
             return false;
         }
         file << manifest.dump(2);
     }
-    const auto cleanup_manifest = [&]() { std::error_code ignored; fs::remove(manifest_path, ignored); };
-    const auto started = std::chrono::steady_clock::now();
-    std::string output;
-    int exit_code = -1;
-    bool timed_out = false;
-    const auto namespace_args = [&]() {
-        return std::vector<std::string>{"-n", config.namespace_name};
-    };
     auto apply_args = namespace_args();
     apply_args.insert(apply_args.end(), {"apply", "-f", manifest_path.string()});
     if (!run_kubectl(config, apply_args, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
@@ -296,6 +438,10 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
         result.exit_code = exit_code;
         if (wait_exit_code == 0) {
             result.status = common_agent_sandbox_status::completed;
+            if (!copy_from_pvc("/mnt/artifacts/" + operation_path + "/artifacts", request.workspace.artifact_path)) {
+                result.status = common_agent_sandbox_status::failed;
+                result.error = error.empty() ? output : error;
+            }
             collect_artifacts(request, result);
         } else {
             result.status = common_agent_sandbox_status::failed;
@@ -304,7 +450,8 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     if (config.cleanup) {
         auto delete_args = namespace_args();
-        delete_args.insert(delete_args.end(), {"delete", "job/" + job, "networkpolicy/" + job + "-deny-egress", "--ignore-not-found=true", "--wait=false"});
+        delete_args.insert(delete_args.end(), {"delete", "job/" + job, "pod/" + staging_pod,
+            "networkpolicy/" + job + "-deny-egress", "--ignore-not-found=true", "--wait=false"});
         std::string ignored_output;
         bool ignored_timeout = false;
         run_kubectl(config, delete_args, 10000, 4096, ignored_output, exit_code, ignored_timeout, error);
