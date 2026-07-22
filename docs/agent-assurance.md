@@ -1,6 +1,7 @@
 # Agent Beta Assurance
 
-Status: Verified for the executed Windows/Debug beta scope
+Status: Conditional for the executed Windows/Debug beta scope; latest run has
+documented smoke and Docker environment failures
 
 This document is the assurance record for the `llama-agent` beta milestone.
 It separates milestone criteria from the test evidence collected for a
@@ -42,7 +43,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Client profile/write-authority overrides are rejected at the daemon boundary
 - [x] User-supplied resources can flow through resource references
 - [x] Memory and resource authorities remain host-owned
-- [ ] Developer workspace tools are implemented
+- [x] Developer workspace tools are implemented with bounded host-native tests
 
 ### Sessions and scheduling
 
@@ -81,6 +82,30 @@ when the corresponding verification record contains evidence for it.
 - [x] MCP vertical smoke passes
 - [ ] Long-running stability test passes
 
+### Tool assurance
+
+Tools are assessed independently from the general runtime milestone. A tool is
+not considered mature merely because its catalog entry exists or its target
+builds.
+
+| Criterion | Status | Assessment rule |
+|---|---|---|
+| Catalog contract | [x] | Name, schema, result shape, risk and executor are registered and validated |
+| Capability/profile authority | [x] | Host configuration resolves the tool into an immutable profile view; clients cannot widen it |
+| Boundary enforcement | [x] | Workspace, repository, sandbox, store and artifact boundaries reject out-of-scope access |
+| Native tool behavior | [x] | Bounded workspace/repository/data/diagnostic adapters have direct tests |
+| Mutation safety | [x] | Workspace mutation uses confirmation, scope checks and expected-content tokens |
+| Sandbox execution | [ ] | Build/test contracts exist, but Docker execution must pass in the host environment |
+| Backend availability | [x] | Tools depending on unavailable backends are removed from the effective tool view |
+| Result normalization | [x] | Tool results expose bounded status, summaries, diagnostics and resource references where applicable |
+| Semantic diagnostics | [ ] | Symbol/reference lookup still uses a text fallback until clangd/LSP or a project index is bound |
+| Tool-specific smoke coverage | [ ] | The latest run is 27/30 because CLI MCP, Docker and model-backed resident coverage remain unresolved |
+
+The maturity labels used in `agent-runtime.md` describe the implementation
+stage: `Foundation`, `Limited`, `Contract-level` and `Experimental`. Assurance
+criteria describe whether a tool is safe and verified for the current host;
+they are not a replacement for those maturity labels.
+
 ## Verification record
 
 Each record must identify exactly what was run. Counts use `passed/total`;
@@ -91,14 +116,14 @@ passes.
 
 | Field | Value |
 |---|---|
-| Branch | `feature/llama-agent` |
-| Commit | `6747c18f7` |
-| Date | `2026-07-21` |
+| Branch | `pocs/agent-tool-profiles` |
+| Commit | `6b35f7503` |
+| Date | `2026-07-23` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug |
-| CTest | 11/11 agent tests passed |
-| Agent smokes | 23/23 model-free smokes passed |
-| Decision | Conditional beta assurance |
+| CTest | 13/14 agent tests passed; Docker sandbox failed to start |
+| Agent smokes | 27/30 passed; CLI MCP, Docker and model-backed resident smoke unresolved |
+| Decision | Conditional assurance; follow-up required |
 
 ### CTest evidence
 
@@ -108,7 +133,8 @@ passes.
 | Memory (`test-memory-*`) | 2 | 0 | 0 | 2 | Passed |
 | Plan (`test-plan-*`) | 2 | 0 | 0 | 2 | Passed |
 | Reflection/tooling (`test-reflection-*`, `test-tool-*`) | 3 | 0 | 0 | 3 | Passed |
-| **Agent CTest total** | **11** | **0** | **0** | **11** | **Passed** |
+| Sandbox (`llama-agent-sandbox-*-ctest`) | 2 | 1 | 0 | 3 | Conditional |
+| **Agent CTest total** | **13** | **1** | **0** | **14** | **Conditional** |
 
 Commands and full output should be retained in the task handoff or CI log;
 this file records the summarized result and the commit it belongs to.
@@ -117,10 +143,12 @@ this file records the summarized result and the commit it belongs to.
 
 | Group | Passed | Failed | Total | Result |
 |---|---:|---:|---:|---|
-| Runtime | 8 | 0 | 8 | Passed |
+| Runtime | 11 | 2 | 13 | Conditional |
 | MCP | 7 | 0 | 7 | Passed |
+| CLI | 1 | 1 | 2 | Conditional |
 | Daemon | 7 | 0 | 7 | Passed |
 | Resource | 1 | 0 | 1 | Passed |
+| **Current full smoke executable set** | **27** | **3** | **30** | **Conditional** |
 
 ## Known limitations
 
@@ -131,7 +159,11 @@ this file records the summarized result and the commit it belongs to.
   called “beta aggregate” in this assurance record.
 - The resident model-backed smoke was built but not executed in this run
   because it requires an explicit `--model` GGUF path.
-- Developer workspace tools are outside the current minimal beta scope.
+- Developer workspace tools are now in scope and have bounded adapter coverage;
+  semantic indexing and full sandbox execution remain separate gates.
+- The latest smoke run found three unresolved cases: the CLI MCP composite tool
+  set, the Docker process startup, and the resident model-backed smoke without a
+  model path.
 - Research workspace checkpointing is not part of the first version.
 - Long-running stability and resource-retention testing remain separate from
   bounded functional smokes.
@@ -146,10 +178,12 @@ explicit rejection of client attempts to select or widen tool authority. The
 daemon reload contract treats `tools.profile`, `tools.capabilities` and
 `tools.profiles` as restart-required; this preserves one immutable host tool
 view for an instance instead of changing the exposed catalog during a live
-session. The Docker sandbox backend is covered by a real container smoke; the
-Kubernetes backend and broader network scopes remain future scope. Developer
-and data-analysis execution classes are represented by host configuration, but
-full operation-manager integration remains a separate verification gate.
+session. Developer workspace tools now have bounded native adapter coverage,
+including symbol/reference fallback and grouped test-failure diagnostics. The
+Docker sandbox contract exists but its latest process-start smoke failed on this
+host; Kubernetes contract coverage passed. Data-analysis execution classes are
+represented by host configuration, while full operation-manager integration and
+semantic project indexing remain separate verification gates.
 
 ## Exit decision
 
@@ -161,12 +195,14 @@ date, and test counts.
 ### Decision record
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
-- Date: 2026-07-21
-- Commit: `6747c18f7`
+- Date: 2026-07-23
+- Commit: `6b35f7503`
 - Reviewer: pending
-- Notes: 11/11 agent CTests and 23/23 model-free agent smokes passed. Linux,
-  model-backed Qwen/Nomic, developer workspace tools, checkpointing and
-  long-running stability remain outside this run.
+- Notes: 13/14 agent CTests passed and 27/30 built smokes passed. The Docker
+  process-start smoke failed, the CLI MCP composite-tool smoke failed, and the
+  resident smoke requires an explicit model path. Linux, model-backed
+  Qwen/Nomic execution, semantic indexing, checkpointing and long-running
+  stability remain outside this run.
 
 ## Assurance history
 
