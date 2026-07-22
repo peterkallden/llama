@@ -7,6 +7,7 @@ int main() {
     common_agent_sandbox_local_test_runtime runtime;
     common_agent_sandbox_policy policy;
     policy.execution_class = "readonly-analysis";
+    policy.image = "test-sandbox-image:latest";
     policy.limits.timeout_ms = 60000;
     policy.limits.cpu_count = 1;
     policy.limits.max_output_bytes = 65536;
@@ -26,6 +27,10 @@ int main() {
     if (!result.ok || result.output.find("local-test/sandbox-smoke-1") == std::string::npos ||
             runtime.last_request.command.program != "test-program") {
         std::fprintf(stderr, "sandbox local helper did not return the expected result\n");
+        return 1;
+    }
+    if (runtime.last_request.image != "test-sandbox-image:latest") {
+        std::fprintf(stderr, "sandbox policy image was not applied by the helper\n");
         return 1;
     }
 

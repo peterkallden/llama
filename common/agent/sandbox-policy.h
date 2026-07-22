@@ -6,6 +6,9 @@
 
 struct common_agent_sandbox_policy {
     std::string execution_class;
+    // Host-owned image selection. Requests may leave image empty and inherit
+    // the policy image, then the backend default image.
+    std::string image;
     common_agent_sandbox_limits limits;
     common_agent_sandbox_network_scope network = common_agent_sandbox_network_scope::none;
     common_agent_sandbox_filesystem_scope filesystem = common_agent_sandbox_filesystem_scope::readonly;

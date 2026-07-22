@@ -42,6 +42,7 @@ Workspace roots and execution classes belong in host configuration:
     },
     "classes": {
       "developer-build": {
+        "image": "llama-agent-dev:latest",
         "timeout_ms": 120000,
         "memory_bytes": 8589934592,
         "cpu_count": 4,
@@ -53,6 +54,10 @@ Workspace roots and execution classes belong in host configuration:
   }
 }
 ```
+
+An execution class may provide its own image. If it is omitted, the Docker
+backend uses `sandbox.docker.default_image`. The request itself may not
+override this host-owned selection.
 
 The Docker backend runs each operation as an ephemeral container with a
 read-only root filesystem, no network by default, bounded resource limits,

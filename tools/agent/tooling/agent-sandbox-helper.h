@@ -29,8 +29,10 @@ public:
                 error);
         }
 
+        auto resolved_request = request;
+        if (resolved_request.image.empty()) resolved_request.image = policy.image;
         common_agent_sandbox_result result;
-        if (!runtime.execute(request, result, error)) {
+        if (!runtime.execute(resolved_request, result, error)) {
             return common_tool_execution_result::failure(
                 "sandbox.execution_failed",
                 common_tool_failure_class::execution,

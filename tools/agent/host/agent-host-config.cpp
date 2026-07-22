@@ -96,6 +96,7 @@ bool read_sandbox_filesystem(
 
 json sandbox_class_to_json(const common_agent_sandbox_policy & policy) {
     return {
+        {"image", policy.image},
         {"timeout_ms", policy.limits.timeout_ms},
         {"memory_bytes", policy.limits.memory_bytes},
         {"cpu_count", policy.limits.cpu_count},
@@ -305,6 +306,7 @@ bool parse_agent_host_config_json(
                 common_agent_sandbox_policy policy;
                 policy.execution_class = it.key();
                 const auto & value = it.value();
+                read_optional(value, "image", policy.image);
                 if (value.contains("timeout_ms")) read_optional(value, "timeout_ms", policy.limits.timeout_ms);
                 if (value.contains("memory_bytes")) read_optional(value, "memory_bytes", policy.limits.memory_bytes);
                 if (value.contains("cpu_count")) read_optional(value, "cpu_count", policy.limits.cpu_count);
