@@ -248,6 +248,13 @@ unavailable when no backend is bound. CozoDB is the intended first persistent
 backend for internal relations, provenance and graph-style queries; file-oriented
 CSV/JSON/Parquet analysis can use another backend later.
 
+When `LLAMA_MEMORY_COZO` is enabled, `common_agent_cozo_data_store` provides a
+persistent implementation of the same interface. It stores host-materialized
+rows in a controlled Cozo relation and currently supports query, filtering,
+basic aggregation, descriptive statistics, joins and bounded column
+transformations. The host still owns opening the database and binding the store
+to the runtime; the model cannot select a database path or backend.
+
 The first diagnostic/data implementations are intentionally bounded. CSV
 validation currently supports `not_null` and `unique`, compiler diagnostics parse
 existing output, formatter diagnostics inspect formatter output, and include-graph

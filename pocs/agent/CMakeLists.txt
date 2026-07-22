@@ -54,6 +54,7 @@ link_libraries(cpp-httplib)
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
         ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+        ../../tools/agent/data/agent-data-store-cozo.cpp
     )
 endif()
 
