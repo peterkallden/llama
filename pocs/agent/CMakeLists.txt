@@ -209,6 +209,20 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-workspace-operation-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-workspace-operation-smoke.cpp
+    ../../common/agent/research/research-workspace-factory.cpp
+    ../../common/agent/research/research-workspace.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-common
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-mcp-stdio-client-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-stdio-client-smoke.cpp
@@ -759,6 +773,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
     llama-agent-sandbox-contract-smoke
+    llama-agent-workspace-operation-smoke
     llama-agent-mcp-tool-provider-smoke
     llama-agent-mcp-stdio-client-smoke
     llama-agent-mcp-http-client-smoke
@@ -790,6 +805,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
     llama-agent-sandbox-contract-smoke
+    llama-agent-workspace-operation-smoke
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke
     llama-agent-runtime-operation-manager-smoke
