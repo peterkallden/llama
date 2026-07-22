@@ -112,6 +112,28 @@ int main() {
     assert(result.ok && result.output.find("src") != std::string::npos);
     result = developer_registry.execute({"repository_changed_files", "{}"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+
+    common_tool_profile execution_profile;
+    execution_profile.id = "developer-execution";
+    execution_profile.members = {{"build_target", 1, true, "{}"}, {"test_run", 1, true, "{}"}};
+    execution_profile.allow_policy_gated_writes = true;
+    std::map<std::string, common_tool_profile> configured_profiles;
+    configured_profiles.emplace(execution_profile.id, execution_profile);
+    common_tool_catalog execution_catalog;
+    assert(execution_catalog.bootstrap("developer-execution", bootstrap, error, {}, configured_profiles));
+    common_tool_registry execution_registry;
+    common_native_tool_bindings execution_bindings;
+    common_agent_sandbox_request captured_request;
+    execution_bindings.sandbox_execute = [&captured_request](common_agent_sandbox_request request) {
+        captured_request = std::move(request);
+        return common_tool_execution_result::success(R"({"status":"completed","exit_code":0})");
+    };
+    assert(common_register_native_tool_adapters(execution_catalog, "developer-execution", execution_bindings, execution_registry, adapters, error));
+    assert(execution_registry.is_policy_gated("build_target"));
+    result = execution_registry.execute({"build_target", R"({"target":"llama-agent","configuration":"Debug"})"});
+    assert(result.ok && captured_request.command.program == "agent.build_target" && captured_request.command.arguments[0] == "llama-agent");
+    result = execution_registry.execute({"test_run", R"({"target":"agent-smoke","filter":"workspace"})"});
+    assert(result.ok && captured_request.command.program == "agent.test_run" && captured_request.command.arguments[1] == "workspace");
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));

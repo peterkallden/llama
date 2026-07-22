@@ -61,6 +61,11 @@ bool is_definition_allowed(
                 context.allow_policy_gated_writes &&
                 definition.requires_confirmation &&
                 registry.is_policy_gated(definition.name);
+
+        case common_tool_risk_class::sandbox_execution:
+            return context.allow_policy_gated_writes &&
+                definition.requires_confirmation &&
+                registry.is_policy_gated(definition.name);
     }
 
     return false;

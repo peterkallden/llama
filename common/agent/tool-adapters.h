@@ -2,6 +2,7 @@
 
 #include "agent/tool-catalog.h"
 #include "agent/tool-registry.h"
+#include "agent/sandbox-contract.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 #include "resource/resource-contract.h"
@@ -33,6 +34,9 @@ struct common_native_tool_bindings {
     // Executes a native memory proposal policy. It receives validated tool JSON
     // and returns a structured policy decision; it is never model-selected code.
     std::function<common_tool_execution_result(const std::string &)> memory_remember_proposal;
+    // Host-owned semantic execution seam. The adapter creates a sandbox
+    // request; the host helper owns workspace preparation and backend choice.
+    std::function<common_tool_execution_result(common_agent_sandbox_request)> sandbox_execute;
 };
 
 struct common_tool_adapter_result {

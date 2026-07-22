@@ -232,6 +232,44 @@ bool repository_path(const std::string & root, const std::string & relative, std
     out = requested; return true;
 }
 
+bool make_sandbox_request(
+        const std::string & tool_name,
+        const std::string & input,
+        common_agent_sandbox_request & request,
+        std::string & error) {
+    json arguments;
+    if (!parse_object(input, arguments, error) || !arguments.contains("target") || !arguments["target"].is_string()) {
+        if (error.empty()) error = tool_name + " requires a target";
+        return false;
+    }
+    const auto target = arguments["target"].get<std::string>();
+    if (target.empty() || target.size() > 256) {
+        error = tool_name + " target is out of bounds";
+        return false;
+    }
+    request = {};
+    request.operation_id = tool_name + "/" + target;
+    request.execution_class = "developer-build";
+    request.command.program = tool_name == "build_target" ? "agent.build_target" : "agent.test_run";
+    request.command.arguments.push_back(target);
+    if (arguments.contains("configuration")) {
+        if (!arguments["configuration"].is_string()) { error = tool_name + " configuration must be a string"; return false; }
+        request.command.arguments.push_back(arguments["configuration"].get<std::string>());
+    }
+    if (tool_name == "test_run" && arguments.contains("filter")) {
+        if (!arguments["filter"].is_string()) { error = "test_run filter must be a string"; return false; }
+        request.command.arguments.push_back(arguments["filter"].get<std::string>());
+    }
+    request.limits.timeout_ms = arguments.value("timeout_ms", 120000u);
+    request.limits.cpu_count = 1;
+    request.limits.max_output_bytes = 65536;
+    request.network = common_agent_sandbox_network_scope::none;
+    request.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
+    request.artifacts.collect = true;
+    error.clear();
+    return true;
+}
+
 bool text_file(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     char buffer[1024]; input.read(buffer, sizeof(buffer));
@@ -736,6 +774,15 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"files", files}});
             }, error);
+        } else if ((definition.executor_id == "sandbox.build_target" || definition.executor_id == "sandbox.test_run") && bindings.sandbox_execute) {
+            installed = register_definition(definition, registry, [bindings, tool_name = definition.name](const std::string & input) {
+                common_agent_sandbox_request request;
+                std::string err;
+                if (!make_sandbox_request(tool_name, input, request, err)) {
+                    return tool_validation_failure("tool." + tool_name + ".invalid_arguments", std::move(err), "Sandbox execution arguments are invalid.");
+                }
+                return bindings.sandbox_execute(std::move(request));
+            }, error, false, true);
         } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
