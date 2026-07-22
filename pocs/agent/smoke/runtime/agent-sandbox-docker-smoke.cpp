@@ -1,6 +1,7 @@
 #include "agent/sandbox-docker-runtime.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 
 int main() {
@@ -30,6 +31,12 @@ int main() {
             result.status != common_agent_sandbox_status::completed ||
             result.exit_code != 0 || result.stdout_excerpt.find("docker-ok") == std::string::npos ||
             result.artifacts.empty()) {
+        if (error == "unable to start Docker process" ||
+                error.find("permission denied while trying to connect") != std::string::npos ||
+                error.find("Cannot connect to the Docker daemon") != std::string::npos) {
+            std::printf("docker_sandbox_smoke=skipped\n");
+            return 77;
+        }
         std::fprintf(stderr, "Docker sandbox smoke failed: %s\n", (error.empty() ? result.error : error).c_str());
         return 1;
     }

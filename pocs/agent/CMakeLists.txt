@@ -871,6 +871,21 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-store-smoke
 )
 
+if (BUILD_TESTING)
+    add_test(NAME llama-agent-sandbox-contract-ctest
+        COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
+    set_property(TEST llama-agent-sandbox-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-sandbox-docker-ctest
+        COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)
+    set_property(TEST llama-agent-sandbox-docker-ctest PROPERTY LABELS sandbox-docker)
+    set_tests_properties(llama-agent-sandbox-docker-ctest PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME llama-agent-sandbox-kubernetes-ctest
+        COMMAND $<TARGET_FILE:llama-agent-sandbox-kubernetes-smoke>)
+    set_property(TEST llama-agent-sandbox-kubernetes-ctest PROPERTY LABELS sandbox-kubernetes)
+endif()
+
 function(llama_agent_add_smoke_group TARGET_NAME)
     add_custom_target(${TARGET_NAME} DEPENDS ${ARGN})
 endfunction()
