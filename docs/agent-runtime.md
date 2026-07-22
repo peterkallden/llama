@@ -154,13 +154,14 @@ first concrete backend and Kubernetes now uses the same seam through
 ephemeral Jobs.
 
 The backend-neutral sandbox runtime also has an explicit no-backend state.
-When Docker, Kubernetes or another executor is not configured, a validated
-request returns `sandbox.backend_unavailable`; it never falls back to an
-unsandboxed host process. This keeps the runtime seam testable before the
-unsandboxed host process. This keeps the no-backend mode explicit even though
-Docker and Kubernetes execution are available when selected by host
-configuration. Kubernetes currently assumes hostPath-visible workspaces;
-shared-volume materialization for remote clusters remains a later slice.
+When Docker, Kubernetes or another executor is not configured, sandbox-backed
+tools are omitted from the effective model-visible tool view during host
+startup. A directly validated sandbox request still returns
+`sandbox.backend_unavailable`; it never falls back to an unsandboxed host
+process. Docker and Kubernetes execution become visible only when selected by
+host configuration. Kubernetes currently assumes hostPath-visible
+workspaces; shared-volume materialization for remote clusters remains a later
+slice.
 
 ## Runtime context budgets
 

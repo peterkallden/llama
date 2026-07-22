@@ -226,6 +226,19 @@ bool resolve_agent_host_tool_selection(
             error = "tool profile snapshot resolution failed: " + error;
             return false;
         }
+        // Sandbox-backed tools must not be model-visible when the host has no
+        // execution backend. Keep the profile itself intact for diagnostics,
+        // but resolve an effective snapshot that cannot advertise tools which
+        // would only fail later with sandbox.backend_unavailable.
+        if (request.sandbox.backend != "docker" && request.sandbox.backend != "kubernetes") {
+            std::vector<common_tool_definition> available_tools;
+            for (auto & definition : profile_snapshot->tools) {
+                if (definition.risk_class != common_tool_risk_class::sandbox_execution) {
+                    available_tools.push_back(std::move(definition));
+                }
+            }
+            profile_snapshot->tools = std::move(available_tools);
+        }
         const auto * resolved_profile = tool_catalog.find_profile(tool_profile);
         resolved_tool_context.profile_snapshot = profile_snapshot;
         if (resolved_profile != nullptr) {

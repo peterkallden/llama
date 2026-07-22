@@ -74,8 +74,10 @@ process count.
 The Docker backend runs each operation as an ephemeral container with a
 read-only root filesystem, no network by default, bounded resource limits,
 and only the host-created workspace mounts. The `none` backend remains useful
-for hosts that only want validation: it returns `sandbox.backend_unavailable`
-instead of falling back to an unsandboxed process. Broader network scopes are
+for hosts that only want validation: the host omits sandbox-backed tools from
+the effective tool view, while direct sandbox execution returns
+`sandbox.backend_unavailable` instead of falling back to an unsandboxed
+process. Broader network scopes are
 rejected by the Docker backend until explicit allowlists are implemented.
 
 ## Kubernetes backend

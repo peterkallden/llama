@@ -124,6 +124,35 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    args unavailable_options = options;
+    unavailable_options.tool_profile = "cli-sandbox-profile";
+    common_tool_profile sandbox_profile;
+    sandbox_profile.id = unavailable_options.tool_profile;
+    sandbox_profile.members = {
+        {"calculator", 1, true, "{}"},
+        {"build_target", 1, true, "{}"},
+        {"test_run", 1, true, "{}"},
+    };
+    unavailable_options.tool_profiles[sandbox_profile.id] = sandbox_profile;
+    common_agent_cli_tool_selection unavailable_selection;
+    if (!resolve_agent_cli_tool_selection(
+            store,
+            nullptr,
+            nullptr,
+            nullptr,
+            unavailable_options,
+            query,
+            false,
+            unavailable_selection,
+            error) ||
+            !unavailable_selection.tool_view ||
+            !has_tool(unavailable_selection.tooling.tools, "calculator") ||
+            has_tool(unavailable_selection.tooling.tools, "build_target") ||
+            has_tool(unavailable_selection.tooling.tools, "test_run")) {
+        std::fprintf(stderr, "CLI selection did not disable sandbox tools without a backend\n");
+        return 1;
+    }
+
     std::printf("cli_mcp_tools=%zu\n", selection.tooling.tools.size());
     std::printf("cli_native_result=%s\n", native_result.content_json.c_str());
     std::printf("cli_mcp_search_result=%s\n", result.content_json.c_str());

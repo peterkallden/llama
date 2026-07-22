@@ -170,8 +170,10 @@ the developer path. They are confirmation-gated and describe a
 `developer-build` sandbox policy. When Docker is configured as the host
 backend, the host resolves `sandbox.defaults` and the class overrides before
 execution. Clients should send a target and bounded options, not container
-commands or shell strings. With `backend: none`, the tools remain unavailable
-with `sandbox.backend_unavailable`.
+commands or shell strings. With `backend: none`, sandbox-backed tools are
+omitted from the effective tooling view at startup. A direct sandbox execution
+request still fails with `sandbox.backend_unavailable`; the runtime never
+falls back to an unsandboxed process.
 
 For a local subprocess provider, use the same model with
 `"transport": "stdio"` and a `command` array; see
