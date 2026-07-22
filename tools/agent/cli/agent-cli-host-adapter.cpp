@@ -6,6 +6,7 @@
 #include "../runtime/agent-runtime-assembly.h"
 #include "../runtime/agent-runtime-execution.h"
 #include "agent/sandbox-docker-runtime.h"
+#include "agent/sandbox-kubernetes-runtime.h"
 #include "agent/sandbox-runtime.h"
 #include "../tooling/agent-sandbox-helper.h"
 #include "common/cli-scope.h"
@@ -264,7 +265,8 @@ bool resolve_agent_host_tool_selection(
             };
         }
 
-        if (request.sandbox.backend == "docker") {
+        if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes") {
+            const auto backend = request.sandbox.backend;
             auto docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
                 common_agent_docker_sandbox_config{
                     request.sandbox.docker_executable,
@@ -276,13 +278,24 @@ bool resolve_agent_host_tool_selection(
             const auto defaults = request.sandbox.defaults;
             const auto tool_context = request.tool_context;
             auto * bound_resource_store = resource_store;
-            bindings.sandbox_execute = [docker_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](
+            auto kubernetes_runtime = std::make_shared<common_agent_sandbox_kubernetes_runtime>(
+                common_agent_kubernetes_sandbox_config{
+                    request.sandbox.kubernetes_executable,
+                    request.sandbox.kubernetes_namespace,
+                    request.sandbox.kubernetes_service_account,
+                    request.sandbox.kubernetes_runtime_class,
+                    request.sandbox.kubernetes_cleanup,
+                });
+            bindings.sandbox_execute = [backend, docker_runtime, kubernetes_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](
                     common_agent_sandbox_request sandbox_request) {
                 common_agent_sandbox_policy policy = defaults;
                 const auto it = policies.find(sandbox_request.execution_class);
                 if (it != policies.end()) policy = it->second;
                 policy.execution_class = sandbox_request.execution_class;
-                common_agent_sandbox_tool_helper helper(*docker_runtime, policy);
+                common_agent_sandbox_runtime & runtime = backend == "docker"
+                    ? static_cast<common_agent_sandbox_runtime &>(*docker_runtime)
+                    : static_cast<common_agent_sandbox_runtime &>(*kubernetes_runtime);
+                common_agent_sandbox_tool_helper helper(runtime, policy);
                 helper.set_workspace_manager(workspace_manager.get());
                 helper.set_resource_store(bound_resource_store, {
                     tool_context.scope.namespace_id,

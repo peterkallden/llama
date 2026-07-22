@@ -28,6 +28,12 @@
     "docker": {
       "default_image": "llama-agent-dev:latest"
     },
+    "kubernetes": {
+      "namespace": "llama-agent-jobs",
+      "service_account": "llama-agent-runner",
+      "runtime_class": "standard",
+      "cleanup": true
+    },
     "workspace": {
       "root": "C:/agent-workspaces",
       "artifact_root": "C:/agent-artifacts",

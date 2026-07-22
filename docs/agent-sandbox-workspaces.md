@@ -65,7 +65,8 @@ Workspace roots and execution classes belong in host configuration:
 The values in `sandbox.defaults` are copied to every execution class when the
 host configuration is loaded. A class may override only the values it needs.
 An execution class may provide its own image; if it is omitted, the Docker
-backend uses `sandbox.docker.default_image`. The request itself may not
+backend uses `sandbox.docker.default_image`. Kubernetes uses the image from
+the selected execution class or default policy. The request itself may not
 override this host-owned selection. A value of zero is invalid for CPU,
 timeout and output limits; zero means no configured limit only for memory and
 process count.
@@ -77,12 +78,42 @@ for hosts that only want validation: it returns `sandbox.backend_unavailable`
 instead of falling back to an unsandboxed process. Broader network scopes are
 rejected by the Docker backend until explicit allowlists are implemented.
 
+## Kubernetes backend
+
+The Kubernetes backend creates one ephemeral `batch/v1 Job` per operation and
+waits for completion through `kubectl`. Its host configuration is:
+
+```json
+{
+  "sandbox": {
+    "backend": "kubernetes",
+    "kubernetes": {
+      "executable": "kubectl",
+      "namespace": "llama-agent-jobs",
+      "service_account": "llama-agent-runner",
+      "runtime_class": "standard",
+      "cleanup": true
+    }
+  }
+}
+```
+
+The first slice uses `hostPath` volumes for the logical source, writable and
+artifact mounts. This is suitable for a local Kubernetes installation where
+the workspace is visible on the worker node. A remote cluster needs a shared
+volume or object-store materializer before these mounts can be used safely.
+The backend currently supports `network: none` by applying a deny-egress
+`NetworkPolicy` alongside the Job; the cluster's CNI must enforce
+NetworkPolicy. It also applies non-root and read-only-rootfs security settings,
+collects logs and artifacts, enforces the operation timeout, and deletes the
+Job and policy when cleanup is enabled.
+
 ## Semantic developer tools
 
 `build_target` and `test_run` create bounded `developer-build` requests. The
 native adapter emits semantic commands such as `agent.build_target` and
 `agent.test_run`; Docker translates those requests into container execution
-details. Kubernetes will use the same semantic contract later.
+details. Kubernetes translates the same semantic request into a Job.
 
 Operation directories are host-created and may be ephemeral. Source is
 normally read-only, the writable directory is used for build/analysis work,

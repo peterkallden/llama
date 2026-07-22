@@ -312,6 +312,15 @@ bool parse_agent_host_config_json(
             read_optional(docker, "executable", config.sandbox.docker_executable);
             read_optional(docker, "default_image", config.sandbox.docker_default_image);
         }
+        if (sandbox.contains("kubernetes")) {
+            if (!sandbox["kubernetes"].is_object()) { error = "sandbox.kubernetes must be an object"; return false; }
+            const auto & kubernetes = sandbox["kubernetes"];
+            read_optional(kubernetes, "executable", config.sandbox.kubernetes_executable);
+            read_optional(kubernetes, "namespace", config.sandbox.kubernetes_namespace);
+            read_optional(kubernetes, "service_account", config.sandbox.kubernetes_service_account);
+            read_optional(kubernetes, "runtime_class", config.sandbox.kubernetes_runtime_class);
+            read_optional(kubernetes, "cleanup", config.sandbox.kubernetes_cleanup);
+        }
         if (sandbox.contains("workspace")) {
             if (!sandbox["workspace"].is_object()) { error = "sandbox.workspace must be an object"; return false; }
             const auto & workspace = sandbox["workspace"];
@@ -650,6 +659,13 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"executable", config.sandbox.docker_executable},
                 {"default_image", config.sandbox.docker_default_image},
             }},
+            {"kubernetes", {
+                {"executable", config.sandbox.kubernetes_executable},
+                {"namespace", config.sandbox.kubernetes_namespace},
+                {"service_account", config.sandbox.kubernetes_service_account},
+                {"runtime_class", config.sandbox.kubernetes_runtime_class},
+                {"cleanup", config.sandbox.kubernetes_cleanup},
+            }},
             {"workspace", {
                 {"root", config.sandbox.workspace.workspace_root},
                 {"artifact_root", config.sandbox.workspace.artifact_root},
@@ -861,6 +877,10 @@ bool validate_agent_host_config(
     }
     if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" && config.sandbox.backend != "kubernetes") {
         error = "sandbox.backend must be none, docker or kubernetes";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" && config.sandbox.kubernetes_namespace.empty()) {
+        error = "sandbox.kubernetes.namespace must not be empty";
         return false;
     }
     if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {

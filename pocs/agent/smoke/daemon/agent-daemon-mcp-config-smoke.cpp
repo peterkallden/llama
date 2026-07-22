@@ -230,6 +230,13 @@ int main(int argc, char ** argv) {
                 {"executable", "docker"},
                 {"default_image", "llama-agent-dev:latest"},
             }},
+            {"kubernetes", {
+                {"executable", "kubectl"},
+                {"namespace", "llama-agent-jobs"},
+                {"service_account", "llama-agent-runner"},
+                {"runtime_class", "standard"},
+                {"cleanup", true},
+            }},
             {"workspace", {
                 {"root", "C:/agent-workspaces"},
                 {"artifact_root", "C:/agent-artifacts"},
@@ -266,6 +273,8 @@ int main(int argc, char ** argv) {
             capability_config.sandbox.backend != "docker" ||
             capability_config.sandbox.docker_executable != "docker" ||
             capability_config.sandbox.docker_default_image != "llama-agent-dev:latest" ||
+            capability_config.sandbox.kubernetes_namespace != "llama-agent-jobs" ||
+            capability_config.sandbox.kubernetes_service_account != "llama-agent-runner" ||
             capability_config.sandbox.classes.at("developer-build").image != "llama-agent-dev:latest" ||
             capability_config.sandbox.classes.at("developer-build").limits.max_output_bytes != 131072 ||
             capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
@@ -288,6 +297,7 @@ int main(int argc, char ** argv) {
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write" ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["image"] != "llama-agent-dev:latest" ||
             capability_roundtrip["sandbox"]["defaults"]["image"] != "llama-agent-default:latest" ||
+            capability_roundtrip["sandbox"]["kubernetes"]["namespace"] != "llama-agent-jobs" ||
             capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest" ||
             capability_roundtrip["sandbox"]["workspace"]["operation_mode"] != "ephemeral") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");

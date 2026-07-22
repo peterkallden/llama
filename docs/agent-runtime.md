@@ -150,14 +150,17 @@ The catalog also defines the first semantic developer execution contracts:
 host-owned sandbox policy metadata; they do not accept Docker, Kubernetes or
 shell details. Their executors are intentionally kept behind the host-owned
 sandbox binding while the model-facing schema remains stable. Docker is the
-first concrete backend; Kubernetes will use the same seam later.
+first concrete backend and Kubernetes now uses the same seam through
+ephemeral Jobs.
 
 The backend-neutral sandbox runtime also has an explicit no-backend state.
 When Docker, Kubernetes or another executor is not configured, a validated
 request returns `sandbox.backend_unavailable`; it never falls back to an
 unsandboxed host process. This keeps the runtime seam testable before the
 unsandboxed host process. This keeps the no-backend mode explicit even though
-Docker execution is now available when selected by host configuration.
+Docker and Kubernetes execution are available when selected by host
+configuration. Kubernetes currently assumes hostPath-visible workspaces;
+shared-volume materialization for remote clusters remains a later slice.
 
 ## Runtime context budgets
 
