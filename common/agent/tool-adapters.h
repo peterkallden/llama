@@ -32,6 +32,11 @@ struct common_native_tool_bindings {
     // Optional host-owned structured data backend. The backend is selected by
     // host configuration; tools only submit bounded semantic requests.
     common_agent_data_store * data_store = nullptr;
+    // Optional host-owned semantic diagnostics provider. A runtime may back
+    // this with clangd, an index, or another project-aware implementation.
+    // The native adapters keep a bounded text fallback when it is absent.
+    std::function<common_tool_execution_result(const std::string &)> diagnostics_symbol;
+    std::function<common_tool_execution_result(const std::string &)> diagnostics_references;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;

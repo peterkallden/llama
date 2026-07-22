@@ -165,6 +165,16 @@ profile, configured capabilities, resolved tool names and effective
 network/write policy. This is the authoritative startup diagnostic for what
 the instance exposes.
 
+The read-only developer profile also exposes `diagnostics.symbol` and
+`diagnostics.references`. Their schemas contain a symbol plus an optional path
+hint/definition path and result limit. A host may bind a semantic implementation
+such as clangd/LSP; otherwise the native adapter uses the controlled repository
+root as a bounded text fallback and marks the result with
+`backend: text-fallback` and `semantic: false`. `diagnostics.test_failures`
+does not execute tests: it groups an existing bounded result by normalized
+message and classification, so it can be used by reflective and deliberate
+flows as well as research.
+
 The tool catalog includes semantic `development.build` and `development.test` contracts for
 the developer path. They are confirmation-gated and describe a
 `developer-build` sandbox policy. When Docker is configured as the host

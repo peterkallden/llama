@@ -199,6 +199,8 @@ do not select implementations or host paths.
 | `development.build` | Sandbox-backed | Declarative target request through the configured sandbox backend |
 | `development.test` | Sandbox-backed | Declarative test request through the configured sandbox backend |
 | `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output |
+| `diagnostics.symbol` | Host-native analysis | Finds bounded symbol definitions through a host provider or text fallback |
+| `diagnostics.references` | Host-native analysis | Finds bounded references through the same provider/index seam or text fallback |
 | `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root |
 | `dataset.inspect` | Host-native | Returns bounded path, format and size metadata |
 | `dataset.schema` | Host-native | Returns a first CSV column schema; richer inference is future work |
@@ -210,7 +212,7 @@ do not select implementations or host paths.
 | `data.join` | Store-backed | Joins two host-approved datasets through the configured data store |
 | `data.transform` | Store-backed | Applies host-approved column transformations through the configured data store |
 | `statistics.describe` | Store-backed | Produces bounded descriptive statistics through the configured data store |
-| `diagnostics.test_failures` | Host-native analysis | Groups bounded failure lines from an existing test result |
+| `diagnostics.test_failures` | Host-native analysis | Groups normalized failure lines, classifies common causes, and preserves examples |
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output |
 | `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store |
@@ -218,8 +220,9 @@ do not select implementations or host paths.
 The first data foundation deliberately supports safe discovery and bounded
 materialization. Cozo-backed queries, filtering, aggregation, joins,
 transformations and descriptive statistics now belong behind the data-store
-seam. Charts, richer artifact conversion, formatters and semantic symbol
-analysis remain follow-up work. No data backend is implicitly selected when the
+seam. Charts and richer artifact conversion remain follow-up work. Semantic
+symbol analysis now has an explicit host-owned provider seam, while the default
+build uses a bounded text fallback when no semantic index is available. No data backend is implicitly selected when the
 host has not configured one.
 
 The namespaced names are canonical in the catalog, native registry and
@@ -259,8 +262,20 @@ to the runtime; the model cannot select a database path or backend.
 The first diagnostic/data implementations are intentionally bounded. CSV
 validation currently supports `not_null` and `unique`, compiler diagnostics parse
 existing output, formatter diagnostics inspect formatter output, and include-graph
-diagnostics consume normalized `source -> include` lines. They do not invoke an
-unbounded compiler, formatter or shell command themselves.
+diagnostics consume normalized `source -> include` lines. Symbol and reference
+tools accept a host-owned semantic callback, for example clangd/LSP or a project
+index; when absent they return `backend: text-fallback` and `semantic: false`.
+Test-failure analysis groups normalized messages and reports a bounded
+classification, count and up to three examples per group. These tools do not
+invoke an unbounded compiler, formatter or shell command themselves.
+
+Diagnostics scope is project-oriented. A future semantic index should be keyed
+by `project_id`, repository revision, compile-commands hash, toolchain id and
+index version. Session and research state may retain query results or evidence
+references, but should not become the canonical source for project symbols.
+Clang/clangd is an optional host capability: its absence does not disable the
+diagnostic contracts, but limits results to the explicit fallback backend until
+a semantic provider is configured.
 * Provider-backed tools are enabled only through host configuration and
   caller policy. Credentials, endpoints and transport details remain outside
   the model-facing schema.

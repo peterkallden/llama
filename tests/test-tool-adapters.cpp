@@ -165,6 +165,8 @@ int main() {
         {"data.transform", 1, true, "{}"},
         {"statistics.describe", 1, true, "{}"},
         {"diagnostics.test_failures", 1, true, "{}"},
+        {"diagnostics.symbol", 1, true, "{}"},
+        {"diagnostics.references", 1, true, "{}"},
         {"diagnostics.format", 1, true, "{}"},
         {"diagnostics.include_graph", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
@@ -189,6 +191,12 @@ int main() {
     assert(result.ok && result.output.find("missing symbol") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"PASS one\nFAILED two: assertion\n"})"});
     assert(result.ok && result.output.find("assertion") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.symbol", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("text-fallback") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.references", R"({"symbol":"needle","definition_path":"src"})"});
+    assert(result.ok && result.output.find("\"references\"") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"FAILED src/a.cpp:42 assertion expected 1\nFAILED src/b.cpp:42 assertion expected 2\nctest: timeout after 120000ms\n"})"});
+    assert(result.ok && result.output.find("assertion_failure") != std::string::npos && result.output.find("timeout") != std::string::npos && result.output.find("\"count\":2") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});
     assert(result.ok && result.output.find("formatted") != std::string::npos && result.output.find("sample.cpp") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"a.h -> b.h\nb.h -> c.h\n"})"});

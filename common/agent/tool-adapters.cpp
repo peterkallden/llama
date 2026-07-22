@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <set>
@@ -263,6 +264,72 @@ bool repository_path(const std::string & root, const std::string & relative, std
     const auto requested_text = requested.generic_string();
     if (requested_text != base_text && requested_text.rfind(base_text + "/", 0) != 0) { error = "repository path escapes the runtime root"; return false; }
     out = requested; return true;
+}
+
+bool text_file(const std::filesystem::path & path);
+std::string lower_copy(std::string value);
+
+common_tool_execution_result fallback_diagnostics_symbol(
+        const common_native_tool_bindings & bindings,
+        const json & arguments,
+        bool references) {
+    if (bindings.repository_root.empty()) {
+        return tool_execution_failure("tool.diagnostics.repository_unavailable", "diagnostics requires a repository root", "Diagnostics are unavailable without a host-owned repository.");
+    }
+    const auto symbol = arguments.value("symbol", std::string{});
+    const int limit = arguments.value("max_results", references ? 128 : 64);
+    if (symbol.empty() || symbol.size() > 256 || limit < 1 || limit > (references ? 128 : 64)) {
+        return tool_validation_failure(references ? "tool.diagnostics.references.invalid_arguments" : "tool.diagnostics.symbol.invalid_arguments", "diagnostics symbol arguments are out of bounds");
+    }
+    std::filesystem::path root;
+    std::string path_error;
+    const auto path_hint = arguments.value(references ? "definition_path" : "path_hint", std::string{});
+    if (!repository_path(bindings.repository_root, path_hint, root, path_error)) return tool_validation_failure("tool.diagnostics.invalid_path", std::move(path_error));
+    if (std::filesystem::is_regular_file(root)) {
+        // Keep the path-hint contract useful for a single file as well.
+    } else if (!std::filesystem::is_directory(root)) {
+        return tool_not_found_failure("tool.diagnostics.path_not_found", "diagnostics path was not found", "The diagnostics path was not found.");
+    }
+    json matches = json::array();
+    auto scan = [&](const std::filesystem::path & file) {
+        std::error_code file_error;
+        if (matches.size() >= static_cast<size_t>(limit) || !std::filesystem::is_regular_file(file) || std::filesystem::file_size(file, file_error) > 512 * 1024 || file_error || !text_file(file)) return;
+        std::ifstream stream(file); std::string line;
+        for (int number = 1; std::getline(stream, line) && matches.size() < static_cast<size_t>(limit); ++number) {
+            size_t offset = line.find(symbol);
+            while (offset != std::string::npos && matches.size() < static_cast<size_t>(limit)) {
+                json item = {{"path", std::filesystem::relative(file, bindings.repository_root).generic_string()}, {"line", number}, {"column", offset + 1}, {"symbol", symbol}, {"kind", references ? "reference" : "text_match"}};
+                if (!references) item["kind"] = (line.find("class " + symbol) != std::string::npos || line.find("struct " + symbol) != std::string::npos || line.find("enum " + symbol) != std::string::npos) ? "definition" : "text_match";
+                matches.push_back(item);
+                offset = line.find(symbol, offset + symbol.size());
+            }
+        }
+    };
+    if (std::filesystem::is_regular_file(root)) scan(root);
+    else for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < static_cast<size_t>(limit); ++it) scan(it->path());
+    return tool_success_json({{"backend", "text-fallback"}, {"semantic", false}, {"symbol", symbol}, {references ? "references" : "definitions", matches}, {"count", matches.size()}, {"truncated", matches.size() >= static_cast<size_t>(limit)}});
+}
+
+std::string normalize_failure_message(std::string value) {
+    value = std::regex_replace(value, std::regex(R"([A-Za-z]:[\\/][^ :]+)"), "<path>");
+    value = std::regex_replace(value, std::regex(R"([^\s:]+\.(?:c|cc|cpp|cxx|h|hh|hpp):\d+(?::\d+)?)"), "<location>");
+    value = std::regex_replace(value, std::regex(R"((expected\s+)\d+)"), "$1<value>");
+    value = std::regex_replace(value, std::regex(R"(0x[0-9A-Fa-f]+|\b\d{4,}\b)"), "<number>");
+    value = std::regex_replace(value, std::regex(R"(\s+)"), " ");
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
+    return value;
+}
+
+std::string classify_failure(const std::string & line) {
+    const auto lower = lower_copy(line);
+    if (lower.find("timeout") != std::string::npos || lower.find("timed out") != std::string::npos) return "timeout";
+    if (lower.find("segmentation fault") != std::string::npos || lower.find("access violation") != std::string::npos || lower.find("crash") != std::string::npos) return "crash";
+    if (lower.find("linker") != std::string::npos || lower.find("undefined reference") != std::string::npos || lower.find("unresolved external") != std::string::npos) return "link_failure";
+    if (lower.find("compile") != std::string::npos || lower.find("compiler") != std::string::npos) return "compile_failure";
+    if (lower.find("permission") != std::string::npos || lower.find("access denied") != std::string::npos) return "permission";
+    if (lower.find("network") != std::string::npos || lower.find("connection") != std::string::npos) return "network";
+    if (lower.find("assert") != std::string::npos || lower.find("expect") != std::string::npos) return "assertion_failure";
+    return "test_failure";
 }
 
 bool make_sandbox_request(
@@ -854,6 +921,20 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"diagnostics", diagnostics}, {"count", diagnostics.size()}});
             }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.symbol") {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.symbol.invalid_arguments", "diagnostics.symbol requires a symbol");
+                if (bindings.diagnostics_symbol) return bindings.diagnostics_symbol(input);
+                return fallback_diagnostics_symbol(bindings, arguments, false);
+            }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.references") {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.references.invalid_arguments", "diagnostics.references requires a symbol");
+                if (bindings.diagnostics_references) return bindings.diagnostics_references(input);
+                return fallback_diagnostics_symbol(bindings, arguments, true);
+            }, error);
         } else if (definition.executor_id == "builtin.diagnostics.test_failures") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err; json arguments;
@@ -862,13 +943,26 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 const auto text = arguments["result"].get<std::string>();
                 json groups = json::array();
+                std::map<std::string, size_t> group_indices;
                 std::istringstream lines(text); std::string line;
-                while (std::getline(lines, line) && groups.size() < 64) {
-                    const auto marker = line.find("FAILED");
-                    if (marker == std::string::npos && line.find("failed") == std::string::npos) continue;
-                    groups.push_back({{"classification", "test_failure"}, {"message", line}});
+                while (std::getline(lines, line)) {
+                    const auto lower = lower_copy(line);
+                    if (lower.find("failed") == std::string::npos && lower.find("failure") == std::string::npos && lower.find("error") == std::string::npos && lower.find("timeout") == std::string::npos && lower.find("assert") == std::string::npos) continue;
+                    const auto classification = classify_failure(line);
+                    const auto normalized = normalize_failure_message(line);
+                    const auto key = classification + "|" + normalized;
+                    auto found = group_indices.find(key);
+                    if (found == group_indices.end()) {
+                        if (groups.size() >= 64) continue;
+                        group_indices.emplace(key, groups.size());
+                        groups.push_back({{"classification", classification}, {"message", normalized}, {"count", 1}, {"examples", json::array({line.substr(0, 1024)})}});
+                    } else {
+                        auto & group = groups[found->second];
+                        group["count"] = group["count"].get<size_t>() + 1;
+                        if (group["examples"].size() < 3) group["examples"].push_back(line.substr(0, 1024));
+                    }
                 }
-                return tool_success_json({{"failure_groups", groups}, {"count", groups.size()}});
+                return tool_success_json({{"failure_groups", groups}, {"count", groups.size()}, {"backend", "bounded-text"}});
             }, error);
         } else if (definition.executor_id == "builtin.diagnostics.format") {
             installed = register_definition(definition, registry, [](const std::string & input) {
