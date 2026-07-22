@@ -3,6 +3,7 @@
 #include "agent/sandbox-contract.h"
 #include "agent/sandbox-policy.h"
 #include "agent/sandbox-runtime.h"
+#include "agent/workspace-manager.h"
 #include "agent/tool-runtime-contract.h"
 
 #include <nlohmann/json.hpp>
@@ -72,9 +73,45 @@ public:
             result.artifacts);
     }
 
+    common_tool_execution_result run_for_workspace(
+            const common_agent_workspace_context & context,
+            const std::string & operation_id,
+            common_agent_sandbox_request request,
+            common_agent_workspace_operation * operation_out = nullptr) {
+        if (workspace_manager == nullptr) {
+            return common_tool_execution_result::failure(
+                "sandbox.workspace_manager_unavailable",
+                common_tool_failure_class::execution,
+                false,
+                "The host has not configured a workspace manager.",
+                "sandbox workspace manager is required for workspace execution");
+        }
+        common_agent_workspace_operation operation;
+        std::string error;
+        if (!workspace_manager->create_operation(context, operation_id, operation, error)) {
+            return common_tool_execution_result::failure(
+                "sandbox.workspace_setup_failed",
+                common_tool_failure_class::execution,
+                false,
+                "The sandbox workspace could not be prepared.",
+                error);
+        }
+        request.operation_id = operation.operation_id;
+        request.workspace.source_path = operation.source_path;
+        request.workspace.writable_path = operation.writable_path;
+        request.workspace.artifact_path = operation.artifact_path;
+        if (operation_out != nullptr) *operation_out = operation;
+        return run(request);
+    }
+
+    void set_workspace_manager(common_agent_workspace_manager * manager) {
+        workspace_manager = manager;
+    }
+
 private:
     common_agent_sandbox_runtime & runtime;
     common_agent_sandbox_policy policy;
+    common_agent_workspace_manager * workspace_manager = nullptr;
 };
 
 class common_agent_sandbox_local_test_runtime final : public common_agent_sandbox_runtime {

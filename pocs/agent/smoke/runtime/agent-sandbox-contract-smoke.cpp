@@ -1,6 +1,7 @@
 #include "tools/agent/tooling/agent-sandbox-helper.h"
 
 #include <cstdio>
+#include <filesystem>
 
 int main() {
     common_agent_sandbox_local_test_runtime runtime;
@@ -43,6 +44,29 @@ int main() {
     if (unavailable.ok || unavailable.failure_code != "sandbox.backend_unavailable" ||
             unavailable.failure_class != common_tool_failure_class::execution) {
         std::fprintf(stderr, "no-backend runtime did not return the expected result\n");
+        return 1;
+    }
+
+    common_agent_workspace_manager workspace_manager({
+        (std::filesystem::temp_directory_path() / "llama-agent-sandbox-contract-workspaces").string(),
+        (std::filesystem::temp_directory_path() / "llama-agent-sandbox-contract-artifacts").string(),
+    });
+    common_agent_sandbox_local_test_runtime workspace_runtime;
+    common_agent_sandbox_tool_helper workspace_helper(workspace_runtime, policy);
+    workspace_helper.set_workspace_manager(&workspace_manager);
+    common_agent_workspace_context context;
+    context.workspace_id = "developer:project";
+    context.namespace_id = "local";
+    context.session_id = "session-1";
+    context.turn_id = "turn-1";
+    common_agent_workspace_operation operation;
+    const auto workspace_result = workspace_helper.run_for_workspace(
+        context, "build/op-1", request, &operation);
+    if (!workspace_result.ok || operation.source_path.empty() ||
+            workspace_runtime.last_request.workspace.source_path != operation.source_path ||
+            workspace_runtime.last_request.workspace.writable_path != operation.writable_path ||
+            workspace_runtime.last_request.workspace.artifact_path != operation.artifact_path) {
+        std::fprintf(stderr, "workspace-aware sandbox helper did not prepare the operation\n");
         return 1;
     }
 
