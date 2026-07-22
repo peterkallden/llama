@@ -104,6 +104,9 @@ The first slice uses `hostPath` volumes for the logical source, writable and
 artifact mounts. This is suitable for a local Kubernetes installation where
 the workspace is visible on the worker node. A remote cluster needs a shared
 volume or object-store materializer before these mounts can be used safely.
+The planned PVC-backed workspace uses a `4Gi` claim for workspace data and a
+separate `1Gi` claim for artifacts. Those values are the host-policy defaults
+for the PVC backend; the current hostPath slice does not create PVCs yet.
 The backend currently supports `network: none` by applying a deny-egress
 `NetworkPolicy` alongside the Job; the cluster's CNI must enforce
 NetworkPolicy. It also applies non-root and read-only-rootfs security settings,
