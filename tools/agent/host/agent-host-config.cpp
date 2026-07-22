@@ -890,10 +890,9 @@ bool validate_agent_host_config(
         return false;
     }
     if (config.sandbox.backend == "kubernetes" &&
-            (config.sandbox.kubernetes_storage_class.empty() ||
-             config.sandbox.kubernetes_workspace_storage_size.empty() ||
+            (config.sandbox.kubernetes_workspace_storage_size.empty() ||
              config.sandbox.kubernetes_artifact_storage_size.empty())) {
-        error = "sandbox.kubernetes storage class and sizes must not be empty";
+        error = "sandbox.kubernetes storage sizes must not be empty";
         return false;
     }
     if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {
