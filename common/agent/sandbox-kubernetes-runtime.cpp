@@ -218,15 +218,20 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     };
     if (!config.service_account.empty()) pod_spec["serviceAccountName"] = config.service_account;
     if (!config.runtime_class.empty()) pod_spec["runtimeClassName"] = config.runtime_class;
+    json pod_template = json::object();
+    pod_template["metadata"] = {
+        {"labels", {{"app", "llama-agent-sandbox"}, {"job", job}}},
+    };
+    pod_template["spec"] = pod_spec;
+    json job_spec = json::object();
+    job_spec["backoffLimit"] = 0;
+    job_spec["ttlSecondsAfterFinished"] = 300;
+    job_spec["template"] = pod_template;
     const json job_manifest = {
         {"apiVersion", "batch/v1"},
         {"kind", "Job"},
         {"metadata", {{"name", job}, {"namespace", config.namespace_name}}},
-        {"spec", {
-            {"backoffLimit", 0},
-            {"ttlSecondsAfterFinished", 300},
-            {"template", {{"metadata", {{"labels", {{"app", "llama-agent-sandbox"}, {"job", job}}}}, {"spec", pod_spec}}}},
-        }},
+        {"spec", job_spec},
     };
     const json network_policy = {
         {"apiVersion", "networking.k8s.io/v1"},
