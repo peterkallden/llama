@@ -191,41 +191,41 @@ do not select implementations or host paths.
 
 | Tool | Boundary | Current foundation behavior | Maturity | Missing / next step |
 | --- | --- | --- | --- | --- |
-| `workspace.list` | Host-native | Bounded directory listing inside the controlled repository root | Grund | Ignore rules, richer entry metadata and pagination |
-| `workspace.read` | Host-native | Bounded text-file line reads | Grund | Binary/resource reads, encoding metadata and larger resource references |
-| `workspace.search` | Host-native | Bounded text search over readable files | Grund | Index-backed search, better language awareness and stable pagination |
-| `workspace.patch` | Host-native mutation | Hash-token checked line operations; confirmation-gated | Begränsad | Atomic multi-file patches, rollback and structured diff artifacts |
-| `repository.diff` | Host-native | Bounded Git working-tree diff summary | Begränsad | Explicit base/head/range selection and larger patch artifacts |
-| `development.build` | Sandbox-backed | Declarative target request through the configured sandbox backend | Kontraktsnivå | Full backend execution, diagnostics parsing and artifact import per tool |
-| `development.test` | Sandbox-backed | Declarative test request through the configured sandbox backend | Kontraktsnivå | CTest/JUnit result parsing, cancellation and persistent test history |
-| `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output | Begränsad | Compiler invocation, richer formats and source-linked diagnostics |
-| `diagnostics.symbol` | Host-native analysis | Host provider seam with bounded text fallback | Experimentell | clangd/LSP or project-index backend and definition-kind ranking |
-| `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimentell | Semantic references, reference kinds and project-index persistence |
-| `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root | Begränsad | Dataset registry, permissions/provenance and non-file sources |
-| `dataset.inspect` | Host-native | Returns bounded path, format and size metadata | Begränsad | Complete format metadata and schema-aware inspection |
-| `dataset.schema` | Host-native | Returns a first CSV column schema | Begränsad | JSON/Parquet support, type inference confidence and constraints |
-| `dataset.sample` | Host-native | Returns a bounded CSV head sample | Begränsad | Random/stratified sampling, seed handling and non-CSV backends |
-| `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules | Begränsad | Range/type/regex rules, validation profiles and artifact reports |
-| `data.query` | Store-backed | Executes a bounded backend-neutral structured query | Begränsad | Broader query language, materialized inputs and backend parity |
-| `data.filter` | Store-backed | Applies declarative predicates through the configured data store | Begränsad | More operators, typed values and derived dataset artifacts |
-| `data.aggregate` | Store-backed | Applies bounded grouping and aggregate operations | Begränsad | More aggregate functions, null semantics and provenance |
-| `data.join` | Store-backed | Joins two host-approved datasets | Begränsad | Join validation, larger results and artifact-backed output datasets |
-| `data.transform` | Store-backed | Applies bounded column transformations | Begränsad | Safer expression language, type checking and artifact persistence |
-| `statistics.describe` | Store-backed | Produces bounded descriptive statistics | Begränsad | Confidence intervals, distributions and assumption reporting |
-| `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Begränsad | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
-| `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Begränsad | Real formatter backend, patch artifact generation and format profiles |
-| `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Begränsad | Compiler database extraction, cycle analysis and persisted graph queries |
-| `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store | Begränsad | Binary formats, dataset export and richer provenance/retention policy |
+| `workspace.list` | Host-native | Bounded directory listing inside the controlled repository root | Foundation | Ignore rules, richer entry metadata and pagination |
+| `workspace.read` | Host-native | Bounded text-file line reads | Foundation | Binary/resource reads, encoding metadata and larger resource references |
+| `workspace.search` | Host-native | Bounded text search over readable files | Foundation | Index-backed search, better language awareness and stable pagination |
+| `workspace.patch` | Host-native mutation | Hash-token checked line operations; confirmation-gated | Limited | Atomic multi-file patches, rollback and structured diff artifacts |
+| `repository.diff` | Host-native | Bounded Git working-tree diff summary | Limited | Explicit base/head/range selection and larger patch artifacts |
+| `development.build` | Sandbox-backed | Declarative target request through the configured sandbox backend | Contract-level | Full backend execution, diagnostics parsing and artifact import per tool |
+| `development.test` | Sandbox-backed | Declarative test request through the configured sandbox backend | Contract-level | CTest/JUnit result parsing, cancellation and persistent test history |
+| `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output | Limited | Compiler invocation, richer formats and source-linked diagnostics |
+| `diagnostics.symbol` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | clangd/LSP or project-index backend and definition-kind ranking |
+| `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | Semantic references, reference kinds and project-index persistence |
+| `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root | Limited | Dataset registry, permissions/provenance and non-file sources |
+| `dataset.inspect` | Host-native | Returns bounded path, format and size metadata | Limited | Complete format metadata and schema-aware inspection |
+| `dataset.schema` | Host-native | Returns a first CSV column schema | Limited | JSON/Parquet support, type inference confidence and constraints |
+| `dataset.sample` | Host-native | Returns a bounded CSV head sample | Limited | Random/stratified sampling, seed handling and non-CSV backends |
+| `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules | Limited | Range/type/regex rules, validation profiles and artifact reports |
+| `data.query` | Store-backed | Executes a bounded backend-neutral structured query | Limited | Broader query language, materialized inputs and backend parity |
+| `data.filter` | Store-backed | Applies declarative predicates through the configured data store | Limited | More operators, typed values and derived dataset artifacts |
+| `data.aggregate` | Store-backed | Applies bounded grouping and aggregate operations | Limited | More aggregate functions, null semantics and provenance |
+| `data.join` | Store-backed | Joins two host-approved datasets | Limited | Join validation, larger results and artifact-backed output datasets |
+| `data.transform` | Store-backed | Applies bounded column transformations | Limited | Safer expression language, type checking and artifact persistence |
+| `statistics.describe` | Store-backed | Produces bounded descriptive statistics | Limited | Confidence intervals, distributions and assumption reporting |
+| `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Limited | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
+| `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
+| `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
+| `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store | Limited | Binary formats, dataset export and richer provenance/retention policy |
 
 Maturity is a capability status, not a quality rating:
 
-* `Grund` means the bounded host-native behavior is implemented and directly
+* `Foundation` means the bounded host-native behavior is implemented and directly
   testable.
-* `Begränsad` means a usable first implementation exists, but the current
+* `Limited` means a usable first implementation exists, but the current
   schema or backend intentionally covers only a narrow subset.
-* `Kontraktsnivå` means the semantic tool contract and policy seam exist, while
+* `Contract-level` means the semantic tool contract and policy seam exist, while
   useful execution still depends on a configured sandbox/backend integration.
-* `Experimentell` means the tool is available for controlled use, but its
+* `Experimental` means the tool is available for controlled use, but its
   result is explicitly provisional, for example the text fallback for symbol
   and reference lookup.
 
