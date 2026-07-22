@@ -156,7 +156,7 @@ ephemeral Jobs.
 Kubernetes deployment settings belong to host configuration, not to agent
 requests. This includes the `kubectl` executable, namespace, service account,
 runtime class, storage class, PVC sizes, staging image, kubeconfig/context and
-cleanup/retention policy. The current defaults are `4Gi` for workspace data
+TLS verification and cleanup/retention policy. The current defaults are `4Gi` for workspace data
 and `1Gi` for artifacts; an empty storage class uses the cluster default. PVC identity is derived from
 `project_id` when present and otherwise from the session workspace identity.
 Operation directories are created below that PVC. Clients cannot choose PVC

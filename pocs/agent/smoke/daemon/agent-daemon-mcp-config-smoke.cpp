@@ -275,6 +275,7 @@ int main(int argc, char ** argv) {
             capability_config.sandbox.docker_default_image != "llama-agent-dev:latest" ||
             capability_config.sandbox.kubernetes_namespace != "llama-agent-jobs" ||
             !capability_config.sandbox.kubernetes_storage_class.empty() ||
+            capability_config.sandbox.kubernetes_insecure_skip_tls_verify ||
             capability_config.sandbox.kubernetes_workspace_storage_size != "4Gi" ||
             capability_config.sandbox.kubernetes_artifact_storage_size != "1Gi" ||
             capability_config.sandbox.kubernetes_staging_image != "alpine:3.20" ||

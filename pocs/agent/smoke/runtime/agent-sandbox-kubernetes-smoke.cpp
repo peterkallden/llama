@@ -6,7 +6,8 @@
 #include <string>
 
 int main() {
-    common_agent_sandbox_kubernetes_runtime runtime({"kubectl", {}, {}, "llama-agent", {}, {}, {}, "4Gi", "1Gi", "alpine:3.20", "project", 120000, true});
+    const bool insecure_skip_tls_verify = std::getenv("LLAMA_AGENT_KUBERNETES_INSECURE_SKIP_TLS_VERIFY") != nullptr;
+    common_agent_sandbox_kubernetes_runtime runtime({"kubectl", {}, {}, insecure_skip_tls_verify, "llama-agent", {}, {}, {}, "4Gi", "1Gi", "alpine:3.20", "project", 120000, true});
     common_agent_sandbox_request request;
     request.operation_id = "kubernetes-contract-smoke";
     request.command.program = "sh";
@@ -44,7 +45,7 @@ int main() {
     const char * namespace_name = std::getenv("LLAMA_AGENT_KUBERNETES_NAMESPACE");
     common_agent_sandbox_kubernetes_runtime backend({
         "kubectl",
-        {}, {},
+        {}, {}, insecure_skip_tls_verify,
         namespace_name == nullptr ? "default" : namespace_name,
         {}, {}, {}, "4Gi", "1Gi", "alpine:3.20", "project", 120000, true});
     request.operation_id = "kubernetes-smoke-1";

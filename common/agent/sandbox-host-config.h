@@ -16,6 +16,7 @@ struct common_agent_sandbox_host_config {
     std::string kubernetes_executable = "kubectl";
     std::string kubernetes_kubeconfig;
     std::string kubernetes_context;
+    bool kubernetes_insecure_skip_tls_verify = false;
     std::string kubernetes_namespace = "default";
     std::string kubernetes_service_account;
     std::string kubernetes_runtime_class;

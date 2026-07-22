@@ -122,6 +122,7 @@ bool run_kubectl(
         args.push_back("--context");
         args.push_back(config.context);
     }
+    if (config.insecure_skip_tls_verify) args.push_back("--insecure-skip-tls-verify=true");
     args.insert(args.end(), arguments.begin(), arguments.end());
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
@@ -259,6 +260,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     bool timed_out = false;
     auto apply_claims = namespace_args();
     apply_claims.insert(apply_claims.end(), {"apply", "-f", manifest_path.string()});
+    if (config.insecure_skip_tls_verify) apply_claims.push_back("--validate=false");
     if (!run_kubectl(config, apply_claims, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
         result.error = error.empty() ? output : error;
         cleanup_manifest();
@@ -270,27 +272,27 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
         "/writable /mnt/artifacts/" + operation_path +
         " && chown -R 65532:65532 /mnt/work/" + operation_path + "/writable /mnt/artifacts/" + operation_path +
         " && sleep 3600";
+    json staging_container = json::object();
+    staging_container["name"] = "staging";
+    staging_container["image"] = config.staging_image;
+    staging_container["command"] = json::array({"sh", "-c"});
+    staging_container["args"] = json::array({staging_command});
+    staging_container["volumeMounts"] = json::array({
+        {{"name", "workspace"}, {"mountPath", "/mnt/work"}},
+        {{"name", "artifacts"}, {"mountPath", "/mnt/artifacts"}},
+    });
+    json staging_spec = json::object();
+    staging_spec["restartPolicy"] = "Never";
+    staging_spec["containers"] = json::array({staging_container});
+    staging_spec["volumes"] = json::array({
+        {{"name", "workspace"}, {"persistentVolumeClaim", {{"claimName", workspace_claim}}}},
+        {{"name", "artifacts"}, {"persistentVolumeClaim", {{"claimName", artifact_claim}}}},
+    });
     const json staging_manifest = {
         {"apiVersion", "v1"},
         {"kind", "Pod"},
         {"metadata", {{"name", staging_pod}, {"namespace", config.namespace_name}}},
-        {"spec", {
-            {"restartPolicy", "Never"},
-            {"containers", json::array({{{
-                {"name", "staging"},
-                {"image", config.staging_image},
-                {"command", json::array({"sh", "-c"})},
-                {"args", json::array({staging_command})},
-                {"volumeMounts", json::array({
-                    {{"name", "workspace"}, {"mountPath", "/mnt/work"}},
-                    {{"name", "artifacts"}, {"mountPath", "/mnt/artifacts"}},
-                })},
-            }}})},
-            {"volumes", json::array({
-                {{"name", "workspace"}, {"persistentVolumeClaim", {{"claimName", workspace_claim}}}},
-                {{"name", "artifacts"}, {"persistentVolumeClaim", {{"claimName", artifact_claim}}}},
-            })},
-        }},
+        {"spec", staging_spec},
     };
     {
         std::ofstream file(manifest_path);
@@ -304,6 +306,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     auto apply_staging = namespace_args();
     apply_staging.insert(apply_staging.end(), {"apply", "-f", manifest_path.string()});
+    if (config.insecure_skip_tls_verify) apply_staging.push_back("--validate=false");
     if (!run_kubectl(config, apply_staging, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
         result.error = error.empty() ? output : error;
         cleanup_manifest();
@@ -318,7 +321,8 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     auto copy_to_pvc = [&](const std::string & local, const std::string & remote) {
         auto args = namespace_args();
-        args.insert(args.end(), {"cp", local + "/.", staging_pod + ":" + remote});
+        const auto local_path = fs::relative(fs::absolute(local), fs::current_path()).generic_string();
+        args.insert(args.end(), {"cp", local_path + "/.", staging_pod + ":" + remote});
         return run_kubectl(config, args, 120000, request.limits.max_output_bytes, output, exit_code, timed_out, error) && exit_code == 0;
     };
     if (!copy_to_pvc(request.workspace.source_path, "/mnt/work/" + operation_path + "/source")) {
@@ -328,7 +332,8 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     auto copy_from_pvc = [&](const std::string & remote, const std::string & local) {
         auto args = namespace_args();
-        args.insert(args.end(), {"cp", staging_pod + ":" + remote + "/.", local});
+        const auto local_path = fs::relative(fs::absolute(local), fs::current_path()).generic_string();
+        args.insert(args.end(), {"cp", staging_pod + ":" + remote + "/.", local_path});
         return run_kubectl(config, args, 120000, request.limits.max_output_bytes, output, exit_code, timed_out, error) && exit_code == 0;
     };
     cleanup_manifest();
@@ -358,6 +363,8 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
             {"allowPrivilegeEscalation", false},
             {"readOnlyRootFilesystem", true},
             {"runAsNonRoot", true},
+            {"runAsUser", 65532},
+            {"runAsGroup", 65532},
             {"capabilities", {{"drop", json::array({"ALL"})}}},
         }},
     };
@@ -370,6 +377,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     json pod_spec = {
         {"restartPolicy", "Never"},
         {"automountServiceAccountToken", false},
+        {"securityContext", {{"fsGroup", 65532}}},
         {"containers", json::array({container})},
         {"volumes", volumes},
     };
@@ -419,6 +427,7 @@ bool common_agent_sandbox_kubernetes_runtime::execute(
     }
     auto apply_args = namespace_args();
     apply_args.insert(apply_args.end(), {"apply", "-f", manifest_path.string()});
+    if (config.insecure_skip_tls_verify) apply_args.push_back("--validate=false");
     if (!run_kubectl(config, apply_args, 10000, request.limits.max_output_bytes, output, exit_code, timed_out, error) || exit_code != 0) {
         result.error = error.empty() ? output : error;
         cleanup_manifest();

@@ -91,6 +91,9 @@ waits for completion through `kubectl`. Its host configuration is:
     "backend": "kubernetes",
     "kubernetes": {
       "executable": "kubectl",
+      "kubeconfig": "",
+      "context": "",
+      "insecure_skip_tls_verify": false,
       "namespace": "llama-agent-jobs",
       "service_account": "llama-agent-runner",
       "runtime_class": "standard",
@@ -113,8 +116,10 @@ The default claim sizes are `4Gi` for workspace data and `1Gi` for artifacts;
 an empty `storage_class` uses the cluster default. PVCs are retained across
 operations and are not deleted by normal Job cleanup.
 The Kubernetes executable, namespace, service account, runtime class, storage
-class, claim sizes, staging image, kubeconfig/context and cleanup/retention
-policy are host-owned and cannot be selected by a client or tool request.
+class, claim sizes, staging image, kubeconfig/context, TLS verification and
+cleanup/retention policy are host-owned and cannot be selected by a client or
+tool request. `insecure_skip_tls_verify` is intended only for isolated local
+testing and must remain `false` in normal deployments.
 
 PVC names, `ReadWriteOnce`, operation `subPath` values and the container paths
 `/workspace/source`, `/workspace/writable` and `/workspace/artifacts` remain

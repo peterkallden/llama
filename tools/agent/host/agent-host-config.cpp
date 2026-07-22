@@ -318,6 +318,7 @@ bool parse_agent_host_config_json(
             read_optional(kubernetes, "executable", config.sandbox.kubernetes_executable);
             read_optional(kubernetes, "kubeconfig", config.sandbox.kubernetes_kubeconfig);
             read_optional(kubernetes, "context", config.sandbox.kubernetes_context);
+            read_optional(kubernetes, "insecure_skip_tls_verify", config.sandbox.kubernetes_insecure_skip_tls_verify);
             read_optional(kubernetes, "namespace", config.sandbox.kubernetes_namespace);
             read_optional(kubernetes, "service_account", config.sandbox.kubernetes_service_account);
             read_optional(kubernetes, "runtime_class", config.sandbox.kubernetes_runtime_class);
@@ -671,6 +672,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"executable", config.sandbox.kubernetes_executable},
                 {"kubeconfig", config.sandbox.kubernetes_kubeconfig},
                 {"context", config.sandbox.kubernetes_context},
+                {"insecure_skip_tls_verify", config.sandbox.kubernetes_insecure_skip_tls_verify},
                 {"namespace", config.sandbox.kubernetes_namespace},
                 {"service_account", config.sandbox.kubernetes_service_account},
                 {"runtime_class", config.sandbox.kubernetes_runtime_class},

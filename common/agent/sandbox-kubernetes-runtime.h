@@ -9,6 +9,7 @@ struct common_agent_kubernetes_sandbox_config {
     std::string executable = "kubectl";
     std::string kubeconfig;
     std::string context;
+    bool insecure_skip_tls_verify = false;
     std::string namespace_name = "default";
     std::string service_account;
     std::string runtime_class;

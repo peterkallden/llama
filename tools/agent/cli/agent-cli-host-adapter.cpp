@@ -296,6 +296,7 @@ bool resolve_agent_host_tool_selection(
                     request.sandbox.kubernetes_executable,
                     request.sandbox.kubernetes_kubeconfig,
                     request.sandbox.kubernetes_context,
+                    request.sandbox.kubernetes_insecure_skip_tls_verify,
                     request.sandbox.kubernetes_namespace,
                     request.sandbox.kubernetes_service_account,
                     request.sandbox.kubernetes_runtime_class,
