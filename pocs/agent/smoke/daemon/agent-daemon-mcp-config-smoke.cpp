@@ -210,12 +210,33 @@ int main(int argc, char ** argv) {
                 }},
             }},
         }},
+        {"sandbox", {
+            {"backend", "none"},
+            {"workspace", {
+                {"root", "C:/agent-workspaces"},
+                {"artifact_root", "C:/agent-artifacts"},
+            }},
+            {"classes", {
+                {"developer-build", {
+                    {"timeout_ms", 120000},
+                    {"memory_bytes", 8589934592ull},
+                    {"cpu_count", 4},
+                    {"max_output_bytes", 65536},
+                    {"network", "none"},
+                    {"filesystem", "workspace_write"},
+                    {"allow_artifacts", true},
+                }},
+            }},
+        }},
     };
     if (!parse_agent_host_config_json(capability_config_json, capability_config, error) ||
             capability_config.tool_profile != "local-developer" ||
             capability_config.tool_capabilities.size() != 2 ||
             capability_config.tool_profiles.size() != 1 ||
-            capability_config.tool_profiles.at("local-developer").include_capabilities.size() != 2) {
+            capability_config.tool_profiles.at("local-developer").include_capabilities.size() != 2 ||
+            capability_config.sandbox.backend != "none" ||
+            capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
+            capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
         return 1;
     }
@@ -228,8 +249,13 @@ int main(int argc, char ** argv) {
     const json capability_roundtrip = agent_host_config_to_json(capability_config);
     if (capability_roundtrip["tools"]["capabilities"]["workspace.read"].size() != 2 ||
             capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2 ||
-            capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>()) {
+            capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>() ||
+            capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
+        return 1;
+    }
+    if (!validate_agent_host_config(capability_config, error)) {
+        std::fprintf(stderr, "sandbox host config was rejected: %s\n", error.c_str());
         return 1;
     }
     agent_host_config invalid_capability_config = capability_config;

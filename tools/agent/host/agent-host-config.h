@@ -3,6 +3,8 @@
 #include "../common/cli-config.h"
 #include "../host/agent-host-mcp-provider-config.h"
 #include "agent/tool-catalog.h"
+#include "agent/sandbox-policy.h"
+#include "agent/workspace-contract.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -12,6 +14,12 @@
 #include <vector>
 
 struct daemon_options;
+
+struct agent_host_sandbox_config {
+    std::string backend = "none";
+    common_agent_workspace_roots workspace;
+    std::map<std::string, common_agent_sandbox_policy> classes;
+};
 
 struct agent_host_config {
     int schema_version = 1;
@@ -49,6 +57,7 @@ struct agent_host_config {
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;
+    agent_host_sandbox_config sandbox;
     std::string repository_root;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     bool inbound_mcp_enabled = false;

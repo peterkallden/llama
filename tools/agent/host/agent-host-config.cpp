@@ -66,6 +66,63 @@ bool read_string_array(
     return true;
 }
 
+bool read_sandbox_network(
+        const json & value,
+        common_agent_sandbox_network_scope & target,
+        std::string & error) {
+    if (!value.is_string()) { error = "sandbox network must be a string"; return false; }
+    const auto name = value.get<std::string>();
+    if (name == "none") target = common_agent_sandbox_network_scope::none;
+    else if (name == "dns_only") target = common_agent_sandbox_network_scope::dns_only;
+    else if (name == "allowlisted") target = common_agent_sandbox_network_scope::allowlisted;
+    else if (name == "package_registry") target = common_agent_sandbox_network_scope::package_registry;
+    else if (name == "research_web") target = common_agent_sandbox_network_scope::research_web;
+    else { error = "unsupported sandbox network scope: " + name; return false; }
+    return true;
+}
+
+bool read_sandbox_filesystem(
+        const json & value,
+        common_agent_sandbox_filesystem_scope & target,
+        std::string & error) {
+    if (!value.is_string()) { error = "sandbox filesystem must be a string"; return false; }
+    const auto name = value.get<std::string>();
+    if (name == "readonly") target = common_agent_sandbox_filesystem_scope::readonly;
+    else if (name == "workspace_write") target = common_agent_sandbox_filesystem_scope::workspace_write;
+    else if (name == "artifact_write") target = common_agent_sandbox_filesystem_scope::artifact_write;
+    else { error = "unsupported sandbox filesystem scope: " + name; return false; }
+    return true;
+}
+
+json sandbox_class_to_json(const common_agent_sandbox_policy & policy) {
+    return {
+        {"timeout_ms", policy.limits.timeout_ms},
+        {"memory_bytes", policy.limits.memory_bytes},
+        {"cpu_count", policy.limits.cpu_count},
+        {"process_count", policy.limits.process_count},
+        {"max_output_bytes", policy.limits.max_output_bytes},
+        {"network", [&policy]() {
+            switch (policy.network) {
+                case common_agent_sandbox_network_scope::none: return std::string("none");
+                case common_agent_sandbox_network_scope::dns_only: return std::string("dns_only");
+                case common_agent_sandbox_network_scope::allowlisted: return std::string("allowlisted");
+                case common_agent_sandbox_network_scope::package_registry: return std::string("package_registry");
+                case common_agent_sandbox_network_scope::research_web: return std::string("research_web");
+            }
+            return std::string("none");
+        }()},
+        {"filesystem", [&policy]() {
+            switch (policy.filesystem) {
+                case common_agent_sandbox_filesystem_scope::readonly: return std::string("readonly");
+                case common_agent_sandbox_filesystem_scope::workspace_write: return std::string("workspace_write");
+                case common_agent_sandbox_filesystem_scope::artifact_write: return std::string("artifact_write");
+            }
+            return std::string("readonly");
+        }()},
+        {"allow_artifacts", policy.allow_artifacts},
+    };
+}
+
 bool read_mcp_provider(
         const json & value,
         agent_host_mcp_provider_config & provider,
@@ -222,6 +279,37 @@ bool parse_agent_host_config_json(
         read_optional(resources, "blob_root", config.resource_blob_root);
         read_optional(resources, "metadata_backend", config.resource_metadata_backend);
         read_optional(resources, "metadata_db", config.resource_metadata_db);
+    }
+
+    if (parsed.contains("sandbox")) {
+        if (!parsed["sandbox"].is_object()) { error = "sandbox must be an object"; return false; }
+        const auto & sandbox = parsed["sandbox"];
+        read_optional(sandbox, "backend", config.sandbox.backend);
+        if (sandbox.contains("workspace")) {
+            if (!sandbox["workspace"].is_object()) { error = "sandbox.workspace must be an object"; return false; }
+            const auto & workspace = sandbox["workspace"];
+            read_optional(workspace, "root", config.sandbox.workspace.workspace_root);
+            read_optional(workspace, "artifact_root", config.sandbox.workspace.artifact_root);
+        }
+        if (sandbox.contains("classes")) {
+            if (!sandbox["classes"].is_object()) { error = "sandbox.classes must be an object"; return false; }
+            config.sandbox.classes.clear();
+            for (auto it = sandbox["classes"].begin(); it != sandbox["classes"].end(); ++it) {
+                if (!it.value().is_object()) { error = "sandbox.classes entries must be objects"; return false; }
+                common_agent_sandbox_policy policy;
+                policy.execution_class = it.key();
+                const auto & value = it.value();
+                if (value.contains("timeout_ms")) read_optional(value, "timeout_ms", policy.limits.timeout_ms);
+                if (value.contains("memory_bytes")) read_optional(value, "memory_bytes", policy.limits.memory_bytes);
+                if (value.contains("cpu_count")) read_optional(value, "cpu_count", policy.limits.cpu_count);
+                if (value.contains("process_count")) read_optional(value, "process_count", policy.limits.process_count);
+                if (value.contains("max_output_bytes")) read_optional(value, "max_output_bytes", policy.limits.max_output_bytes);
+                if (value.contains("network") && !read_sandbox_network(value["network"], policy.network, error)) return false;
+                if (value.contains("filesystem") && !read_sandbox_filesystem(value["filesystem"], policy.filesystem, error)) return false;
+                if (value.contains("allow_artifacts")) read_optional(value, "allow_artifacts", policy.allow_artifacts);
+                config.sandbox.classes.emplace(it.key(), std::move(policy));
+            }
+        }
     }
 
     if (parsed.contains("tools") && parsed["tools"].is_object()) {
@@ -434,6 +522,7 @@ nlohmann::ordered_json agent_host_config_to_json(
     for (const auto & entry : config.tool_capabilities) {
         capabilities[entry.first] = entry.second;
     }
+
     json profiles = json::object();
     for (const auto & entry : config.tool_profiles) {
         json profile = {
@@ -448,6 +537,8 @@ nlohmann::ordered_json agent_host_config_to_json(
         }
         profiles[entry.first] = std::move(profile);
     }
+    json sandbox_classes = json::object();
+    for (const auto & entry : config.sandbox.classes) sandbox_classes[entry.first] = sandbox_class_to_json(entry.second);
     return {
         {"schema_version", config.schema_version},
         {"model", {
@@ -494,6 +585,14 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"capabilities", std::move(capabilities)},
             {"profiles", std::move(profiles)},
             {"providers", std::move(providers)},
+        }},
+        {"sandbox", {
+            {"backend", config.sandbox.backend},
+            {"workspace", {
+                {"root", config.sandbox.workspace.workspace_root},
+                {"artifact_root", config.sandbox.workspace.artifact_root},
+            }},
+            {"classes", std::move(sandbox_classes)},
         }},
         {"mcp", {
             {"inbound", {
@@ -682,6 +781,22 @@ bool validate_agent_host_config(
                 error = "tools.capabilities entries must not contain duplicate tools: " + tool;
                 return false;
             }
+        }
+    }
+    if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" && config.sandbox.backend != "kubernetes") {
+        error = "sandbox.backend must be none, docker or kubernetes";
+        return false;
+    }
+    if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {
+        error = "sandbox.workspace.root is required when sandbox classes are configured";
+        return false;
+    }
+    for (const auto & entry : config.sandbox.classes) {
+        if (entry.first.empty() || entry.second.execution_class != entry.first ||
+                entry.second.limits.timeout_ms == 0 || entry.second.limits.cpu_count == 0 ||
+                entry.second.limits.max_output_bytes == 0) {
+            error = "sandbox class has invalid identity or limits: " + entry.first;
+            return false;
         }
     }
     for (const auto & profile : config.tool_profiles) {
