@@ -10,8 +10,28 @@ namespace {
 
 using json = nlohmann::ordered_json;
 
-bool build_call(const std::string & tool_name, const std::string & instruction, common_agent_tool_call & call) {
+bool build_call(
+        const std::string & tool_name,
+        const std::string & instruction,
+        const common_agent_research_workspace & workspace,
+        common_agent_tool_call & call) {
     call.name = tool_name;
+    if (tool_name == "build_target" || tool_name == "test_run") {
+        json arguments = {
+            {"target", instruction},
+            {"configuration", "Debug"},
+        };
+        if (tool_name == "test_run") arguments["timeout_ms"] = 120000;
+        json resources = json::array();
+        for (const auto & source : workspace.sources) {
+            if (source.resource_ref && resources.size() < 32) {
+                resources.push_back(source.resource_ref->uri);
+            }
+        }
+        if (!resources.empty()) arguments["resource_refs"] = std::move(resources);
+        call.arguments_json = std::move(arguments).dump();
+        return true;
+    }
     if (tool_name == "repository_search") {
         call.arguments_json = json{{"query", instruction}, {"max_results", 8}}.dump();
         return true;
@@ -87,7 +107,7 @@ bool common_agent_research_runtime_adapter::execute(
 
     for (const auto & tool_name : action.preferred_tools) {
         common_agent_tool_call call;
-        if (!build_call(tool_name, action.instruction, call)) continue;
+        if (!build_call(tool_name, action.instruction, workspace, call)) continue;
         std::string validation_error;
         if (!tools.validate(call, validation_error)) continue;
 
@@ -156,7 +176,10 @@ bool common_agent_research_runtime_adapter::execute(
         source.authority = "host-tool-runtime";
         source.kind = tool_name == "web_search" || tool_name == "web_fetch"
             ? common_agent_research_source_kind::web_page
-            : common_agent_research_source_kind::repository_file;
+            : (!result.resource_refs.empty() &&
+                result.resource_refs.front().uri.rfind("artifact://", 0) == 0
+                ? common_agent_research_source_kind::remote_agent_result
+                : common_agent_research_source_kind::repository_file);
         source.quality_score = result.resource_refs.empty() ? 0.5 : 0.75;
         source.primary_source = true;
         if (!result.resource_refs.empty()) {

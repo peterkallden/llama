@@ -266,6 +266,21 @@ bool make_sandbox_request(
     request.network = common_agent_sandbox_network_scope::none;
     request.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
     request.artifacts.collect = true;
+    if (arguments.contains("resource_refs")) {
+        if (!arguments["resource_refs"].is_array() || arguments["resource_refs"].size() > 32) {
+            error = tool_name + " resource_refs must be an array with at most 32 entries";
+            return false;
+        }
+        for (const auto & value : arguments["resource_refs"]) {
+            if (!value.is_string() || value.get<std::string>().empty()) {
+                error = tool_name + " resource_refs entries must be non-empty strings";
+                return false;
+            }
+            common_runtime_resource_ref resource;
+            resource.uri = value.get<std::string>();
+            request.workspace.input_resources.push_back(std::move(resource));
+        }
+    }
     error.clear();
     return true;
 }

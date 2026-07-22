@@ -537,6 +537,7 @@ agent_host_tool_selection_request make_server_tool_selection_request(
     };
     request.tool_capabilities = options.tool_capabilities;
     request.tool_profiles = options.tool_profiles;
+    request.sandbox = options.sandbox;
     append_configured_stdio_mcp_providers(configured_mcp_providers, request.mcp_providers);
     return request;
 }

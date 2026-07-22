@@ -37,7 +37,9 @@ Workspace roots and execution classes belong in host configuration:
     },
     "workspace": {
       "root": "C:/agent-workspaces",
-      "artifact_root": "C:/agent-artifacts"
+      "artifact_root": "C:/agent-artifacts",
+      "operation_mode": "ephemeral",
+      "project_mode": "persistent"
     },
     "defaults": {
       "timeout_ms": 60000,
@@ -85,3 +87,10 @@ details. Kubernetes will use the same semantic contract later.
 Operation directories are host-created and may be ephemeral. Source is
 normally read-only, the writable directory is used for build/analysis work,
 and artifacts are returned through explicit artifact/resource references.
+
+The workspace modes are host policy, not tool arguments. `operation_mode:
+ephemeral` gives each operation its own generated directory; `project_mode:
+persistent` keeps the project identity stable across turns while still using
+separate operation directories. Build and test requests may carry bounded
+`resource_refs`; the helper resolves those through the host resource store and
+materializes them under the operation's `source/` directory before execution.

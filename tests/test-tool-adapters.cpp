@@ -134,6 +134,9 @@ int main() {
     assert(result.ok && captured_request.command.program == "agent.build_target" && captured_request.command.arguments[0] == "llama-agent");
     result = execution_registry.execute({"test_run", R"({"target":"agent-smoke","filter":"workspace"})"});
     assert(result.ok && captured_request.command.program == "agent.test_run" && captured_request.command.arguments[1] == "workspace");
+    result = execution_registry.execute({"test_run", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
+    assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
+            captured_request.workspace.input_resources[0].uri == "resource://input.txt");
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));

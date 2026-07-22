@@ -102,6 +102,31 @@ public:
         request.workspace.source_path = operation.source_path;
         request.workspace.writable_path = operation.writable_path;
         request.workspace.artifact_path = operation.artifact_path;
+        if (resource_store != nullptr) {
+            for (size_t index = 0; index < request.workspace.input_resources.size(); ++index) {
+                const auto & resource = request.workspace.input_resources[index];
+                const auto file_name = resource.name.empty()
+                    ? "input-" + std::to_string(index + 1) + ".txt"
+                    : resource.name;
+                std::string materialized_path;
+                if (!workspace_manager->materialize_text_resource(
+                        operation,
+                        resource,
+                        *resource_store,
+                        resource_authority,
+                        file_name,
+                        request.artifacts.max_bytes,
+                        materialized_path,
+                        error)) {
+                    return common_tool_execution_result::failure(
+                        "sandbox.resource_materialization_failed",
+                        common_tool_failure_class::execution,
+                        false,
+                        "A sandbox input resource could not be materialized.",
+                        error);
+                }
+            }
+        }
         if (operation_out != nullptr) *operation_out = operation;
         return run(request);
     }
@@ -110,10 +135,19 @@ public:
         workspace_manager = manager;
     }
 
+    void set_resource_store(
+            agent_resource_store * store,
+            agent_resource_read_authority authority = {}) {
+        resource_store = store;
+        resource_authority = std::move(authority);
+    }
+
 private:
     common_agent_sandbox_runtime & runtime;
     common_agent_sandbox_policy policy;
     common_agent_workspace_manager * workspace_manager = nullptr;
+    agent_resource_store * resource_store = nullptr;
+    agent_resource_read_authority resource_authority;
 };
 
 class common_agent_sandbox_local_test_runtime final : public common_agent_sandbox_runtime {

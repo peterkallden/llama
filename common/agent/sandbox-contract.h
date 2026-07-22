@@ -58,6 +58,7 @@ struct common_agent_sandbox_workspace {
     std::string source_path;
     std::string writable_path;
     std::string artifact_path;
+    std::vector<common_runtime_resource_ref> input_resources;
 };
 
 struct common_agent_sandbox_artifact_policy {

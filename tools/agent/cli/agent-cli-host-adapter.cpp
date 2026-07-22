@@ -5,6 +5,9 @@
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
 #include "../runtime/agent-runtime-execution.h"
+#include "agent/sandbox-docker-runtime.h"
+#include "agent/sandbox-runtime.h"
+#include "../tooling/agent-sandbox-helper.h"
 #include "common/cli-scope.h"
 
 #include <algorithm>
@@ -77,6 +80,7 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     };
     request.tool_capabilities = options.tool_capabilities;
     request.tool_profiles = options.tool_profiles;
+    request.sandbox = options.sandbox;
     append_legacy_stdio_mcp_provider(
         options.mcp_tool_command,
         options.mcp_tool_args,
@@ -257,6 +261,61 @@ bool resolve_agent_host_tool_selection(
             bindings.embed_memory_query = [provider = embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return provider != nullptr &&
                     provider->embed("tool query", text, embedding, embedding_error);
+            };
+        }
+
+        if (request.sandbox.backend == "docker") {
+            auto docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
+                common_agent_docker_sandbox_config{
+                    request.sandbox.docker_executable,
+                    request.sandbox.docker_default_image,
+                });
+            auto workspace_manager = std::make_shared<common_agent_workspace_manager>(
+                request.sandbox.workspace);
+            const auto policies = request.sandbox.classes;
+            const auto defaults = request.sandbox.defaults;
+            const auto tool_context = request.tool_context;
+            auto * bound_resource_store = resource_store;
+            bindings.sandbox_execute = [docker_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](
+                    common_agent_sandbox_request sandbox_request) {
+                common_agent_sandbox_policy policy = defaults;
+                const auto it = policies.find(sandbox_request.execution_class);
+                if (it != policies.end()) policy = it->second;
+                policy.execution_class = sandbox_request.execution_class;
+                common_agent_sandbox_tool_helper helper(*docker_runtime, policy);
+                helper.set_workspace_manager(workspace_manager.get());
+                helper.set_resource_store(bound_resource_store, {
+                    tool_context.scope.namespace_id,
+                    tool_context.scope.session_id,
+                    tool_context.scope.project_id,
+                    tool_context.scope.turn_id,
+                });
+                common_agent_workspace_context workspace_context;
+                workspace_context.workspace_id = tool_context.scope.project_id.empty()
+                    ? "session:" + tool_context.scope.session_id
+                    : "project:" + tool_context.scope.project_id;
+                workspace_context.project_id = tool_context.scope.project_id;
+                workspace_context.namespace_id = tool_context.scope.namespace_id;
+                workspace_context.session_id = tool_context.scope.session_id;
+                workspace_context.turn_id = tool_context.scope.turn_id;
+                workspace_context.input_resources = sandbox_request.workspace.input_resources;
+                return helper.run_for_workspace(
+                    workspace_context,
+                    sandbox_request.operation_id,
+                    std::move(sandbox_request));
+            };
+        } else {
+            auto unavailable_runtime = std::make_shared<common_agent_sandbox_unavailable_runtime>();
+            const auto policies = request.sandbox.classes;
+            const auto defaults = request.sandbox.defaults;
+            bindings.sandbox_execute = [unavailable_runtime, policies, defaults](
+                    common_agent_sandbox_request sandbox_request) {
+                common_agent_sandbox_policy policy = defaults;
+                const auto it = policies.find(sandbox_request.execution_class);
+                if (it != policies.end()) policy = it->second;
+                policy.execution_class = sandbox_request.execution_class;
+                common_agent_sandbox_tool_helper helper(*unavailable_runtime, policy);
+                return helper.run(sandbox_request);
             };
         }
 
