@@ -297,6 +297,9 @@ bool resolve_agent_host_tool_selection(
                     request.sandbox.kubernetes_namespace,
                     request.sandbox.kubernetes_service_account,
                     request.sandbox.kubernetes_runtime_class,
+                    request.sandbox.kubernetes_storage_class,
+                    request.sandbox.kubernetes_workspace_storage_size,
+                    request.sandbox.kubernetes_artifact_storage_size,
                     request.sandbox.kubernetes_cleanup,
                 });
             bindings.sandbox_execute = [backend, docker_runtime, kubernetes_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](

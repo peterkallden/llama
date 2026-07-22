@@ -99,6 +99,8 @@ public:
                 error);
         }
         request.operation_id = operation.operation_id;
+        request.project_id = context.project_id;
+        request.workspace_id = context.workspace_id;
         request.workspace.source_path = operation.source_path;
         request.workspace.writable_path = operation.writable_path;
         request.workspace.artifact_path = operation.artifact_path;

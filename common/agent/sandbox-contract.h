@@ -69,6 +69,8 @@ struct common_agent_sandbox_artifact_policy {
 
 struct common_agent_sandbox_request {
     std::string operation_id;
+    std::string project_id;
+    std::string workspace_id;
     std::string execution_class;
     std::string image;
     common_agent_sandbox_command command;

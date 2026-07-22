@@ -319,6 +319,9 @@ bool parse_agent_host_config_json(
             read_optional(kubernetes, "namespace", config.sandbox.kubernetes_namespace);
             read_optional(kubernetes, "service_account", config.sandbox.kubernetes_service_account);
             read_optional(kubernetes, "runtime_class", config.sandbox.kubernetes_runtime_class);
+            read_optional(kubernetes, "storage_class", config.sandbox.kubernetes_storage_class);
+            read_optional(kubernetes, "workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size);
+            read_optional(kubernetes, "artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size);
             read_optional(kubernetes, "cleanup", config.sandbox.kubernetes_cleanup);
         }
         if (sandbox.contains("workspace")) {
@@ -664,6 +667,9 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"namespace", config.sandbox.kubernetes_namespace},
                 {"service_account", config.sandbox.kubernetes_service_account},
                 {"runtime_class", config.sandbox.kubernetes_runtime_class},
+                {"storage_class", config.sandbox.kubernetes_storage_class},
+                {"workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size},
+                {"artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size},
                 {"cleanup", config.sandbox.kubernetes_cleanup},
             }},
             {"workspace", {
@@ -881,6 +887,13 @@ bool validate_agent_host_config(
     }
     if (config.sandbox.backend == "kubernetes" && config.sandbox.kubernetes_namespace.empty()) {
         error = "sandbox.kubernetes.namespace must not be empty";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" &&
+            (config.sandbox.kubernetes_storage_class.empty() ||
+             config.sandbox.kubernetes_workspace_storage_size.empty() ||
+             config.sandbox.kubernetes_artifact_storage_size.empty())) {
+        error = "sandbox.kubernetes storage class and sizes must not be empty";
         return false;
     }
     if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {
