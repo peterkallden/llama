@@ -65,6 +65,8 @@ struct args {
     std::string plan_scope = "turn";
     std::string plan_backend = "auto";
     std::string plan_db;
+    std::string data_backend = "auto";
+    std::string data_db;
     std::string plan_id;
     std::string agent_plan = "off";
     std::string repository_root;

@@ -205,7 +205,7 @@ Useful overrides are:
 | --- | --- |
 | model | `--model`, optional `--embedding-model`, `--n-predict`, `--n-gpu-layers` |
 | runtime | `--default-mode`, `--thinking-mode`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-plan`, `--agent-trace` |
-| stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db` |
+| stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db`, `--data-backend`, `--data-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |
 | HTTP host | `--http-listen`, `--http-port`, `--http-path`, `--http-token-env`, `--http-allowed-origin`, `--http-agent-tools`, `--http-max-delegation-depth` |

@@ -149,6 +149,10 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_backend = v;
         } else if (strcmp(argv[i], "--plan-db") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_db = v;
+        } else if (strcmp(argv[i], "--data-backend") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.data_backend = v;
+        } else if (strcmp(argv[i], "--data-db") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.data_db = v;
         } else if (strcmp(argv[i], "--plan-id") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.plan_id = v;
         } else if (strcmp(argv[i], "--agent-plan") == 0) {

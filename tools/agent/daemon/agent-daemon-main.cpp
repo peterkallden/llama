@@ -332,6 +332,8 @@ int main(int argc, char ** argv) {
         require_restart(candidate.memory_db != options.memory_db, "stores.memory.path");
         require_restart(candidate.plan_backend != options.plan_backend, "stores.plan.backend");
         require_restart(candidate.plan_db != options.plan_db, "stores.plan.path");
+        require_restart(candidate.data_backend != options.data_backend, "stores.data.backend");
+        require_restart(candidate.data_db != options.data_db, "stores.data.path");
         require_restart(candidate.resource_blob_backend != options.resource_blob_backend, "resources.blob_backend");
         require_restart(candidate.resource_blob_root != options.resource_blob_root, "resources.blob_root");
         require_restart(candidate.resource_metadata_backend != options.resource_metadata_backend, "resources.metadata_backend");

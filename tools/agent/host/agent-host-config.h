@@ -46,6 +46,8 @@ struct agent_host_config {
     std::string memory_db;
     std::string plan_backend = "auto";
     std::string plan_db;
+    std::string data_backend = "auto";
+    std::string data_db;
 
     std::string resource_blob_backend = "auto";
     std::string resource_blob_root;

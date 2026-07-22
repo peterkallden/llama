@@ -137,6 +137,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.plan_backend = value;
         } else if (std::strcmp(argv[i], "--plan-db") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.plan_db = value;
+        } else if (std::strcmp(argv[i], "--data-backend") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.data_backend = value;
+        } else if (std::strcmp(argv[i], "--data-db") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.data_db = value;
         } else if (std::strcmp(argv[i], "--default-mode") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.default_mode = value;
         } else if (std::strcmp(argv[i], "--thinking-mode") == 0) {

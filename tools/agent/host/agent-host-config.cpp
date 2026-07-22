@@ -292,6 +292,11 @@ bool parse_agent_host_config_json(
             read_optional(plan, "backend", config.plan_backend);
             read_optional(plan, "path", config.plan_db);
         }
+        if (stores.contains("data") && stores["data"].is_object()) {
+            const auto & data = stores["data"];
+            read_optional(data, "backend", config.data_backend);
+            read_optional(data, "path", config.data_db);
+        }
     }
 
     if (parsed.contains("resources") && parsed["resources"].is_object()) {
@@ -648,6 +653,10 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"backend", config.plan_backend},
                 {"path", config.plan_db},
             }},
+            {"data", {
+                {"backend", config.data_backend},
+                {"path", config.data_db},
+            }},
         }},
         {"resources", {
             {"blob_backend", config.resource_blob_backend},
@@ -806,6 +815,14 @@ bool validate_agent_host_config(
     }
     if (config.max_reflection_rounds < 0 || config.max_plan_revisions < 0) {
         error = "runtime deliberation limits must not be negative";
+        return false;
+    }
+    if (config.data_backend != "auto" && config.data_backend != "none" && config.data_backend != "cozo") {
+        error = "stores.data.backend must be auto, none, or cozo";
+        return false;
+    }
+    if (config.data_backend == "cozo" && config.data_db.empty()) {
+        error = "stores.data.path is required when stores.data.backend is cozo";
         return false;
     }
     if (config.inbound_mcp_enabled) {
@@ -1030,6 +1047,8 @@ void apply_agent_host_config_to_daemon_options(
     options.memory_db = config.memory_db;
     options.plan_backend = config.plan_backend;
     options.plan_db = config.plan_db;
+    options.data_backend = config.data_backend;
+    options.data_db = config.data_db;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
     options.tool_profiles = config.tool_profiles;
@@ -1116,6 +1135,8 @@ void apply_agent_host_config_to_args(
     options.resource_metadata_db = config.resource_metadata_db;
     options.plan_backend = config.plan_backend;
     options.plan_db = config.plan_db;
+    options.data_backend = config.data_backend;
+    options.data_db = config.data_db;
     options.thinking_mode = config.thinking_mode;
     options.max_reflection_rounds = config.max_reflection_rounds;
     options.max_plan_revisions = config.max_plan_revisions;

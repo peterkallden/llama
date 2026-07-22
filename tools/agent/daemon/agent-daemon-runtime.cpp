@@ -7,6 +7,7 @@
 #include "../memory/memory-cli-memory.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
+#include "../data/agent-data-store-factory.h"
 #ifdef LLAMA_MEMORY_USE_COZO
 #include "memory/cozo/memory-cozo.h"
 #endif
@@ -239,6 +240,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    tool_request.data_store_config = {options.data_backend, options.data_db};
     tool_request.tool_capabilities = options.tool_capabilities;
     tool_request.tool_profiles = options.tool_profiles;
     tool_request.sandbox = options.sandbox;
@@ -265,11 +267,13 @@ bool resolve_agent_daemon_tooling(
         agent_resource_store * resource_store,
         common_agent_runtime_tooling & tooling,
         std::string & error,
+        common_agent_data_store * data_store,
         std::optional<bool> allow_policy_gated_writes) {
     tooling = {};
     common_memory_query query = make_daemon_memory_query(request);
-    const auto tool_request = make_daemon_tool_request(
+    auto tool_request = make_daemon_tool_request(
         options, request, allow_policy_gated_writes);
+    tool_request.data_store = data_store;
         std::string * current_plan_id = runtime != nullptr
         ? const_cast<std::string *>(&runtime->current_plan_id())
         : nullptr;
@@ -330,6 +334,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         common_memory_store & memory_store,
         common_plan_store & plan_store,
         agent_resource_store & resource_store,
+        common_agent_data_store * data_store,
         const daemon_options & options,
         const std::shared_ptr<common_agent_daemon_config_store> & config_store) {
     return {
@@ -343,7 +348,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         true,
         {},
         {},
-        [config_store, &memory_store, &plan_store, &resource_store](
+        [config_store, &memory_store, &plan_store, &resource_store, data_store](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
@@ -357,7 +362,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 plan_store,
                 &resource_store,
                 tooling,
-                error);
+                error,
+                data_store);
         },
     };
 }
@@ -431,6 +437,14 @@ bool open_daemon_resource_store(
     return store != nullptr;
 }
 
+bool open_daemon_data_store(
+        const daemon_options & options,
+        std::unique_ptr<common_agent_data_store> & store,
+        std::string & error) {
+    store = make_agent_data_store({options.data_backend, options.data_db}, error);
+    return error.empty();
+}
+
 } // namespace
 
 bool initialize_agent_daemon_environment(
@@ -447,6 +461,9 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_plan_store(options, runtime.plan_store, error)) {
         return false;
     }
+    if (!open_daemon_data_store(options, runtime.data_store, error)) {
+        return false;
+    }
     if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
         return false;
     }
@@ -459,6 +476,7 @@ bool initialize_agent_daemon_environment(
         *runtime.memory_store,
         *runtime.plan_store,
         *runtime.resource_store,
+        runtime.data_store.get(),
         options,
         runtime.config_store);
     runtime.inference_gate = std::make_shared<common_agent_inference_capacity_gate>(
@@ -483,7 +501,8 @@ bool initialize_agent_daemon_environment(
     common_memory_store * memory_store = runtime.memory_store.get();
     common_plan_store * plan_store = runtime.plan_store.get();
     agent_resource_store * resource_store = runtime.resource_store.get();
-    runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store, resource_store](
+    common_agent_data_store * data_store = runtime.data_store.get();
+    runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store, resource_store, data_store](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {
@@ -514,6 +533,7 @@ bool initialize_agent_daemon_environment(
                 resource_store,
                 tooling,
                 callback_error,
+                data_store,
                 payload.allow_policy_gated_writes)) {
             return false;
         }

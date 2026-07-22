@@ -2,6 +2,11 @@
 
 #include <string>
 
+struct common_agent_data_store_config {
+    std::string backend = "auto";
+    std::string path;
+};
+
 // Host-owned backend seam for structured data tools. Tool arguments remain
 // semantic JSON; the selected backend owns storage and query translation.
 class common_agent_data_store {

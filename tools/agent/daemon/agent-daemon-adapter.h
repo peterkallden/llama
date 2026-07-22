@@ -2,6 +2,7 @@
 
 #include "../common/cli-config.h"
 #include "agent/tool-catalog.h"
+#include "agent/data-store.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../runtime/agent-plan-orchestration.h"
@@ -29,6 +30,8 @@ struct daemon_options {
     std::string memory_db;
     std::string plan_backend = "auto";
     std::string plan_db;
+    std::string data_backend = "auto";
+    std::string data_db;
     std::string default_mode = "chat";
     std::string thinking_mode = "reflective";
     int max_reflection_rounds = 1;
@@ -142,6 +145,7 @@ bool resolve_agent_daemon_tooling(
     agent_resource_store * resource_store,
     common_agent_runtime_tooling & tooling,
     std::string & error,
+    common_agent_data_store * data_store = nullptr,
     std::optional<bool> allow_policy_gated_writes = std::nullopt);
 
 bool parse_agent_daemon_command(

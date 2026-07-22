@@ -209,6 +209,12 @@ int main(int argc, char ** argv) {
     agent_host_config capability_config;
     const json capability_config_json = {
         {"schema_version", 1},
+        {"stores", {
+            {"data", {
+                {"backend", "cozo"},
+                {"path", "C:/agent-data/structured.cozo"},
+            }},
+        }},
         {"tools", {
             {"profile", "local-developer"},
             {"capabilities", {
@@ -267,6 +273,8 @@ int main(int argc, char ** argv) {
     };
     if (!parse_agent_host_config_json(capability_config_json, capability_config, error) ||
             capability_config.tool_profile != "local-developer" ||
+            capability_config.data_backend != "cozo" ||
+            capability_config.data_db != "C:/agent-data/structured.cozo" ||
             capability_config.tool_capabilities.size() != 2 ||
             capability_config.tool_profiles.size() != 1 ||
             capability_config.tool_profiles.at("local-developer").include_capabilities.size() != 2 ||
@@ -301,6 +309,8 @@ int main(int argc, char ** argv) {
     if (capability_roundtrip["tools"]["capabilities"]["workspace.read"].size() != 2 ||
             capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2 ||
             capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>() ||
+            capability_roundtrip["stores"]["data"]["backend"] != "cozo" ||
+            capability_roundtrip["stores"]["data"]["path"] != "C:/agent-data/structured.cozo" ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write" ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["image"] != "llama-agent-dev:latest" ||
             capability_roundtrip["sandbox"]["defaults"]["image"] != "llama-agent-default:latest" ||

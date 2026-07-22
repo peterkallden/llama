@@ -1003,6 +1003,10 @@ One concrete "full current functionality" foreground run looks like this on Wind
     "plan": {
       "backend": "cozo",
       "path": ".\\work\\agent-plan.cozo"
+    },
+    "data": {
+      "backend": "cozo",
+      "path": ".\\work\\agent-data.cozo"
     }
   },
   "resources": {

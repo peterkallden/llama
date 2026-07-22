@@ -8,6 +8,7 @@
 #include "agent/sandbox-docker-runtime.h"
 #include "agent/sandbox-kubernetes-runtime.h"
 #include "agent/sandbox-runtime.h"
+#include "../data/agent-data-store-factory.h"
 #include "../tooling/agent-sandbox-helper.h"
 #include "common/cli-scope.h"
 
@@ -79,6 +80,7 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    request.data_store_config = {options.data_backend, options.data_db};
     request.tool_capabilities = options.tool_capabilities;
     request.tool_profiles = options.tool_profiles;
     request.sandbox = options.sandbox;
@@ -207,6 +209,14 @@ bool resolve_agent_host_tool_selection(
         std::string & error) {
     selection = {};
 
+    if (request.data_store == nullptr) {
+        selection.owned_data_store = make_agent_data_store(request.data_store_config, error);
+        if (!error.empty()) {
+            error = "data store setup failed: " + error;
+            return false;
+        }
+    }
+
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
     agent_tool_context resolved_tool_context = request.tool_context;
@@ -234,6 +244,16 @@ bool resolve_agent_host_tool_selection(
             std::vector<common_tool_definition> available_tools;
             for (auto & definition : profile_snapshot->tools) {
                 if (definition.risk_class != common_tool_risk_class::sandbox_execution) {
+                    available_tools.push_back(std::move(definition));
+                }
+            }
+            profile_snapshot->tools = std::move(available_tools);
+        }
+        if (request.data_store == nullptr && selection.owned_data_store == nullptr) {
+            std::vector<common_tool_definition> available_tools;
+            for (auto & definition : profile_snapshot->tools) {
+                if (definition.executor_id.rfind("builtin.data.", 0) != 0 &&
+                        definition.executor_id != "builtin.statistics.describe") {
                     available_tools.push_back(std::move(definition));
                 }
             }
@@ -269,6 +289,9 @@ bool resolve_agent_host_tool_selection(
             resource_store = selection.owned_resource_store.get();
         }
         bindings.resource_runtime.store = resource_store;
+        bindings.data_store = request.data_store != nullptr
+            ? request.data_store
+            : selection.owned_data_store.get();
         bindings.memory_store = &store;
         bindings.memory_query = query;
         if (embedding_provider != nullptr) {
