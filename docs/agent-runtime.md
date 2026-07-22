@@ -148,15 +148,16 @@ Public turn requests that try to provide `tool_profile`, `allowed_tools`,
 The catalog also defines the first semantic developer execution contracts:
 `build_target` and `test_run`. They accept a target-oriented request and carry
 host-owned sandbox policy metadata; they do not accept Docker, Kubernetes or
-shell details. Their executors are intentionally not installed in the native
-adapter yet. A later sandbox runtime will provide the execution backend while
-the model-facing schema remains stable.
+shell details. Their executors are intentionally kept behind the host-owned
+sandbox binding while the model-facing schema remains stable. Docker is the
+first concrete backend; Kubernetes will use the same seam later.
 
 The backend-neutral sandbox runtime also has an explicit no-backend state.
 When Docker, Kubernetes or another executor is not configured, a validated
 request returns `sandbox.backend_unavailable`; it never falls back to an
 unsandboxed host process. This keeps the runtime seam testable before the
-first concrete backend is added.
+unsandboxed host process. This keeps the no-backend mode explicit even though
+Docker execution is now available when selected by host configuration.
 
 ## Thinking-mode escalation
 

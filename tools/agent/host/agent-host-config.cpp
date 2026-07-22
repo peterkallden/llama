@@ -285,6 +285,12 @@ bool parse_agent_host_config_json(
         if (!parsed["sandbox"].is_object()) { error = "sandbox must be an object"; return false; }
         const auto & sandbox = parsed["sandbox"];
         read_optional(sandbox, "backend", config.sandbox.backend);
+        if (sandbox.contains("docker")) {
+            if (!sandbox["docker"].is_object()) { error = "sandbox.docker must be an object"; return false; }
+            const auto & docker = sandbox["docker"];
+            read_optional(docker, "executable", config.sandbox.docker_executable);
+            read_optional(docker, "default_image", config.sandbox.docker_default_image);
+        }
         if (sandbox.contains("workspace")) {
             if (!sandbox["workspace"].is_object()) { error = "sandbox.workspace must be an object"; return false; }
             const auto & workspace = sandbox["workspace"];
@@ -588,6 +594,10 @@ nlohmann::ordered_json agent_host_config_to_json(
         }},
         {"sandbox", {
             {"backend", config.sandbox.backend},
+            {"docker", {
+                {"executable", config.sandbox.docker_executable},
+                {"default_image", config.sandbox.docker_default_image},
+            }},
             {"workspace", {
                 {"root", config.sandbox.workspace.workspace_root},
                 {"artifact_root", config.sandbox.workspace.artifact_root},

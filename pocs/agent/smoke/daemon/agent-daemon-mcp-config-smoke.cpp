@@ -211,7 +211,11 @@ int main(int argc, char ** argv) {
             }},
         }},
         {"sandbox", {
-            {"backend", "none"},
+            {"backend", "docker"},
+            {"docker", {
+                {"executable", "docker"},
+                {"default_image", "llama-agent-dev:latest"},
+            }},
             {"workspace", {
                 {"root", "C:/agent-workspaces"},
                 {"artifact_root", "C:/agent-artifacts"},
@@ -234,7 +238,9 @@ int main(int argc, char ** argv) {
             capability_config.tool_capabilities.size() != 2 ||
             capability_config.tool_profiles.size() != 1 ||
             capability_config.tool_profiles.at("local-developer").include_capabilities.size() != 2 ||
-            capability_config.sandbox.backend != "none" ||
+            capability_config.sandbox.backend != "docker" ||
+            capability_config.sandbox.docker_executable != "docker" ||
+            capability_config.sandbox.docker_default_image != "llama-agent-dev:latest" ||
             capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
             capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
@@ -250,7 +256,8 @@ int main(int argc, char ** argv) {
     if (capability_roundtrip["tools"]["capabilities"]["workspace.read"].size() != 2 ||
             capability_roundtrip["tools"]["profiles"]["local-developer"]["include_capabilities"].size() != 2 ||
             capability_roundtrip["tools"]["profiles"]["local-developer"]["allow_network"].get<bool>() ||
-            capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write") {
+            capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write" ||
+            capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
         return 1;
     }

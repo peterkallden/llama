@@ -31,7 +31,11 @@ Workspace roots and execution classes belong in host configuration:
 ```json
 {
   "sandbox": {
-    "backend": "none",
+    "backend": "docker",
+    "docker": {
+      "executable": "docker",
+      "default_image": "llama-agent-dev:latest"
+    },
     "workspace": {
       "root": "C:/agent-workspaces",
       "artifact_root": "C:/agent-artifacts"
@@ -50,16 +54,19 @@ Workspace roots and execution classes belong in host configuration:
 }
 ```
 
-The current `none` backend is intentional. It validates and prepares the
-workspace contract but returns `sandbox.backend_unavailable` instead of
-falling back to an unsandboxed process.
+The Docker backend runs each operation as an ephemeral container with a
+read-only root filesystem, no network by default, bounded resource limits,
+and only the host-created workspace mounts. The `none` backend remains useful
+for hosts that only want validation: it returns `sandbox.backend_unavailable`
+instead of falling back to an unsandboxed process. Broader network scopes are
+rejected by the Docker backend until explicit allowlists are implemented.
 
 ## Semantic developer tools
 
 `build_target` and `test_run` create bounded `developer-build` requests. The
 native adapter emits semantic commands such as `agent.build_target` and
-`agent.test_run`; a future Docker or Kubernetes backend will translate those
-requests into its own execution details.
+`agent.test_run`; Docker translates those requests into container execution
+details. Kubernetes will use the same semantic contract later.
 
 Operation directories are host-created and may be ephemeral. Source is
 normally read-only, the writable directory is used for build/analysis work,
