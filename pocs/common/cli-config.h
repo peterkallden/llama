@@ -2,6 +2,7 @@
 
 #include "memory/memory-retrieval.h"
 #include "agent/tool-catalog.h"
+#include "agent/sandbox-host-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-store.h"
@@ -76,6 +77,7 @@ struct args {
     bool tool_profile_explicit = false;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;
+    common_agent_sandbox_host_config sandbox;
     bool thinking_mode_explicit = false;
     bool memory_learn_explicit = false;
     bool agent_profile_explicit = false;

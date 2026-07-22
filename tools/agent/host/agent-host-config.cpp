@@ -301,6 +301,8 @@ bool parse_agent_host_config_json(
             const auto & workspace = sandbox["workspace"];
             read_optional(workspace, "root", config.sandbox.workspace.workspace_root);
             read_optional(workspace, "artifact_root", config.sandbox.workspace.artifact_root);
+            read_optional(workspace, "operation_mode", config.sandbox.workspace.operation_mode);
+            read_optional(workspace, "project_mode", config.sandbox.workspace.project_mode);
         }
         if (sandbox.contains("defaults")) {
             if (!sandbox["defaults"].is_object()) { error = "sandbox.defaults must be an object"; return false; }
@@ -620,6 +622,8 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"workspace", {
                 {"root", config.sandbox.workspace.workspace_root},
                 {"artifact_root", config.sandbox.workspace.artifact_root},
+                {"operation_mode", config.sandbox.workspace.operation_mode},
+                {"project_mode", config.sandbox.workspace.project_mode},
             }},
             {"defaults", sandbox_defaults_to_json(config.sandbox.defaults)},
             {"classes", std::move(sandbox_classes)},
@@ -821,6 +825,16 @@ bool validate_agent_host_config(
         error = "sandbox.workspace.root is required when sandbox classes are configured";
         return false;
     }
+    if (config.sandbox.workspace.operation_mode != "ephemeral" &&
+            config.sandbox.workspace.operation_mode != "persistent") {
+        error = "sandbox.workspace.operation_mode must be ephemeral or persistent";
+        return false;
+    }
+    if (config.sandbox.workspace.project_mode != "persistent" &&
+            config.sandbox.workspace.project_mode != "ephemeral") {
+        error = "sandbox.workspace.project_mode must be persistent or ephemeral";
+        return false;
+    }
     for (const auto & entry : config.sandbox.classes) {
         if (entry.first.empty() || entry.second.execution_class != entry.first ||
                 entry.second.limits.timeout_ms == 0 || entry.second.limits.cpu_count == 0 ||
@@ -922,6 +936,7 @@ void apply_agent_host_config_to_daemon_options(
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
     options.tool_profiles = config.tool_profiles;
+    options.sandbox = config.sandbox;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;
@@ -995,6 +1010,7 @@ void apply_agent_host_config_to_args(
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
     options.tool_profiles = config.tool_profiles;
+    options.sandbox = config.sandbox;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;

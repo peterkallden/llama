@@ -219,6 +219,8 @@ int main(int argc, char ** argv) {
             {"workspace", {
                 {"root", "C:/agent-workspaces"},
                 {"artifact_root", "C:/agent-artifacts"},
+                {"operation_mode", "ephemeral"},
+                {"project_mode", "persistent"},
             }},
             {"defaults", {
                 {"image", "llama-agent-default:latest"},
@@ -253,6 +255,8 @@ int main(int argc, char ** argv) {
             capability_config.sandbox.classes.at("developer-build").image != "llama-agent-dev:latest" ||
             capability_config.sandbox.classes.at("developer-build").limits.max_output_bytes != 131072 ||
             capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
+            capability_config.sandbox.workspace.operation_mode != "ephemeral" ||
+            capability_config.sandbox.workspace.project_mode != "persistent" ||
             capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
         return 1;
@@ -270,7 +274,8 @@ int main(int argc, char ** argv) {
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["filesystem"] != "workspace_write" ||
             capability_roundtrip["sandbox"]["classes"]["developer-build"]["image"] != "llama-agent-dev:latest" ||
             capability_roundtrip["sandbox"]["defaults"]["image"] != "llama-agent-default:latest" ||
-            capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest") {
+            capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest" ||
+            capability_roundtrip["sandbox"]["workspace"]["operation_mode"] != "ephemeral") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
         return 1;
     }

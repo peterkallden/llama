@@ -41,6 +41,7 @@ struct daemon_options {
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;
+    common_agent_sandbox_host_config sandbox;
     std::string repository_root;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;

@@ -3,6 +3,7 @@
 #include "../common/cli-config.h"
 #include "../host/agent-host-mcp-provider-config.h"
 #include "agent/tool-catalog.h"
+#include "agent/sandbox-host-config.h"
 #include "agent/sandbox-policy.h"
 #include "agent/workspace-contract.h"
 
@@ -15,14 +16,7 @@
 
 struct daemon_options;
 
-struct agent_host_sandbox_config {
-    std::string backend = "none";
-    std::string docker_executable = "docker";
-    std::string docker_default_image;
-    common_agent_workspace_roots workspace;
-    common_agent_sandbox_policy defaults;
-    std::map<std::string, common_agent_sandbox_policy> classes;
-};
+using agent_host_sandbox_config = common_agent_sandbox_host_config;
 
 struct agent_host_config {
     int schema_version = 1;

@@ -56,6 +56,8 @@ inline bool validate_common_agent_workspace_context(
 struct common_agent_workspace_roots {
     std::string workspace_root;
     std::string artifact_root;
+    std::string operation_mode = "ephemeral";
+    std::string project_mode = "persistent";
 };
 
 struct common_agent_workspace_operation {
