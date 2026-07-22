@@ -165,7 +165,7 @@ profile, configured capabilities, resolved tool names and effective
 network/write policy. This is the authoritative startup diagnostic for what
 the instance exposes.
 
-The tool catalog includes semantic `build_target` and `test_run` contracts for
+The tool catalog includes semantic `development.build` and `development.test` contracts for
 the developer path. They are confirmation-gated and describe a
 `developer-build` sandbox policy. When Docker is configured as the host
 backend, the host resolves `sandbox.defaults` and the class overrides before

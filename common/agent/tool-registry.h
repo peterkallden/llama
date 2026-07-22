@@ -24,6 +24,7 @@ using common_registered_tool_call = common_agent_tool_call;
 class common_tool_registry {
 public:
     bool register_tool(common_registered_tool tool, std::string & error);
+    bool register_alias(const std::string & alias, const std::string & target, std::string & error);
     // Validates registration and the object-shaped JSON contract without
     // invoking the handler. Runtime callers use this to distinguish a bad
     // plan/tool contract from an ordinary handler failure.

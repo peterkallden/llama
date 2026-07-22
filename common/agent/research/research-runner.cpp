@@ -16,12 +16,12 @@ bool build_call(
         const common_agent_research_workspace & workspace,
         common_agent_tool_call & call) {
     call.name = tool_name;
-    if (tool_name == "build_target" || tool_name == "test_run") {
+    if (tool_name == "development.build" || tool_name == "development.test" || tool_name == "build_target" || tool_name == "test_run") {
         json arguments = {
             {"target", instruction},
             {"configuration", "Debug"},
         };
-        if (tool_name == "test_run") arguments["timeout_ms"] = 120000;
+        if (tool_name == "development.test" || tool_name == "test_run") arguments["timeout_ms"] = 120000;
         json resources = json::array();
         for (const auto & source : workspace.sources) {
             if (source.resource_ref && resources.size() < 32) {

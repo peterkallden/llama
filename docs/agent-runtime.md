@@ -146,7 +146,7 @@ Public turn requests that try to provide `tool_profile`, `allowed_tools`,
 `allow_writes` or `enable_shell` are rejected at the protocol boundary.
 
 The catalog also defines the first semantic developer execution contracts:
-`build_target` and `test_run`. They accept a target-oriented request and carry
+`development.build` and `development.test`. They accept a target-oriented request and carry
 host-owned sandbox policy metadata; they do not accept Docker, Kubernetes or
 shell details. Their executors are intentionally kept behind the host-owned
 sandbox binding while the model-facing schema remains stable. Docker is the
@@ -170,8 +170,8 @@ choice exposed to the client:
 
 | Tool class | Responsibility | Typical examples |
 | --- | --- | --- |
-| Host-native | Reads or changes the host's controlled workspace or repository | `workspace_read`, `workspace_search`, `workspace_patch`, `repository_diff` |
-| Sandbox-backed | Runs build, test, analysis or transformation in an isolated executor | `build_target`, `test_run`, `python_execute`, `data_compute` |
+| Host-native | Reads or changes the host's controlled workspace or repository | `workspace.read`, `workspace.search`, `workspace.patch`, `repository.diff` |
+| Sandbox-backed | Runs build, test, analysis or transformation in an isolated executor | `development.build`, `development.test`, `python_execute`, `data_compute` |
 | Store-backed | Queries an authorized internal store or catalog | `memory_search`, `resource_read`, `plan_lookup` |
 | Artifact | Publishes sandbox/store results as named resources with provenance | `artifact_export`, `report_create`, `chart_export` |
 | Provider-backed | Uses a host-configured external provider or MCP server | web search, repository search, remote resource tools |
@@ -182,6 +182,14 @@ effect labels: a sandbox-backed tool may produce artifacts, and a
 provider-backed tool may register resources in the store. Tool metadata must
 therefore keep execution class separate from capability, effect, risk and
 artifact production.
+
+The namespaced names are canonical in the catalog and in resolved profile
+snapshots. During this migration the native adapter also accepts these legacy
+aliases: `repository_diff`, `workspace_list`, `workspace_read`,
+`workspace_search`, `build_target` and `test_run`. The aliases are compatibility
+inputs only; new host configuration, profiles and model-visible tool views
+should use the namespaced names. A later migration sweep will remove the
+aliases after remaining repository references have been updated.
 
 The following constraints apply:
 
@@ -1176,7 +1184,7 @@ The current real MCP stdio server exports a host-resolved tool surface, not the 
 | Capability | Available through real MCP stdio server | What it requires today |
 | --- | --- | --- |
 | `calculator`, `time_now` | Yes | `--tool-profile minimal` or any broader native profile |
-| Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository_diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
+| Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository.diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
 | Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, such as `research` or `all-configured`; host policy still decides whether network tools are exposed |
 | `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
 | `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads through the MCP resource capability |

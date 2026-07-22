@@ -28,6 +28,16 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+std::string legacy_tool_alias(const std::string & name) {
+    if (name == "repository.diff") return "repository_diff";
+    if (name == "workspace.list") return "workspace_list";
+    if (name == "workspace.read") return "workspace_read";
+    if (name == "workspace.search") return "workspace_search";
+    if (name == "development.build") return "build_target";
+    if (name == "development.test") return "test_run";
+    return {};
+}
+
 class calculator_parser {
 public:
     explicit calculator_parser(const std::string & text) : text(text) {}
@@ -248,15 +258,16 @@ bool make_sandbox_request(
         return false;
     }
     request = {};
+    const bool is_test = tool_name == "development.test" || tool_name == "test_run";
     request.operation_id = tool_name + "/" + target;
     request.execution_class = "developer-build";
-    request.command.program = tool_name == "build_target" ? "agent.build_target" : "agent.test_run";
+    request.command.program = is_test ? "agent.test_run" : "agent.build_target";
     request.command.arguments.push_back(target);
     if (arguments.contains("configuration")) {
         if (!arguments["configuration"].is_string()) { error = tool_name + " configuration must be a string"; return false; }
         request.command.arguments.push_back(arguments["configuration"].get<std::string>());
     }
-    if (tool_name == "test_run" && arguments.contains("filter")) {
+    if (is_test && arguments.contains("filter")) {
         if (!arguments["filter"].is_string()) { error = "test_run filter must be a string"; return false; }
         request.command.arguments.push_back(arguments["filter"].get<std::string>());
     }
@@ -1122,7 +1133,11 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             }, error);
         }
         if (!error.empty()) return false;
-        if (installed) result.registered.push_back(definition.name);
+        if (installed) {
+            const auto alias = legacy_tool_alias(definition.name);
+            if (!alias.empty() && !registry.register_alias(alias, definition.name, error)) return false;
+            result.registered.push_back(definition.name);
+        }
         else result.unavailable.push_back(definition.name);
     }
     error.clear();

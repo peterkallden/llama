@@ -132,7 +132,7 @@ Job and policy when cleanup is enabled.
 
 ## Semantic developer tools
 
-`build_target` and `test_run` create bounded `developer-build` requests. The
+`development.build` and `development.test` create bounded `developer-build` requests. The
 native adapter emits semantic commands such as `agent.build_target` and
 `agent.test_run`; Docker translates those requests into container execution
 details. Kubernetes translates the same semantic request into a Job.

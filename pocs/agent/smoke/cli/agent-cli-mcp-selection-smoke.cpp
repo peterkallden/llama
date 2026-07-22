@@ -130,8 +130,8 @@ int main(int argc, char ** argv) {
     sandbox_profile.id = unavailable_options.tool_profile;
     sandbox_profile.members = {
         {"calculator", 1, true, "{}"},
-        {"build_target", 1, true, "{}"},
-        {"test_run", 1, true, "{}"},
+        {"development.build", 1, true, "{}"},
+        {"development.test", 1, true, "{}"},
     };
     unavailable_options.tool_profiles[sandbox_profile.id] = sandbox_profile;
     common_agent_cli_tool_selection unavailable_selection;
@@ -147,8 +147,8 @@ int main(int argc, char ** argv) {
             error) ||
             !unavailable_selection.tool_view ||
             !has_tool(unavailable_selection.tooling.tools, "calculator") ||
-            has_tool(unavailable_selection.tooling.tools, "build_target") ||
-            has_tool(unavailable_selection.tooling.tools, "test_run")) {
+            has_tool(unavailable_selection.tooling.tools, "development.build") ||
+            has_tool(unavailable_selection.tooling.tools, "development.test")) {
         std::fprintf(stderr, "CLI selection did not disable sandbox tools without a backend\n");
         return 1;
     }
