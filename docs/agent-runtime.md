@@ -162,6 +162,52 @@ and `1Gi` for artifacts; an empty storage class uses the cluster default. PVC id
 Operation directories are created below that PVC. Clients cannot choose PVC
 names, mount paths or Kubernetes Job details.
 
+## Tool execution boundaries
+
+Tools are classified by where their work is performed and which host-owned
+authority they use. The classification is a runtime design constraint, not a
+choice exposed to the client:
+
+| Tool class | Responsibility | Typical examples |
+| --- | --- | --- |
+| Host-native | Reads or changes the host's controlled workspace or repository | `workspace_read`, `workspace_search`, `workspace_patch`, `repository_diff` |
+| Sandbox-backed | Runs build, test, analysis or transformation in an isolated executor | `build_target`, `test_run`, `python_execute`, `data_compute` |
+| Store-backed | Queries an authorized internal store or catalog | `memory_search`, `resource_read`, `plan_lookup` |
+| Artifact | Publishes sandbox/store results as named resources with provenance | `artifact_export`, `report_create`, `chart_export` |
+| Provider-backed | Uses a host-configured external provider or MCP server | web search, repository search, remote resource tools |
+| Orchestration-backed | Schedules, delegates or observes bounded operations without performing the work itself | `delegate_task`, operation status and scheduler tools |
+
+The classes describe the primary execution boundary. They are not exclusive
+effect labels: a sandbox-backed tool may produce artifacts, and a
+provider-backed tool may register resources in the store. Tool metadata must
+therefore keep execution class separate from capability, effect, risk and
+artifact production.
+
+The following constraints apply:
+
+* Host-native tools are restricted to host-created workspace and repository
+  roots. Mutations use host validation such as expected hashes and explicit
+  patch operations.
+* Sandbox-backed tools receive semantic requests. They do not expose Docker,
+  Kubernetes or shell details to the model, and they do not write arbitrary
+  changes directly back to the host workspace.
+* Store-backed tools enforce namespace, project, session and turn authority
+  at the store boundary. A store result is not automatically evidence until
+  the owning runtime registers and scopes it.
+* Artifact tools publish explicit, bounded outputs with resource references,
+  provenance and size limits. Text in a tool result is not implicitly an
+  artifact.
+* Provider-backed tools are enabled only through host configuration and
+  caller policy. Credentials, endpoints and transport details remain outside
+  the model-facing schema.
+* Orchestration-backed tools cannot bypass the same profile, capability,
+  workspace, budget and confirmation rules that apply to a direct operation.
+
+The runtime should resolve these boundaries before a session starts. A tool
+may be absent when its required executor or provider is unavailable; the
+client must not be able to add a tool by naming a backend or capability in a
+turn request.
+
 The backend-neutral sandbox runtime also has an explicit no-backend state.
 When Docker, Kubernetes or another executor is not configured, sandbox-backed
 tools are omitted from the effective model-visible tool view during host
