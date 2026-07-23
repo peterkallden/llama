@@ -7,6 +7,7 @@
 #include "agent/sandbox-host-config.h"
 #include "agent/sandbox-contract.h"
 #include "agent/data-store.h"
+#include "../host/agent-diagnostics-config.h"
 #include "agent/workspace-manager.h"
 #include "../runtime/agent-runtime-host.h"
 #include "../runtime/agent-runtime-tooling.h"
@@ -52,6 +53,7 @@ struct agent_host_tool_selection_request {
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
+    agent_host_diagnostics_config diagnostics;
 };
 
 bool has_enabled_stdio_mcp_provider(

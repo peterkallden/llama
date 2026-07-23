@@ -10,6 +10,7 @@
 #include "../runtime/agent-runtime-execution.h"
 #include "../runtime/agent-runtime-resident.h"
 #include "agent-daemon-service.h"
+#include "../host/agent-diagnostics-config.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -47,6 +48,7 @@ struct daemon_options {
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
     std::string repository_root;
+    agent_host_diagnostics_config diagnostics;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";

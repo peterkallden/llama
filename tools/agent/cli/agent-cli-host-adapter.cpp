@@ -8,6 +8,7 @@
 #include "agent/sandbox-docker-runtime.h"
 #include "agent/sandbox-kubernetes-runtime.h"
 #include "agent/sandbox-runtime.h"
+#include "../diagnostics/agent-clangd-provider.h"
 #include "../data/agent-data-store-factory.h"
 #include "../tooling/agent-sandbox-helper.h"
 #include "common/cli-scope.h"
@@ -294,6 +295,21 @@ bool resolve_agent_host_tool_selection(
             : selection.owned_data_store.get();
         bindings.memory_store = &store;
         bindings.memory_query = query;
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+        std::shared_ptr<agent_clangd_diagnostics_provider> clangd_provider;
+        if (request.diagnostics.semantic_backend == "clangd" && !request.repository_root.empty()) {
+            clangd_provider = std::make_shared<agent_clangd_diagnostics_provider>(agent_clangd_session_config{
+                request.diagnostics.clangd_executable,
+                request.repository_root,
+                request.diagnostics.compile_commands,
+                request.tool_context.default_timeout_ms,
+                request.tool_context.default_timeout_ms,
+            });
+            bindings.diagnostics_symbol = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
+            bindings.diagnostics_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
+            bindings.diagnostics_call_hierarchy = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };
+        }
+#endif
         if (embedding_provider != nullptr) {
             bindings.embed_memory_query = [provider = embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return provider != nullptr &&

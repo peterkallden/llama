@@ -388,9 +388,11 @@ preferred provider for symbol definitions, references and call hierarchy. The
 provider integration now has a bounded JSON-RPC framing seam with
 `Content-Length` parsing, fragmented-read support and request-id helpers. A
 host-owned provider also normalizes `workspace/symbol`, references and call
-hierarchy locations into the tool result shape. The remaining integration step
-is binding that provider from host configuration in the daemon/CLI assembly,
-without adding executable paths to model-facing tool arguments.
+hierarchy locations into the tool result shape. The daemon/CLI host assembly
+now binds the provider when `diagnostics.semantic_backend` is explicitly
+`clangd`; default `auto` retains the fallback until executable discovery is
+made authoritative. Paths and process settings stay host-owned and never enter
+model-facing tool arguments.
 
 The host configuration shape for this selection is:
 

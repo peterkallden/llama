@@ -1,4 +1,7 @@
 include_directories(${PROJECT_SOURCE_DIR})
+if (LLAMA_AGENT_TOOLS_CLANG)
+    add_compile_definitions(LLAMA_AGENT_TOOLS_USE_CLANG=1)
+endif()
 
 set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-config.cpp

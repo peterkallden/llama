@@ -234,6 +234,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.repository_root = options.repository_root.empty()
         ? std::string()
         : std::filesystem::weakly_canonical(options.repository_root).string();
+    tool_request.diagnostics = options.diagnostics;
     tool_request.resource_store_config = {
         options.resource_blob_backend,
         options.resource_blob_root,

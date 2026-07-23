@@ -6,6 +6,7 @@
 #include "agent/sandbox-host-config.h"
 #include "agent/sandbox-policy.h"
 #include "agent/workspace-contract.h"
+#include "agent-diagnostics-config.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -17,13 +18,6 @@
 struct daemon_options;
 
 using agent_host_sandbox_config = common_agent_sandbox_host_config;
-
-struct agent_host_diagnostics_config {
-    std::string semantic_backend = "auto";
-    std::string clang_executable = "clang";
-    std::string clangd_executable = "clangd";
-    std::string compile_commands = "auto";
-};
 
 struct agent_host_config {
     int schema_version = 1;

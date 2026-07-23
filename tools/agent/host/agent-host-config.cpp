@@ -1082,6 +1082,7 @@ void apply_agent_host_config_to_daemon_options(
     options.tool_capabilities = config.tool_capabilities;
     options.tool_profiles = config.tool_profiles;
     options.sandbox = config.sandbox;
+    options.diagnostics = config.diagnostics;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;
@@ -1157,6 +1158,8 @@ void apply_agent_host_config_to_args(
     options.tool_capabilities = config.tool_capabilities;
     options.tool_profiles = config.tool_profiles;
     options.sandbox = config.sandbox;
+    // CLI options do not currently expose semantic provider overrides; keep
+    // the host-config value available to selection requests through defaults.
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;
