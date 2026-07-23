@@ -171,6 +171,106 @@ bool common_agent_cozo_data_store::read_dataset_with_conditions(
     return true;
 }
 
+bool common_agent_cozo_data_store::execute_native_aggregate(
+        const json & request,
+        size_t max_result_rows,
+        std::string & result_json,
+        std::string & error) const {
+    const auto dataset = request.value("dataset", std::string());
+    const auto group_by = request.value("group_by", json::array());
+    const auto measures = request.value("measures", json::array());
+    if (dataset.empty() || !group_by.is_array() || !measures.is_array() || measures.empty()) { error = "data.aggregate requires dataset, group_by and measures"; return false; }
+    for (const auto & field : group_by) if (!field.is_string() || field.get<std::string>().empty()) { error = "data.aggregate group_by fields must be strings"; return false; }
+
+    json output_rows = json::array();
+    std::map<std::string, size_t> output_index;
+    for (const auto & measure : measures) {
+        if (!measure.is_object()) { error = "data.aggregate measures must be objects"; return false; }
+        const auto function = measure.value("function", std::string());
+        const auto column = measure.value("column", std::string());
+        const auto name = measure.value("as", function + (column.empty() ? std::string() : "_" + column));
+        const bool count = function == "count";
+        const bool numeric = function == "sum" || function == "avg" || function == "min" || function == "max";
+        if ((!count && !numeric) || (!count && column.empty())) { error = "unsupported data.aggregate function"; return false; }
+
+        json params = {{"dataset", dataset}};
+        std::string script = "?[";
+        for (size_t i = 0; i < group_by.size(); ++i) script += "gkind" + std::to_string(i) + ", gtext" + std::to_string(i) + ", ";
+        script += count ? "count(row_id)] := " : (function == "avg" ? "mean(mnumber)] := " : function + "(mnumber)] := ");
+        for (size_t i = 0; i < group_by.size(); ++i) {
+            const auto field = "gfield" + std::to_string(i);
+            params[field] = group_by[i].get<std::string>();
+            script += "*agent_data_values[$dataset, row_id, $" + field + ", gkind" + std::to_string(i) + ", gtext" + std::to_string(i) + ", gnumber" + std::to_string(i) + "], ";
+        }
+        if (count) script += "*agent_data_rows[$dataset, row_id, row_json]";
+        else {
+            params["mfield"] = column;
+            script += "*agent_data_values[$dataset, row_id, $mfield, mkind, mtext, mnumber], mkind == 'number'";
+        }
+        script += " :limit " + std::to_string(max_result_rows);
+        std::string raw;
+        if (!run(script, params.dump(), raw, error)) return false;
+        const auto parsed = json::parse(raw, nullptr, false);
+        if (!parsed.is_object() || !parsed.contains("rows")) { error = "Cozo aggregate query returned invalid rows"; return false; }
+        for (const auto & row : parsed["rows"]) {
+            if (!row.is_array() || row.size() < (group_by.size() * 2 + 1)) continue;
+            json output = json::object();
+            std::string key;
+            size_t position = 0;
+            for (size_t i = 0; i < group_by.size(); ++i) {
+                const auto kind = row[position++].get<std::string>();
+                const auto text = row[position++].get<std::string>();
+                json value = text;
+                if (kind == "number") value = json::parse(text, nullptr, false);
+                else if (kind == "boolean") value = text == "true";
+                output[group_by[i].get<std::string>()] = value;
+                key += kind + ":" + text + "\x1f";
+            }
+            if (output_index.find(key) == output_index.end()) { output_index[key] = output_rows.size(); output_rows.push_back(std::move(output)); }
+            output_rows[output_index[key]][name] = row.back();
+        }
+    }
+    result_json = json({{"rows", output_rows}, {"row_count", output_rows.size()}, {"scanned_rows", 0}, {"scan_truncated", false}, {"result_truncated", output_rows.size() >= max_result_rows}}).dump();
+    return true;
+}
+
+bool common_agent_cozo_data_store::execute_native_join(
+        const json & request,
+        size_t max_result_rows,
+        std::string & result_json,
+        std::string & error) const {
+    const auto left = request.value("left", std::string());
+    const auto right = request.value("right", std::string());
+    const auto on = request.value("on", json::array());
+    if (left.empty() || right.empty() || !on.is_array() || on.empty()) { error = "data.join requires left, right and on"; return false; }
+    std::string script = "?[left_json, right_json] := ";
+    json params = {{"left", left}, {"right", right}};
+    for (size_t i = 0; i < on.size(); ++i) {
+        if (!on[i].is_object() || !on[i].contains("left") || !on[i].contains("right")) { error = "data.join on entries require left and right"; return false; }
+        params["left_field" + std::to_string(i)] = on[i]["left"];
+        params["right_field" + std::to_string(i)] = on[i]["right"];
+        script += "*agent_data_values[$left, left_id, $left_field" + std::to_string(i) + ", left_kind" + std::to_string(i) + ", left_text" + std::to_string(i) + ", left_number" + std::to_string(i) + "], ";
+        script += "*agent_data_values[$right, right_id, $right_field" + std::to_string(i) + ", right_kind" + std::to_string(i) + ", right_text" + std::to_string(i) + ", right_number" + std::to_string(i) + "], ";
+        script += "left_kind" + std::to_string(i) + " == right_kind" + std::to_string(i) + ", left_text" + std::to_string(i) + " == right_text" + std::to_string(i) + ", ";
+    }
+    script += "*agent_data_rows[$left, left_id, left_json], *agent_data_rows[$right, right_id, right_json] :limit " + std::to_string(max_result_rows);
+    std::string raw;
+    if (!run(script, params.dump(), raw, error)) return false;
+    const auto parsed = json::parse(raw, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows")) { error = "Cozo join query returned invalid rows"; return false; }
+    json joined = json::array();
+    for (const auto & row : parsed["rows"]) if (row.is_array() && row.size() >= 2) {
+        const auto left_row = json::parse(row[0].get<std::string>(), nullptr, false);
+        const auto right_row = json::parse(row[1].get<std::string>(), nullptr, false);
+        if (!left_row.is_object() || !right_row.is_object()) continue;
+        json merged = left_row;
+        for (auto it = right_row.begin(); it != right_row.end(); ++it) if (!merged.contains(it.key())) merged[it.key()] = it.value();
+        joined.push_back(std::move(merged));
+    }
+    result_json = json({{"rows", joined}, {"row_count", joined.size()}, {"scanned_rows", 0}, {"scan_truncated", false}, {"result_truncated", joined.size() >= max_result_rows}}).dump();
+    return true;
+}
+
 common_agent_cozo_data_store::~common_agent_cozo_data_store() { close(); }
 
 bool common_agent_cozo_data_store::run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const {
@@ -238,6 +338,8 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
     } else if (!request.contains("dataset") || !request["dataset"].is_string()) {
         error = operation + " requires dataset"; return false;
     }
+    if (operation == "data.aggregate") return execute_native_aggregate(request, max_result_rows, result_json, error);
+    if (operation == "data.join" && request.value("type", std::string("inner")) == "inner") return execute_native_join(request, max_result_rows, result_json, error);
 
     std::vector<json> rows;
     size_t scanned_rows = 0;

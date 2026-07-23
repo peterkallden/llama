@@ -40,6 +40,10 @@ int main() {
     auto aggregate = json::parse(output);
     assert(aggregate["row_count"] == 2);
 
+    assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
+    auto inner_join = json::parse(output);
+    assert(inner_join["row_count"] == 2 && inner_join["rows"][0].contains("name"));
+
     assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto join = json::parse(output);
     assert(join["row_count"] == 3 && join["rows"][0].contains("name"));

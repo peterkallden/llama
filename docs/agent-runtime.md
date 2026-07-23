@@ -321,8 +321,10 @@ and `result_truncated` so callers can distinguish a bounded scan from a small
 result. Cozo now keeps a structured field-value relation alongside the JSON
 payload relation and compiles typed `data.filter`/`data.query` predicates into
 CozoScript before materializing matching payloads. Ordering, grouping,
-aggregation and joins still use the backend adapter's bounded normalization
-path; they are the next operations to move onto the structured relation.
+aggregation and inner joins use the structured relation as well. Left joins,
+complex expressions and full scan accounting still use the backend adapter's
+bounded normalization path; they are the next operations to move onto the
+complete query planner.
 
 This is deliberately documented as an intermediate implementation: a
 structured Cozo query planner should own all supported relational operations
