@@ -146,7 +146,7 @@ Profiles can be defined in host configuration through capabilities:
   "tools": {
     "profile": "local-developer",
     "capabilities": {
-      "workspace.read": ["repository_list", "repository_read", "repository_search"],
+      "workspace.read": ["repository.list", "repository.read", "repository.search"],
       "research.read": ["web_search", "web_fetch"]
     },
     "profiles": {

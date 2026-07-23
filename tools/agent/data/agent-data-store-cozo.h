@@ -2,8 +2,11 @@
 
 #include "agent/data-store.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Cozo-backed structured data store. Rows are kept in one host-owned relation
 // with JSON payloads so the semantic tool layer is independent of relation
@@ -21,4 +24,11 @@ public:
 private:
     int32_t db_id_ = -1;
     bool run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const;
+    bool read_dataset(
+            const std::string & dataset,
+            size_t max_scan_rows,
+            std::vector<nlohmann::ordered_json> & rows,
+            size_t & scanned_rows,
+            bool & scan_truncated,
+            std::string & error) const;
 };

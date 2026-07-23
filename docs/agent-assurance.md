@@ -101,6 +101,13 @@ builds.
 | Semantic diagnostics | [ ] | Symbol/reference lookup still uses a text fallback until clangd/LSP or a project index is bound |
 | Tool-specific smoke coverage | [ ] | The latest run is 27/30 because CLI MCP, Docker and model-backed resident coverage remain unresolved |
 
+The Cozo data-store test is conditional on `LLAMA_MEMORY_COZO=ON` and a
+configured Cozo C API. The default agent build keeps that option disabled, so
+the ordinary adapter tests verify the backend seam and tool contracts, while
+the Cozo-specific test verifies bounded scans, result limits, ordering,
+grouping, inner/left joins and operation-specific validation when the backend
+is enabled.
+
 The maturity labels used in `agent-runtime.md` describe the implementation
 stage: `Foundation`, `Limited`, `Contract-level` and `Experimental`. Assurance
 criteria describe whether a tool is safe and verified for the current host;

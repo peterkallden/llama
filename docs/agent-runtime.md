@@ -260,6 +260,31 @@ The following constraints apply:
   provenance and size limits. Text in a tool result is not implicitly an
   artifact.
 
+## Tool naming convention
+
+New tool names use dotted namespaces so related operations are visible as one
+family:
+
+| Canonical name | Legacy compatibility name |
+| --- | --- |
+| `repository.list` | `repository_list` |
+| `repository.search` | `repository_search` |
+| `repository.read` | `repository_read` |
+| `repository.diff` | — |
+| `repository.log` | `repository_log` |
+| `repository.status` | `repository_status` |
+| `repository.changed_files` | `repository_changed_files` |
+| `workspace.list` | — |
+| `workspace.read` | — |
+| `workspace.search` | — |
+| `workspace.patch` | — |
+
+The dotted names are the model-facing direction for repository tools. Legacy
+names remain temporarily accepted by existing planning, memory and research
+paths while callers migrate. New domains must use dotted names from the
+start; memory and plan tool names are outside this migration until their
+contracts are revised together.
+
 Structured data tools use the host-owned `common_agent_data_store` interface. The
 tool layer submits semantic JSON operations and does not select CozoDB, DuckDB or
 another backend. A backend is supplied by host configuration and can be replaced
@@ -274,6 +299,36 @@ rows in a controlled Cozo relation and currently supports query, filtering,
 basic aggregation, descriptive statistics, joins and bounded column
 transformations. The host still owns opening the database and binding the store
 to the runtime; the model cannot select a database path or backend.
+
+Database-backed operations should be expressed as database operations whenever
+the selected backend can execute them safely. The common data contract groups
+them as follows:
+
+| Operation family | Examples | Backend responsibility |
+| --- | --- | --- |
+| Projection | `select`, column projection | Return only requested columns |
+| Filtering | `where`, `data.filter`, equality and ordered predicates | Apply predicates before result materialization |
+| Ordering and paging | `order_by`, `limit`, `offset` | Sort and bound rows in the backend |
+| Distinctness | `distinct` | Remove duplicate projected rows in the backend |
+| Grouping and aggregation | `group_by`, `count`, `sum`, `avg`, `min`, `max` | Group and aggregate before returning rows |
+| Joins | `inner`, `left`, and later other declared join types | Join relations using declared keys |
+| Data quality predicates | null, unique and range checks | Prefer indexed or relation-level validation |
+| Graph and recursive queries | reachability, ancestry, dependency traversal | Use Cozo/Datalog or another graph-capable backend |
+
+`max_scan_rows` limits backend input scanning and `max_result_rows` limits the
+returned result. Results report `scanned_rows`, `row_count`, `scan_truncated`
+and `result_truncated` so callers can distinguish a bounded scan from a small
+result. The current Cozo POC uses a JSON payload relation, so filtering,
+ordering, grouping and joining are still normalized by the backend adapter
+after bounded row retrieval. This is deliberately documented as an
+intermediate implementation: a structured Cozo schema should compile these
+operations to CozoScript before the backend is considered production-ready.
+
+Transformations involving arbitrary expressions, file conversion, chart
+rendering and advanced statistical methods remain compute- or sandbox-backed
+until they have a safe backend-specific query plan. A tool must not accept an
+operation in its schema unless its result semantics are implemented; unsupported
+operations should be rejected explicitly.
 
 The first diagnostic/data implementations are intentionally bounded. CSV
 validation currently supports `not_null` and `unique`, compiler diagnostics parse
@@ -1278,7 +1333,7 @@ The current real MCP stdio server exports a host-resolved tool surface, not the 
 | Memory reads: `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
 | Memory proposals: `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
 | Planning: `plan_get`, `plan_propose` | Yes, when bound | A matching profile and plan store; `plan_get` is useful with a bound `plan_id` |
-| Repository: `repository_list`, `repository_search`, `repository_read`, `repository.diff`, `repository_log`, `repository_status`, `repository_changed_files` | Yes | A matching profile and host-owned `repository_root` |
+| Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root` |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
 | Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
