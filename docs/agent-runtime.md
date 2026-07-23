@@ -316,19 +316,22 @@ them as follows:
 | Graph and recursive queries | reachability, ancestry, dependency traversal | Use Cozo/Datalog or another graph-capable backend |
 
 `max_scan_rows` limits backend input scanning and `max_result_rows` limits the
-returned result. Results report `scanned_rows`, `row_count`, `scan_truncated`
-and `result_truncated` so callers can distinguish a bounded scan from a small
-result. Cozo now keeps a structured field-value relation alongside the JSON
-payload relation and compiles typed `data.filter`/`data.query` predicates into
-CozoScript before materializing matching payloads. Ordering, grouping,
-aggregation and inner joins use the structured relation as well. Left joins,
-complex expressions and full scan accounting still use the backend adapter's
-bounded normalization path; they are the next operations to move onto the
-complete query planner.
+returned result. Results report `scanned_rows`, `row_count`, `scan_truncated`,
+`result_truncated` and, where relevant, `scan_mode` so callers can distinguish a
+bounded scan from a small result. Cozo keeps a structured field-value relation
+alongside the JSON payload relation and compiles typed `data.filter`/
+`data.query` predicates into CozoScript before materializing matching payloads.
+Ordering, grouping, aggregation, inner joins and left joins use the structured
+relation as well. Native aggregation and joins currently report
+`scan_mode: native_unbounded`: Cozo executes the relational operation directly,
+but the stored row relation does not yet have a host-defined ordinal that can
+enforce `max_scan_rows` before grouping or joining. The bounded materialization
+path remains the reference for operations that need strict input accounting.
 
 This is deliberately documented as an intermediate implementation: a
-structured Cozo query planner should own all supported relational operations
-before the backend is considered production-ready.
+structured Cozo query planner should own all supported relational operations,
+including bounded input accounting, before the backend is considered
+production-ready.
 
 Transformations involving arbitrary expressions, file conversion, chart
 rendering and advanced statistical methods remain compute- or sandbox-backed

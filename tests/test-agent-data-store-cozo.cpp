@@ -38,15 +38,18 @@ int main() {
 
     assert(store.execute("data.aggregate", R"({"dataset":"orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"},{"function":"sum","column":"value","as":"total"}]})", output, error));
     auto aggregate = json::parse(output);
-    assert(aggregate["row_count"] == 2);
+    assert(aggregate["row_count"] == 2 && aggregate["scan_mode"] == "native_unbounded");
 
     assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);
-    assert(inner_join["row_count"] == 2 && inner_join["rows"][0].contains("name"));
+    assert(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_unbounded" && inner_join["rows"][0].contains("name"));
 
     assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto join = json::parse(output);
-    assert(join["row_count"] == 3 && join["rows"][0].contains("name"));
+    assert(join["row_count"] == 3 && join["scan_mode"] == "native_unbounded" && join["rows"][0].contains("name"));
+    bool found_unmatched = false;
+    for (const auto & row : join["rows"]) if (row.value("customer_id", 0) == 11) found_unmatched = !row.contains("name");
+    assert(found_unmatched);
 
     assert(!store.execute("data.join", R"({"dataset":"orders","right":"customers","on":[]})", output, error));
     assert(error.find("left") != std::string::npos);
