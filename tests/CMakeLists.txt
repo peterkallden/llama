@@ -346,10 +346,15 @@ if (LLAMA_AGENT_RUNTIME)
         test-reflection-json.cpp
         test-tool-adapters.cpp
         test-tool-catalog.cpp
+        test-agent-clangd-protocol.cpp
     )
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-poc)
+        if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp)
+        endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
 
