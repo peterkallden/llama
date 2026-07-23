@@ -386,9 +386,11 @@ tools continue to report the explicit non-semantic fallback.
 `clang` is suitable for compiler and dependency operations; `clangd` is the
 preferred provider for symbol definitions, references and call hierarchy. The
 provider integration now has a bounded JSON-RPC framing seam with
-`Content-Length` parsing, fragmented-read support and request-id helpers. The
-next slice will bind that transport to a host-owned clangd process without
-adding executable paths to model-facing tool arguments.
+`Content-Length` parsing, fragmented-read support and request-id helpers. A
+host-owned provider also normalizes `workspace/symbol`, references and call
+hierarchy locations into the tool result shape. The remaining integration step
+is binding that provider from host configuration in the daemon/CLI assembly,
+without adding executable paths to model-facing tool arguments.
 
 The host configuration shape for this selection is:
 

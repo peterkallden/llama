@@ -23,6 +23,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
+    ../../tools/agent/diagnostics/agent-clangd-provider.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
