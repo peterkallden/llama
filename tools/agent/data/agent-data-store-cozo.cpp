@@ -25,6 +25,39 @@ const char * schema = R"COZO(
         ?[dataset, row_id] <- [['__probe__', '__probe__']]
         :delete agent_data_rows { dataset, row_id }
     }
+    {
+        ?[dataset, row_id, field, value_kind, value_text, value_number] <- [['__probe__', '__probe__', '__probe__', 'string', '', 0.0]]
+        :create agent_data_values {
+            dataset: String,
+            row_id: String,
+            field: String =>
+            value_kind: String,
+            value_text: String,
+            value_number: Float
+        }
+    }
+    {
+        ?[dataset, row_id, field] <- [['__probe__', '__probe__', '__probe__']]
+        :delete agent_data_values { dataset, row_id, field }
+    }
+)COZO";
+
+const char * values_schema = R"COZO(
+    {
+        ?[dataset, row_id, field, value_kind, value_text, value_number] <- [['__probe__', '__probe__', '__probe__', 'string', '', 0.0]]
+        :create agent_data_values {
+            dataset: String,
+            row_id: String,
+            field: String =>
+            value_kind: String,
+            value_text: String,
+            value_number: Float
+        }
+    }
+    {
+        ?[dataset, row_id, field] <- [['__probe__', '__probe__', '__probe__']]
+        :delete agent_data_values { dataset, row_id, field }
+    }
 )COZO";
 
 bool match_condition(const json & row, const json & condition) {
@@ -93,6 +126,51 @@ bool common_agent_cozo_data_store::read_dataset(
     return true;
 }
 
+bool common_agent_cozo_data_store::read_dataset_with_conditions(
+        const std::string & dataset,
+        const json & conditions,
+        size_t max_scan_rows,
+        std::vector<json> & rows,
+        size_t & scanned_rows,
+        bool & scan_truncated,
+        std::string & error) const {
+    if (!conditions.is_array() || conditions.empty()) return read_dataset(dataset, max_scan_rows, rows, scanned_rows, scan_truncated, error);
+    std::string script = "?[row_id, row_json] := ";
+    json params = {{"dataset", dataset}};
+    size_t index = 0;
+    for (const auto & condition : conditions) {
+        if (!condition.is_object() || !condition.value("field", std::string()).size()) { error = "unsupported condition"; return false; }
+        const auto op = condition.value("operator", std::string("="));
+        const auto field_name = condition["field"].get<std::string>();
+        const auto field = "field" + std::to_string(index);
+        const auto kind = "kind" + std::to_string(index);
+        const auto text = "text" + std::to_string(index);
+        const auto number = "number" + std::to_string(index);
+        const auto expected = condition.value("value", json());
+        if (op != "=" && op != "!=" && op != ">" && op != ">=" && op != "<" && op != "<=") { error = "unsupported condition"; return false; }
+        if (!(expected.is_string() || expected.is_number() || expected.is_boolean())) { error = "unsupported condition"; return false; }
+        params[field] = field_name;
+        if (expected.is_number()) { params[kind] = "number"; params[number] = expected.get<double>(); script += "*agent_data_values[$dataset, row_id, $" + field + ", " + kind + ", " + text + ", " + number + "], " + kind + " == $" + kind + ", " + number + " " + op + " $" + number; }
+        else { params[kind] = expected.is_boolean() ? "boolean" : "string"; params[text] = expected.is_boolean() ? (expected.get<bool>() ? "true" : "false") : expected.get<std::string>(); script += "*agent_data_values[$dataset, row_id, $" + field + ", " + kind + ", " + text + ", " + number + "], " + kind + " == $" + kind + ", " + text + " " + op + " $" + text; }
+        script += ", ";
+        ++index;
+    }
+    script += "*agent_data_rows[$dataset, row_id, row_json] :limit " + std::to_string(max_scan_rows + 1);
+    std::string raw;
+    if (!run(script, params.dump(), raw, error)) return false;
+    const auto rows_value = json::parse(raw, nullptr, false);
+    if (!rows_value.is_object() || !rows_value.contains("rows")) { error = "Cozo filtered query returned invalid rows"; return false; }
+    rows.clear();
+    for (const auto & item : rows_value["rows"]) if (item.is_array() && item.size() >= 2 && item[1].is_string()) {
+        const auto row = json::parse(item[1].get<std::string>(), nullptr, false);
+        if (row.is_object()) rows.push_back(row);
+    }
+    scan_truncated = rows.size() > max_scan_rows;
+    if (scan_truncated) { rows.resize(max_scan_rows); scanned_rows = max_scan_rows; }
+    else scanned_rows = rows.size();
+    return true;
+}
+
 common_agent_cozo_data_store::~common_agent_cozo_data_store() { close(); }
 
 bool common_agent_cozo_data_store::run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const {
@@ -112,9 +190,13 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
     std::string relations;
     if (!run("::relations", "{}", relations, error)) { close(); return false; }
     const auto parsed = json::parse(relations, nullptr, false);
-    bool present = false;
-    if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0] == "agent_data_rows") present = true;
-    if (!present) { std::string ignored; if (!run(schema, "{}", ignored, error)) { close(); return false; } }
+    bool rows_present = false, values_present = false;
+    if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0].is_string()) {
+        rows_present |= row[0] == "agent_data_rows";
+        values_present |= row[0] == "agent_data_values";
+    }
+    if (!rows_present) { std::string ignored; if (!run(schema, "{}", ignored, error)) { close(); return false; } }
+    else if (!values_present) { std::string ignored; if (!run(values_schema, "{}", ignored, error)) { close(); return false; } }
     return true;
 }
 
@@ -125,7 +207,21 @@ bool common_agent_cozo_data_store::put_row(const std::string & dataset, const st
     if (!parsed.is_object() || dataset.empty() || row_id.empty()) { error = "data row requires dataset, row id and JSON object"; return false; }
     const json params = {{"dataset", dataset}, {"row_id", row_id}, {"row_json", row_json}};
     std::string result;
-    return run("?[dataset, row_id, row_json] <- [[$dataset, $row_id, $row_json]] :put agent_data_rows { dataset, row_id => row_json }", params.dump(), result, error);
+    if (!run("?[dataset, row_id, row_json] <- [[$dataset, $row_id, $row_json]] :put agent_data_rows { dataset, row_id => row_json }", params.dump(), result, error)) return false;
+    json values = json::array();
+    for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+        const auto & value = it.value();
+        std::string kind = "null";
+        std::string text;
+        double number = 0.0;
+        if (value.is_string()) { kind = "string"; text = value.get<std::string>(); }
+        else if (value.is_number()) { kind = "number"; text = value.dump(); number = value.get<double>(); }
+        else if (value.is_boolean()) { kind = "boolean"; text = value.get<bool>() ? "true" : "false"; }
+        else text = value.dump();
+        values.push_back({dataset, row_id, it.key(), kind, text, number});
+    }
+    if (!values.empty() && !run("?[dataset, row_id, field, value_kind, value_text, value_number] <- $rows :put agent_data_values { dataset, row_id, field => value_kind, value_text, value_number }", json({{"rows", values}}).dump(), result, error)) return false;
+    return true;
 }
 
 bool common_agent_cozo_data_store::execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) {
@@ -146,7 +242,17 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
     std::vector<json> rows;
     size_t scanned_rows = 0;
     bool scan_truncated = false;
-    if (!is_join && !read_dataset(request["dataset"].get<std::string>(), max_scan_rows, rows, scanned_rows, scan_truncated, error)) return false;
+    if (!is_join) {
+        const auto conditions = operation == "data.filter" ? request.value("conditions", json::array()) : request.value("where", json::array());
+        bool loaded = conditions.is_array() && !conditions.empty()
+            ? read_dataset_with_conditions(request["dataset"].get<std::string>(), conditions, max_scan_rows, rows, scanned_rows, scan_truncated, error)
+            : read_dataset(request["dataset"].get<std::string>(), max_scan_rows, rows, scanned_rows, scan_truncated, error);
+        if (!loaded && error == "unsupported condition") {
+            error.clear();
+            loaded = read_dataset(request["dataset"].get<std::string>(), max_scan_rows, rows, scanned_rows, scan_truncated, error);
+        }
+        if (!loaded) return false;
+    }
 
     if (operation == "data.filter") {
         for (auto it = rows.begin(); it != rows.end();) {

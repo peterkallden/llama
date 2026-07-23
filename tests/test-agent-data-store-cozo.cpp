@@ -32,6 +32,10 @@ int main() {
     assert(query["scanned_rows"] == 2 && query["scan_truncated"] == true && query["row_count"] == 1 && query["result_truncated"] == true);
     assert(query["rows"][0]["value"] == 12);
 
+    assert(store.execute("data.filter", R"({"dataset":"orders","conditions":[{"field":"region","operator":"=","value":"north"}],"max_scan_rows":10})", output, error));
+    auto filtered = json::parse(output);
+    assert(filtered["row_count"] == 2 && filtered["rows"][0]["region"] == "north");
+
     assert(store.execute("data.aggregate", R"({"dataset":"orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"},{"function":"sum","column":"value","as":"total"}]})", output, error));
     auto aggregate = json::parse(output);
     assert(aggregate["row_count"] == 2);

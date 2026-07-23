@@ -31,4 +31,12 @@ private:
             size_t & scanned_rows,
             bool & scan_truncated,
             std::string & error) const;
+    bool read_dataset_with_conditions(
+            const std::string & dataset,
+            const nlohmann::ordered_json & conditions,
+            size_t max_scan_rows,
+            std::vector<nlohmann::ordered_json> & rows,
+            size_t & scanned_rows,
+            bool & scan_truncated,
+            std::string & error) const;
 };
