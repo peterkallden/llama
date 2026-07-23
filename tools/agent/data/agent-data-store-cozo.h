@@ -24,25 +24,4 @@ public:
 private:
     int32_t db_id_ = -1;
     bool run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const;
-    bool read_dataset(
-            const std::string & dataset,
-            size_t max_scan_rows,
-            std::vector<nlohmann::ordered_json> & rows,
-            size_t & scanned_rows,
-            bool & scan_truncated,
-            std::string & error) const;
-    bool read_dataset_with_conditions(
-            const std::string & dataset,
-            const nlohmann::ordered_json & conditions,
-            size_t max_scan_rows,
-            std::vector<nlohmann::ordered_json> & rows,
-            size_t & scanned_rows,
-            bool & scan_truncated,
-            std::string & error) const;
-    bool read_scan_metadata(
-            const std::string & dataset,
-            size_t max_scan_rows,
-            size_t & scanned_rows,
-            bool & scan_truncated,
-            std::string & error) const;
 };
