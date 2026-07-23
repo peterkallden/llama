@@ -1,4 +1,5 @@
 #include "agent-clangd-protocol.h"
+#include "agent-clangd-session.h"
 
 #include <cassert>
 
@@ -20,5 +21,8 @@ int main() {
 
     agent_clangd_message_decoder limited(8);
     assert(!limited.feed(agent_clangd_encode_message({{"jsonrpc", "2.0"}, {"result", "too long"}}), error));
+
+    agent_clangd_session unavailable({"__llama_missing_clangd__", "", "", 100, 100});
+    assert(!unavailable.request("workspace/symbol", {{"query", "needle"}}, decoded, error));
     return 0;
 }
