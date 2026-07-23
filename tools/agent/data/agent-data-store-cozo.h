@@ -45,12 +45,6 @@ private:
             size_t & scanned_rows,
             bool & scan_truncated,
             std::string & error) const;
-    bool execute_native_aggregate(
-            const nlohmann::ordered_json & request,
-            size_t max_scan_rows,
-            size_t max_result_rows,
-            std::string & result_json,
-            std::string & error) const;
     bool execute_native_join(
             const nlohmann::ordered_json & request,
             size_t max_scan_rows,

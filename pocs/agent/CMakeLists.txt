@@ -64,6 +64,7 @@ if (LLAMA_MEMORY_COZO)
         ../../tools/agent/data/agent-data-store-cozo.cpp
         ../../tools/agent/data/agent-data-store-cozo-schema.cpp
         ../../tools/agent/data/agent-data-store-cozo-query.cpp
+        ../../tools/agent/data/agent-data-store-cozo-aggregate.cpp
     )
 endif()
 
