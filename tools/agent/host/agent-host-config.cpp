@@ -451,6 +451,14 @@ bool parse_agent_host_config_json(
         }
     }
 
+    if (parsed.contains("diagnostics") && parsed["diagnostics"].is_object()) {
+        const auto & diagnostics = parsed["diagnostics"];
+        read_optional(diagnostics, "semantic_backend", config.diagnostics.semantic_backend);
+        read_optional(diagnostics, "clang_executable", config.diagnostics.clang_executable);
+        read_optional(diagnostics, "clangd_executable", config.diagnostics.clangd_executable);
+        read_optional(diagnostics, "compile_commands", config.diagnostics.compile_commands);
+    }
+
     if (parsed.contains("mcp") && parsed["mcp"].is_object()) {
         const auto & mcp = parsed["mcp"];
         if (mcp.contains("inbound") && mcp["inbound"].is_object()) {
@@ -671,6 +679,12 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"profiles", std::move(profiles)},
             {"providers", std::move(providers)},
         }},
+        {"diagnostics", {
+            {"semantic_backend", config.diagnostics.semantic_backend},
+            {"clang_executable", config.diagnostics.clang_executable},
+            {"clangd_executable", config.diagnostics.clangd_executable},
+            {"compile_commands", config.diagnostics.compile_commands},
+        }},
         {"sandbox", {
             {"backend", config.sandbox.backend},
             {"docker", {
@@ -823,6 +837,21 @@ bool validate_agent_host_config(
     }
     if (config.data_backend == "cozo" && config.data_db.empty()) {
         error = "stores.data.path is required when stores.data.backend is cozo";
+        return false;
+    }
+    if (config.diagnostics.semantic_backend != "auto" &&
+            config.diagnostics.semantic_backend != "text" &&
+            config.diagnostics.semantic_backend != "clang" &&
+            config.diagnostics.semantic_backend != "clangd") {
+        error = "diagnostics.semantic_backend must be auto, text, clang, or clangd";
+        return false;
+    }
+    if (config.diagnostics.clang_executable.empty() || config.diagnostics.clangd_executable.empty()) {
+        error = "diagnostics clang executable names must not be empty";
+        return false;
+    }
+    if (config.diagnostics.compile_commands.empty()) {
+        error = "diagnostics.compile_commands must not be empty";
         return false;
     }
     if (config.inbound_mcp_enabled) {

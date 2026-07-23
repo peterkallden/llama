@@ -18,6 +18,13 @@ struct daemon_options;
 
 using agent_host_sandbox_config = common_agent_sandbox_host_config;
 
+struct agent_host_diagnostics_config {
+    std::string semantic_backend = "auto";
+    std::string clang_executable = "clang";
+    std::string clangd_executable = "clangd";
+    std::string compile_commands = "auto";
+};
+
 struct agent_host_config {
     int schema_version = 1;
 
@@ -59,6 +66,7 @@ struct agent_host_config {
     std::map<std::string, common_tool_profile> tool_profiles;
     agent_host_sandbox_config sandbox;
     std::string repository_root;
+    agent_host_diagnostics_config diagnostics;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     bool inbound_mcp_enabled = false;
     std::string inbound_mcp_listen_address = "127.0.0.1";

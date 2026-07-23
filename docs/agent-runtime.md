@@ -387,6 +387,24 @@ tools continue to report the explicit non-semantic fallback.
 preferred provider for symbol definitions, references and call hierarchy. The
 next integration slice will bind those executables to the host-owned provider
 without adding executable paths to model-facing tool arguments.
+
+The host configuration shape for this selection is:
+
+```json
+{
+  "diagnostics": {
+    "semantic_backend": "auto",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "auto"
+  }
+}
+```
+
+`compile_commands: auto` resolves the database below the host repository root;
+an explicit host-owned path may be used when the build directory is elsewhere.
+These values are runtime/provider configuration and are never accepted from a
+client tool request.
 * Provider-backed tools are enabled only through host configuration and
   caller policy. Credentials, endpoints and transport details remain outside
   the model-facing schema.

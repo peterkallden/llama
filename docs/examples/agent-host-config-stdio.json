@@ -33,6 +33,12 @@
       }
     ]
   },
+  "diagnostics": {
+    "semantic_backend": "auto",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "auto"
+  },
   "limits": {
     "queue_capacity": 8,
     "worker_count": 2,
