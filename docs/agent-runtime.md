@@ -314,10 +314,10 @@ shared-volume materialization for remote clusters remains a later slice.
 
 ## Runtime context budgets
 
-Prompt- och observationsbudgetar ligger i host-konfigurationen under
-`runtime.context_budgets`. Defaults finns i runtime-koden och kan justeras för
-den modell och det `runtime.context_size` som instansen använder. Värdena är
-teckenbudgetar om inget annat anges:
+Prompt and observation budgets are configured by the host under
+`runtime.context_budgets`. Defaults exist in the runtime code and can be
+adjusted for the model and `runtime.context_size` used by the instance. Values
+are character budgets unless stated otherwise:
 
 ```json
 {
@@ -343,25 +343,25 @@ teckenbudgetar om inget annat anges:
 }
 ```
 
-Se även [`docs/examples/agent-runtime-context-budgets.json`](examples/agent-runtime-context-budgets.json).
+See also [`docs/examples/agent-runtime-context-budgets.json`](examples/agent-runtime-context-budgets.json).
 
-Budgetarna används så här:
+The budgets are used as follows:
 
-| Fält | Användning | Begränsningstyp |
+| Field | Use | Limiting behavior |
 | --- | --- | --- |
-| `plan_chars`, `step_chars` | plan- och stegcontext för planner, draft och reflection | bounded rendering med slutlig truncering |
-| `tool_observation_chars` | tool-resultat som sparas i planobservationen | truncering av inline-resultat; resource/artifact refs bevaras separat |
-| `input_resources_chars` | host-godkända input resources i normal prompt | truncering av renderad katalog |
-| `deliberate_input_resources_chars` | input resources i deliberate reasoning | truncering av renderad katalog |
-| `memory_chars`, `memory_per_item_chars` | vanlig memory-context | memory-renderern väljer poster inom total- och per-postbudget |
-| `overlay_chars`, `overlay_per_item_chars` | symboliskt memory-overlay | stage-aware urval och compaction före rendering |
-| `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | reasoning-context | memory-renderern väljer poster inom budgeten |
-| `deliberate_overlay_chars`, `deliberate_overlay_per_item_chars` | deliberate symbolic overlay | stage-aware urval och compaction före rendering |
+| `plan_chars`, `step_chars` | Plan and step context for the planner, draft and reflection | Bounded rendering with final truncation |
+| `tool_observation_chars` | Tool results retained in plan observations | Inline results are truncated; resource/artifact references are retained separately |
+| `input_resources_chars` | Host-approved input resources in the normal prompt | Truncation of the rendered resource catalog |
+| `deliberate_input_resources_chars` | Input resources in deliberate reasoning | Truncation of the rendered resource catalog |
+| `memory_chars`, `memory_per_item_chars` | Normal memory context | The memory renderer selects entries within total and per-entry budgets |
+| `overlay_chars`, `overlay_per_item_chars` | Symbolic memory overlay | Stage-aware selection and compaction before rendering |
+| `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | Reasoning context | The memory renderer selects entries within the configured budgets |
+| `deliberate_overlay_chars`, `deliberate_overlay_per_item_chars` | Deliberate symbolic overlay | Stage-aware selection and compaction before rendering |
 
-`context_size` är modellens token-context och bör sättas separat från
-teckenbudgetarna. Runtime använder fortfarande hårda hostägda tak för
-transport-, resurs-, sandbox- och resultatstorlekar; dessa budgetar ger inte
-klienten rätt att överskrida sådana tak.
+`context_size` is the model token context and should be configured separately
+from the character budgets. The runtime still applies hard host-owned limits
+for transport, resources, sandbox requests and result sizes; these budgets do
+not allow a client to exceed those limits.
 
 ## Thinking-mode escalation
 
@@ -1272,20 +1272,24 @@ The important implication is that "available through MCP" now means "available t
 
 The current real MCP stdio server exports a host-resolved tool surface, not the whole agent runtime loop. In practice that means native tools from the selected profile can appear there, and configured external stdio MCP providers can also be forwarded into that same exported surface when the host config enables them.
 
-| Capability | Available through real MCP stdio server | What it requires today |
+| Tool/capability group | Available through real MCP stdio server | What it requires today |
 | --- | --- | --- |
-| `calculator`, `time_now` | Yes | `--tool-profile minimal` or any broader native profile |
-| Repository tools such as `repository_list`, `repository_search`, `repository_read`, `repository.diff`, `repository_log` | Yes | A profile that includes them, typically `research`, plus `--repository-root PATH` |
-| Web tools such as `web_search` and `web_fetch` | Yes | A profile that includes them, such as `research` or `all-configured`; host policy still decides whether network tools are exposed |
-| `resource_read` | Yes | A profile that includes it, such as `memory-read`, `memory`, or `research`; the server always opens a host-owned resource store |
-| `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads through the MCP resource capability |
-| Memory read tools such as `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A profile that includes them plus any host-owned memory store, including the default in-memory store or an explicit persistent backend such as `--memory-db PATH` |
-| External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | A host config or equivalent host-owned request that enables stdio MCP subprocess providers with a prefix and command |
-| Memory proposal tools such as `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A profile such as `memory`, `research`, or `all-configured`, a host-owned memory store, and host policy that allows proposal-style writes |
-| Planning tools such as `plan_get` and `plan_propose` | Partly | A profile that includes them plus a real plan store; `plan_get` is only meaningful when a bound `--plan-id ID` exists |
-| Resource refs returned from native tools | Yes | The underlying native tool must materialize them through the host-owned resource store; `web_search`, `web_fetch` and `resource_read` are the first concrete examples |
-| Full agent/planning runtime, reflection loop, memory learning loop | No | Those are runtime behaviors, not MCP tools in the current slice |
-| Fake server tools such as `search_issues`, `search_recent_failures`, `create_issue` | No, not from the real server | Those remain test-only tools from the fake MCP server path |
+| `calculator`, `time_now` | Yes | A profile containing the tools, such as `minimal` |
+| Memory reads: `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
+| Memory proposals: `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
+| Planning: `plan_get`, `plan_propose` | Yes, when bound | A matching profile and plan store; `plan_get` is useful with a bound `plan_id` |
+| Repository: `repository_list`, `repository_search`, `repository_read`, `repository.diff`, `repository_log`, `repository_status`, `repository_changed_files` | Yes | A matching profile and host-owned `repository_root` |
+| Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
+| Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
+| Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
+| Dataset: `dataset.list`, `dataset.inspect`, `dataset.schema`, `dataset.sample`, `dataset.validate` | Yes | A matching profile and host-owned repository/workspace root; current file support is bounded, with CSV as the primary implementation |
+| Structured data: `data.query`, `data.filter`, `data.aggregate`, `data.join`, `data.transform`, `statistics.describe` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
+| `resource_read` and `artifact.export` | Yes, when bound | A matching profile and host-owned resource store; artifact output remains bounded |
+| Network: `web_search`, `web_fetch` | Yes, when allowed | A matching profile, network policy and the host's safe network provider |
+| `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads |
+| External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | Host configuration enabling an stdio MCP provider with a prefix and command |
+| Full agent/planning runtime, reflection loop and memory-learning loop | No | These are runtime behaviors, not MCP tools in the current surface |
+| Fake server tools such as `search_issues`, `search_recent_failures`, `create_issue` | No, not from the real server | These remain test-only tools from the fake MCP server path |
 
 This is also the cleanest way to think about memory, planning and resources through MCP right now:
 
@@ -1684,12 +1688,36 @@ claim coverage merely because the target exists in CMake.
 
 ## Current Verification Baseline
 
-The `poc/agent-remote-mcp-scheduler` branch has been validated with the smoke
-pack below and with the non-smoke agent CTest suite. The current Release
-baseline is 55/55 passing for `ctest -L agent`, including memory, plan,
-inference, lifecycle, and tooling tests.
+For the authoritative branch, commit, platform, counts and known failures, see
+the separate [Agent Assurance record](agent-assurance.md). This section is
+intentionally descriptive rather than a second test inventory. It explains
+which verification layers exist and what they are intended to cover; the
+assurance record owns the current pass/fail baseline.
 
-The validated smoke and integration paths include:
+The verification layers are:
+
+- **Agent CTests** cover model-free contracts and focused runtime behavior for
+  agent lifecycle, thinking modes, memory, plans, reflection, tool adapters,
+  tool catalog/profile resolution and sandbox contracts.
+- **Runtime smokes** cover provider/tool execution, workspace operations,
+  session and operation managers, deliberate/research orchestration, resource
+  stores and sandbox backend contracts.
+- **MCP smokes** cover stdio and HTTP client/server transport, tool discovery,
+  namespacing, error mapping, resource capabilities, inbound dispatch and the
+  complete vertical path.
+- **CLI smokes** cover native-plus-MCP tool selection and CLI-to-runtime
+  argument/host-adapter wiring.
+- **Daemon smokes** cover JSONL lifecycle, status, sessions, cancellation,
+  event projection, reload/configuration and daemon-side tool resolution.
+- **Resource and data checks** cover scoped resource reads/writes, artifact
+  references and host-owned structured data seams where the selected build
+  enables them.
+- **Model-backed checks** cover resident keepalive, multi-turn reuse and local
+  model integration. These require an explicit local model and are kept
+  separate from model-free assurance.
+
+The following are representative paths and focused regression cases, not a
+complete list of every CTest or smoke executable:
 
 - `test-agent-inference`
 - `test-tool-adapters`
@@ -1746,11 +1774,13 @@ The non-smoke CTest baseline can be run as one serial sweep:
 ctest --test-dir build-plan-resident-cozo-debug-3 -C Release -L agent --output-on-failure
 ```
 
-The current branch has completed this sweep with 55/55 tests passing. The
-CTest targets also retain explicit provider/runtime wiring: the inference
-aggregate links the HTTP MCP client and the lifecycle/repository tests use the
-same provider-backed tool-runtime adapter as production code. This keeps a
-successful build meaningful after the registry-to-provider migration.
+The numeric result of a particular sweep belongs in the
+[Agent Assurance record](agent-assurance.md), not in this architecture
+document. The CTest targets retain explicit provider/runtime wiring: the
+inference aggregate links the HTTP MCP client and the lifecycle/repository
+tests use the same provider-backed tool-runtime adapter as production code.
+This keeps a successful build meaningful after the registry-to-provider
+migration.
 
 The CMake test-pack targets provide the same layers when the agent options are
 enabled:
