@@ -175,6 +175,12 @@ does not execute tests: it groups an existing bounded result by normalized
 message and classification, so it can be used by reflective and deliberate
 flows as well as research.
 
+The optional clang integration is enabled at build time with
+`LLAMA_AGENT_TOOLS_CLANG=ON`. This only includes the integration seam; the host
+still owns executable discovery, `compile_commands.json` selection and the
+semantic provider binding. If `clangd` is unavailable, symbol and reference
+tools retain the explicit text fallback for backward compatibility.
+
 The tool catalog includes semantic `development.build` and `development.test` contracts for
 the developer path. They are confirmation-gated and describe a
 `developer-build` sandbox policy. When Docker is configured as the host

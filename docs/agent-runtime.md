@@ -356,6 +356,33 @@ references, but should not become the canonical source for project symbols.
 Clang/clangd is an optional host capability: its absence does not disable the
 diagnostic contracts, but limits results to the explicit fallback backend until
 a semantic provider is configured.
+
+### Optional clang tool support
+
+Clang-backed agent tooling is opt-in at build time:
+
+```text
+-DLLAMA_AGENT_RUNTIME=ON
+-DLLAMA_AGENT_TOOLS_CLANG=ON
+```
+
+When enabled, CMake searches for both `clang` and `clangd` and defines
+`LLAMA_AGENT_TOOLS_USE_CLANG` for the agent target. Missing executables produce
+configuration warnings rather than breaking the build. Runtime host setup must
+still provide the executable paths and a project `compile_commands.json` when a
+semantic provider is bound.
+
+The build flag only includes the optional integration. The host/runtime remains
+responsible for selecting `auto`, `text` or `clangd` behavior and for exposing
+the provider through the existing semantic diagnostics callback. Without the
+flag, the current text fallback and all existing tool contracts remain
+available. With the flag but without a usable `clangd`, symbol and reference
+tools continue to report the explicit non-semantic fallback.
+
+`clang` is suitable for compiler and dependency operations; `clangd` is the
+preferred provider for symbol definitions, references and call hierarchy. The
+next integration slice will bind those executables to the host-owned provider
+without adding executable paths to model-facing tool arguments.
 * Provider-backed tools are enabled only through host configuration and
   caller policy. Credentials, endpoints and transport details remain outside
   the model-facing schema.
