@@ -1,4 +1,5 @@
 #include "agent-data-store-cozo.h"
+#include "agent-data-store-cozo-schema.h"
 
 extern "C" {
 #include <cozo_c.h>
@@ -12,81 +13,6 @@ extern "C" {
 using json = nlohmann::ordered_json;
 
 namespace {
-const char * schema = R"COZO(
-    {
-        ?[dataset, row_id, row_json] <- [['__probe__', '__probe__', '{}']]
-        :create agent_data_rows {
-            dataset: String,
-            row_id: String =>
-            row_json: String
-        }
-    }
-    {
-        ?[dataset, row_id] <- [['__probe__', '__probe__']]
-        :delete agent_data_rows { dataset, row_id }
-    }
-    {
-        ?[dataset, row_id, field, value_kind, value_text, value_number] <- [['__probe__', '__probe__', '__probe__', 'string', '', 0.0]]
-        :create agent_data_values {
-            dataset: String,
-            row_id: String,
-            field: String =>
-            value_kind: String,
-            value_text: String,
-            value_number: Float
-        }
-    }
-    {
-        ?[dataset, row_id, field] <- [['__probe__', '__probe__', '__probe__']]
-        :delete agent_data_values { dataset, row_id, field }
-    }
-    {
-        ?[dataset, row_id, row_seq] <- [['__probe__', '__probe__', 1]]
-        :create agent_data_row_order {
-            dataset: String,
-            row_id: String =>
-            row_seq: Int
-        }
-    }
-    {
-        ?[dataset, row_id] <- [['__probe__', '__probe__']]
-        :delete agent_data_row_order { dataset, row_id }
-    }
-)COZO";
-
-const char * values_schema = R"COZO(
-    {
-        ?[dataset, row_id, field, value_kind, value_text, value_number] <- [['__probe__', '__probe__', '__probe__', 'string', '', 0.0]]
-        :create agent_data_values {
-            dataset: String,
-            row_id: String,
-            field: String =>
-            value_kind: String,
-            value_text: String,
-            value_number: Float
-        }
-    }
-    {
-        ?[dataset, row_id, field] <- [['__probe__', '__probe__', '__probe__']]
-        :delete agent_data_values { dataset, row_id, field }
-    }
-)COZO";
-
-const char * order_schema = R"COZO(
-    {
-        ?[dataset, row_id, row_seq] <- [['__probe__', '__probe__', 1]]
-        :create agent_data_row_order {
-            dataset: String,
-            row_id: String =>
-            row_seq: Int
-        }
-    }
-    {
-        ?[dataset, row_id] <- [['__probe__', '__probe__']]
-        :delete agent_data_row_order { dataset, row_id }
-    }
-)COZO";
-
 bool match_condition(const json & row, const json & condition) {
     if (!condition.is_object() || !condition.value("field", std::string()).size()) return false;
     const auto field = condition["field"].get<std::string>();
@@ -386,9 +312,9 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         values_present |= row[0] == "agent_data_values";
         order_present |= row[0] == "agent_data_row_order";
     }
-    if (!rows_present) { std::string ignored; if (!run(schema, "{}", ignored, error)) { close(); return false; } }
-    else if (!values_present) { std::string ignored; if (!run(values_schema, "{}", ignored, error)) { close(); return false; } }
-    if (rows_present && !order_present) { std::string ignored; if (!run(order_schema, "{}", ignored, error)) { close(); return false; } }
+    if (!rows_present) { std::string ignored; if (!run(agent_cozo_schema_script(), "{}", ignored, error)) { close(); return false; } }
+    else if (!values_present) { std::string ignored; if (!run(agent_cozo_values_schema_script(), "{}", ignored, error)) { close(); return false; } }
+    if (rows_present && !order_present) { std::string ignored; if (!run(agent_cozo_order_schema_script(), "{}", ignored, error)) { close(); return false; } }
     if (rows_present && !order_present) {
         std::string raw;
         if (!run("?[dataset, row_id] := *agent_data_rows[dataset, row_id, row_json]", "{}", raw, error)) { close(); return false; }
