@@ -28,7 +28,7 @@
           "tool_profile": "minimal",
           "allowed_tools": [
             "calculator",
-            "repository_read"
+            "repository.read"
           ],
           "allow_writes": false
         },

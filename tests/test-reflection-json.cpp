@@ -24,7 +24,7 @@ int main() {
     assert(result.proposed_plan_operations.size() == 2);
     assert(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
     assert(result.proposed_plan_operations[1].step->source_memory_ids[0] == "procedure-1");
-    assert(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"confidence":0.7,"revision_guidance":["repair the failed branch"],"complete":["lookup"],"activate":["retry"],"retry":["retry-2"],"reset":["fetch"],"next_action":"re-run verification","add_steps":[{"tool":"repository_search","args":{"query":"planner"}},{"mode":"reasoning","source_memory_ids":["procedure-1"]}],"replace_steps":[{"step_id":"fetch","title":"Retry fetch","objective":"Retry with corrected parameters","tool":"repository_search","args":{"query":"planner repair"}}]})", result, error));
+    assert(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"confidence":0.7,"revision_guidance":["repair the failed branch"],"complete":["lookup"],"activate":["retry"],"retry":["retry-2"],"reset":["fetch"],"next_action":"re-run verification","add_steps":[{"tool":"repository.search","args":{"query":"planner"}},{"mode":"reasoning","source_memory_ids":["procedure-1"]}],"replace_steps":[{"step_id":"fetch","title":"Retry fetch","objective":"Retry with corrected parameters","tool":"repository.search","args":{"query":"planner repair"}}]})", result, error));
     assert(result.proposed_plan_operations.size() == 8);
     assert(result.proposed_plan_operations[0].kind == common_plan_operation_kind::complete_step);
     assert(*result.proposed_plan_operations[0].step_id == "lookup");
@@ -38,13 +38,13 @@ int main() {
     assert(*result.proposed_plan_operations[4].value == "re-run verification");
     assert(result.proposed_plan_operations[5].kind == common_plan_operation_kind::add_step);
     assert(result.proposed_plan_operations[5].step->id == "repair_1");
-    assert(result.proposed_plan_operations[5].step->tool_call && result.proposed_plan_operations[5].step->tool_call->name == "repository_search");
+    assert(result.proposed_plan_operations[5].step->tool_call && result.proposed_plan_operations[5].step->tool_call->name == "repository.search");
     assert(result.proposed_plan_operations[6].kind == common_plan_operation_kind::add_step);
     assert(result.proposed_plan_operations[6].step->id == "repair_2");
     assert(result.proposed_plan_operations[6].step->depends_on == std::vector<std::string>{"repair_1"});
     assert(result.proposed_plan_operations[7].kind == common_plan_operation_kind::replace_step);
     assert(*result.proposed_plan_operations[7].step_id == "fetch");
-    assert(result.proposed_plan_operations[7].step->tool_call && result.proposed_plan_operations[7].step->tool_call->name == "repository_search");
+    assert(result.proposed_plan_operations[7].step->tool_call && result.proposed_plan_operations[7].step->tool_call->name == "repository.search");
     assert(common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"add_constraint","reason_summary":"preserve the repository boundary","constraint":{"id":"repo-boundary","description":"Do not modify files outside the repository.","hard":true}},{"kind":"add_assumption","reason_summary":"record the working assumption","assumption":{"id":"local-model","statement":"The configured model is available locally.","confidence":0.8,"evidence_ids":["model-check"]}},{"kind":"invalidate_assumption","reason_summary":"assumption no longer holds","target_id":"old-model"}]})", result, error));
     assert(result.proposed_plan_operations.size() == 3);
     assert(result.proposed_plan_operations[0].kind == common_plan_operation_kind::add_constraint);

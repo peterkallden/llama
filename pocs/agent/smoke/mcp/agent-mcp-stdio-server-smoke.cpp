@@ -280,7 +280,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to resolve research MCP stdio server tool view: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(research_view->chat_tools(), "local_repository_list") ||
+    if (!has_tool(research_view->chat_tools(), "local_repository.list") ||
             !has_tool(research_view->chat_tools(), "local_github_search_issues")) {
         std::fprintf(
             stderr,
@@ -291,11 +291,11 @@ int main(int argc, char ** argv) {
 
     const auto repository_result = research_view->call({
         "call-3",
-        "local_repository_list",
+        "local_repository.list",
         R"({"path":"tools/agent/mcp","depth":0})",
     }, error);
     if (!repository_result.ok || repository_result.content_json.find("agent-mcp-stdio-server-main.cpp") == std::string::npos) {
-        std::fprintf(stderr, "repository_list did not return the expected repository payload: %s\n", repository_result.content_json.c_str());
+        std::fprintf(stderr, "repository.list did not return the expected repository payload: %s\n", repository_result.content_json.c_str());
         return 1;
     }
 
@@ -315,7 +315,7 @@ int main(int argc, char ** argv) {
     std::printf("mcp_server_memory_search=%s\n", memory_search_result.content_json.c_str());
     std::printf("mcp_server_listed_resources=%zu\n", listed_resources.size());
     std::printf("mcp_server_research_tools=%zu\n", research_view->chat_tools().size());
-    std::printf("mcp_server_repository_list=%s\n", repository_result.content_json.c_str());
+    std::printf("mcp_server_repository.list=%s\n", repository_result.content_json.c_str());
     std::printf("mcp_server_github_search=%s\n", github_result.content_json.c_str());
     std::printf("mcp_server_invalid_code=%s\n", invalid_result.failure_code.c_str());
     return 0;

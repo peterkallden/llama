@@ -32,7 +32,7 @@ bool build_call(
         call.arguments_json = std::move(arguments).dump();
         return true;
     }
-    if (tool_name == "repository_search") {
+    if (tool_name == "repository.search") {
         call.arguments_json = json{{"query", instruction}, {"max_results", 8}}.dump();
         return true;
     }

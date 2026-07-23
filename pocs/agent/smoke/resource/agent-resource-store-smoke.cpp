@@ -25,7 +25,7 @@ int main() {
             "turn-1",
             "tool-1",
             "native",
-            "repository_search",
+            "repository.search",
             0,
             0,
             {
@@ -33,7 +33,7 @@ int main() {
                 "Three repository search matches in JSON form.",
                 "Read the resource when a later step needs the full match list instead of an inline summary.",
                 "Search previews are partial lines only.",
-                {"repository_search", "matches"},
+                {"repository.search", "matches"},
                 {"tool-adapters.cpp"},
             },
         }, first, error)) {
@@ -59,7 +59,7 @@ int main() {
             "turn-2",
             "tool-2",
             "native",
-            "repository_search",
+            "repository.search",
         }, second, error)) {
         std::fprintf(stderr, "second put_text failed: %s\n", error.c_str());
         return 1;
@@ -92,7 +92,7 @@ int main() {
         std::fprintf(stderr, "stat failed: %s\n", error.c_str());
         return 1;
     }
-    if (statted.source_tool != "repository_search") {
+    if (statted.source_tool != "repository.search") {
         std::fprintf(stderr, "stat returned unexpected source tool: %s\n", statted.source_tool.c_str());
         return 1;
     }
@@ -174,7 +174,7 @@ int main() {
             "turn-3",
             "tool-3",
             "native",
-            "repository_search",
+            "repository.search",
         }, cozo_descriptor, error)) {
         std::fprintf(stderr, "cozo put_text failed: %s\n", error.c_str());
         return 1;

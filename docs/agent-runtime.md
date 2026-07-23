@@ -266,25 +266,23 @@ The following constraints apply:
 New tool names use dotted namespaces so related operations are visible as one
 family:
 
-| Canonical name | Legacy compatibility name |
-| --- | --- |
-| `repository.list` | `repository_list` |
-| `repository.search` | `repository_search` |
-| `repository.read` | `repository_read` |
-| `repository.diff` | — |
-| `repository.log` | `repository_log` |
-| `repository.status` | `repository_status` |
-| `repository.changed_files` | `repository_changed_files` |
-| `workspace.list` | — |
-| `workspace.read` | — |
-| `workspace.search` | — |
-| `workspace.patch` | — |
+| Canonical name |
+| --- |
+| `repository.list` |
+| `repository.search` |
+| `repository.read` |
+| `repository.diff` |
+| `repository.log` |
+| `repository.status` |
+| `repository.changed_files` |
+| `workspace.list` |
+| `workspace.read` |
+| `workspace.search` |
+| `workspace.patch` |
 
-The dotted names are the model-facing direction for repository tools. Legacy
-names remain temporarily accepted by existing planning, memory and research
-paths while callers migrate. New domains must use dotted names from the
-start; memory and plan tool names are outside this migration until their
-contracts are revised together.
+Repository and workspace tools use only their namespaced model-facing names.
+The former underscore names are no longer accepted by the catalog, profiles,
+planning or research paths.
 
 Structured data tools use the host-owned `common_agent_data_store` interface. The
 tool layer submits semantic JSON operations and does not select CozoDB, DuckDB or

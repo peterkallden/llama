@@ -149,7 +149,7 @@ int main() {
                         {"usage_hint", "Read when the top inline hits are insufficient."},
                         {"limitations", "May be truncated by max_bytes."},
                         {"keywords", json::array({"search", "results"})},
-                        {"entities", json::array({"repository_search"})},
+                        {"entities", json::array({"repository.search"})},
                     }},
                 }
             });
@@ -213,7 +213,7 @@ int main() {
                         {"usage_hint", "Read when the top inline hits are insufficient."},
                         {"limitations", "May be truncated by max_bytes."},
                         {"keywords", json::array({"search", "results"})},
-                        {"entities", json::array({"repository_search"})},
+                        {"entities", json::array({"repository.search"})},
                     }},
                 }},
                 {"content", R"({"results":["stub"]})"},

@@ -80,7 +80,7 @@ int main() {
     workspace.objective.success_criteria = {"claims are source-backed"};
     std::string error;
     assert(common_agent_research_add_gap(workspace, {"gap-1", "Is cancellation bounded?", "The runtime contract is unclear.", "evidence establishes whether cancellation is bounded", 1}, error));
-    assert(common_agent_research_add_task(workspace, {"task-1", "gap-1", "Find cancellation paths", common_agent_research_task_kind::repository_search, {"repository_search"}, {}, 1, 0, 1}, error));
+    assert(common_agent_research_add_task(workspace, {"task-1", "gap-1", "Find cancellation paths", common_agent_research_task_kind::repository_inspection, {"repository.search"}, {}, 1, 0, 1}, error));
     common_runtime_resource_ref resource;
     resource.uri = "agent-resource://turn-1/source-1";
     resource.scope = common_runtime_resource_scope::turn;

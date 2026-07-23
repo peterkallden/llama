@@ -218,8 +218,8 @@ int main(int argc, char ** argv) {
         {"tools", {
             {"profile", "local-developer"},
             {"capabilities", {
-                {"workspace.read", json::array({"repository_list", "repository_read"})},
-                {"repository.inspect", json::array({"repository_search", "repository.diff"})},
+                {"workspace.read", json::array({"repository.list", "repository.read"})},
+                {"repository.inspect", json::array({"repository.search", "repository.diff"})},
             }},
             {"profiles", {
                 {"local-developer", {
@@ -346,7 +346,7 @@ int main(int argc, char ** argv) {
         capability_config.tool_profile, error);
     if (configured_tools.size() != 4 ||
             error.size() != 0 ||
-            configured_tools[0].name != "repository_list" ||
+            configured_tools[0].name != "repository.list" ||
             configured_tools[3].name != "repository.diff") {
         std::fprintf(stderr, "configured capability profile did not resolve its tools\n");
         return 1;

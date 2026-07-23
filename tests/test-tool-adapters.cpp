@@ -117,17 +117,17 @@ int main() {
         return common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
     };
     assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
-    result = repository_registry.execute({"repository_list", R"({"path":"src","depth":1})"});
+    result = repository_registry.execute({"repository.list", R"({"path":"src","depth":1})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
-    result = repository_registry.execute({"repository_search", R"({"query":"needle","path":"src"})"});
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src"})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
-    result = repository_registry.execute({"repository_read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
+    result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
     assert(result.ok && result.output.find("needle in a haystack") != std::string::npos);
     result = repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"});
     assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
     result = repository_registry.execute({"web_fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});
     assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos);
-    result = repository_registry.execute({"repository_read", R"({"path":"../outside.txt"})"});
+    result = repository_registry.execute({"repository.read", R"({"path":"../outside.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
 
     common_tool_catalog developer_catalog;
@@ -141,9 +141,9 @@ int main() {
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     result = developer_registry.execute({"workspace.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
     assert(result.ok && result.output.find("alpha") != std::string::npos);
-    result = developer_registry.execute({"repository_status", "{}"});
+    result = developer_registry.execute({"repository.status", "{}"});
     assert(result.ok && result.output.find("src") != std::string::npos);
-    result = developer_registry.execute({"repository_changed_files", "{}"});
+    result = developer_registry.execute({"repository.changed_files", "{}"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
 
     std::filesystem::create_directories(repository / "datasets");

@@ -18,7 +18,7 @@ int main() {
                nlohmann::json::parse(rhs, nullptr, false);
     };
 
-    const auto compact = R"({"purpose":"inspect the current implementation","goal":"inspect bindings","steps":[{"id":"search","contribution":"find the relevant implementation","tool":"repository_search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository_read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
+    const auto compact = R"({"purpose":"inspect the current implementation","goal":"inspect bindings","steps":[{"id":"search","contribution":"find the relevant implementation","tool":"repository.search","args":{"query":"plan bindings"}},{"id":"read","tool":{"name":"repository.read","arguments":{"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}}},"after":"search"},{"id":"answer","mode":"final","after":"read"}]})";
     assert(common_plan_parse_proposal_json(compact, plan, operations, error));
     assert(operations.size() == 3);
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"query":"plan bindings"})"));
@@ -33,7 +33,7 @@ int main() {
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
     assert(operations[1].step->id == "answer");
 
-    const auto repaired_integer = R"({"goal":"inspect","steps":[{"id":"search","tool":"repository_search","args":{"query":"plan","max_results":"16"}}]})";
+    const auto repaired_integer = R"({"goal":"inspect","steps":[{"id":"search","tool":"repository.search","args":{"query":"plan","max_results":"16"}}]})";
     assert(common_plan_parse_proposal_json(repaired_integer, plan, operations, error));
     const auto repaired_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
     assert(repaired_actual.is_object());
@@ -60,7 +60,7 @@ int main() {
     assert(sibling_actual["limit"].is_number_integer());
     assert(sibling_actual["limit"].get<int>() == 2);
 
-    const auto compact_without_ids = R"({"goal":"inspect","steps":[{"tool":"repository_search","args":{"query":"planner"}},{"tool":{"name":"repository_read","arguments":{"path":{"$from_step":"step_1","$json_pointer":"/matches/0/path"}}}},{"mode":"reasoning"}]})";
+    const auto compact_without_ids = R"({"goal":"inspect","steps":[{"tool":"repository.search","args":{"query":"planner"}},{"tool":{"name":"repository.read","arguments":{"path":{"$from_step":"step_1","$json_pointer":"/matches/0/path"}}}},{"mode":"reasoning"}]})";
     assert(common_plan_parse_proposal_json(compact_without_ids, plan, operations, error));
     assert(operations.size() == 4); // native final synthesis
     assert(operations[0].step->id == "step_1");
@@ -77,7 +77,7 @@ int main() {
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
-    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository_search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository.search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
     assert(error == "duplicate step id");
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"answer","tool":"calculator","args":{"expression":"6 * 7"}}]})", plan, operations, error));
     assert(error == "native final step id conflicts with proposed step");
@@ -97,7 +97,7 @@ int main() {
     materialize_plan.observations.push_back(search_observation);
     common_plan_step read_step{"read", "Read", "Open the file"};
     read_step.tool_call = common_plan_tool_call{
-        "repository_read",
+        "repository.read",
         R"({"path":{"$from_step":"search","$json_pointer":"/matches/0/path"}})",
     };
     std::string materialized_arguments_json;

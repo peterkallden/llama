@@ -12,8 +12,8 @@ public:
     bool is_policy_gated(const std::string &) const override { return false; }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
-        if (call.name != "repository_search" && call.name != "memory_get") {
-            error = "only repository_search and memory_get are exposed in this smoke";
+        if (call.name != "repository.search" && call.name != "memory_get") {
+            error = "only repository.search and memory_get are exposed in this smoke";
             return false;
         }
         error.clear();
@@ -29,7 +29,7 @@ public:
         }
         return common_tool_execution_result::success(
             "{\"matches\":[{\"path\":\"common/agent\",\"line\":1}]}",
-            "repository_search returned one deterministic repository match");
+            "repository.search returned one deterministic repository match");
     }
 
     mutable int calls = 0;

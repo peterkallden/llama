@@ -803,18 +803,18 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (timezone != "UTC") return tool_validation_failure("tool.time_now.unsupported_timezone", "time_now currently supports only UTC", "Only UTC is currently supported.");
                 return tool_success_json({{"timezone", "UTC"}, {"time", utc_now()}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_list" && !bindings.repository_root.empty()) {
+        } else if ((definition.executor_id == "builtin.repository.list" || definition.executor_id == "builtin.workspace.list") && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository_list.invalid_arguments", std::move(err));
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository.list.invalid_arguments", std::move(err));
                 std::filesystem::path path;
                 if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), path, err)) {
-                    return tool_validation_failure("tool.repository_list.invalid_path", std::move(err), "Repository path is outside the allowed root.");
+                    return tool_validation_failure("tool.repository.list.invalid_path", std::move(err), "Repository path is outside the allowed root.");
                 }
                 const int depth = arguments.value("depth", 1);
-                if (depth < 0 || depth > 3) return tool_validation_failure("tool.repository_list.invalid_depth", "repository_list path or depth is invalid", "Repository list depth is out of bounds.");
-                if (!std::filesystem::is_directory(path)) return tool_not_found_failure("tool.repository_list.path_not_found", "repository_list path or depth is invalid", "Repository directory was not found.");
+                if (depth < 0 || depth > 3) return tool_validation_failure("tool.repository.list.invalid_depth", "repository.list path or depth is invalid", "Repository list depth is out of bounds.");
+                if (!std::filesystem::is_directory(path)) return tool_not_found_failure("tool.repository.list.path_not_found", "repository.list path or depth is invalid", "Repository directory was not found.");
                 json entries = json::array();
                 for (auto it = std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && entries.size() < 128; ++it) {
                     if (it.depth() >= depth && it->is_directory()) it.disable_recursion_pending();
@@ -822,43 +822,43 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"entries", entries}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_read" && !bindings.repository_root.empty()) {
+        } else if ((definition.executor_id == "builtin.repository.read" || definition.executor_id == "builtin.workspace.read") && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) {
-                    if (err.empty()) err = "repository_read requires a path";
-                    return tool_validation_failure("tool.repository_read.invalid_path", std::move(err), "Repository read requires a valid path.");
+                    if (err.empty()) err = "repository.read requires a path";
+                    return tool_validation_failure("tool.repository.read.invalid_path", std::move(err), "Repository read requires a valid path.");
                 }
                 std::filesystem::path path;
                 if (!repository_path(bindings.repository_root, arguments["path"].get<std::string>(), path, err)) {
-                    return tool_validation_failure("tool.repository_read.path_escapes_root", std::move(err), "Repository path is outside the allowed root.");
+                    return tool_validation_failure("tool.repository.read.path_escapes_root", std::move(err), "Repository path is outside the allowed root.");
                 }
                 const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199);
                 if (start < 1 || end < start || end - start > 399) {
-                    return tool_validation_failure("tool.repository_read.invalid_range", "repository_read range or file is invalid", "Requested line range is invalid.");
+                    return tool_validation_failure("tool.repository.read.invalid_range", "repository.read range or file is invalid", "Requested line range is invalid.");
                 }
-                if (!std::filesystem::is_regular_file(path)) return tool_not_found_failure("tool.repository_read.file_not_found", "repository_read range or file is invalid", "Repository file was not found.");
-                if (!text_file(path)) return tool_validation_failure("tool.repository_read.not_text", "repository_read range or file is invalid", "Repository file is not a readable text file.");
+                if (!std::filesystem::is_regular_file(path)) return tool_not_found_failure("tool.repository.read.file_not_found", "repository.read range or file is invalid", "Repository file was not found.");
+                if (!text_file(path)) return tool_validation_failure("tool.repository.read.not_text", "repository.read range or file is invalid", "Repository file is not a readable text file.");
                 std::ifstream file(path); std::string line; json lines = json::array(); for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) lines.push_back({{"line", number}, {"text", line}});
                 return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"lines", lines}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_search" && !bindings.repository_root.empty()) {
+        } else if ((definition.executor_id == "builtin.repository.search" || definition.executor_id == "builtin.workspace.search") && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err) || !arguments.contains("query") || !arguments["query"].is_string()) {
-                    if (err.empty()) err = "repository_search requires a query";
-                    return tool_validation_failure("tool.repository_search.invalid_query", std::move(err), "Repository search requires a valid query.");
+                    if (err.empty()) err = "repository.search requires a query";
+                    return tool_validation_failure("tool.repository.search.invalid_query", std::move(err), "Repository search requires a valid query.");
                 }
                 const auto query = arguments["query"].get<std::string>();
                 const int limit = arguments.value("max_results", 16);
                 if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) {
-                    return tool_validation_failure("tool.repository_search.out_of_bounds", "repository_search arguments are out of bounds", "Repository search arguments are out of bounds.");
+                    return tool_validation_failure("tool.repository.search.out_of_bounds", "repository.search arguments are out of bounds", "Repository search arguments are out of bounds.");
                 }
                 std::filesystem::path root;
                 if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, err)) {
-                    return tool_validation_failure("tool.repository_search.invalid_path", std::move(err), "Repository path is outside the allowed root.");
+                    return tool_validation_failure("tool.repository.search.invalid_path", std::move(err), "Repository path is outside the allowed root.");
                 }
                 json matches = json::array(); for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < (size_t) limit; ++it) { if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue; std::ifstream file(it->path()); std::string line; for (int number = 1; std::getline(file, line) && matches.size() < (size_t) limit; ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}}); }
                 return tool_success_json({{"matches", matches}});
@@ -1106,44 +1106,44 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"summary", diff}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_log" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.repository.log" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository_log.invalid_arguments", std::move(err));
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.repository.log.invalid_arguments", std::move(err));
                 const int limit = arguments.value("limit", 8);
-                if (limit < 1 || limit > 20) return tool_validation_failure("tool.repository_log.invalid_limit", "repository_log limit is out of bounds", "Repository log limit is out of bounds.");
+                if (limit < 1 || limit > 20) return tool_validation_failure("tool.repository.log.invalid_limit", "repository.log limit is out of bounds", "Repository log limit is out of bounds.");
                 std::string log;
                 if (!git_read(bindings.repository_root, "log --no-ext-diff --max-count=" + std::to_string(limit) + " --pretty=format:%h%x09%s", log, err)) {
-                    return tool_execution_failure("tool.repository_log.git_failed", std::move(err), "Git log could not be read.");
+                    return tool_execution_failure("tool.repository.log.git_failed", std::move(err), "Git log could not be read.");
                 }
                 return tool_success_json({{"commits", log}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_status" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.repository.status" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err) || !arguments.empty()) {
-                    if (err.empty()) err = "repository_status takes no arguments";
-                    return tool_validation_failure("tool.repository_status.invalid_arguments", std::move(err), "Repository status does not take arguments.");
+                    if (err.empty()) err = "repository.status takes no arguments";
+                    return tool_validation_failure("tool.repository.status.invalid_arguments", std::move(err), "Repository status does not take arguments.");
                 }
                 std::string status;
                 if (!git_read(bindings.repository_root, "status --short --branch", status, err)) {
-                    return tool_execution_failure("tool.repository_status.git_failed", std::move(err), "Git status could not be read.");
+                    return tool_execution_failure("tool.repository.status.git_failed", std::move(err), "Git status could not be read.");
                 }
                 return tool_success_json({{"status", status}});
             }, error);
-        } else if (definition.executor_id == "builtin.repository_changed_files" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.repository.changed_files" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;
                 json arguments;
                 if (!parse_object(input, arguments, err) || !arguments.empty()) {
-                    if (err.empty()) err = "repository_changed_files takes no arguments";
-                    return tool_validation_failure("tool.repository_changed_files.invalid_arguments", std::move(err), "Changed files does not take arguments.");
+                    if (err.empty()) err = "repository.changed_files takes no arguments";
+                    return tool_validation_failure("tool.repository.changed_files.invalid_arguments", std::move(err), "Changed files does not take arguments.");
                 }
                 std::string status;
                 if (!git_read(bindings.repository_root, "status --short --untracked-files=all", status, err)) {
-                    return tool_execution_failure("tool.repository_changed_files.git_failed", std::move(err), "Changed files could not be read.");
+                    return tool_execution_failure("tool.repository.changed_files.git_failed", std::move(err), "Changed files could not be read.");
                 }
                 json files = json::array();
                 std::istringstream lines(status);

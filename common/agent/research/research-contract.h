@@ -30,7 +30,7 @@ struct common_agent_research_gap {
     std::vector<std::string> evidence_ids, child_gap_ids;
 };
 
-enum class common_agent_research_task_kind { search, fetch, repository_search, resource_read, evidence_extract, compare_sources, verify_claim, summarize_material };
+enum class common_agent_research_task_kind { search, fetch, repository_inspection, resource_read, evidence_extract, compare_sources, verify_claim, summarize_material };
 enum class common_agent_research_task_status { pending, active, completed, blocked, failed, cancelled };
 struct common_agent_research_task {
     std::string task_id, gap_id, instruction;

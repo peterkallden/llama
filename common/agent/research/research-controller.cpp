@@ -212,10 +212,10 @@ common_agent_research_action schedule_next_gap(
     task.attempt = next_attempt - 1;
     task.instruction = query_for_attempt(*selected, task.attempt);
     task.preferred_tools = task.attempt <= 0
-        ? std::vector<std::string>{"resource_read", "repository_search", "web_search"}
+        ? std::vector<std::string>{"resource_read", "repository.search", "web_search"}
         : (task.attempt == 1
-            ? std::vector<std::string>{"repository_search", "resource_read", "web_search"}
-            : std::vector<std::string>{"web_search", "web_fetch", "repository_search"});
+            ? std::vector<std::string>{"repository.search", "resource_read", "web_search"}
+            : std::vector<std::string>{"web_search", "web_fetch", "repository.search"});
     task.priority = selected->priority;
     task.max_attempts = std::max(1, workspace.budget.max_iterations);
     for (const auto & source : workspace.sources) {

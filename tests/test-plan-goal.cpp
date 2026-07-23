@@ -14,7 +14,7 @@ int main() {
     lookup.intended_contribution = "Provide the evidence used by the answer.";
     lookup.status = common_plan_step_status::completed;
     plan.steps.push_back(lookup);
-    plan.observations.push_back({"tool:lookup:repository_search", "repository_search", "result found", 1.0f, {}, {}, 0});
+    plan.observations.push_back({"tool:lookup:repository.search", "repository.search", "result found", 1.0f, {}, {}, 0});
 
     const auto complete = common_plan_evaluate_goal(plan);
     assert(complete.structurally_complete);

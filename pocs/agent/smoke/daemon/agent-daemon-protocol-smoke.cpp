@@ -667,7 +667,7 @@ int main() {
             "Read when the top inline hits are insufficient.",
             "May be truncated by max_bytes.",
             {"search", "results"},
-            {"repository_search"},
+            {"repository.search"},
         },
         "r-1",
         "",
