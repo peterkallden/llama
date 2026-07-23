@@ -318,11 +318,15 @@ them as follows:
 `max_scan_rows` limits backend input scanning and `max_result_rows` limits the
 returned result. Results report `scanned_rows`, `row_count`, `scan_truncated`
 and `result_truncated` so callers can distinguish a bounded scan from a small
-result. The current Cozo POC uses a JSON payload relation, so filtering,
-ordering, grouping and joining are still normalized by the backend adapter
-after bounded row retrieval. This is deliberately documented as an
-intermediate implementation: a structured Cozo schema should compile these
-operations to CozoScript before the backend is considered production-ready.
+result. Cozo now keeps a structured field-value relation alongside the JSON
+payload relation and compiles typed `data.filter`/`data.query` predicates into
+CozoScript before materializing matching payloads. Ordering, grouping,
+aggregation and joins still use the backend adapter's bounded normalization
+path; they are the next operations to move onto the structured relation.
+
+This is deliberately documented as an intermediate implementation: a
+structured Cozo query planner should own all supported relational operations
+before the backend is considered production-ready.
 
 Transformations involving arbitrary expressions, file conversion, chart
 rendering and advanced statistical methods remain compute- or sandbox-backed
