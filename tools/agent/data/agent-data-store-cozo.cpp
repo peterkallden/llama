@@ -382,53 +382,10 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
             if (!keep) it = rows.erase(it); else ++it;
         }
         agent_cozo_sort_rows(rows, request.value("order_by", json::array()));
-    } else if (operation == "data.aggregate") {
-        std::map<std::string, std::vector<json>> groups;
-        const auto group_by = request.value("group_by", json::array());
-        for (const auto & row : rows) {
-            std::string key;
-            for (const auto & field : group_by) key += json(row.value(field.get<std::string>(), json())).dump() + "\x1f";
-            groups[key].push_back(row);
-        }
-        if (groups.empty()) groups[""] = {};
-        if (groups.size() == 1 && groups.begin()->second.empty()) groups.begin()->second = rows;
-        json output_rows = json::array();
-        for (const auto & group : groups) {
-            json output = json::object();
-            if (!group_by.empty() && !group.second.empty()) for (const auto & field : group_by) output[field.get<std::string>()] = group.second.front().value(field.get<std::string>(), json());
-            for (const auto & measure : request.value("measures", json::array())) {
-                if (!measure.is_object()) continue;
-                const auto function = measure.value("function", std::string()); const auto column = measure.value("column", std::string());
-                const auto name = measure.value("as", function + (column.empty() ? std::string() : "_" + column));
-                if (function == "count") output[name] = group.second.size();
-                else if ((function == "sum" || function == "avg") && !column.empty()) { double sum = 0; size_t count = 0; for (const auto & row : group.second) if (row.contains(column) && row[column].is_number()) { sum += row[column].get<double>(); ++count; } output[name] = function == "avg" && count ? sum / count : sum; }
-                else if (function == "min" || function == "max") { json value; for (const auto & row : group.second) if (row.contains(column) && row[column].is_number() && (!value.is_number() || (function == "min" ? row[column] < value : row[column] > value))) value = row[column]; output[name] = value; }
-            }
-            output_rows.push_back(std::move(output));
-            if (output_rows.size() >= max_result_rows) break;
-        }
-        result_json = json({{"rows", output_rows}, {"scanned_rows", scanned_rows}, {"row_count", output_rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", groups.size() > output_rows.size()}}).dump(); return true;
     } else if (operation == "statistics.describe") {
         json columns = json::array();
         for (const auto & name : request.value("columns", json::array())) { if (!name.is_string()) continue; double sum = 0; size_t count = 0; for (const auto & row : rows) if (row.contains(name) && row[name].is_number()) { sum += row[name].get<double>(); ++count; } columns.push_back({{"name", name}, {"count", count}, {"mean", count ? sum / count : 0.0}}); }
         result_json = json({{"columns", columns}, {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated}}).dump(); return true;
-    } else if (operation == "data.join") {
-        bool left_truncated = false, right_truncated = false; size_t left_scanned = 0, right_scanned = 0;
-        if (!read_dataset(request["left"].get<std::string>(), max_scan_rows, rows, left_scanned, left_truncated, error)) return false;
-        std::vector<json> right_rows;
-        if (!read_dataset(request["right"].get<std::string>(), max_scan_rows, right_rows, right_scanned, right_truncated, error)) return false;
-        json joined = json::array();
-        for (const auto & left : rows) for (const auto & right : right_rows) {
-            bool match = true;
-            for (const auto & key : request.value("on", json::array())) if (key.is_object() && key.contains("left") && key.contains("right")) match = match && left.value(key["left"].get<std::string>(), json()) == right.value(key["right"].get<std::string>(), json());
-            if (match) { json row = left; for (auto it = right.begin(); it != right.end(); ++it) if (!row.contains(it.key())) row[it.key()] = it.value(); joined.push_back(std::move(row)); }
-            if (joined.size() >= max_result_rows) break;
-        }
-        if (request.value("type", std::string("inner")) == "left") for (const auto & left : rows) {
-            bool matched = false; for (const auto & row : joined) { bool same = true; for (const auto & key : request["on"]) if (key.is_object() && left.value(key["left"].get<std::string>(), json()) != row.value(key["left"].get<std::string>(), json())) same = false; if (same) { matched = true; break; } }
-            if (!matched && joined.size() < max_result_rows) joined.push_back(left);
-        }
-        result_json = json({{"rows", joined}, {"scanned_rows", left_scanned + right_scanned}, {"row_count", joined.size()}, {"scan_truncated", left_truncated || right_truncated}, {"result_truncated", joined.size() >= max_result_rows}}).dump(); return true;
     } else if (operation == "data.transform") {
         for (auto & row : rows) for (const auto & transform : request.value("operations", json::array())) if (transform.is_object()) {
             const auto type = transform.value("type", std::string());
