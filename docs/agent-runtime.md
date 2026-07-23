@@ -1901,6 +1901,9 @@ pwsh -File scripts/test-qwen-nomic-agent.ps1 -ThinkingMode deliberate
 The CSV join/sum scenario is intentionally a separate integration slice. It
 must seed the two CSV inputs into the configured data-store scope before a
 model-backed research turn can exercise `data.join` and `data.aggregate`.
+The `scripts/test-qwen-nomic-agent-data.ps1` helper now accepts optional
+`-OrdersCsv` and `-CustomersCsv` paths; when omitted it creates small local
+fixtures, seeds Cozo, and runs the model-backed data turn.
 
 The non-smoke CTest baseline can be run as one serial sweep:
 
