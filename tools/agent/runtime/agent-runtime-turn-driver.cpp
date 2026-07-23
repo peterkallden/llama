@@ -55,6 +55,13 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
             operation_manager.cancel(
                 pending_operation->pending_operation.operation_id,
                 ignored_error);
+            if (pending_operation->pending_operation.kind ==
+                    common_agent_runtime_pending_operation_kind::tool) {
+                turn_events.with_operation(
+                    pending_operation->pending_operation.operation_id).emit(
+                    common_agent_daemon_event_type::tool_cancelled,
+                    request.execution_control.stop_reason());
+            }
         }
         pending_operation.reset();
         if (active_turn.has_value()) {
@@ -85,6 +92,8 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
     const std::string operation_id = pending_operation->pending_operation.operation_id;
     bool ready = false;
     if (!operation_manager.poll(operation_id, ready, error)) {
+        common_runtime_operation_status operation_status;
+        const bool has_status = operation_manager.describe(operation_id, operation_status);
         if (pending_operation->cancel) {
             std::string ignored_cancel_error;
             pending_operation->cancel(ignored_cancel_error);
@@ -94,6 +103,14 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
             active_turn->pending_operation.reset();
             active_turn->disposition = common_agent_runtime_turn_disposition::failed;
             active_turn->phase = common_agent_runtime_turn_phase::failed;
+        }
+        if (pending_operation->pending_operation.kind ==
+                common_agent_runtime_pending_operation_kind::tool) {
+            turn_events.with_operation(operation_id).emit(
+                has_status && operation_status.state == common_runtime_operation_state::timed_out
+                    ? common_agent_daemon_event_type::tool_timed_out
+                    : common_agent_daemon_event_type::tool_failed,
+                error);
         }
         turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
         return common_agent_runtime_turn_disposition::failed;
@@ -230,6 +247,14 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     }
                     auto operation_events = turn_events.with_operation(
                         pending_operation->pending_operation.operation_id);
+                    if (pending_operation->pending_operation.kind ==
+                            common_agent_runtime_pending_operation_kind::tool) {
+                        operation_events.emit(
+                            common_agent_daemon_event_type::tool_queued,
+                            pending_operation->pending_operation.detail.empty()
+                                ? "tool operation queued"
+                                : pending_operation->pending_operation.detail);
+                    }
                     operation_events.emit(
                         pending_operation->pending_operation.kind ==
                             common_agent_runtime_pending_operation_kind::tool

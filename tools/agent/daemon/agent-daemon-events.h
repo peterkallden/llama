@@ -20,12 +20,18 @@ enum class common_agent_daemon_event_type {
     turn_waiting_for_inference,
     inference_queued,
     inference_capacity_granted,
+    tool_queued,
     turn_completed,
     turn_failed,
     turn_cancelled,
     tool_started,
+    tool_progress,
+    tool_output,
+    tool_artifact_created,
     tool_completed,
     tool_failed,
+    tool_cancelled,
+    tool_timed_out,
     memory_learned,
     plan_created,
     plan_updated,
@@ -83,12 +89,18 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::turn_waiting_for_inference: return "turn.waiting_for_inference";
         case common_agent_daemon_event_type::inference_queued:       return "inference.queued";
         case common_agent_daemon_event_type::inference_capacity_granted: return "inference.capacity_granted";
+        case common_agent_daemon_event_type::tool_queued:            return "tool.queued";
         case common_agent_daemon_event_type::turn_completed:          return "turn.completed";
         case common_agent_daemon_event_type::turn_failed:             return "turn.failed";
         case common_agent_daemon_event_type::turn_cancelled:          return "turn.cancelled";
         case common_agent_daemon_event_type::tool_started:            return "tool.started";
+        case common_agent_daemon_event_type::tool_progress:           return "tool.progress";
+        case common_agent_daemon_event_type::tool_output:             return "tool.output";
+        case common_agent_daemon_event_type::tool_artifact_created:   return "tool.artifact_created";
         case common_agent_daemon_event_type::tool_completed:          return "tool.completed";
         case common_agent_daemon_event_type::tool_failed:             return "tool.failed";
+        case common_agent_daemon_event_type::tool_cancelled:          return "tool.cancelled";
+        case common_agent_daemon_event_type::tool_timed_out:          return "tool.timed_out";
         case common_agent_daemon_event_type::memory_learned:          return "memory.learned";
         case common_agent_daemon_event_type::plan_created:           return "plan.created";
         case common_agent_daemon_event_type::plan_updated:           return "plan.updated";

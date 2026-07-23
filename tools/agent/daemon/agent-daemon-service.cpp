@@ -1061,12 +1061,21 @@ bool common_agent_daemon_service::execute_outcome(
                 return false;
             }
             outcome.response_kind = common_agent_daemon_response_kind::tool;
+            command_events.emit(common_agent_daemon_event_type::tool_queued, command.tool->tool_name);
             command_events.emit(common_agent_daemon_event_type::tool_started, command.tool->tool_name);
             outcome.ok = runtime.tool_executor(*command.tool, outcome.tool_result, error);
             outcome.event = outcome.ok ? "tool_completed" : "tool_failed";
             outcome.error = error.empty() ? outcome.tool_result.raw_diagnostic : error;
+            if (!outcome.tool_result.safe_summary.empty()) {
+                command_events.emit(common_agent_daemon_event_type::tool_output, outcome.tool_result.safe_summary);
+            }
+            for (const auto & resource_ref : outcome.tool_result.resource_refs) {
+                command_events.emit(
+                    common_agent_daemon_event_type::tool_artifact_created,
+                    resource_ref.uri.empty() ? resource_ref.name : resource_ref.uri);
+            }
             command_events.emit(
-                outcome.ok ? common_agent_daemon_event_type::tool_completed : common_agent_daemon_event_type::command_failed,
+                outcome.ok ? common_agent_daemon_event_type::tool_completed : common_agent_daemon_event_type::tool_failed,
                 outcome.tool_result.safe_summary);
             return outcome.ok;
 
@@ -1122,12 +1131,27 @@ bool common_agent_daemon_service::execute_outcome(
                     ? "turn_cancelled"
                     : (outcome.turn_result.ok ? "turn_completed" : "turn_failed");
             const auto command_context = make_command_event_context(command);
+            std::set<std::string> queued_tools;
             std::set<std::string> started_tools;
             for (const auto & trace : outcome.turn_result.trace) {
                 if (trace.stage != common_runtime_trace_stage::tool || trace.tool_name.empty()) {
                     continue;
                 }
                 const std::string tool_identity = trace.tool_name + "|" + trace.step_id;
+                if ((trace.kind == common_runtime_trace_kind::started ||
+                        trace.kind == common_runtime_trace_kind::succeeded ||
+                        trace.kind == common_runtime_trace_kind::completed ||
+                        trace.kind == common_runtime_trace_kind::failed) &&
+                        queued_tools.insert(tool_identity).second) {
+                    auto event_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_queued,
+                        event_context.request_id,
+                        event_context.turn_id,
+                        trace.tool_name,
+                        0,
+                        std::move(event_context)));
+                }
                 if (trace.kind == common_runtime_trace_kind::started ||
                         trace.kind == common_runtime_trace_kind::succeeded ||
                         trace.kind == common_runtime_trace_kind::completed ||
@@ -1154,6 +1178,14 @@ bool common_agent_daemon_service::execute_outcome(
                         trace.tool_name,
                         0,
                         std::move(event_context)));
+                    auto output_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_output,
+                        output_context.request_id,
+                        output_context.turn_id,
+                        trace.detail.empty() ? trace.tool_name : trace.detail,
+                        0,
+                        std::move(output_context)));
                 } else if (trace.kind == common_runtime_trace_kind::failed) {
                     auto event_context = command_context;
                     emit_internal_event(make_common_agent_daemon_event(

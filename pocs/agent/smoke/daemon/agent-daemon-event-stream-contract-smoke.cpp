@@ -52,6 +52,39 @@ int main() {
         return 1;
     }
 
+    const common_agent_daemon_event_type tool_lifecycle[] = {
+        common_agent_daemon_event_type::tool_queued,
+        common_agent_daemon_event_type::tool_started,
+        common_agent_daemon_event_type::tool_progress,
+        common_agent_daemon_event_type::tool_output,
+        common_agent_daemon_event_type::tool_artifact_created,
+        common_agent_daemon_event_type::tool_completed,
+        common_agent_daemon_event_type::tool_failed,
+        common_agent_daemon_event_type::tool_cancelled,
+        common_agent_daemon_event_type::tool_timed_out,
+    };
+    const char * tool_lifecycle_names[] = {
+        "tool.queued",
+        "tool.started",
+        "tool.progress",
+        "tool.output",
+        "tool.artifact_created",
+        "tool.completed",
+        "tool.failed",
+        "tool.cancelled",
+        "tool.timed_out",
+    };
+    for (size_t i = 0; i < sizeof(tool_lifecycle) / sizeof(tool_lifecycle[0]); ++i) {
+        const auto lifecycle_event = make_common_agent_daemon_event(
+            tool_lifecycle[i], "request-1", "turn-1", {}, 0,
+            {"namespace-1", "project-1", "session-1", "request-1", "turn-1", "operation-1"});
+        if (std::string(lifecycle_event.type) != tool_lifecycle_names[i] ||
+                lifecycle_event.operation_id != "operation-1") {
+            std::fprintf(stderr, "tool lifecycle event contract was not preserved\n");
+            return 1;
+        }
+    }
+
     subscription.filter.turn_id = "other-turn";
     if (subscription.filter.matches(event)) {
         std::fprintf(stderr, "event stream contract ignored a turn filter\n");
