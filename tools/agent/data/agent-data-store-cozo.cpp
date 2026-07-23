@@ -1,5 +1,6 @@
 #include "agent-data-store-cozo.h"
 #include "agent-data-store-cozo-aggregate.h"
+#include "agent-data-store-cozo-encoding.h"
 #include "agent-data-store-cozo-join.h"
 #include "agent-data-store-cozo-reader.h"
 #include "agent-data-store-cozo-query.h"
@@ -83,18 +84,7 @@ bool common_agent_cozo_data_store::put_row(const std::string & dataset, const st
         if (maximum.is_object() && maximum.contains("rows") && !maximum["rows"].empty() && !maximum["rows"][0].empty() && maximum["rows"][0][0].is_number()) next_sequence += maximum["rows"][0][0].get<int64_t>();
         if (!run("?[dataset, row_id, row_seq] <- [[$dataset, $row_id, $row_seq]] :put agent_data_row_order { dataset, row_id => row_seq }", json({{"dataset", dataset}, {"row_id", row_id}, {"row_seq", next_sequence}}).dump(), result, error)) return false;
     }
-    json values = json::array();
-    for (auto it = parsed.begin(); it != parsed.end(); ++it) {
-        const auto & value = it.value();
-        std::string kind = "null";
-        std::string text;
-        double number = 0.0;
-        if (value.is_string()) { kind = "string"; text = value.get<std::string>(); }
-        else if (value.is_number()) { kind = "number"; text = value.dump(); number = value.get<double>(); }
-        else if (value.is_boolean()) { kind = "boolean"; text = value.get<bool>() ? "true" : "false"; }
-        else text = value.dump();
-        values.push_back({dataset, row_id, it.key(), kind, text, number});
-    }
+    const auto values = agent_cozo_encode_row_values(dataset, row_id, parsed);
     if (!values.empty() && !run("?[dataset, row_id, field, value_kind, value_text, value_number] <- $rows :put agent_data_values { dataset, row_id, field => value_kind, value_text, value_number }", json({{"rows", values}}).dump(), result, error)) return false;
     return true;
 }
