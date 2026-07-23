@@ -5,6 +5,9 @@ param(
     [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\qwen-nomic-manual-test",
     [string]$LearningPrompt = "When debugging agent regressions, explain the reusable procedure you followed and keep the final answer brief.",
+    [ValidateSet("reflective", "deliberate")]
+    [string]$ThinkingMode = "reflective",
+    [string]$AgentPrompt = "Say OK after making a tiny plan.",
     [switch]$Build,
     [switch]$SkipAddSearch,
     [switch]$SkipStaticChat,
@@ -123,6 +126,7 @@ Write-Host "Repo root: $repoRoot"
 Write-Host "Build dir: $BuildDir"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
+Write-Host "Thinking mode: $ThinkingMode"
 Write-Host "Work dir: $workDir"
 
 Assert-PathExists -Path $ChatModel -Label "Chat model"
@@ -189,10 +193,10 @@ if (-not $SkipAgentChat) {
         "--embedding-model", $EmbeddingModel,
         "--agent-profile", "safe",
         "--agent-bootstrap", "none",
-        "--thinking-mode", "reflective",
+        "--thinking-mode", $ThinkingMode,
         "--agent-trace",
         "--plan-show-summary",
-        "--prompt", "Say OK after making a tiny plan.",
+        "--prompt", $AgentPrompt,
         "-ngl", "0"
     )
 }
@@ -229,3 +233,4 @@ Write-Host "  $(Join-Path $workDir '02-search.log')"
 Write-Host "  $(Join-Path $workDir '03-static-chat.log')"
 Write-Host "  $(Join-Path $workDir '04-agent-chat.log')"
 Write-Host "  $(Join-Path $workDir '05-learning-chat.log')"
+Write-Host "Agent chat thinking mode: $ThinkingMode"

@@ -1885,6 +1885,23 @@ The foreground daemon `agent` path is now part of the smoke baseline as well. On
 
 The current branch now supports a more targeted serial workflow for agent-heavy verification on this laptop.
 
+The model-backed Qwen/Nomic helper `scripts/test-qwen-nomic-agent.ps1` accepts
+`-ThinkingMode reflective|deliberate` for the agent turn. The dedicated
+`scripts/test-qwen-nomic-agent-deliberate.ps1` wrapper selects `deliberate`
+with the same model, Cozo and work-directory setup. These runs are optional
+model-backed checks; the deterministic CTest and model-free smoke baseline
+remains the authoritative regression gate.
+
+For example:
+
+```powershell
+pwsh -File scripts/test-qwen-nomic-agent.ps1 -ThinkingMode deliberate
+```
+
+The CSV join/sum scenario is intentionally a separate integration slice. It
+must seed the two CSV inputs into the configured data-store scope before a
+model-backed research turn can exercise `data.join` and `data.aggregate`.
+
 The non-smoke CTest baseline can be run as one serial sweep:
 
 ```powershell
