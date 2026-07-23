@@ -322,16 +322,16 @@ bounded scan from a small result. Cozo keeps a structured field-value relation
 alongside the JSON payload relation and compiles typed `data.filter`/
 `data.query` predicates into CozoScript before materializing matching payloads.
 Ordering, grouping, aggregation, inner joins and left joins use the structured
-relation as well. Native aggregation and joins currently report
-`scan_mode: native_unbounded`: Cozo executes the relational operation directly,
-but the stored row relation does not yet have a host-defined ordinal that can
-enforce `max_scan_rows` before grouping or joining. The bounded materialization
-path remains the reference for operations that need strict input accounting.
+relation as well. Cozo-backed rows now have a host-owned per-dataset ordinal,
+which lets native aggregation and joins apply `max_scan_rows` before grouping or
+joining and report `scan_mode: native_bounded`. Existing databases are migrated
+when opened. The ordinal is an execution bound, not a user-visible ordering
+promise; deletes can leave gaps and newly inserted rows receive the next
+sequence number.
 
-This is deliberately documented as an intermediate implementation: a
-structured Cozo query planner should own all supported relational operations,
-including bounded input accounting, before the backend is considered
-production-ready.
+This remains an intermediate implementation: a structured Cozo query planner
+should own all supported relational operations and preserve the same bound
+semantics before the backend is considered production-ready.
 
 Transformations involving arbitrary expressions, file conversion, chart
 rendering and advanced statistical methods remain compute- or sandbox-backed

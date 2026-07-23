@@ -38,18 +38,26 @@ int main() {
 
     assert(store.execute("data.aggregate", R"({"dataset":"orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"},{"function":"sum","column":"value","as":"total"}]})", output, error));
     auto aggregate = json::parse(output);
-    assert(aggregate["row_count"] == 2 && aggregate["scan_mode"] == "native_unbounded");
+    assert(aggregate["row_count"] == 2 && aggregate["scan_mode"] == "native_bounded" && aggregate["scanned_rows"] == 3 && aggregate["scan_truncated"] == false);
+
+    assert(store.execute("data.aggregate", R"({"dataset":"orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"}],"max_scan_rows":2})", output, error));
+    auto bounded_aggregate = json::parse(output);
+    assert(bounded_aggregate["scan_mode"] == "native_bounded" && bounded_aggregate["scanned_rows"] == 2 && bounded_aggregate["scan_truncated"] == true);
 
     assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);
-    assert(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_unbounded" && inner_join["rows"][0].contains("name"));
+    assert(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 4 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));
 
     assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto join = json::parse(output);
-    assert(join["row_count"] == 3 && join["scan_mode"] == "native_unbounded" && join["rows"][0].contains("name"));
+    assert(join["row_count"] == 3 && join["scan_mode"] == "native_bounded" && join["scanned_rows"] == 4 && join["scan_truncated"] == false && join["rows"][0].contains("name"));
     bool found_unmatched = false;
     for (const auto & row : join["rows"]) if (row.value("customer_id", 0) == 11) found_unmatched = !row.contains("name");
     assert(found_unmatched);
+
+    assert(store.execute("data.join", R"({"left":"orders","right":"customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}],"max_scan_rows":2})", output, error));
+    auto bounded_join = json::parse(output);
+    assert(bounded_join["row_count"] == 2 && bounded_join["scanned_rows"] == 3 && bounded_join["scan_truncated"] == true);
 
     assert(!store.execute("data.join", R"({"dataset":"orders","right":"customers","on":[]})", output, error));
     assert(error.find("left") != std::string::npos);
