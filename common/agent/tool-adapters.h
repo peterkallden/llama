@@ -37,6 +37,7 @@ struct common_native_tool_bindings {
     // The native adapters keep a bounded text fallback when it is absent.
     std::function<common_tool_execution_result(const std::string &)> diagnostics_symbol;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_references;
+    std::function<common_tool_execution_result(const std::string &)> diagnostics_call_hierarchy;
     // Optional runtime-owned semantic query embedding provider. Tool arguments
     // only supply text; model code never receives this callback or model path.
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;

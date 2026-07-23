@@ -98,7 +98,7 @@ builds.
 | Sandbox execution | [ ] | Build/test contracts exist, but Docker execution must pass in the host environment |
 | Backend availability | [x] | Tools depending on unavailable backends are removed from the effective tool view |
 | Result normalization | [x] | Tool results expose bounded status, summaries, diagnostics and resource references where applicable |
-| Semantic diagnostics | [ ] | Symbol/reference lookup still uses a text fallback until clangd/LSP or a project index is bound |
+| Semantic diagnostics | [ ] | Symbol/reference keep a bounded text fallback and call hierarchy requires a semantic provider; clangd/LSP or a project index is not yet bound |
 | Tool-specific smoke coverage | [ ] | The latest run is 27/30 because CLI MCP, Docker and model-backed resident coverage remain unresolved |
 
 The Cozo data-store test is conditional on `LLAMA_MEMORY_COZO=ON` and a

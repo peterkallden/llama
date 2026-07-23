@@ -167,6 +167,7 @@ int main() {
         {"diagnostics.test_failures", 1, true, "{}"},
         {"diagnostics.symbol", 1, true, "{}"},
         {"diagnostics.references", 1, true, "{}"},
+        {"diagnostics.call_hierarchy", 1, true, "{}"},
         {"diagnostics.format", 1, true, "{}"},
         {"diagnostics.include_graph", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
@@ -195,6 +196,8 @@ int main() {
     assert(result.ok && result.output.find("text-fallback") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.references", R"({"symbol":"needle","definition_path":"src"})"});
     assert(result.ok && result.output.find("\"references\"") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.call_hierarchy", R"({"symbol":"needle"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.call_hierarchy.unavailable");
     result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"FAILED src/a.cpp:42 assertion expected 1\nFAILED src/b.cpp:42 assertion expected 2\nctest: timeout after 120000ms\n"})"});
     assert(result.ok && result.output.find("assertion_failure") != std::string::npos && result.output.find("timeout") != std::string::npos && result.output.find("\"count\":2") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});

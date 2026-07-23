@@ -935,6 +935,17 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (bindings.diagnostics_references) return bindings.diagnostics_references(input);
                 return fallback_diagnostics_symbol(bindings, arguments, true);
             }, error);
+        } else if (definition.executor_id == "builtin.diagnostics.call_hierarchy") {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy requires a symbol");
+                const auto direction = arguments.value("direction", std::string("both"));
+                const auto max_depth = arguments.value("max_depth", 3);
+                const auto max_results = arguments.value("max_results", 128);
+                if (direction != "callers" && direction != "callees" && direction != "both" || max_depth < 1 || max_depth > 8 || max_results < 1 || max_results > 128) return tool_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy arguments are out of bounds");
+                if (bindings.diagnostics_call_hierarchy) return bindings.diagnostics_call_hierarchy(input);
+                return tool_execution_failure("tool.diagnostics.call_hierarchy.unavailable", "diagnostics.call_hierarchy requires a semantic provider", "Call hierarchy is unavailable until a clangd or project-index provider is configured.");
+            }, error);
         } else if (definition.executor_id == "builtin.diagnostics.test_failures") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err; json arguments;

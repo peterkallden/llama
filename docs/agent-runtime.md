@@ -201,6 +201,7 @@ do not select implementations or host paths.
 | `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output | Limited | Compiler invocation, richer formats and source-linked diagnostics |
 | `diagnostics.symbol` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | clangd/LSP or project-index backend and definition-kind ranking |
 | `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | Semantic references, reference kinds and project-index persistence |
+| `diagnostics.call_hierarchy` | Host-native analysis | Semantic-provider contract; unavailable without a provider | Experimental | clangd/LSP callers/callees, depth bounds and project-index persistence |
 | `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root | Limited | Dataset registry, permissions/provenance and non-file sources |
 | `dataset.inspect` | Host-native | Returns bounded path, format and size metadata | Limited | Complete format metadata and schema-aware inspection |
 | `dataset.schema` | Host-native | Returns a first CSV column schema | Limited | JSON/Parquet support, type inference confidence and constraints |
@@ -345,6 +346,9 @@ existing output, formatter diagnostics inspect formatter output, and include-gra
 diagnostics consume normalized `source -> include` lines. Symbol and reference
 tools accept a host-owned semantic callback, for example clangd/LSP or a project
 index; when absent they return `backend: text-fallback` and `semantic: false`.
+`diagnostics.call_hierarchy` is stricter because a text match cannot provide a
+meaningful caller/callee relation: it returns an explicit provider-unavailable
+result until a semantic provider is bound.
 Test-failure analysis groups normalized messages and reports a bounded
 classification, count and up to three examples per group. These tools do not
 invoke an unbounded compiler, formatter or shell command themselves.
