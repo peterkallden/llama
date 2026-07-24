@@ -24,6 +24,9 @@ function Assert-PathExists {
 
 function Quote-Argument {
     param([string]$Value)
+    # cmd.exe treats literal newlines in a /c command as command separators.
+    # Normalize multi-line prompts before constructing the redirected command.
+    $Value = $Value -replace '[\r\n]+', ' '
     if ($Value -notmatch '[\s"]') { return $Value }
     $escaped = $Value -replace '(\\*)"', '$1$1\"'
     $escaped = $escaped -replace '(\\+)$', '$1$1'
@@ -36,6 +39,7 @@ function Invoke-LoggedCommand {
     $stderrPath = "$LogPath.stderr"
     if (Test-Path -LiteralPath $stdoutPath) { Remove-Item -LiteralPath $stdoutPath -Force }
     if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
+    New-Item -ItemType File -Force -Path $stdoutPath,$stderrPath | Out-Null
     $arguments = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
     $toolPath = 'E:\progs\bin;C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Program Files\Git\cmd;C:\Program Files\nodejs;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin'
     $command = ('"{0}" {1} 1> "{2}" 2> "{3}"' -f $FilePath, $arguments, $stdoutPath, $stderrPath)
@@ -44,7 +48,9 @@ function Invoke-LoggedCommand {
     $lines = @()
     if (Test-Path -LiteralPath $stdoutPath) { $lines += Get-Content -LiteralPath $stdoutPath }
     if (Test-Path -LiteralPath $stderrPath) { $lines += Get-Content -LiteralPath $stderrPath }
-    $lines | Set-Content -LiteralPath $LogPath
+    if (-not (Test-Path -LiteralPath $stdoutPath)) { New-Item -ItemType File -Force -Path $stdoutPath | Out-Null }
+    if (-not (Test-Path -LiteralPath $stderrPath)) { New-Item -ItemType File -Force -Path $stderrPath | Out-Null }
+    [System.IO.File]::WriteAllText($LogPath, ($lines -join [Environment]::NewLine))
     $lines | ForEach-Object { Write-Host $_ }
     if ($exitCode -ne 0) { throw "$Name failed with exit code $exitCode. See $LogPath" }
 }
@@ -123,6 +129,7 @@ Invoke-LoggedCommand -Name "Qwen/Nomic $ThinkingMode data research" -LogPath $ag
     "--agent-profile", "research", "--tool-profile", "all-configured",
     "--thinking-mode", $ThinkingMode, "--max-reflection-rounds", "1",
     "--max-research-iterations", "1", "--agent-plan", "auto",
+    "--max-plan-revisions", "2",
     "--repository-root", $workDir, "--max-tool-rounds", "4",
     "--memory-project", "qwen-nomic-data", "--plan-scope", "project",
     "--agent-trace", "--plan-show-summary", "--prompt", $prompt, "-n", "96",
