@@ -6,6 +6,8 @@ param(
     [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$OrdersCsv = "",
     [string]$CustomersCsv = "",
+    [ValidateRange(1, 64)]
+    [int]$Threads = 2,
     [switch]$Build
 )
 
@@ -16,6 +18,7 @@ param(
     -EmbeddingModel $EmbeddingModel `
     -OrdersCsv $OrdersCsv `
     -CustomersCsv $CustomersCsv `
+    -Threads $Threads `
     -ThinkingMode deliberate `
     -Build:$Build
 

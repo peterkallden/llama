@@ -8,6 +8,8 @@ param(
     [ValidateSet("reflective", "deliberate")]
     [string]$ThinkingMode = "reflective",
     [string]$AgentPrompt = "Say OK after making a tiny plan.",
+    [ValidateRange(1, 64)]
+    [int]$Threads = 2,
     [switch]$Build,
     [switch]$SkipAddSearch,
     [switch]$SkipStaticChat,
@@ -127,6 +129,7 @@ Write-Host "Build dir: $BuildDir"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
 Write-Host "Thinking mode: $ThinkingMode"
+Write-Host "Inference threads: $Threads"
 Write-Host "Work dir: $workDir"
 
 Assert-PathExists -Path $ChatModel -Label "Chat model"
@@ -177,6 +180,7 @@ if (-not $SkipStaticChat) {
         "--agent-profile", "static",
         "--agent-bootstrap", "none",
         "--prompt", "Say OK.",
+        "-t", $Threads.ToString(),
         "-ngl", "0"
     )
 }
@@ -197,6 +201,7 @@ if (-not $SkipAgentChat) {
         "--agent-trace",
         "--plan-show-summary",
         "--prompt", $AgentPrompt,
+        "-t", $Threads.ToString(),
         "-ngl", "0"
     )
 }
@@ -221,6 +226,7 @@ if (-not $SkipLearningChat) {
         "--agent-trace",
         "--plan-show-summary",
         "--prompt", $LearningPrompt,
+        "-t", $Threads.ToString(),
         "-ngl", "0"
     )
 }
