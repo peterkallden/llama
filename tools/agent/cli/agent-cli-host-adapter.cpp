@@ -586,6 +586,9 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     common_agent_request request;
     request.messages = messages;
     common_agent_generation_options generation_options;
+    generation_options.n_threads = options.cpuparams.n_threads > 0
+        ? options.cpuparams.n_threads
+        : 2;
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
         runtime_scope,

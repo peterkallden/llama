@@ -31,10 +31,10 @@ common_agent_scope make_memory_cli_scope(const args & a) {
 }
 
 std::string embedding_model_path(const args & a) {
-    if (!a.embedding_model.empty()) {
-        return a.embedding_model;
-    }
-    return a.model;
+    // A chat model is not an embedding model.  Falling back to a.model here
+    // makes a normal agent run load and evaluate the chat model a second time
+    // for retrieval, and may produce vectors with an incompatible meaning.
+    return a.embedding_model;
 }
 
 struct embedding_model_cache {

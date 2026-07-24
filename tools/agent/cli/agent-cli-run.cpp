@@ -71,10 +71,16 @@ int run_agent_cli(common_memory_store & store, args a) {
     query.token_budget = a.memory_token_budget;
     apply_memory_scope(a, query);
     bool memory_enabled = true;
-    if (query.embedding.empty() && !ensure_memory_cli_embedding(a, a.prompt, query.embedding, "query", error)) {
-        fprintf(stderr, "warning: memory retrieval disabled: %s\n", error.c_str());
-        fallback_reason = error;
-        memory_enabled = false;
+    if (query.embedding.empty()) {
+        if (a.embedding_model.empty()) {
+            fallback_reason = "no explicit --embedding-model configured";
+            fprintf(stderr, "warning: memory retrieval disabled: %s\n", fallback_reason.c_str());
+            memory_enabled = false;
+        } else if (!ensure_memory_cli_embedding(a, a.prompt, query.embedding, "query", error)) {
+            fprintf(stderr, "warning: memory retrieval disabled: %s\n", error.c_str());
+            fallback_reason = error;
+            memory_enabled = false;
+        }
     }
 
     std::vector<common_memory_hit> hits;
@@ -94,7 +100,13 @@ int run_agent_cli(common_memory_store & store, args a) {
     ctx_cfg.char_budget = a.memory_token_budget * 4;
     const std::string memory_context = common_memory_render_context(hits, ctx_cfg);
 
-    ggml_backend_load_all();
+    // A CPU-only agent run does not need dynamic backend discovery. In this
+    // build ggml-cpu.dll is a shared CPU dependency, not a dynamically loaded
+    // backend, so scanning it would produce a misleading missing-symbol
+    // warning when --ngl 0 is used.
+    if (a.n_gpu_layers != 0) {
+        ggml_backend_load_all();
+    }
     std::vector<common_chat_msg> messages;
     if (!memory_context.empty() || (!a.tool_profile.empty() && memory_enabled)) {
         common_chat_msg system_msg;

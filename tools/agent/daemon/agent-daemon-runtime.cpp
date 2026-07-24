@@ -279,9 +279,7 @@ bool resolve_agent_daemon_tooling(
         ? const_cast<std::string *>(&runtime->current_plan_id())
         : nullptr;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
-    const std::string embedding_model = options.embedding_model.empty()
-        ? options.model
-        : options.embedding_model;
+    const std::string embedding_model = options.embedding_model;
     if (!embedding_model.empty()) {
         embedding_provider = std::make_unique<daemon_agent_embedding_provider>(
             embedding_model,

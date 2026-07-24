@@ -22,8 +22,10 @@ std::string describe_agent_cli_generation_failure(
 common_agent_generation_options make_agent_cli_generation_options(
         const common_agent_generation_config & generation_config,
         int n_predict) {
+    common_agent_generation_options options;
+    options.n_predict = generation_config.n_predict;
     return common_agent_generation_options_with_n_predict(
-        common_agent_generation_options{generation_config.n_predict},
+        options,
         n_predict);
 }
 

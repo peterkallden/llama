@@ -40,6 +40,10 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
 
 struct common_agent_generation_options {
     int n_predict = 0;
+    // Zero means that the host/runtime must supply the configured thread
+    // count.  Keeping this unset prevents a library default from silently
+    // forcing model-backed agent turns onto a single CPU thread.
+    int n_threads = 0;
     std::optional<int64_t> t_max_prompt_ms;
     std::optional<int64_t> t_max_predict_ms;
 };

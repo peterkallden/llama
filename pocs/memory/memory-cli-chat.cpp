@@ -70,6 +70,8 @@ bool generate_chat_turn_result(
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = n_prompt + options.n_predict;
     ctx_params.n_batch = n_prompt;
+    ctx_params.n_threads = options.n_threads;
+    ctx_params.n_threads_batch = options.n_threads;
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == nullptr) {
         result.error_message = "failed to create llama context";
@@ -102,6 +104,7 @@ bool generate_chat_turn_result(
     bool completed_json_schema = false;
     std::optional<steady_clock::time_point> predict_started_at;
 
+    bool logged_prompt_decode = false;
     for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + options.n_predict; ) {
         if (n_pos == 0 && budget_exceeded(prompt_started_at, options.t_max_prompt_ms)) {
             result.stop_reason = common_agent_generation_stop_reason::limit;
@@ -109,11 +112,22 @@ bool generate_chat_turn_result(
             llama_free(ctx);
             return false;
         }
+        const auto decode_started_at = steady_clock::now();
         if (llama_decode(ctx, batch)) {
             result.error_message = "failed to decode";
             fprintf(stderr, "%s\n", result.error_message.c_str());
             llama_free(ctx);
             return false;
+        }
+        if (!logged_prompt_decode && batch.n_tokens == n_prompt) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                steady_clock::now() - decode_started_at).count();
+            fprintf(stderr,
+                "generation: prompt decoded tokens=%d threads=%d elapsed_ms=%lld\n",
+                n_prompt,
+                options.n_threads,
+                static_cast<long long>(elapsed_ms));
+            logged_prompt_decode = true;
         }
         n_pos += batch.n_tokens;
         if (n_pos == n_prompt && budget_exceeded(prompt_started_at, options.t_max_prompt_ms)) {

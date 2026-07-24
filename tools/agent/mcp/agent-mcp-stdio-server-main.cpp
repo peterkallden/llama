@@ -672,9 +672,7 @@ int main(int argc, char ** argv) {
     }
 
     std::unique_ptr<agent_embedding_provider> embedding_provider;
-    const std::string embedding_model = !options.embedding_model.empty()
-        ? options.embedding_model
-        : options.model;
+    const std::string embedding_model = options.embedding_model;
     if (!embedding_model.empty()) {
         embedding_provider = std::make_unique<server_agent_embedding_provider>(
             embedding_model,

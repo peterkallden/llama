@@ -8,8 +8,6 @@ param(
     [string]$CustomersCsv = "",
     [ValidateSet("reflective", "deliberate")]
     [string]$ThinkingMode = "reflective",
-    [ValidateRange(1, 64)]
-    [int]$Threads = 2,
     [string]$WorkSubdir = "work\qwen-nomic-data-$ThinkingMode",
     [switch]$Build
 )
@@ -133,7 +131,7 @@ Invoke-LoggedCommand -Name "Qwen/Nomic $ThinkingMode data research" -LogPath $ag
     "--repository-root", $workDir, "--max-tool-rounds", "4",
     "--memory-project", "qwen-nomic-data", "--plan-scope", "project",
     "--agent-trace", "--plan-show-summary", "--prompt", $prompt, "-n", "96",
-    "-t", $Threads.ToString(), "-ngl", "0")
+    "-ngl", "0")
 
 $orders = Import-Csv -LiteralPath $ordersPath
 $expectedTotal = ($orders | ForEach-Object { [double]$_.amount } | Measure-Object -Sum).Sum
