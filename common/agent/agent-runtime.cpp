@@ -416,6 +416,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // unambiguous, schema-invalid call is degraded to reasoning here.
         if (!degrade_on_any_invalid && !incomplete_tool_call) return false;
         if (!name_candidates.empty()) return false;
+        // A unique fuzzy name match is already a host-approved canonical tool
+        // name. Preserve it for ordinary schema repair instead of losing the
+        // semantic tool intent by degrading the step to reasoning.
+        if (name_normalization_applied) return false;
         step.selected_tool.reset();
         step.tool_call.reset();
         step.mode = common_plan_step_mode::reasoning;
