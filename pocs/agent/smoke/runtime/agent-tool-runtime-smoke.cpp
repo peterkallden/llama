@@ -540,19 +540,42 @@ int main() {
     bool saw_suspended_answer = false;
     bool saw_repair_completed = false;
     bool saw_repair_before_accept = false;
-    for (const auto & trace : reflection_result.trace) {
+    size_t suspended_trace_index = reflection_result.trace.size();
+    size_t repair_trace_index = reflection_result.trace.size();
+    size_t accepted_trace_index = reflection_result.trace.size();
+    for (size_t trace_index = 0; trace_index < reflection_result.trace.size(); ++trace_index) {
+        const auto & trace = reflection_result.trace[trace_index];
         if (trace.detail.find("final answer suspended for pending reflection repair") != std::string::npos) {
             saw_suspended_answer = true;
+            suspended_trace_index = std::min(suspended_trace_index, trace_index);
         }
         if (trace.detail.find("reasoning step completed") != std::string::npos) {
             saw_repair_completed = true;
+            repair_trace_index = std::min(repair_trace_index, trace_index);
         }
-        if (trace.detail.find("response accepted without reflection revision") != std::string::npos && saw_suspended_answer) {
-            saw_repair_before_accept = true;
+        if (trace.detail.find("response accepted without reflection revision") != std::string::npos) {
+            accepted_trace_index = std::min(accepted_trace_index, trace_index);
         }
     }
+    saw_repair_before_accept = saw_suspended_answer && saw_repair_completed &&
+        suspended_trace_index < repair_trace_index && repair_trace_index < accepted_trace_index;
     if (!saw_suspended_answer || !saw_repair_completed || !saw_repair_before_accept) {
         std::fprintf(stderr, "reflection runtime accepted the draft before executing its repair step\n");
+        return 1;
+    }
+    auto stored_reflection_plan = reflection_plan_store.get(reflection_result.plan_id.value_or(""), error);
+    if (!stored_reflection_plan) {
+        std::fprintf(stderr, "reflection runtime did not persist its final plan: %s\n", error.c_str());
+        return 1;
+    }
+    bool repair_step_completed = false;
+    bool answer_step_completed = false;
+    for (const auto & step : stored_reflection_plan->steps) {
+        if (step.id == "repair-memory") repair_step_completed = step.status == common_plan_step_status::completed;
+        if (step.id == "answer") answer_step_completed = step.status == common_plan_step_status::completed;
+    }
+    if (!repair_step_completed || !answer_step_completed) {
+        std::fprintf(stderr, "reflection runtime did not complete repair and answer steps\n");
         return 1;
     }
 

@@ -886,6 +886,10 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
 )
 
 if (BUILD_TESTING)
+    add_test(NAME llama-agent-tool-runtime-ctest
+        COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)
+    set_property(TEST llama-agent-tool-runtime-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-sandbox-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
     set_property(TEST llama-agent-sandbox-contract-ctest PROPERTY LABELS agent)
