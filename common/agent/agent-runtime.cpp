@@ -202,6 +202,20 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
         classification, result.retryable, result.safe_summary.empty() ? "The tool failed." : result.safe_summary);
 }
 
+static std::string tool_repair_context_json(const common_agent_tool_repair_context & context) {
+    json available = json::array();
+    for (const auto & name : context.available_tools) available.push_back(name);
+    json value = {
+        {"tool", context.tool_name},
+        {"error", context.validation_error},
+        {"arguments_skeleton", context.arguments_skeleton.empty()
+            ? json(nullptr)
+            : json::parse(context.arguments_skeleton, nullptr, false)},
+        {"available_tools", std::move(available)},
+    };
+    return value.dump();
+}
+
 static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
     const std::string base = "tool:" + step_id + ":" + tool_name;
     const std::string attempt_prefix = base + ":attempt:";
@@ -628,12 +642,37 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (tool_batches >= request.max_tool_batches) break;
             if (!tools || request.max_tool_batches == 0) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.unavailable", common_agent_failure_class::execution, false, "Registered tool execution is unavailable.")); append_event(result, request, {common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
+            if (!tools->is_available(tool_call->name)) {
+                const auto repair = tools->make_repair_context(*tool_call, "tool is unavailable in the effective runtime view");
+                const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
+                auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.unavailable", common_agent_failure_class::not_found, false, "The requested tool is not available in the effective runtime view.");
+                failure.repair_context_json = tool_repair_context_json(repair);
+                result.failures.push_back(failure);
+                common_plan_operation observed;
+                observed.kind = common_plan_operation_kind::record_observation;
+                observed.plan_id = plan.id;
+                observed.expected_version = plan.version;
+                observed.reason_summary = "unavailable tool repair context recorded";
+                observed.observation = common_plan_observation{failure_observation_id, tool_call->name, common_agent_runtime_failure_observation_json(failure), 0.0f, {}, {}, 0};
+                if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+                common_plan_operation failed;
+                failed.kind = common_plan_operation_kind::fail_step;
+                failed.plan_id = plan.id;
+                failed.expected_version = plan.version;
+                failed.step_id = tool_step_id;
+                failed.reason_summary = "requested tool was unavailable";
+                if (!store.apply(failed, plan, error)) { result.error = error; return result; }
+                append_event(result, request, common_agent_event_type::tool_repair_context_created, "unavailable tool repair context recorded", {}, plan.id, tool_step_id, failure_observation_id, tool_call->name);
+                append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed, "unavailable tool repair context recorded", plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                break;
+            }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); append_event(result, request, {common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
             if (!tools->validate(*tool_call, error)) {
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
+                failure.repair_context_json = tool_repair_context_json(tools->make_repair_context(*tool_call, validation_error));
                 result.failures.push_back(failure);
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;
@@ -659,6 +698,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 result.learning_signals.push_back({common_learning_signal_type::tool_failure, plan.id, tool_step_id,
                     tool_call->name, failure_observation_id, "registered tool validation failed"});
                 append_event(result, request, {common_agent_event_type::tool_rejected, validation_error, {}, plan.id});
+                append_event(result, request, common_agent_event_type::tool_repair_context_created, "schema-derived tool repair context recorded", {}, plan.id, tool_step_id, failure_observation_id, tool_call->name);
                 append_event(result, request, {common_agent_event_type::plan_updated, "tool validation failure recorded for repair", {}, plan.id});
                 append_observation_and_resource_events(
                     result,

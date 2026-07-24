@@ -1,5 +1,10 @@
 #include "agent-tool-runtime-adapter.h"
 
+#include <algorithm>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::ordered_json;
+
 namespace {
 
 class provider_agent_tool_runtime final : public common_agent_tool_runtime {
@@ -13,6 +18,38 @@ public:
 
     bool is_policy_gated(const std::string & tool_name) const override {
         return tool_view.is_policy_gated(tool_name);
+    }
+
+    bool is_available(const std::string & tool_name) const override {
+        return tool_view.exposes_tool(tool_name);
+    }
+
+    common_agent_tool_repair_context make_repair_context(
+            const common_agent_tool_call & call,
+            const std::string & validation_error) const override {
+        common_agent_tool_repair_context result;
+        result.tool_name = call.name;
+        result.validation_error = validation_error;
+        for (const auto & tool : tool_view.chat_tools()) {
+            result.available_tools.push_back(tool.name);
+            if (tool.name != call.name || !result.arguments_skeleton.empty()) continue;
+            const auto schema = json::parse(tool.parameters, nullptr, false);
+            if (!schema.is_object() || !schema.contains("properties") || !schema["properties"].is_object()) continue;
+            json skeleton = json::object();
+            size_t count = 0;
+            for (const auto & [name, property] : schema["properties"].items()) {
+                if (count++ >= 24) break;
+                if (property.contains("default")) skeleton[name] = property["default"];
+                else if (property.value("type", "") == "string") skeleton[name] = "";
+                else if (property.value("type", "") == "integer" || property.value("type", "") == "number") skeleton[name] = 0;
+                else if (property.value("type", "") == "boolean") skeleton[name] = false;
+                else if (property.value("type", "") == "array") skeleton[name] = json::array();
+                else skeleton[name] = json::object();
+            }
+            result.arguments_skeleton = skeleton.dump();
+        }
+        std::sort(result.available_tools.begin(), result.available_tools.end());
+        return result;
     }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {

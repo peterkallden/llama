@@ -30,6 +30,7 @@ enum class common_agent_event_type {
     blueprint_promoted,
     tool_executed,
     tool_rejected,
+    tool_repair_context_created,
     plan_created,
     plan_updated,
     observation_recorded,
@@ -70,6 +71,7 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::blueprint_promoted: return "blueprint_promoted";
         case common_agent_event_type::tool_executed: return "tool_executed";
         case common_agent_event_type::tool_rejected: return "tool_rejected";
+        case common_agent_event_type::tool_repair_context_created: return "tool_repair_context_created";
         case common_agent_event_type::plan_created: return "plan_created";
         case common_agent_event_type::plan_updated: return "plan_updated";
         case common_agent_event_type::observation_recorded: return "observation_recorded";
@@ -147,6 +149,9 @@ struct common_agent_failure {
     std::string evidence_id;
     bool retryable = false;
     std::string safe_summary;
+    // Bounded, host-generated repair input. It contains a schema-derived
+    // argument skeleton and the effective tool names, never hidden policy.
+    std::string repair_context_json;
 };
 
 // A caller supplies this only when it has an explicit user correction and the

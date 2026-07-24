@@ -7,12 +7,29 @@
 #include <memory>
 
 class common_memory_post_turn_learner;
+
+struct common_agent_tool_repair_context {
+    std::string tool_name;
+    std::string validation_error;
+    std::string arguments_skeleton;
+    std::vector<std::string> available_tools;
+};
+
 class common_agent_tool_runtime {
 public:
     virtual ~common_agent_tool_runtime() = default;
     virtual bool is_read_only(const std::string & tool_name) const = 0;
     virtual bool is_policy_gated(const std::string & tool_name) const = 0;
+    // Tool availability is distinct from read/write policy. The default keeps
+    // older runtime implementations source-compatible; provider-backed
+    // runtimes override it with the immutable resolved tool view.
+    virtual bool is_available(const std::string &) const { return true; }
     virtual bool validate(const common_agent_tool_call & call, std::string & error) const = 0;
+    virtual common_agent_tool_repair_context make_repair_context(
+            const common_agent_tool_call & call,
+            const std::string & validation_error) const {
+        return {call.name, validation_error, {}, {}};
+    }
     virtual common_tool_execution_result execute(const common_agent_tool_call & call) const = 0;
 
     // Optional asynchronous tool seam. Existing runtimes remain synchronous

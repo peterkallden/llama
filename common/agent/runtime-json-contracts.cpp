@@ -58,6 +58,9 @@ nlohmann::ordered_json common_agent_runtime_failure_observation_to_json(
             {"retryable", failure.retryable},
             {"safe_summary", failure.safe_summary},
             {"evidence_id", failure.evidence_id},
+            {"repair_context", failure.repair_context_json.empty()
+                ? json(nullptr)
+                : json::parse(failure.repair_context_json, nullptr, false)},
         }},
     };
 }

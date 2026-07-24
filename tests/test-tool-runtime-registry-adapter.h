@@ -3,7 +3,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/tool-registry.h"
 
-class test_tool_runtime_registry_adapter final : public common_agent_tool_runtime {
+class test_tool_runtime_registry_adapter : public common_agent_tool_runtime {
 public:
     explicit test_tool_runtime_registry_adapter(const common_tool_registry & registry)
         : registry(registry) {}

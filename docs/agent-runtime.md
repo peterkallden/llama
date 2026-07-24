@@ -261,6 +261,30 @@ The following constraints apply:
   provenance and size limits. Text in a tool result is not implicitly an
   artifact.
 
+### Tool-call repair
+
+Tool-call repair is a common runtime path shared by `reflective`, `deliberate`
+and `research`; it is not a mode-specific tool provider. After a schema or
+availability failure, the host records a bounded repair context for the next
+reflection/review pass:
+
+* the failed tool and validation diagnostic;
+* a host-generated argument skeleton derived from the registered schema, when
+  the tool is available;
+* the effective model-visible tool names for the resolved profile.
+
+For an unavailable tool there is no argument skeleton. The repair context only
+offers the effective tool view, so reflection can select a valid alternative
+without expanding host authority. The context is emitted through the normal
+agent event stream as `tool_repair_context_created` and is retained with the
+tool-failure observation. A repair pass may correct selection or arguments,
+but it cannot change the profile, capability set, policy or backend.
+
+The mode controls only the bounded budget around this common path: reflective
+gets the minimum repair/reflection pass, while deliberate and research may
+spend their larger review budgets on the same context. Static chat without a
+tool call has no repair pass.
+
 ## Tool naming convention
 
 New tool names use dotted namespaces so related operations are visible as one
