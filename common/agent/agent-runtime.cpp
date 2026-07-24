@@ -607,6 +607,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         complete.expected_version = plan.version;
         complete.step_id = active->id;
         complete.reason_summary = "final response synthesis completed";
+        const std::string completed_step_id = active->id;
         for (const auto & observation : plan.observations) {
             complete.evidence_ids.push_back(observation.id);
             complete.evidence_ids.insert(complete.evidence_ids.end(), observation.evidence_ids.begin(), observation.evidence_ids.end());
@@ -614,7 +615,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (!store.apply(complete, plan, error)) return false;
         append_event(result, request, {common_agent_event_type::plan_updated, "final synthesis step completed", {}, plan.id});
         append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
-            "final synthesis step completed", plan.id, active->id);
+            "final synthesis step completed", plan.id, completed_step_id);
         activate_next_ready_step();
         return error.empty();
     };
