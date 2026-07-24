@@ -273,6 +273,12 @@ reflection/review pass:
   the tool is available;
 * the effective model-visible tool names for the resolved profile.
 
+Before validation, the runtime also applies the existing compatibility
+normalization used by plan and reflection parsing. This unwraps supported
+legacy `tool`/`args` shapes and canonicalizes bounded control values; semantic
+defaults remain a separate host-owned step. The executor receives the
+normalized arguments rather than the pre-normalized model payload.
+
 For an unavailable tool there is no argument skeleton. The repair context only
 offers the effective tool view, so reflection can select a valid alternative
 without expanding host authority. The context is emitted through the normal

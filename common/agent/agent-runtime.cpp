@@ -4,6 +4,7 @@
 #include "agent/research/research-runner.h"
 #include "agent/runtime-json-contracts.h"
 #include "plan/plan-bindings.h"
+#include "plan/plan-json.h"
 #include "plan/plan-goal.h"
 #include "plan/plan-memory.h"
 #include "plan/plan-scheduler.h"
@@ -212,8 +213,27 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
             ? json(nullptr)
             : json::parse(context.arguments_skeleton, nullptr, false)},
         {"available_tools", std::move(available)},
+        {"normalized_arguments", context.normalized_arguments.empty()
+            ? json(nullptr)
+            : json::parse(context.normalized_arguments, nullptr, false)},
+        {"normalization_applied", context.normalization_applied},
     };
     return value.dump();
+}
+
+static bool normalize_agent_tool_call(common_agent_tool_call & call) {
+    const auto original = call.arguments_json;
+    std::string normalized;
+    std::string ignored_error;
+    if (!common_plan_normalize_tool_arguments_json(
+            call.name,
+            call.arguments_json,
+            normalized,
+            ignored_error)) {
+        return false;
+    }
+    call.arguments_json = std::move(normalized);
+    return call.arguments_json != original;
 }
 
 static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
@@ -347,6 +367,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         detail.clear();
         if (!step.tool_call) return false;
         common_agent_tool_call call{step.tool_call->name, step.tool_call->arguments_json};
+        normalize_agent_tool_call(call);
         common_agent_runtime_apply_safe_tool_defaults(request, call);
         step.tool_call->arguments_json = call.arguments_json;
         if (!tools) {
@@ -642,8 +663,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (tool_batches >= request.max_tool_batches) break;
             if (!tools || request.max_tool_batches == 0) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.unavailable", common_agent_failure_class::execution, false, "Registered tool execution is unavailable.")); append_event(result, request, {common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
+            const bool normalization_applied = normalize_agent_tool_call(*tool_call);
             if (!tools->is_available(tool_call->name)) {
-                const auto repair = tools->make_repair_context(*tool_call, "tool is unavailable in the effective runtime view");
+                auto repair = tools->make_repair_context(*tool_call, "tool is unavailable in the effective runtime view");
+                repair.normalized_arguments = tool_call->arguments_json;
+                repair.normalization_applied = normalization_applied;
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.unavailable", common_agent_failure_class::not_found, false, "The requested tool is not available in the effective runtime view.");
                 failure.repair_context_json = tool_repair_context_json(repair);
@@ -667,12 +691,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); append_event(result, request, {common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
-            common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
+            const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
             if (!tools->validate(*tool_call, error)) {
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
-                failure.repair_context_json = tool_repair_context_json(tools->make_repair_context(*tool_call, validation_error));
+                auto repair = tools->make_repair_context(*tool_call, validation_error);
+                repair.normalized_arguments = tool_call->arguments_json;
+                repair.normalization_applied = normalization_applied || defaults_applied;
+                failure.repair_context_json = tool_repair_context_json(repair);
                 result.failures.push_back(failure);
                 common_plan_operation observed;
                 observed.kind = common_plan_operation_kind::record_observation;

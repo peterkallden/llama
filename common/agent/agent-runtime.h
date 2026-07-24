@@ -13,6 +13,8 @@ struct common_agent_tool_repair_context {
     std::string validation_error;
     std::string arguments_skeleton;
     std::vector<std::string> available_tools;
+    std::string normalized_arguments;
+    bool normalization_applied = false;
 };
 
 class common_agent_tool_runtime {
@@ -28,7 +30,7 @@ public:
     virtual common_agent_tool_repair_context make_repair_context(
             const common_agent_tool_call & call,
             const std::string & validation_error) const {
-        return {call.name, validation_error, {}, {}};
+        return {call.name, validation_error, {}, {}, call.arguments_json, false};
     }
     virtual common_tool_execution_result execute(const common_agent_tool_call & call) const = 0;
 

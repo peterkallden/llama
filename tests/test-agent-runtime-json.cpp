@@ -1,4 +1,5 @@
 #include "agent/runtime-json-contracts.h"
+#include "plan/plan-json.h"
 
 #include <cassert>
 
@@ -55,6 +56,15 @@ int main() {
         changed,
         error));
     assert(error == "tool arguments must be a JSON object");
+
+    std::string normalized_tool_arguments;
+    assert(common_plan_normalize_tool_arguments_json(
+        "lookup",
+        R"({"tool":{"name":"lookup","args":{"id":"first"}}})",
+        normalized_tool_arguments,
+        error));
+    const auto normalized_tool = nlohmann::ordered_json::parse(normalized_tool_arguments);
+    assert(normalized_tool.size() == 1 && normalized_tool.value("id", "") == "first");
 
     return 0;
 }
