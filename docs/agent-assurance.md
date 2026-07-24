@@ -102,6 +102,20 @@ builds.
 | Semantic diagnostics | [ ] | Symbol/reference keep a bounded text fallback and call hierarchy requires a semantic provider; clangd/LSP or a project index is not yet bound |
 | Tool-specific smoke coverage | [ ] | The focused migration smoke set passed; the complete smoke executable set and model-backed resident coverage were not rerun |
 
+The tool-repair path has separate deterministic coverage. The provider CTest
+checks host-owned dotted-name normalization, unique high-confidence fuzzy
+resolution and preservation of ambiguous candidates. The runtime CTest checks
+that a failed tool step suspends the active final answer until its repair pass
+has completed. These tests do not claim that a model will select the intended
+tool in every prompt.
+
+The latest Qwen/Nomic CSV data smoke remains a known model-backed failure: the
+structured plan selected an invalid `dataset.inspect` call and did not issue
+`data.join`, `data.aggregate` or `statistics.describe`, even though the prose
+plan mentioned a join. The smoke correctly reports this as a failed expected
+tool assertion. The deterministic Cozo/tool contracts and repair tests remain
+separate from that model-selection result.
+
 The Cozo data-store test is conditional on `LLAMA_MEMORY_COZO=ON` and a
 configured Cozo C API. The default agent build keeps that option disabled, so
 the ordinary adapter tests verify the backend seam and tool contracts, while

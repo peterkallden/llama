@@ -273,6 +273,24 @@ reflection/review pass:
   the tool is available;
 * the effective model-visible tool names for the resolved profile.
 
+Tool selection also has a host-owned name-normalization step before schema
+validation. Exact names are preferred, followed by compatibility aliases and
+normalized separators/casing. A unique, high-confidence fuzzy match may be
+resolved mechanically; this does not require another model inference. For
+example, `join` can resolve to `data.join` when that is the only sufficiently
+strong candidate in the effective tool view. The resolver never searches
+outside that view.
+
+If more than one candidate is plausible, the runtime does not silently choose
+one. It preserves the tool intent as an unresolved repair step and exposes the
+bounded candidate list to the common repair pass. Candidates may be grouped by
+domain when needed, so a model can select one or more host-provided domains
+(for example `data` and `statistics`) without receiving unrelated tools or
+being allowed to expand the profile. If a unique fuzzy match has valid tool
+name but invalid arguments, the canonical tool step is retained so ordinary
+schema repair can repair its arguments rather than reducing the request to
+generic reasoning.
+
 Before validation, the runtime also applies the existing compatibility
 normalization used by plan and reflection parsing. This unwraps supported
 legacy `tool`/`args` shapes and canonicalizes bounded control values; semantic
@@ -285,6 +303,11 @@ without expanding host authority. The context is emitted through the normal
 agent event stream as `tool_repair_context_created` and is retained with the
 tool-failure observation. A repair pass may correct selection or arguments,
 but it cannot change the profile, capability set, policy or backend.
+
+This makes repair a bounded normalization and validation path, not a second
+tool-discovery protocol. The model is used only when deterministic matching is
+ambiguous or when the arguments need semantic correction. The same path is
+available to all thinking modes; the mode changes only the repair budget.
 
 The mode controls only the bounded budget around this common path: reflective
 gets the minimum repair/reflection pass, while deliberate and research may
@@ -1419,6 +1442,12 @@ The important implication is that "available through MCP" now means "available t
 
 The current real MCP stdio server exports a host-resolved tool surface, not the whole agent runtime loop. In practice that means native tools from the selected profile can appear there, and configured external stdio MCP providers can also be forwarded into that same exported surface when the host config enables them.
 
+The table below describes the currently bound/exportable surface, not every
+tool proposal or every catalog entry. A tool is visible only when its profile,
+provider binding, host scope and backend requirements are satisfied. In
+particular, sandbox-dependent tools can be omitted when no usable execution
+backend is configured.
+
 | Tool/capability group | Available through real MCP stdio server | What it requires today |
 | --- | --- | --- |
 | `calculator`, `time_now` | Yes | A profile containing the tools, such as `minimal` |
@@ -1876,6 +1905,12 @@ complete list of every CTest or smoke executable:
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
+- `llama-agent-tool-runtime-ctest`, verifying that an active final answer is
+  suspended while reflection repairs a failed tool step and is accepted only
+  after the repair completes
+- `llama-agent-tool-provider-ctest`, verifying deterministic dotted-name
+  normalization, unique fuzzy resolution (for example `join` to `data.join`)
+  and preservation of ambiguous candidates
 - `llama-agent-tool-runtime-smoke` also verifies the current reflection guardrail for incomplete `memory_get` repairs, so that an empty or underspecified `memory_get` tool step degrades to reasoning with a specific "requires an id from a prior memory_search or recorded memory reference" diagnostic instead of surfacing only the generic schema-contract error
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
@@ -1934,6 +1969,15 @@ model-backed research turn can exercise `data.join` and `data.aggregate`.
 The `scripts/test-qwen-nomic-agent-data.ps1` helper now accepts optional
 `-OrdersCsv` and `-CustomersCsv` paths; when omitted it creates small local
 fixtures, seeds Cozo, and runs the model-backed data turn.
+
+The model-backed CSV smoke is not a substitute for the deterministic tool
+tests. In the latest Qwen/Nomic run, the model produced a prose plan that
+mentioned a join but the structured plan selected `dataset.inspect` with
+invalid arguments and never issued `data.join`, `data.aggregate` or
+`statistics.describe`. The smoke therefore failed its expected-tool
+assertion, as intended. This indicates a model planning/selection gap, not a
+successful join path; the host resolver cannot repair a join that the model
+never requested.
 
 The non-smoke CTest baseline can be run as one serial sweep:
 
