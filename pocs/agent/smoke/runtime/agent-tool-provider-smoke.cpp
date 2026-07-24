@@ -1,11 +1,14 @@
 #include "tools/agent/resource/agent-resource-store.h"
+#include "tools/agent/tooling/agent-tool-runtime-adapter.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 
 #include "agent/tool-catalog.h"
 #include "memory/memory-in-memory.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <thread>
@@ -25,6 +28,10 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
     return false;
 }
 
+bool has_name(const std::vector<std::string> & names, const std::string & name) {
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
 } // namespace
 
 int main() {
@@ -36,9 +43,14 @@ int main() {
         return 1;
     }
     const auto all_configured = catalog.load_profile("all-configured", error);
-    if (all_configured.size() != bootstrap.definitions_created.size()) {
-        std::fprintf(stderr, "all-configured profile did not include every catalogued tool: %zu/%zu\n",
-            all_configured.size(), bootstrap.definitions_created.size());
+    bool all_configured_has_data_join = false;
+    bool all_configured_has_data_aggregate = false;
+    for (const auto & definition : all_configured) {
+        all_configured_has_data_join = all_configured_has_data_join || definition.name == "data.join";
+        all_configured_has_data_aggregate = all_configured_has_data_aggregate || definition.name == "data.aggregate";
+    }
+    if (!all_configured_has_data_join || !all_configured_has_data_aggregate) {
+        std::fprintf(stderr, "all-configured profile did not expose the data tools required by this smoke\n");
         return 1;
     }
 
@@ -112,6 +124,7 @@ int main() {
     native_agent_tool_provider research_provider(
         catalog,
         [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
+            bindings.repository_root = context.repository_root;
             bindings.resource_runtime.store = &g_resource_store;
             bindings.resource_runtime.namespace_id = context.scope.namespace_id;
             bindings.resource_runtime.session_id = context.scope.session_id;
@@ -217,6 +230,40 @@ int main() {
     }
     if (research_view->supports_async_call("web_search")) {
         std::fprintf(stderr, "web_search should not have been marked async in this smoke\n");
+        return 1;
+    }
+
+    agent_tool_context all_tools_context = research_context;
+    all_tools_context.profile_id = "all-configured";
+    all_tools_context.allow_network = true;
+    all_tools_context.repository_root = std::filesystem::current_path().string();
+    std::unique_ptr<agent_tool_view> all_tools_view = research_provider.resolve_tools(all_tools_context, error);
+    if (!all_tools_view) {
+        std::fprintf(stderr, "all-configured provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    auto tool_runtime = make_provider_agent_tool_runtime(*all_tools_view);
+    std::string resolved_tool;
+    std::vector<std::string> candidates;
+    if (!tool_runtime->resolve_tool_name("join", resolved_tool, candidates) ||
+            resolved_tool != "data.join" || !candidates.empty()) {
+        std::fprintf(stderr, "unique fuzzy tool resolution did not select data.join\n");
+        return 1;
+    }
+    agent_tool_context developer_context = all_tools_context;
+    developer_context.profile_id = "developer-read";
+    std::unique_ptr<agent_tool_view> developer_view = research_provider.resolve_tools(developer_context, error);
+    if (!developer_view) {
+        std::fprintf(stderr, "developer-read provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    auto developer_tool_runtime = make_provider_agent_tool_runtime(*developer_view);
+    if (developer_tool_runtime->resolve_tool_name("search", resolved_tool, candidates) ||
+            !has_name(candidates, "workspace.search") ||
+            !has_name(candidates, "repository.search")) {
+        std::fprintf(stderr, "ambiguous fuzzy tool resolution did not preserve search candidates (resolved=%s, count=%zu)\n",
+            resolved_tool.c_str(), candidates.size());
+        for (const auto & candidate : candidates) std::fprintf(stderr, "  candidate=%s\n", candidate.c_str());
         return 1;
     }
     if (!research_view->supports_async_call("web_fetch")) {

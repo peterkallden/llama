@@ -206,6 +206,8 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
 static std::string tool_repair_context_json(const common_agent_tool_repair_context & context) {
     json available = json::array();
     for (const auto & name : context.available_tools) available.push_back(name);
+    json candidates = json::array();
+    for (const auto & name : context.candidate_tools) candidates.push_back(name);
     json value = {
         {"tool", context.tool_name},
         {"error", context.validation_error},
@@ -213,6 +215,7 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
             ? json(nullptr)
             : json::parse(context.arguments_skeleton, nullptr, false)},
         {"available_tools", std::move(available)},
+        {"candidate_tools", std::move(candidates)},
         {"normalized_arguments", context.normalized_arguments.empty()
             ? json(nullptr)
             : json::parse(context.normalized_arguments, nullptr, false)},
@@ -221,7 +224,22 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
     return value.dump();
 }
 
-static bool normalize_agent_tool_call(common_agent_tool_call & call) {
+static bool normalize_agent_tool_call(
+        common_agent_tool_call & call,
+        const common_agent_tool_runtime * tools = nullptr,
+        bool * name_normalized = nullptr,
+        std::vector<std::string> * name_candidates = nullptr) {
+    if (name_normalized) *name_normalized = false;
+    if (name_candidates) name_candidates->clear();
+    if (tools) {
+        std::string resolved_name;
+        std::vector<std::string> candidates;
+        if (tools->resolve_tool_name(call.name, resolved_name, candidates)) {
+            call.name = std::move(resolved_name);
+            if (name_normalized) *name_normalized = true;
+        }
+        if (name_candidates) *name_candidates = std::move(candidates);
+    }
     const auto original = call.arguments_json;
     std::string normalized;
     std::string ignored_error;
@@ -367,8 +385,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         detail.clear();
         if (!step.tool_call) return false;
         common_agent_tool_call call{step.tool_call->name, step.tool_call->arguments_json};
-        normalize_agent_tool_call(call);
+        bool name_normalization_applied = false;
+        std::vector<std::string> name_candidates;
+        normalize_agent_tool_call(call, tools, &name_normalization_applied, &name_candidates);
         common_agent_runtime_apply_safe_tool_defaults(request, call);
+        step.tool_call->name = call.name;
+        if (name_normalization_applied) step.selected_tool = call.name;
         step.tool_call->arguments_json = call.arguments_json;
         if (!tools) {
             if (!degrade_on_any_invalid) return false;
@@ -389,7 +411,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             call.name,
             arguments,
             validation_error);
+        // Preserve ambiguous name matches as tool steps so the runtime can
+        // expose the bounded candidate list to repair/reflection. Only an
+        // unambiguous, schema-invalid call is degraded to reasoning here.
         if (!degrade_on_any_invalid && !incomplete_tool_call) return false;
+        if (!name_candidates.empty()) return false;
         step.selected_tool.reset();
         step.tool_call.reset();
         step.mode = common_plan_step_mode::reasoning;
@@ -663,11 +689,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (tool_batches >= request.max_tool_batches) break;
             if (!tools || request.max_tool_batches == 0) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.unavailable", common_agent_failure_class::execution, false, "Registered tool execution is unavailable.")); append_event(result, request, {common_agent_event_type::tool_rejected, "registered tool execution is unavailable", {}, plan.id}); result.error = "registered tool execution is unavailable"; return result; }
-            const bool normalization_applied = normalize_agent_tool_call(*tool_call);
+            bool name_normalization_applied = false;
+            std::vector<std::string> name_candidates;
+            const bool normalization_applied = normalize_agent_tool_call(
+                *tool_call, tools, &name_normalization_applied, &name_candidates);
             if (!tools->is_available(tool_call->name)) {
                 auto repair = tools->make_repair_context(*tool_call, "tool is unavailable in the effective runtime view");
+                repair.candidate_tools = std::move(name_candidates);
                 repair.normalized_arguments = tool_call->arguments_json;
-                repair.normalization_applied = normalization_applied;
+                repair.normalization_applied = normalization_applied || name_normalization_applied;
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.unavailable", common_agent_failure_class::not_found, false, "The requested tool is not available in the effective runtime view.");
                 failure.repair_context_json = tool_repair_context_json(repair);
@@ -697,8 +727,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 auto repair = tools->make_repair_context(*tool_call, validation_error);
+                repair.candidate_tools = std::move(name_candidates);
                 repair.normalized_arguments = tool_call->arguments_json;
-                repair.normalization_applied = normalization_applied || defaults_applied;
+                repair.normalization_applied = normalization_applied || name_normalization_applied || defaults_applied;
                 failure.repair_context_json = tool_repair_context_json(repair);
                 result.failures.push_back(failure);
                 common_plan_operation observed;

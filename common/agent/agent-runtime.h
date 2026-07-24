@@ -13,6 +13,9 @@ struct common_agent_tool_repair_context {
     std::string validation_error;
     std::string arguments_skeleton;
     std::vector<std::string> available_tools;
+    // Host-ranked candidates for an unavailable or invalid tool name. These
+    // are always drawn from the immutable effective tool view.
+    std::vector<std::string> candidate_tools;
     std::string normalized_arguments;
     bool normalization_applied = false;
 };
@@ -26,11 +29,18 @@ public:
     // older runtime implementations source-compatible; provider-backed
     // runtimes override it with the immutable resolved tool view.
     virtual bool is_available(const std::string &) const { return true; }
+    // Resolve a model-produced tool name against the host-owned effective view.
+    // A true result means the match is deterministic and safe to apply. A
+    // false result may still populate candidates for bounded repair.
+    virtual bool resolve_tool_name(
+            const std::string &,
+            std::string &,
+            std::vector<std::string> &) const { return false; }
     virtual bool validate(const common_agent_tool_call & call, std::string & error) const = 0;
     virtual common_agent_tool_repair_context make_repair_context(
             const common_agent_tool_call & call,
             const std::string & validation_error) const {
-        return {call.name, validation_error, {}, {}, call.arguments_json, false};
+        return {call.name, validation_error, {}, {}, {}, call.arguments_json, false};
     }
     virtual common_tool_execution_result execute(const common_agent_tool_call & call) const = 0;
 

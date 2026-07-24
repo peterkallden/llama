@@ -1,11 +1,60 @@
 #include "agent-tool-runtime-adapter.h"
 
 #include <algorithm>
+#include <cctype>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
 
 namespace {
+
+std::string normalized_tool_name(const std::string & value) {
+    std::string result;
+    bool separator = false;
+    for (const unsigned char character : value) {
+        if (std::isalnum(character)) {
+            if (separator && !result.empty()) result.push_back('.');
+            result.push_back(static_cast<char>(std::tolower(character)));
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+    return result;
+}
+
+size_t edit_distance(const std::string & left, const std::string & right) {
+    std::vector<size_t> previous(right.size() + 1);
+    std::vector<size_t> current(right.size() + 1);
+    for (size_t column = 0; column <= right.size(); ++column) previous[column] = column;
+    for (size_t row = 1; row <= left.size(); ++row) {
+        current[0] = row;
+        for (size_t column = 1; column <= right.size(); ++column) {
+            current[column] = std::min({
+                previous[column] + 1,
+                current[column - 1] + 1,
+                previous[column - 1] + (left[row - 1] == right[column - 1] ? 0 : 1)});
+        }
+        previous.swap(current);
+    }
+    return previous[right.size()];
+}
+
+double tool_name_score(const std::string & requested, const std::string & candidate) {
+    const std::string normalized_requested = normalized_tool_name(requested);
+    const std::string normalized_candidate = normalized_tool_name(candidate);
+    if (normalized_requested.empty() || normalized_candidate.empty()) return 0.0;
+    if (normalized_requested == normalized_candidate) return 1.0;
+    const std::string suffix = "." + normalized_requested;
+    if (normalized_candidate.size() > suffix.size() &&
+            normalized_candidate.compare(normalized_candidate.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return 0.92;
+    }
+    const size_t distance = edit_distance(normalized_requested, normalized_candidate);
+    const size_t length = std::max(normalized_requested.size(), normalized_candidate.size());
+    return length == 0 ? 0.0 : 1.0 - static_cast<double>(distance) / static_cast<double>(length);
+}
 
 class provider_agent_tool_runtime final : public common_agent_tool_runtime {
 public:
@@ -22,6 +71,33 @@ public:
 
     bool is_available(const std::string & tool_name) const override {
         return tool_view.exposes_tool(tool_name);
+    }
+
+    bool resolve_tool_name(
+            const std::string & requested,
+            std::string & resolved,
+            std::vector<std::string> & candidates) const override {
+        candidates.clear();
+        if (tool_view.exposes_tool(requested)) {
+            resolved = requested;
+            return true;
+        }
+        struct scored_tool { std::string name; double score = 0.0; };
+        std::vector<scored_tool> scored;
+        for (const auto & tool : tool_view.chat_tools()) {
+            const double score = tool_name_score(requested, tool.name);
+            if (score >= 0.55) scored.push_back({tool.name, score});
+        }
+        std::sort(scored.begin(), scored.end(), [](const auto & left, const auto & right) {
+            if (left.score != right.score) return left.score > right.score;
+            return left.name < right.name;
+        });
+        for (const auto & item : scored) candidates.push_back(item.name);
+        if (scored.empty() || scored.front().score < 0.80) return false;
+        if (scored.size() > 1 && scored.front().score - scored[1].score < 0.12) return false;
+        resolved = scored.front().name;
+        candidates.clear();
+        return true;
     }
 
     common_agent_tool_repair_context make_repair_context(
