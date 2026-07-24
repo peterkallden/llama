@@ -11,7 +11,13 @@
 # The environment changes are limited to the current PowerShell process. The
 # script does not modify the user or system PATH permanently.
 
-$cmakeBin = 'C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts'
+$cmakeCandidates = @(
+    'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin',
+    'C:\Users\kalld\AppData\Roaming\Python\Python312\Scripts'
+)
+$cmakeBin = $cmakeCandidates | Where-Object {
+    Test-Path -LiteralPath (Join-Path $_ 'cmake.exe')
+} | Select-Object -First 1
 $llvmBin = 'E:\progs\bin'
 
 foreach ($requiredPath in @($cmakeBin, $llvmBin)) {
@@ -51,29 +57,17 @@ function Invoke-AgentBuild {
         $arguments += @('--target', $Target)
     }
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = Join-Path $cmakeBin 'cmake.exe'
-    $psi.Arguments = ($arguments | ForEach-Object {
-        if ($_ -match '\s') { "`"$_`"" } else { [string]$_ }
+    $cmakePath = Join-Path $cmakeBin 'cmake.exe'
+    $argumentString = ($arguments | ForEach-Object {
+        if ([string]$_ -match '\s') { "`"$_`"" } else { [string]$_ }
     }) -join ' '
-    $psi.UseShellExecute = $false
-    $psi.WorkingDirectory = (Get-Location).Path
 
-    # ProcessStartInfo receives a fresh, case-insensitive environment map.
-    # This avoids MSBuild seeing both Path and PATH from the parent process.
-    $psi.EnvironmentVariables.Clear()
-    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
-        if ($entry.Key -ine 'Path' -and $entry.Key -ine 'PATH') {
-            $psi.EnvironmentVariables.Set_Item($entry.Key, [string]$entry.Value)
-        }
-    }
-    $psi.EnvironmentVariables.Set_Item('Path', $env:Path)
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-    [void]$process.Start()
-    $process.WaitForExit()
-    return $process.ExitCode
+    # cmd.exe lets us replace both case variants before MSBuild inherits the
+    # environment.  This avoids the duplicate Path/PATH dictionary key seen
+    # by MSBuild in the Codex Windows process.
+    $cleanPath = $env:Path
+    & cmd.exe /d /c ('set "Path=" & set "PATH=" & set "Path={0}" & "{1}" {2}' -f $cleanPath, $cmakePath, $argumentString)
+    return $LASTEXITCODE
 }
 
 Write-Host "Agent build environment configured for this PowerShell session."

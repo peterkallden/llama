@@ -42,6 +42,7 @@ struct args {
     size_t memory_token_budget = 768;
     size_t max_tool_rounds = 1;
     int n_predict = 128;
+    int n_threads = 2;
     common_agent_context_budget_config context_budgets;
     int n_gpu_layers = 99;
     bool record_episode = false;

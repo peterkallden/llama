@@ -27,7 +27,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
-        "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n"
+        "         [--n-predict N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
         "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
@@ -107,6 +107,12 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.max_research_iterations = (size_t) std::stoul(v);
         } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--n-predict") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_predict = std::stoi(v);
+        } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.n_threads = std::stoi(v);
+            if (out.n_threads < 1) {
+                fprintf(stderr, "--threads must be greater than zero\n");
+                return false;
+            }
         } else if (strcmp(argv[i], "-ngl") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_gpu_layers = std::stoi(v);
         } else if (strcmp(argv[i], "--embedding") == 0) {

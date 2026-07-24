@@ -551,7 +551,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         turn_request.policy.deliberation_policy = deliberation_policy;
     }
     turn_request.runtime_config = make_agent_runtime_config({
-        {options.n_predict, options.context_budgets},
+        {options.n_predict, options.n_threads, options.context_budgets},
         options.context_budgets,
         options.memory_learn == "post-turn",
         {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
@@ -562,6 +562,9 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     });
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;
+    if (turn_request.generation_options.n_threads < 1) {
+        turn_request.generation_options.n_threads = options.n_threads;
+    }
     if (!turn_request.generation_options.t_max_predict_ms && options.inference_step_timeout_ms > 0) {
         turn_request.generation_options.t_max_predict_ms = options.inference_step_timeout_ms;
     }
@@ -586,9 +589,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     common_agent_request request;
     request.messages = messages;
     common_agent_generation_options generation_options;
-    generation_options.n_threads = options.cpuparams.n_threads > 0
-        ? options.cpuparams.n_threads
-        : 2;
+    generation_options.n_threads = options.n_threads;
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
         runtime_scope,
