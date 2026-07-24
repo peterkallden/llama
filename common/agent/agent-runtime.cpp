@@ -1019,6 +1019,57 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "deliberation requested a plan revision", {}, plan.id});
             ++plan_revision_count;
         }
+        std::vector<std::string> reflection_work_step_ids;
+        for (const auto & op : reflection.proposed_plan_operations) {
+            const common_plan_step * step = nullptr;
+            if (op.step) {
+                step = &*op.step;
+            } else if (op.step_id) {
+                for (const auto & candidate : plan.steps) {
+                    if (candidate.id == *op.step_id) {
+                        step = &candidate;
+                        break;
+                    }
+                }
+            }
+            if (step && common_plan_step_effective_mode(*step) != common_plan_step_mode::final_response &&
+                    (op.kind == common_plan_operation_kind::add_step ||
+                     op.kind == common_plan_operation_kind::replace_step ||
+                     op.kind == common_plan_operation_kind::activate_step ||
+                     op.kind == common_plan_operation_kind::unblock_step ||
+                     op.kind == common_plan_operation_kind::reset_step)) {
+                reflection_work_step_ids.push_back(step->id);
+            }
+        }
+        const std::optional<std::string> active_final_step_id = [&]() -> std::optional<std::string> {
+            if (!plan.active_step_id) return std::nullopt;
+            for (const auto & step : plan.steps) {
+                if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active &&
+                        common_plan_step_effective_mode(step) == common_plan_step_mode::final_response) {
+                    return step.id;
+                }
+            }
+            return std::nullopt;
+        }();
+        if (!reflection_work_step_ids.empty() && active_final_step_id) {
+            common_plan_operation reset_answer;
+            reset_answer.kind = common_plan_operation_kind::reset_step;
+            reset_answer.plan_id = plan.id;
+            reset_answer.expected_version = plan.version;
+            reset_answer.step_id = *active_final_step_id;
+            reset_answer.reason_summary = "final answer suspended for reflection repair";
+            if (!store.apply(reset_answer, plan, error)) {
+                result.error = error;
+                return result;
+            }
+            append_event(result, request, {common_agent_event_type::plan_updated,
+                "final answer suspended for reflection repair", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::response,
+                common_runtime_trace_kind::updated,
+                "final answer suspended for pending reflection repair", plan.id,
+                *active_final_step_id);
+        }
+        std::vector<std::string> applied_reflection_work_step_ids;
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
             if ((op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) && op.step && op.step->tool_call) {
@@ -1035,6 +1086,51 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "reflection plan operation applied", plan.id,
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
+            const std::string applied_step_id = op.step_id.value_or(op.step ? op.step->id : std::string());
+            if (std::find(reflection_work_step_ids.begin(), reflection_work_step_ids.end(), applied_step_id) != reflection_work_step_ids.end() &&
+                    applied_step_id != active_final_step_id.value_or(std::string())) {
+                applied_reflection_work_step_ids.push_back(applied_step_id);
+            }
+        }
+        if (!applied_reflection_work_step_ids.empty() && active_final_step_id) {
+            for (const auto & work_step_id : applied_reflection_work_step_ids) {
+                bool already_dependency = false;
+                for (const auto & step : plan.steps) {
+                    if (step.id == *active_final_step_id) {
+                        already_dependency = std::find(step.depends_on.begin(), step.depends_on.end(), work_step_id) != step.depends_on.end();
+                        break;
+                    }
+                }
+                if (already_dependency) continue;
+                common_plan_operation dependency;
+                dependency.kind = common_plan_operation_kind::add_dependency;
+                dependency.plan_id = plan.id;
+                dependency.expected_version = plan.version;
+                dependency.step_id = *active_final_step_id;
+                dependency.target_id = work_step_id;
+                dependency.reason_summary = "final answer waits for reflection repair";
+                if (!store.apply(dependency, plan, error)) {
+                    result.error = error;
+                    return result;
+                }
+                append_event(result, request, {common_agent_event_type::plan_updated,
+                    "final answer dependency added for reflection repair", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::updated,
+                    "final answer dependency added for reflection repair", plan.id,
+                    *active_final_step_id, {}, work_step_id);
+            }
+            if (!activate_next_ready_step()) {
+                result.error = error.empty() ? "reflection repair step could not be scheduled" : error;
+                return result;
+            }
+            result.revised = true;
+            append_event(result, request, {common_agent_event_type::response_revised,
+                "reflection repair scheduled before final answer", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::reflection,
+                common_runtime_trace_kind::decided,
+                "reflection scheduled repair before accepting response", plan.id);
+            continue;
         }
         if (!reflection_escalation_denied &&
                 !reflection_requested_escalation &&

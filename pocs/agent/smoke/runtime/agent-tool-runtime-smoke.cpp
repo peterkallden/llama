@@ -149,6 +149,15 @@ public:
         error.clear();
         return "Draft answer before reflection.";
     }
+
+    std::string generate_reasoning(
+            const common_agent_request &,
+            const common_plan_state &,
+            const common_plan_step &,
+            std::string & error) override {
+        error.clear();
+        return "The repair step was executed before the answer was accepted.";
+    }
 };
 
 class reflection_memory_get_reflector final : public common_reflection_engine {
@@ -508,7 +517,7 @@ int main() {
     reflection_request.plan_scope = common_plan_scope::session;
     reflection_request.enable_planning = true;
     reflection_request.enable_reflection = true;
-    reflection_request.max_iterations = 1;
+    reflection_request.max_iterations = 2;
     reflection_request.max_tool_batches = 1;
 
     const auto reflection_result = reflection_runtime.run(reflection_request);
@@ -526,6 +535,24 @@ int main() {
     }
     if (!saw_memory_get_guardrail) {
         std::fprintf(stderr, "reflection runtime did not emit the expected memory_get guardrail detail\n");
+        return 1;
+    }
+    bool saw_suspended_answer = false;
+    bool saw_repair_completed = false;
+    bool saw_repair_before_accept = false;
+    for (const auto & trace : reflection_result.trace) {
+        if (trace.detail.find("final answer suspended for pending reflection repair") != std::string::npos) {
+            saw_suspended_answer = true;
+        }
+        if (trace.detail.find("reasoning step completed") != std::string::npos) {
+            saw_repair_completed = true;
+        }
+        if (trace.detail.find("response accepted without reflection revision") != std::string::npos && saw_suspended_answer) {
+            saw_repair_before_accept = true;
+        }
+    }
+    if (!saw_suspended_answer || !saw_repair_completed || !saw_repair_before_accept) {
+        std::fprintf(stderr, "reflection runtime accepted the draft before executing its repair step\n");
         return 1;
     }
 
