@@ -1010,6 +1010,113 @@ int main() {
         }
     }
 
+    common_agent_runtime_session_manager_build_config failed_pending_build_config = {
+        memory_store,
+        plan_store,
+    };
+    failed_pending_build_config.resident_request = {
+        "",
+        "",
+        "",
+        "",
+        std::nullopt,
+        "fake.gguf",
+        32,
+        0,
+        false,
+        "server-context",
+        common_memory_scope::session,
+        common_plan_scope::turn,
+    };
+    failed_pending_build_config.pending_operation_resolver =
+        [](const common_agent_runtime_session_host_turn_request & request,
+                std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
+                std::string & error) {
+            pending_operation = common_agent_runtime_session_manager_pending_operation{};
+            pending_operation->pending_operation.operation_id = "failed-tool:" + request.turn_id;
+            pending_operation->pending_operation.kind = common_agent_runtime_pending_operation_kind::tool;
+            pending_operation->pending_operation.detail = "session manager smoke failed pending tool";
+            if (request.turn_id == "turn-timeout-pending") {
+                pending_operation->pending_operation.deadline =
+                    std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+            }
+            pending_operation->poll = [](bool & ready, std::string & error) {
+                ready = false;
+                error = "synthetic pending operation failure";
+                return false;
+            };
+            error.clear();
+            return true;
+        };
+    auto failed_pending_manager_config =
+        make_agent_runtime_session_manager_config(std::move(failed_pending_build_config));
+    common_agent_runtime_session_manager failed_pending_manager(
+        std::move(failed_pending_manager_config));
+    auto failed_pending_events = std::make_shared<std::vector<common_agent_daemon_event>>();
+    auto failed_pending_events_mutex = std::make_shared<std::mutex>();
+    failed_pending_manager.set_event_sink(
+        [failed_pending_events, failed_pending_events_mutex](common_agent_daemon_event event) {
+            std::lock_guard<std::mutex> lock(*failed_pending_events_mutex);
+            failed_pending_events->push_back(std::move(event));
+        });
+    common_agent_runtime_session_manager_turn_result failed_pending_result;
+    std::string failed_pending_error;
+    if (failed_pending_manager.run_turn({
+            "request-failed-pending",
+            {
+                common_agent_runtime_host_mode::chat,
+                "failed-pending",
+                "session-failed-pending",
+                "namespace-failed-pending",
+                "",
+                "turn-failed-pending",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, failed_pending_result, failed_pending_error)) {
+        std::fprintf(stderr, "failed pending operation smoke unexpectedly succeeded\n");
+        return 1;
+    }
+    if (failed_pending_error != "synthetic pending operation failure" ||
+            failed_pending_result.error != failed_pending_error ||
+            !contains_event_type(*failed_pending_events, "tool.failed") ||
+            !contains_event_type(*failed_pending_events, "turn.failed")) {
+        std::fprintf(stderr, "failed pending operation smoke did not preserve failure diagnostics\n");
+        return 1;
+    }
+
+    common_agent_runtime_session_manager_turn_result timeout_pending_result;
+    std::string timeout_pending_error;
+    if (failed_pending_manager.run_turn({
+            "request-timeout-pending",
+            {
+                common_agent_runtime_host_mode::chat,
+                "timeout-pending",
+                "session-failed-pending",
+                "namespace-failed-pending",
+                "",
+                "turn-timeout-pending",
+                common_memory_scope::session,
+                common_plan_scope::turn,
+                0,
+                std::nullopt,
+                make_common_agent_runtime_execution_control({}),
+            },
+        }, timeout_pending_result, timeout_pending_error)) {
+        std::fprintf(stderr, "timed-out pending operation smoke unexpectedly succeeded\n");
+        return 1;
+    }
+    if (timeout_pending_error != "operation deadline exceeded" ||
+            timeout_pending_result.error != timeout_pending_error ||
+            !contains_event_type(*failed_pending_events, "tool.timed_out") ||
+            !contains_event_type(*failed_pending_events, "turn.failed")) {
+        std::fprintf(stderr, "timed-out pending operation smoke did not preserve timeout diagnostics\n");
+        return 1;
+    }
+
     auto inference_wait_release = std::make_shared<std::promise<void>>();
     auto inference_wait_release_future = inference_wait_release->get_future().share();
     auto inference_wait_poll_count = std::make_shared<int>(0);

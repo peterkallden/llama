@@ -128,14 +128,19 @@ common_agent_event_stream_wait_status common_agent_daemon_event_collector::wait_
         common_agent_event_stream_delivery & delivery,
         std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex);
+    if (subscriptions.find(subscription_id) == subscriptions.end()) {
+        return common_agent_event_stream_wait_status::not_found;
+    }
+    if (!condition.wait_for(lock, timeout, [this, &subscription_id]() {
+            const auto current = subscriptions.find(subscription_id);
+            return current == subscriptions.end() ||
+                !current->second.pending.empty() || !current->second.active;
+        })) {
+        return common_agent_event_stream_wait_status::timeout;
+    }
     const auto it = subscriptions.find(subscription_id);
     if (it == subscriptions.end()) {
         return common_agent_event_stream_wait_status::not_found;
-    }
-    if (!condition.wait_for(lock, timeout, [&it]() {
-            return !it->second.pending.empty() || !it->second.active;
-        })) {
-        return common_agent_event_stream_wait_status::timeout;
     }
     if (it->second.pending.empty()) {
         return common_agent_event_stream_wait_status::closed;

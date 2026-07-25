@@ -4,6 +4,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <future>
+#include <memory>
+#include <thread>
+#include <utility>
 
 int main() {
     const auto event = make_common_agent_daemon_event(
@@ -144,6 +148,48 @@ int main() {
     if (collector.wait_next(live_id, live_delivery, std::chrono::milliseconds(10)) !=
             common_agent_event_stream_wait_status::closed) {
         std::fprintf(stderr, "event stream collector did not close a subscription\n");
+        return 1;
+    }
+
+    common_agent_daemon_event_collector concurrent_collector;
+    common_agent_event_stream_subscription concurrent_subscription;
+    concurrent_subscription.filter.session_id = "session-concurrent";
+    const auto concurrent_id = concurrent_collector.subscribe(concurrent_subscription);
+    auto waiter_started = std::make_shared<std::promise<void>>();
+    auto waiter_started_future = waiter_started->get_future();
+    auto concurrent_waiter = std::async(
+        std::launch::async,
+        [&concurrent_collector, concurrent_id, waiter_started]() {
+            common_agent_event_stream_delivery delivery;
+            waiter_started->set_value();
+            return std::make_pair(
+                concurrent_collector.wait_next(
+                    concurrent_id,
+                    delivery,
+                    std::chrono::seconds(2)),
+                delivery);
+        });
+    if (waiter_started_future.wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
+        std::fprintf(stderr, "event stream concurrent waiter did not start\n");
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    for (int i = 0; i < 2048; ++i) {
+        common_agent_event_stream_subscription extra_subscription;
+        extra_subscription.subscription_id = "concurrent-extra-" + std::to_string(i);
+        concurrent_collector.subscribe(std::move(extra_subscription));
+    }
+    concurrent_collector.append(make_common_agent_daemon_event(
+        common_agent_daemon_event_type::turn_started,
+        "request-concurrent",
+        "turn-concurrent",
+        {},
+        0,
+        {"namespace-concurrent", "project-concurrent", "session-concurrent", "request-concurrent", "turn-concurrent", {}}));
+    const auto concurrent_result = concurrent_waiter.get();
+    if (concurrent_result.first != common_agent_event_stream_wait_status::delivered ||
+            concurrent_result.second.event.event_type != common_agent_daemon_event_type::turn_started) {
+        std::fprintf(stderr, "event stream concurrent subscribe/wait contract failed\n");
         return 1;
     }
 

@@ -92,6 +92,7 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
     const std::string operation_id = pending_operation->pending_operation.operation_id;
     bool ready = false;
     if (!operation_manager.poll(operation_id, ready, error)) {
+        const auto operation_kind = pending_operation->pending_operation.kind;
         common_runtime_operation_status operation_status;
         const bool has_status = operation_manager.describe(operation_id, operation_status);
         if (pending_operation->cancel) {
@@ -104,7 +105,7 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
             active_turn->disposition = common_agent_runtime_turn_disposition::failed;
             active_turn->phase = common_agent_runtime_turn_phase::failed;
         }
-        if (pending_operation->pending_operation.kind ==
+        if (operation_kind ==
                 common_agent_runtime_pending_operation_kind::tool) {
             turn_events.with_operation(operation_id).emit(
                 has_status && operation_status.state == common_runtime_operation_state::timed_out
