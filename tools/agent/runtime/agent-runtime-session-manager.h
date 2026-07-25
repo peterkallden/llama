@@ -239,11 +239,6 @@ private:
     void reconcile_lane_state(
         common_agent_runtime_session_lane & lane) const;
 
-    common_agent_runtime_turn_disposition poll_pending_operation(
-        common_agent_runtime_session_lane & lane,
-        const std::shared_ptr<common_agent_runtime_session_lane_message> & message,
-        common_agent_runtime_turn_phase phase);
-
     bool run_lane_turn(
         common_agent_runtime_session_lane & lane,
         const std::shared_ptr<common_agent_runtime_session_lane_message> & message);

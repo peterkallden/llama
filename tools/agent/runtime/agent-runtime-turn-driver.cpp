@@ -95,10 +95,6 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         const auto operation_kind = pending_operation->pending_operation.kind;
         common_runtime_operation_status operation_status;
         const bool has_status = operation_manager.describe(operation_id, operation_status);
-        if (pending_operation->cancel) {
-            std::string ignored_cancel_error;
-            pending_operation->cancel(ignored_cancel_error);
-        }
         pending_operation.reset();
         if (active_turn.has_value()) {
             active_turn->pending_operation.reset();
@@ -412,11 +408,24 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     poll_error = *async_turn->error;
                     return ok || result_ptr->cancelled || poll_error.empty();
                 };
+                const auto execution_control = request.execution_control;
+                pending.cancel = [execution_control](std::string & cancel_error) {
+                    if (!execution_control.cancellation) {
+                        cancel_error = "asynchronous host turn has no cancellation state";
+                        return false;
+                    }
+                    execution_control.cancellation->request_cancel(
+                        execution_control.stop_reason().empty()
+                            ? "turn cancelled by host"
+                            : execution_control.stop_reason());
+                    cancel_error.clear();
+                    return true;
+                };
                 std::string operation_error;
                 if (!operation_manager.begin(
                         pending.pending_operation,
                         pending.poll,
-                        {},
+                        pending.cancel,
                         operation_error)) {
                     if (inference_gate) inference_gate->release(lease_id);
                     std::lock_guard<std::mutex> lock(lane_mutex);
