@@ -218,8 +218,8 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     std::string operation_error;
                     if (!operation_manager.begin(
                             resolved->pending_operation,
-                            resolved->poll,
-                            {},
+                            resolved->take_poll_callback(),
+                            resolved->take_cancel_callback(),
                             operation_error)) {
                         error = operation_error;
                         {
@@ -329,8 +329,8 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                         std::string operation_error;
                         if (!operation_manager.begin(
                                 pending.pending_operation,
-                                pending.poll,
-                                pending.cancel,
+                                pending.take_poll_callback(),
+                                pending.take_cancel_callback(),
                                 operation_error)) {
                             std::string ignored_error;
                             inference_gate->cancel(waiter_id, ignored_error);
@@ -424,8 +424,8 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 std::string operation_error;
                 if (!operation_manager.begin(
                         pending.pending_operation,
-                        pending.poll,
-                        pending.cancel,
+                        pending.take_poll_callback(),
+                        pending.take_cancel_callback(),
                         operation_error)) {
                     if (inference_gate) inference_gate->release(lease_id);
                     std::lock_guard<std::mutex> lock(lane_mutex);

@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 class common_agent_inference_capacity_gate;
 
@@ -19,6 +20,14 @@ struct common_agent_runtime_session_manager_pending_operation {
         common_agent_runtime_turn_disposition::wait_for_tool;
     std::function<bool(bool & ready, std::string & error)> poll;
     std::function<bool(std::string & error)> cancel;
+
+    common_runtime_operation_manager::poll_callback take_poll_callback() {
+        return std::move(poll);
+    }
+
+    common_runtime_operation_manager::cancel_callback take_cancel_callback() {
+        return std::move(cancel);
+    }
 };
 
 common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operation(

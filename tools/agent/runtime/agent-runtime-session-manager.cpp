@@ -181,21 +181,27 @@ bool common_agent_runtime_session_manager::run_lane_turn(
 
     const auto disposition = advance_lane_turn(lane, message);
 
-    std::lock_guard<std::mutex> lock(lane.mutex);
-    if (!lane.active_turn.has_value()) {
-        return disposition == common_agent_runtime_turn_disposition::completed;
-    }
+    const bool terminal = is_terminal_disposition(disposition);
+    {
+        std::lock_guard<std::mutex> lock(lane.mutex);
+        if (!lane.active_turn.has_value()) {
+            return disposition == common_agent_runtime_turn_disposition::completed;
+        }
 
-    lane.last_turn_id = lane.active_turn->turn_id;
-    lane.last_turn_phase = lane.active_turn->phase;
-    lane.last_turn_disposition = disposition;
-    if (disposition == common_agent_runtime_turn_disposition::completed) {
-        lane.active_turn->phase = common_agent_runtime_turn_phase::completed;
+        lane.last_turn_id = lane.active_turn->turn_id;
         lane.last_turn_phase = lane.active_turn->phase;
+        lane.last_turn_disposition = disposition;
+        if (disposition == common_agent_runtime_turn_disposition::completed) {
+            lane.active_turn->phase = common_agent_runtime_turn_phase::completed;
+            lane.last_turn_phase = lane.active_turn->phase;
+        }
+        if (terminal) {
+            lane.pending_operation.reset();
+            lane.active_turn.reset();
+        }
     }
-    if (is_terminal_disposition(disposition)) {
-        lane.pending_operation.reset();
-        lane.active_turn.reset();
+    if (terminal) {
+        operation_manager.cleanup_terminal();
     }
 
     return disposition == common_agent_runtime_turn_disposition::completed;

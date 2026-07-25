@@ -857,6 +857,7 @@ int main() {
     }
 
     auto waiting_poll_count = std::make_shared<int>(0);
+    auto waiting_cancel_called = std::make_shared<bool>(false);
     auto waiting_tool_started = std::make_shared<std::promise<void>>();
     auto waiting_tool_started_future = waiting_tool_started->get_future();
 
@@ -888,7 +889,7 @@ int main() {
             return false;
         };
     waiting_manager_build_config.pending_operation_resolver =
-        [waiting_poll_count, waiting_tool_started](
+        [waiting_poll_count, waiting_tool_started, waiting_cancel_called](
                 const common_agent_runtime_session_host_turn_request & request,
                 std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
                 std::string & error) {
@@ -906,6 +907,11 @@ int main() {
                     error.clear();
                     return true;
                 };
+            pending_operation->cancel = [waiting_cancel_called](std::string & error) {
+                *waiting_cancel_called = true;
+                error.clear();
+                return true;
+            };
             error.clear();
             return true;
         };
@@ -1000,6 +1006,10 @@ int main() {
     }
     if (!waiting_result.cancelled || waiting_result.error != "turn cancelled by host") {
         std::fprintf(stderr, "session manager tool-wait smoke did not preserve cancellation result\n");
+        return 1;
+    }
+    if (!*waiting_cancel_called) {
+        std::fprintf(stderr, "session manager tool-wait smoke did not invoke the manager-owned cancel callback\n");
         return 1;
     }
     {
