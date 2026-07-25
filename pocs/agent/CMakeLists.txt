@@ -41,6 +41,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/runtime/agent-runtime-session-host.cpp
     ../../tools/agent/runtime/agent-runtime-event-projector.cpp
     ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
+    ../../tools/agent/runtime/agent-inference-executor.cpp
     ../../tools/agent/runtime/agent-inference-capacity-gate.cpp
     ../../tools/agent/runtime/agent-runtime-session-manager.cpp
     ../../tools/agent/runtime/agent-runtime-execution.cpp

@@ -3,6 +3,7 @@
 #include "../daemon/agent-daemon-events.h"
 #include "agent-runtime-session-host.h"
 #include "agent-runtime-turn-execution.h"
+#include "agent-inference-executor.h"
 
 #include <functional>
 #include <memory>
@@ -51,6 +52,7 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
             std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
             std::string & error)> & pending_operation_resolver,
         const std::shared_ptr<common_agent_inference_capacity_gate> & inference_gate,
+        const std::shared_ptr<common_agent_runtime_inference_executor> & inference_executor,
         const std::string & request_id,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_session_host_turn_result & result,

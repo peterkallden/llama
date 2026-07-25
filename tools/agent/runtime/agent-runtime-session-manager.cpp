@@ -237,6 +237,7 @@ common_agent_runtime_turn_disposition common_agent_runtime_session_manager::adva
         operation_manager,
         config.pending_operation_resolver,
         config.inference_gate,
+        config.inference_executor,
         request.request_id,
         request.turn,
         result,

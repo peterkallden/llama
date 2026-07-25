@@ -2,7 +2,6 @@
 #include "agent-inference-capacity-gate.h"
 
 #include <chrono>
-#include <future>
 #include <memory>
 #include <utility>
 
@@ -32,13 +31,6 @@ common_agent_daemon_event_type completed_event_for_operation_kind(
 }
 
 } // namespace
-
-struct async_session_host_turn {
-    std::shared_ptr<common_agent_runtime_session_host_turn_result> result =
-        std::make_shared<common_agent_runtime_session_host_turn_result>();
-    std::shared_ptr<std::string> error = std::make_shared<std::string>();
-    std::future<bool> future;
-};
 
 common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operation(
         common_runtime_operation_manager & operation_manager,
@@ -157,6 +149,7 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
             std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
             std::string & error)> & pending_operation_resolver,
         const std::shared_ptr<common_agent_inference_capacity_gate> & inference_gate,
+        const std::shared_ptr<common_agent_runtime_inference_executor> & inference_executor,
         const std::string & request_id,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_session_host_turn_result & result,
@@ -361,29 +354,20 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                         }
                     }
                 }
-                auto async_turn = std::make_shared<async_session_host_turn>();
-                const auto turn_request = request;
                 const std::string lease_id = "inference-capacity:" + request_id;
                 auto * result_ptr = &result;
                 auto * error_ptr = &error;
-                async_turn->future = std::async(
-                    std::launch::async,
-                    [async_turn, host, turn_request, inference_gate, lease_id]() mutable {
-                        const auto release = [&]() {
-                            if (inference_gate) inference_gate->release(lease_id);
-                        };
-                        try {
-                            const bool ok = host->run_turn(
-                                turn_request,
-                                *async_turn->result,
-                                *async_turn->error);
-                            release();
-                            return ok;
-                        } catch (...) {
-                            release();
-                            throw;
-                        }
-                    });
+                const auto executor = inference_executor
+                    ? inference_executor
+                    : make_common_agent_runtime_async_inference_executor();
+                std::string executor_error;
+                const auto inference_task = executor->submit(
+                    host, request, inference_gate, lease_id, executor_error);
+                if (!inference_task) {
+                    if (inference_gate) inference_gate->release(lease_id);
+                    error = executor_error;
+                    return common_agent_runtime_turn_disposition::failed;
+                }
 
                 common_agent_runtime_session_manager_pending_operation pending;
                 pending.pending_operation.operation_id = "inference:" + request_id;
@@ -394,32 +378,13 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 }
                 pending.waiting_phase = common_agent_runtime_turn_phase::awaiting_inference;
                 pending.waiting_disposition = common_agent_runtime_turn_disposition::wait_for_inference;
-                pending.poll = [async_turn, result_ptr, error_ptr](bool & ready, std::string & poll_error) {
-                    ready = false;
-                    if (async_turn->future.wait_for(std::chrono::milliseconds(0)) !=
-                            std::future_status::ready) {
-                        poll_error.clear();
-                        return true;
-                    }
-                    const bool ok = async_turn->future.get();
-                    *result_ptr = *async_turn->result;
-                    *error_ptr = *async_turn->error;
-                    ready = true;
-                    poll_error = *async_turn->error;
-                    return ok || result_ptr->cancelled || poll_error.empty();
+                pending.poll = [inference_task, result_ptr, error_ptr](bool & ready, std::string & poll_error) {
+                    const bool ok = inference_task->poll(ready, *result_ptr, *error_ptr);
+                    poll_error = *error_ptr;
+                    return ok;
                 };
-                const auto execution_control = request.execution_control;
-                pending.cancel = [execution_control](std::string & cancel_error) {
-                    if (!execution_control.cancellation) {
-                        cancel_error = "asynchronous host turn has no cancellation state";
-                        return false;
-                    }
-                    execution_control.cancellation->request_cancel(
-                        execution_control.stop_reason().empty()
-                            ? "turn cancelled by host"
-                            : execution_control.stop_reason());
-                    cancel_error.clear();
-                    return true;
+                pending.cancel = [inference_task](std::string & cancel_error) {
+                    return inference_task->cancel(cancel_error);
                 };
                 std::string operation_error;
                 if (!operation_manager.begin(
@@ -470,7 +435,8 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 }
                 return advance_common_agent_runtime_turn(
                     host, pending_operation, active_turn, lane_mutex, operation_manager,
-                    pending_operation_resolver, inference_gate, request_id, request,
+                    pending_operation_resolver, inference_gate, inference_executor,
+                    request_id, request,
                     result, error, turn_events);
             }
             const bool ok = host_turn_async

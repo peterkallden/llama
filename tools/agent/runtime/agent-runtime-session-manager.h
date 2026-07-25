@@ -3,6 +3,7 @@
 #include "../daemon/agent-daemon-events.h"
 #include "../runtime/agent-runtime-session-host.h"
 #include "../runtime/agent-runtime-turn-driver.h"
+#include "../runtime/agent-inference-executor.h"
 #include "../runtime/agent-runtime-turn-execution.h"
 #include "runtime/runtime-state.h"
 
@@ -74,6 +75,7 @@ using common_agent_runtime_session_manager_turn_result = common_agent_runtime_se
 struct common_agent_runtime_session_manager_config {
     common_agent_runtime_session_host_config host_config;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
+    std::shared_ptr<common_agent_runtime_inference_executor> inference_executor;
     std::function<bool(
         const common_agent_runtime_session_host_turn_request & request,
         std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
@@ -101,6 +103,7 @@ struct common_agent_runtime_session_manager_build_config {
         std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
         std::string & error)> pending_operation_resolver;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
+    std::shared_ptr<common_agent_runtime_inference_executor> inference_executor;
 };
 
 struct common_agent_runtime_active_turn_descriptor {
@@ -133,6 +136,7 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
     return {
         make_agent_runtime_session_host_config(std::move(host_build_config)),
         std::move(config.inference_gate),
+        std::move(config.inference_executor),
         std::move(config.pending_operation_resolver),
     };
 }
