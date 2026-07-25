@@ -11,6 +11,7 @@ void common_agent_daemon_event_collector::append(
         common_agent_daemon_event event) {
     std::lock_guard<std::mutex> lock(mutex);
     event.type = common_agent_daemon_event_type_name(event.event_type);
+    event.category = common_agent_daemon_event_category_for_type(event.event_type);
     event.sequence = next_sequence++;
     pending_events.push_back(std::move(event));
     const auto & published = pending_events.back();
@@ -26,11 +27,26 @@ void common_agent_daemon_event_collector::append(
             continue;
         }
         if (state.pending.size() >= state.subscription.max_pending_events) {
+            uint64_t overflow_from_sequence = published.sequence;
+            if (!state.pending.empty()) {
+                const auto & first_pending = state.pending.front();
+                overflow_from_sequence = first_pending.kind ==
+                        common_agent_event_stream_delivery_kind::event
+                    ? first_pending.event.sequence
+                    : (first_pending.overflow_from_sequence != 0
+                        ? first_pending.overflow_from_sequence
+                        : first_pending.cursor.after_sequence);
+            }
             state.pending.clear();
             state.pending.push_back({
                 common_agent_event_stream_delivery_kind::overflow,
                 {},
                 {published.sequence},
+                overflow_from_sequence,
+                published.sequence,
+                published.sequence >= overflow_from_sequence
+                    ? published.sequence - overflow_from_sequence + 1
+                    : 0,
             });
             state.subscription.cursor.after_sequence = published.sequence;
             continue;
@@ -71,6 +87,11 @@ std::string common_agent_daemon_event_collector::subscribe(
                 common_agent_event_stream_delivery_kind::overflow,
                 {},
                 {oldest_sequence - 1},
+                state.subscription.cursor.after_sequence + 1,
+                oldest_sequence - 1,
+                oldest_sequence > state.subscription.cursor.after_sequence
+                    ? oldest_sequence - state.subscription.cursor.after_sequence - 1
+                    : 0,
             });
             state.subscription.cursor.after_sequence = oldest_sequence - 1;
         }
@@ -80,11 +101,22 @@ std::string common_agent_daemon_event_collector::subscribe(
                 continue;
             }
             if (state.pending.size() >= state.subscription.max_pending_events) {
+                const uint64_t overflow_from_sequence = state.pending.empty()
+                    ? event.sequence
+                    : (state.pending.front().kind ==
+                            common_agent_event_stream_delivery_kind::event
+                        ? state.pending.front().event.sequence
+                        : state.pending.front().overflow_from_sequence);
                 state.pending.clear();
                 state.pending.push_back({
                     common_agent_event_stream_delivery_kind::overflow,
                     {},
                     {event.sequence},
+                    overflow_from_sequence,
+                    event.sequence,
+                    event.sequence >= overflow_from_sequence
+                        ? event.sequence - overflow_from_sequence + 1
+                        : 0,
                 });
                 state.subscription.cursor.after_sequence = event.sequence;
                 break;

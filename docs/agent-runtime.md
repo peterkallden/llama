@@ -2104,6 +2104,39 @@ The ownership rule remains:
 > One state object has one owner and one source of truth. Other layers keep IDs,
 > references, or bounded projections.
 
+### Event taxonomy and overflow metadata
+
+Daemon events retain their stable `event_type` names, such as
+`turn.completed` or `tool.failed`, and now also expose an explicit
+`event_category`. Categories are derived centrally from the typed event kind:
+`command`, `turn`, `inference`, `tool`, `memory`, `plan`, `observation`,
+`resource`, `session`, `daemon`, `config`, `mcp`, and `agent`. The category is
+diagnostic metadata; it does not replace the event kind or change routing and
+filter semantics.
+
+An event-stream overflow is no longer represented only by a cursor jump. An
+overflow delivery carries `from_sequence`, `to_sequence`, and
+`skipped_sequence_count` metadata. JSONL clients receive that metadata under
+an `overflow` object, for example:
+
+```json
+{
+  "message_type": "event",
+  "delivery_kind": "overflow",
+  "cursor": {"after_sequence": 42},
+  "overflow": {
+    "from_sequence": 39,
+    "to_sequence": 42,
+    "skipped_sequence_count": 4
+  }
+}
+```
+
+The sequence range describes the bounded replay gap, including sequence
+positions that did not match a subscription filter. Clients should resume
+from the delivery cursor and use the metadata for diagnostics or resync
+decisions rather than treating the skipped range as recoverable event data.
+
 The current cleanup policy is intentionally conservative. Turn research state
 is released with the turn, terminal operations are removed by operation-manager
 cleanup, session lanes are removed on session close, resources follow their

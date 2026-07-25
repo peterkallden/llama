@@ -51,6 +51,7 @@ int main() {
             "operation-1",
         });
     if (failed_event.event_type != common_agent_daemon_event_type::tool_failed ||
+            failed_event.category != common_agent_daemon_event_category::tool ||
             std::string(failed_event.type) != "tool.failed") {
         std::fprintf(stderr, "tool failure event contract was not preserved\n");
         return 1;
@@ -143,6 +144,15 @@ int main() {
         std::fprintf(stderr, "event stream collector did not report bounded overflow\n");
         return 1;
     }
+    if (live_delivery.overflow_from_sequence == 0 ||
+            live_delivery.overflow_to_sequence < live_delivery.overflow_from_sequence ||
+            live_delivery.skipped_sequence_count == 0 ||
+            live_delivery.skipped_sequence_count !=
+                live_delivery.overflow_to_sequence - live_delivery.overflow_from_sequence + 1) {
+        std::fprintf(stderr, "event stream collector did not report overflow metadata\n");
+        return 1;
+    }
+    const auto live_overflow_delivery = live_delivery;
 
     collector.unsubscribe(live_id);
     if (collector.wait_next(live_id, live_delivery, std::chrono::milliseconds(10)) !=
@@ -233,7 +243,8 @@ int main() {
     const auto jsonl_event = make_agent_daemon_jsonl_event_message("subscription-1", delivery);
     if (jsonl_event.value("message_type", "") != "event" ||
             jsonl_event.value("subscription_id", "") != "subscription-1" ||
-            jsonl_event["event"].value("event_type", "") != "tool.completed") {
+            jsonl_event["event"].value("event_type", "") != "tool.completed" ||
+            jsonl_event["event"].value("event_category", "") != "tool") {
         std::fprintf(stderr, "JSONL event projection did not preserve the contract\n");
         return 1;
     }
@@ -242,6 +253,18 @@ int main() {
         {common_agent_event_stream_delivery_kind::event, failed_event, {failed_event.sequence}});
     if (jsonl_failed_event["event"].value("event_type", "") != "tool.failed") {
         std::fprintf(stderr, "JSONL tool failure projection did not preserve the contract\n");
+        return 1;
+    }
+    const auto jsonl_overflow = make_agent_daemon_jsonl_event_message(
+        "subscription-1", live_overflow_delivery);
+    if (jsonl_overflow.value("delivery_kind", "") != "overflow" ||
+            jsonl_overflow["overflow"].value("from_sequence", uint64_t(0)) !=
+                live_overflow_delivery.overflow_from_sequence ||
+            jsonl_overflow["overflow"].value("to_sequence", uint64_t(0)) !=
+                live_overflow_delivery.overflow_to_sequence ||
+            jsonl_overflow["overflow"].value("skipped_sequence_count", uint64_t(0)) !=
+                live_overflow_delivery.skipped_sequence_count) {
+        std::fprintf(stderr, "JSONL overflow projection did not preserve metadata\n");
         return 1;
     }
 

@@ -24,10 +24,17 @@ agent_mcp_json make_event_notification(
     };
     if (delivery.kind == common_agent_event_stream_delivery_kind::event) {
         data["event_type"] = common_agent_daemon_event_type_name(delivery.event.event_type);
+        data["event_category"] = common_agent_daemon_event_category_name(delivery.event.category);
         data["request_id"] = delivery.event.request_id;
         data["turn_id"] = delivery.event.turn_id;
         data["session_id"] = delivery.event.session_id;
         data["detail"] = delivery.event.detail;
+    } else if (delivery.kind == common_agent_event_stream_delivery_kind::overflow) {
+        data["overflow"] = {
+            {"from_sequence", delivery.overflow_from_sequence},
+            {"to_sequence", delivery.overflow_to_sequence},
+            {"skipped_sequence_count", delivery.skipped_sequence_count},
+        };
     }
     return {
         {"jsonrpc", "2.0"},

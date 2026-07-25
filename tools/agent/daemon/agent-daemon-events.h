@@ -73,6 +73,125 @@ enum class common_agent_daemon_event_type {
     agent_runtime_event,
 };
 
+enum class common_agent_daemon_event_category {
+    unknown,
+    command,
+    turn,
+    inference,
+    tool,
+    memory,
+    plan,
+    observation,
+    resource,
+    session,
+    daemon,
+    config,
+    mcp,
+    agent,
+};
+
+inline const char * common_agent_daemon_event_category_name(
+        common_agent_daemon_event_category category) {
+    switch (category) {
+        case common_agent_daemon_event_category::unknown:      return "unknown";
+        case common_agent_daemon_event_category::command:      return "command";
+        case common_agent_daemon_event_category::turn:         return "turn";
+        case common_agent_daemon_event_category::inference:    return "inference";
+        case common_agent_daemon_event_category::tool:         return "tool";
+        case common_agent_daemon_event_category::memory:       return "memory";
+        case common_agent_daemon_event_category::plan:         return "plan";
+        case common_agent_daemon_event_category::observation:  return "observation";
+        case common_agent_daemon_event_category::resource:     return "resource";
+        case common_agent_daemon_event_category::session:      return "session";
+        case common_agent_daemon_event_category::daemon:       return "daemon";
+        case common_agent_daemon_event_category::config:       return "config";
+        case common_agent_daemon_event_category::mcp:          return "mcp";
+        case common_agent_daemon_event_category::agent:        return "agent";
+    }
+    return "unknown";
+}
+
+inline common_agent_daemon_event_category common_agent_daemon_event_category_for_type(
+        common_agent_daemon_event_type type) {
+    switch (type) {
+        case common_agent_daemon_event_type::command_queued:
+        case common_agent_daemon_event_type::command_started:
+        case common_agent_daemon_event_type::command_rejected:
+        case common_agent_daemon_event_type::command_failed:
+            return common_agent_daemon_event_category::command;
+        case common_agent_daemon_event_type::turn_accepted:
+        case common_agent_daemon_event_type::turn_started:
+        case common_agent_daemon_event_type::turn_rejected:
+        case common_agent_daemon_event_type::turn_cancel_requested:
+        case common_agent_daemon_event_type::turn_cancel_rejected:
+        case common_agent_daemon_event_type::turn_waiting_for_tool:
+        case common_agent_daemon_event_type::turn_waiting_for_inference:
+        case common_agent_daemon_event_type::turn_completed:
+        case common_agent_daemon_event_type::turn_failed:
+        case common_agent_daemon_event_type::turn_cancelled:
+            return common_agent_daemon_event_category::turn;
+        case common_agent_daemon_event_type::inference_queued:
+        case common_agent_daemon_event_type::inference_capacity_granted:
+            return common_agent_daemon_event_category::inference;
+        case common_agent_daemon_event_type::tool_queued:
+        case common_agent_daemon_event_type::tool_started:
+        case common_agent_daemon_event_type::tool_progress:
+        case common_agent_daemon_event_type::tool_output:
+        case common_agent_daemon_event_type::tool_artifact_created:
+        case common_agent_daemon_event_type::tool_completed:
+        case common_agent_daemon_event_type::tool_failed:
+        case common_agent_daemon_event_type::tool_cancelled:
+        case common_agent_daemon_event_type::tool_timed_out:
+            return common_agent_daemon_event_category::tool;
+        case common_agent_daemon_event_type::memory_learned:
+            return common_agent_daemon_event_category::memory;
+        case common_agent_daemon_event_type::plan_created:
+        case common_agent_daemon_event_type::plan_updated:
+        case common_agent_daemon_event_type::plan_step_started:
+        case common_agent_daemon_event_type::plan_step_completed:
+            return common_agent_daemon_event_category::plan;
+        case common_agent_daemon_event_type::observation_recorded:
+            return common_agent_daemon_event_category::observation;
+        case common_agent_daemon_event_type::resource_created:
+        case common_agent_daemon_event_type::resource_attached:
+        case common_agent_daemon_event_type::resources_listed:
+        case common_agent_daemon_event_type::resources_list_failed:
+        case common_agent_daemon_event_type::resource_read:
+        case common_agent_daemon_event_type::resource_not_found:
+        case common_agent_daemon_event_type::resource_read_failed:
+            return common_agent_daemon_event_category::resource;
+        case common_agent_daemon_event_type::session_reset_requested:
+        case common_agent_daemon_event_type::session_reset:
+        case common_agent_daemon_event_type::session_close_requested:
+        case common_agent_daemon_event_type::session_closed:
+        case common_agent_daemon_event_type::session_reset_failed:
+        case common_agent_daemon_event_type::session_close_failed:
+        case common_agent_daemon_event_type::sessions_listed:
+        case common_agent_daemon_event_type::session_found:
+        case common_agent_daemon_event_type::session_not_found:
+        case common_agent_daemon_event_type::session_lookup_failed:
+            return common_agent_daemon_event_category::session;
+        case common_agent_daemon_event_type::drain_requested:
+        case common_agent_daemon_event_type::shutdown_requested:
+        case common_agent_daemon_event_type::lane_drained:
+        case common_agent_daemon_event_type::status_reported:
+            return common_agent_daemon_event_category::daemon;
+        case common_agent_daemon_event_type::config_reload_started:
+        case common_agent_daemon_event_type::config_reload_completed:
+        case common_agent_daemon_event_type::config_reload_rejected:
+            return common_agent_daemon_event_category::config;
+        case common_agent_daemon_event_type::mcp_provider_added:
+        case common_agent_daemon_event_type::mcp_provider_removed:
+        case common_agent_daemon_event_type::mcp_provider_replaced:
+            return common_agent_daemon_event_category::mcp;
+        case common_agent_daemon_event_type::agent_runtime_event:
+            return common_agent_daemon_event_category::agent;
+        case common_agent_daemon_event_type::unknown:
+            return common_agent_daemon_event_category::unknown;
+    }
+    return common_agent_daemon_event_category::unknown;
+}
+
 inline const char * common_agent_daemon_event_type_name(
         common_agent_daemon_event_type type) {
     switch (type) {
@@ -155,6 +274,7 @@ struct common_agent_daemon_event {
     std::string detail;
     common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown;
     uint64_t sequence = 0;
+    common_agent_daemon_event_category category = common_agent_daemon_event_category::unknown;
 };
 
 enum class common_agent_event_stream_delivery_kind {
@@ -206,6 +326,9 @@ struct common_agent_event_stream_delivery {
         common_agent_event_stream_delivery_kind::event;
     common_agent_daemon_event event;
     common_agent_event_stream_cursor cursor;
+    uint64_t overflow_from_sequence = 0;
+    uint64_t overflow_to_sequence = 0;
+    uint64_t skipped_sequence_count = 0;
 };
 
 using common_agent_event_stream_sink =
@@ -240,6 +363,7 @@ inline common_agent_daemon_event make_common_agent_daemon_event(
         std::move(detail),
         type,
         sequence,
+        common_agent_daemon_event_category_for_type(type),
     };
 }
 
@@ -311,7 +435,7 @@ public:
             return;
         }
 
-        sink(common_agent_daemon_event{
+        auto event = common_agent_daemon_event{
             common_agent_daemon_event_type_name(type),
             context.request_id,
             context.turn_id,
@@ -322,7 +446,9 @@ public:
             std::move(detail),
             type,
             0,
-        });
+            common_agent_daemon_event_category_for_type(type),
+        };
+        sink(std::move(event));
     }
 
     explicit operator bool() const {

@@ -164,6 +164,7 @@ nlohmann::ordered_json make_agent_daemon_jsonl_event_message(
         nlohmann::ordered_json event = {
             {"type", delivery.event.type},
             {"event_type", common_agent_daemon_event_type_name(delivery.event.event_type)},
+            {"event_category", common_agent_daemon_event_category_name(delivery.event.category)},
             {"sequence", delivery.event.sequence},
         };
         if (!delivery.event.request_id.empty()) event["request_id"] = delivery.event.request_id;
@@ -174,6 +175,12 @@ nlohmann::ordered_json make_agent_daemon_jsonl_event_message(
         if (!delivery.event.operation_id.empty()) event["operation_id"] = delivery.event.operation_id;
         if (!delivery.event.detail.empty()) event["detail"] = delivery.event.detail;
         message["event"] = std::move(event);
+    } else if (delivery.kind == common_agent_event_stream_delivery_kind::overflow) {
+        message["overflow"] = {
+            {"from_sequence", delivery.overflow_from_sequence},
+            {"to_sequence", delivery.overflow_to_sequence},
+            {"skipped_sequence_count", delivery.skipped_sequence_count},
+        };
     }
     return message;
 }
