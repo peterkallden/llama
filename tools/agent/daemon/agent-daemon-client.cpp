@@ -121,6 +121,31 @@ size_t count_listing_items(
     return response.payload[field].size();
 }
 
+void print_daemon_resource_listing(
+        const agent_daemon_jsonl_listing_response & response) {
+    const auto count = count_listing_items(response, "resources");
+    std::printf("[daemon-resources] count=%zu\n", count);
+
+    if (!response.payload.contains("resources") ||
+            !response.payload["resources"].is_array()) {
+        return;
+    }
+
+    for (const auto & item : response.payload["resources"]) {
+        if (!item.is_object()) {
+            continue;
+        }
+        std::printf(
+            "[daemon-resource-item] id=%s uri=%s name=%s mime=%s bytes=%zu scope=%s\n",
+            item.value("resource_id", "").c_str(),
+            item.value("uri", "").c_str(),
+            item.value("name", "").c_str(),
+            item.value("mime_type", "").c_str(),
+            item.value("size_bytes", size_t{0}),
+            item.value("scope", "").c_str());
+    }
+}
+
 void print_daemon_turn_failure(
         const agent_daemon_jsonl_turn_response & response,
         const std::string & fallback_error) {
@@ -735,7 +760,7 @@ int run_daemon_session_command(const char * argv0, const args & a) {
                 session.shutdown(error);
                 return 1;
             }
-            std::printf("[daemon-resources] count=%zu\n", count_listing_items(response, "resources"));
+            print_daemon_resource_listing(response);
             continue;
         }
         if (line == "/memories") {
