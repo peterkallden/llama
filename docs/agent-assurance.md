@@ -341,6 +341,16 @@ previous result when the branch or test configuration changes.
 - Agent CTest: 19/19 passed with the repo-local `TEMP`/`TMP` build-test
   directory and four-way build.
 
+### 2026-07-26 - Daemon CLI resource forwarding checkpoint
+
+- Commit: `f3dcce0d2`
+- Scope: daemon `--resource PATH` now imports through JSONL `put_resource`
+  before `run_turn`, and forwards the returned URIs as scoped `resource_refs`.
+  The daemon session path keeps imported resource references available for
+  subsequent prompts.
+- Focused daemon protocol and client CTests: 2/2 passed, including CLI resource
+  forwarding and turn-request resource references.
+
 ### 2026-07-26 — Lane-state ownership checkpoint
 
 - Commit: `94cb3169d`
