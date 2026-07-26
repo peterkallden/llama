@@ -1,8 +1,8 @@
 # Agent Beta Assurance
 
-Status: Conditional for the executed Windows/Debug beta scope; the latest
-focused tool-name and sandbox verification passed, while the complete smoke
-matrix and model-backed resident run remain outstanding
+Status: Conditional for the executed Windows/Debug beta scope; the complete
+model-free agent CTest and smoke matrix passed with backend skips recorded,
+while model-backed coverage remains outstanding
 
 This document is the assurance record for the `llama-agent` beta milestone.
 It separates milestone criteria from the test evidence collected for a
@@ -100,7 +100,7 @@ builds.
 | Backend availability | [x] | Tools depending on unavailable backends are removed from the effective tool view |
 | Result normalization | [x] | Tool results expose bounded status, summaries, diagnostics and resource references where applicable |
 | Semantic diagnostics | [ ] | Symbol/reference keep a bounded text fallback and call hierarchy requires a semantic provider; clangd/LSP or a project index is not yet bound |
-| Tool-specific smoke coverage | [ ] | The focused migration smoke set passed; the complete smoke executable set and model-backed resident coverage were not rerun |
+| Tool-specific smoke coverage | [x] | The complete model-free smoke executable set passed; model-backed resident coverage remains separate |
 
 The tool-repair path has separate deterministic coverage. The provider CTest
 checks host-owned dotted-name normalization, unique high-confidence fuzzy
@@ -139,35 +139,39 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `d55ff9d7b` |
-| Date | `2026-07-23` |
+| Commit | `acc1a5015` |
+| Date | `2026-07-26` |
 | Platform | Windows / MSVC |
-| Build configuration | Debug |
-| CTest | 10/11 passed, 1 skipped; the Docker CTest was skipped by the CTest environment, while the Kubernetes CTest passed |
-| Focused smokes | 8/8 passed: affected tool-name smokes plus direct Docker and Kubernetes backend smokes |
-| Decision | Conditional assurance; follow-up required |
+| Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
+| Cozo | `LLAMA_MEMORY_COZO=ON`, `LLAMA_PLAN_COZO=ON`, configured Cozo 0.7.6 MSVC release library and DLL |
+| CTest | Agent label 16/16 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
+| Complete model-free smokes | 28/28 passed; Docker backend smoke skipped (exit 77); resident model-backed smoke not run (requires `--model`) |
+| Decision | Conditional assurance; model-backed, Linux, Docker backend and long-running gates remain open |
 
 ### CTest evidence
 
 | Batch | Passed | Failed | Skipped | Total | Result |
 |---|---:|---:|---:|---:|---|
-| Agent contracts/runtime (`test-agent-*`) | 4 | 0 | 0 | 4 | Passed |
-| Tooling (`test-tool-*`, clangd, Cozo) | 4 | 0 | 0 | 4 | Passed |
-| Sandbox (`llama-agent-sandbox-*-ctest`) | 2 | 0 | 1 | 3 | Conditional; Docker skipped |
-| **Focused agent CTest total** | **10** | **0** | **1** | **11** | **Conditional** |
+| Agent contracts/runtime (`test-agent-*`) | 8 | 0 | 0 | 8 | Passed |
+| Tooling (`test-tool-*`, clangd, Cozo) | 5 | 0 | 0 | 5 | Passed |
+| Agent runtime CTest smokes | 3 | 0 | 0 | 3 | Passed |
+| **Agent CTest total** | **16** | **0** | **0** | **16** | **Passed** |
+| Sandbox Kubernetes (`sandbox-kubernetes`) | 1 | 0 | 0 | 1 | Passed |
+| Sandbox Docker (`sandbox-docker`) | 0 | 0 | 1 | 1 | Skipped; backend unavailable |
 
 Commands and full output should be retained in the task handoff or CI log;
 this file records the summarized result and the commit it belongs to.
 
 ### Smoke evidence
 
-| Group | Passed | Failed | Total | Result |
-|---|---:|---:|---:|---|
-| Affected research/resource/MCP/daemon smokes | 6 | 0 | 6 | Passed |
-| Docker backend smoke | 1 | 0 | 1 | Passed |
-| Kubernetes backend smoke | 1 | 0 | 1 | Passed |
-| **Focused smoke set** | **8** | **0** | **8** | Passed |
-| Complete smoke executable set | — | — | 30 | Not rerun |
+| Group | Passed | Failed | Skipped/not run | Total | Result |
+|---|---:|---:|---|---:|---|
+| Runtime smokes | 11 | 0 | 1 skipped, 1 not run | 13 | Passed with Docker/resident qualifications |
+| MCP smokes | 7 | 0 | 0 | 7 | Passed |
+| CLI smokes | 2 | 0 | 0 | 2 | Passed |
+| Daemon smokes | 7 | 0 | 0 | 7 | Passed |
+| Resource smoke | 1 | 0 | 0 | 1 | Passed |
+| **Complete model-free smoke set** | **28** | **0** | **1 skipped, 1 not run** | **30** | Conditional |
 
 ## Known limitations
 
@@ -179,10 +183,9 @@ this file records the summarized result and the commit it belongs to.
 - The resident model-backed smoke was not executed in this focused run because
   it requires an explicit `--model` GGUF path.
 - Developer workspace tools are now in scope and have bounded adapter coverage;
-  semantic indexing, end-to-end build/test execution and the complete smoke
-  matrix remain separate gates.
-- The direct Docker and Kubernetes backend smokes passed. CTest still reports
-  Docker as skipped when the test process cannot access the Docker daemon.
+  semantic indexing and end-to-end build/test execution remain separate gates.
+- Kubernetes contract and CTest coverage passed, while the Docker backend smoke
+  and CTest are skipped when the Docker daemon is unavailable.
 - Research workspace checkpointing is not part of the first version.
 - Long-running stability and resource-retention testing remain separate from
   bounded functional smokes.
@@ -198,9 +201,9 @@ daemon reload contract treats `tools.profile`, `tools.capabilities` and
 `tools.profiles` as restart-required; this preserves one immutable host tool
 view for an instance instead of changing the exposed catalog during a live
 session. Developer workspace tools now have bounded native adapter coverage,
-including symbol/reference fallback and grouped test-failure diagnostics. The
-direct Docker and Kubernetes sandbox smokes passed; CTest Docker remains
-environment-skipped when daemon access is unavailable. Data-analysis execution classes are
+including symbol/reference fallback and grouped test-failure diagnostics.
+Kubernetes contract coverage passed; Docker remains environment-skipped when
+daemon access is unavailable. Data-analysis execution classes are
 represented by host configuration, while full operation-manager integration and
 semantic project indexing remain separate verification gates.
 
@@ -214,19 +217,32 @@ date, and test counts.
 ### Decision record
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
-- Date: 2026-07-23
-- Commit: `d55ff9d7b`
+- Date: 2026-07-26
+- Commit: `acc1a5015`
 - Reviewer: pending
-- Notes: The focused verification for the canonical namespaced repository tools
-  passed: 10/11 focused CTests passed with one Docker skip, and 8/8 affected
-  smokes passed including direct Docker and Kubernetes backend execution. The
-  complete smoke matrix, Linux, model-backed Qwen/Nomic execution, semantic
-  indexing, checkpointing and long-running stability remain outside this run.
+- Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
+  passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
+  with one Docker backend skip and the resident model-backed smoke not run.
+  Linux, model-backed Qwen/Nomic execution, semantic indexing, checkpointing
+  and long-running stability remain outside this run.
 
 ## Assurance history
 
 Add a dated entry for every meaningful verification run. Do not overwrite a
 previous result when the branch or test configuration changes.
+
+### 2026-07-26 — Windows Cozo Debug assurance run
+
+- Branch: `pocs/agent-tool-profiles`
+- Commit: `acc1a5015`
+- Build: Cozo-enabled Ninja build with four-way compilation; separate debug
+  information disabled after PDB/ILK disk exhaustion was observed.
+- CTest: agent 16/16 passed; Kubernetes 1/1 passed; Docker skipped.
+- Smokes: runtime 11 passed, 1 Docker skip, 1 resident model-backed not run;
+  MCP 7/7, CLI 2/2, daemon 7/7 and resource 1/1 passed.
+- Overall model-free smoke result: 28/28 executed passed.
+- Not run: resident model-backed execution, Linux build, Qwen/Nomic model runs,
+  Docker backend execution and long-running stability.
 
 ### 2026-07-21 — Windows Debug assurance run
 
