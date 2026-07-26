@@ -139,7 +139,7 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `ad7e68649` |
+| Commit | `e57f5839d` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
@@ -259,7 +259,7 @@ date, and test counts.
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
 - Date: 2026-07-26
-- Commit: `ad7e68649`
+- Commit: `e57f5839d`
 - Reviewer: pending
 - Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
   passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
@@ -294,6 +294,18 @@ previous result when the branch or test configuration changes.
 - Focused smokes: operation-manager and session-manager async lifecycle
   regressions, including the poll/cancel race, passed.
 - Agent CTest: 16/16 passed with Cozo enabled.
+
+### 2026-07-26 - Multiple CLI text resources checkpoint
+
+- Commit: `e57f5839d`
+- Scope: repeatable `--resource PATH` imports bounded text files into the
+  host-owned resource store and attaches multiple read-only input resources to
+  the runtime request.
+- Focused smoke: CLI/MCP smoke imported two text resources and verified their
+  media types and resource references.
+- Agent CTest: 16/16 passed with Cozo enabled.
+- Deferred backlog: binary resources, PDF/document extraction, and byte-oriented
+  resource transport remain out of scope for this text-only slice.
 - The MCP agent-tools executable remained subject to a local Windows
   `LNK1104` output-lock failure during rebuild; it was not counted as a test
   pass or failure.
