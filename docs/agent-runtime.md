@@ -2032,29 +2032,34 @@ cmake --build build-agent-current-ninja-debug --parallel 4 --target llama-agent-
 cmake --build build-agent-current-ninja-debug --parallel 4 --target llama-agent-smoke-mcp
 ```
 
-The regular `tests/` side is now a little easier to slice as well. Agent-adjacent tests carry focused CTest labels such as:
+The current build registers the agent contract tests under the `agent` label
+and the sandbox backend tests under their own backend labels:
 
-- `agent`
-- `agent-inference`
-- `agent-memory`
-- `agent-plan`
-- `agent-tooling`
+| Label | Scope | Current Cozo build |
+|---|---|---:|
+| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 16 |
+| `sandbox-docker` | Docker backend smoke; uses CTest skip code 77 when Docker is unavailable | 1 |
+| `sandbox-kubernetes` | Kubernetes backend smoke | 1 |
 
-Example serial runs:
+The current build registers 60 CTest cases in total. The three labels above
+account for 18 label memberships; the two sandbox labels are separate from the
+authoritative `agent` test slice and are therefore not included in its 16-test
+count. Other repository tests are registered without an agent label in this
+build. Counts are configuration-dependent and should be refreshed with
+`ctest --test-dir BUILD_DIR -N` rather than treated as a permanent contract.
+
+Example runs:
 
 ```powershell
 ctest --test-dir build-agent-current-ninja-debug -L agent --output-on-failure
-ctest --test-dir build-agent-current-ninja-debug -L agent-inference --output-on-failure
-ctest --test-dir build-agent-current-ninja-debug -L agent-memory --output-on-failure
-ctest --test-dir build-agent-current-ninja-debug -L agent-plan --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -L sandbox-kubernetes --output-on-failure
 ```
 
-`test-agent-inference` also keeps its aggregate executable run, but its internal scenarios are now exposed as individual CTest cases as well. That makes it possible to run just one inference/runtime scenario without paying for the whole aggregate sweep:
-
-```powershell
-ctest --test-dir build-agent-current-ninja-debug -R test-agent-inference-runtime-session-reuse --output-on-failure
-ctest --test-dir build-agent-current-ninja-debug -R test-agent-inference-runtime-host-agent-smoke --output-on-failure
-```
+The current `agent` label is the authoritative model-free agent CTest slice;
+focused inference, memory, plan and tooling coverage is represented by the
+named tests within that label rather than by separate labels in this build.
+The smoke groups remain category-oriented and are built through the
+`llama-agent-smoke-*` targets above.
 
 That split is intentional: smoke groups stay category-oriented and close to the `pocs/agent/smoke/*` layout, while the longer-lived `tests/` binaries are driven through CTest labels and named scenarios.
 
