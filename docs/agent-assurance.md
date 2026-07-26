@@ -139,7 +139,7 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `acc1a5015` |
+| Commit | `902057b35` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
@@ -177,6 +177,24 @@ passed 16/16 after the changes.
 | **Agent CTest total** | **16** | **0** | **0** | **16** | **Passed** |
 | Sandbox Kubernetes (`sandbox-kubernetes`) | 1 | 0 | 0 | 1 | Passed |
 | Sandbox Docker (`sandbox-docker`) | 0 | 0 | 1 | 1 | Skipped; backend unavailable |
+
+### Registered CTest inventory
+
+The current Cozo-enabled build registers 60 CTest cases in total. The agent
+verification slice is the `agent` label with 16 tests, all of which passed in
+the current run. The sandbox labels are separate backend slices:
+
+| Label | Registered tests | Current result |
+|---|---:|---|
+| `agent` | 16 | 16 passed |
+| `sandbox-kubernetes` | 1 | 1 passed |
+| `sandbox-docker` | 1 | 1 skipped; backend unavailable |
+| Other repository tests | 42 | Not part of the agent assurance sweep |
+
+The 60-test inventory is configuration-dependent. It includes general
+repository tests whose executables were not built or run in this focused agent
+verification, so the total inventory must not be reported as a 60-test agent
+pass.
 
 Commands and full output should be retained in the task handoff or CI log;
 this file records the summarized result and the commit it belongs to.
@@ -237,7 +255,7 @@ date, and test counts.
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
 - Date: 2026-07-26
-- Commit: `acc1a5015`
+- Commit: `902057b35`
 - Reviewer: pending
 - Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
   passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
