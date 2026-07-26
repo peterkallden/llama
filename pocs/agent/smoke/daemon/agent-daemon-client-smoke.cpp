@@ -316,6 +316,7 @@ int main(int argc, char ** argv) {
                             {"description", request.value("description", "Uploaded notes")},
                             {"mime_type", request.value("mime_type", "text/markdown")},
                             {"size_bytes", request.value("text", "").size()},
+                            {"scope", request.value("scope", "session")},
                             {"metadata", nlohmann::ordered_json::object()},
                         }},
                         {"content", ""},
@@ -433,7 +434,8 @@ int main(int argc, char ** argv) {
                     negative_error) ||
                 resource_response.event != "resource_created" ||
                 resource_response.resource.name != "notes.md" ||
-                resource_response.resource.mime_type != "text/markdown") {
+                resource_response.resource.mime_type != "text/markdown" ||
+                resource_response.resource.scope != common_runtime_resource_scope::session) {
             std::fprintf(
                 stderr,
                 "daemon client smoke did not put resource through JSONL: %s\n",

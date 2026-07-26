@@ -41,6 +41,16 @@ bool parse_resource_descriptor_field(
     descriptor.mime_type = value.value("mime_type", std::string());
     descriptor.size_bytes = value.value("size_bytes", size_t(0));
     descriptor.resource_id = value.value("resource_id", std::string());
+    const auto scope = value.value("scope", "turn");
+    if (scope == "session") {
+        descriptor.scope = common_runtime_resource_scope::session;
+    } else if (scope == "project") {
+        descriptor.scope = common_runtime_resource_scope::project;
+    } else if (scope == "turn") {
+        descriptor.scope = common_runtime_resource_scope::turn;
+    } else {
+        return false;
+    }
     if (value.contains("metadata") && value["metadata"].is_object()) {
         const auto & metadata = value["metadata"];
         descriptor.metadata.purpose = metadata.value("purpose", std::string());
