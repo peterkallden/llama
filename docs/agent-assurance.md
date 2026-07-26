@@ -139,7 +139,7 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `902057b35` |
+| Commit | `722b3f645` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
@@ -150,7 +150,8 @@ passes.
 
 ### Async lifecycle hardening
 
-The current checkpoint (`902057b35`) closes three async lifecycle findings:
+The current checkpoint (`722b3f645`) closes the async lifecycle findings and
+the later poll/cancel terminal-state race:
 
 - After a successful inference submit, the task owns the inference-capacity
   lease. If operation registration fails, the driver requests task
@@ -164,8 +165,11 @@ The current checkpoint (`902057b35`) closes three async lifecycle findings:
 
 The regression coverage includes operation-registration failure with exact
 single cancellation/release, deadline cancellation, and cleanup concurrency.
-The two focused runtime smokes passed, and the complete agent CTest label
-passed 16/16 after the changes.
+Operation terminal transitions are now monotonic from `running`, and the
+operation-manager smoke deterministically covers the poll-ready versus cancel
+race. The turn-driver smoke coverage also verifies the existing admission and
+registration cancellation paths. The two focused runtime smokes passed, and
+the complete agent CTest label passed 16/16 after the changes.
 
 ### CTest evidence
 
@@ -283,11 +287,12 @@ previous result when the branch or test configuration changes.
 
 ### 2026-07-26 — Async lifecycle hardening checkpoint
 
-- Commit: `902057b35`
+- Commit: `722b3f645`
 - Scope: inference lease ownership, deadline cancellation and terminal-entry
-  cleanup outside the operation-manager mutex.
+  cleanup outside the operation-manager mutex, monotonic terminal state
+  transitions and failed-turn state cleanup.
 - Focused smokes: operation-manager and session-manager async lifecycle
-  regressions passed.
+  regressions, including the poll/cancel race, passed.
 - Agent CTest: 16/16 passed with Cozo enabled.
 - The MCP agent-tools executable remained subject to a local Windows
   `LNK1104` output-lock failure during rebuild; it was not counted as a test
