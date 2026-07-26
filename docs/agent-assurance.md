@@ -139,7 +139,7 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `94cb3169d` |
+| Commit | `ad7e68649` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
@@ -259,7 +259,7 @@ date, and test counts.
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
 - Date: 2026-07-26
-- Commit: `94cb3169d`
+- Commit: `ad7e68649`
 - Reviewer: pending
 - Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
   passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
@@ -315,3 +315,12 @@ previous result when the branch or test configuration changes.
 - Overall model-free smoke result: 23/23 passed.
 - Not run: resident model-backed smoke, Linux build, Qwen/Nomic model runs,
   long-running stability.
+
+### 2026-07-26 - Event taxonomy checkpoint
+
+- Commit: `ad7e68649`
+- Scope: distinguish initial turn start, tool-driven turn resume, and
+  manager-owned inference start/completion with explicit typed event kinds.
+- Focused smokes: event-stream contract, operation-manager and
+  session-manager runtime smokes passed.
+- Agent CTest: 16/16 passed with Cozo enabled.
