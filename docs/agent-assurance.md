@@ -148,6 +148,25 @@ passes.
 | Complete model-free smokes | 28/28 passed; Docker backend smoke skipped (exit 77); resident model-backed smoke not run (requires `--model`) |
 | Decision | Conditional assurance; model-backed, Linux, Docker backend and long-running gates remain open |
 
+### Async lifecycle hardening
+
+The current checkpoint (`902057b35`) closes three async lifecycle findings:
+
+- After a successful inference submit, the task owns the inference-capacity
+  lease. If operation registration fails, the driver requests task
+  cancellation and does not release the lease a second time.
+- Operation deadlines invoke the registered cancellation callback outside the
+  operation-manager mutex while preserving `timed_out` as the authoritative
+  terminal state.
+- Terminal operation entries are moved out of the manager under the mutex and
+  destroyed after the mutex is released, so destruction of an asynchronous
+  task cannot block other operation-manager calls.
+
+The regression coverage includes operation-registration failure with exact
+single cancellation/release, deadline cancellation, and cleanup concurrency.
+The two focused runtime smokes passed, and the complete agent CTest label
+passed 16/16 after the changes.
+
 ### CTest evidence
 
 | Batch | Passed | Failed | Skipped | Total | Result |
@@ -243,6 +262,18 @@ previous result when the branch or test configuration changes.
 - Overall model-free smoke result: 28/28 executed passed.
 - Not run: resident model-backed execution, Linux build, Qwen/Nomic model runs,
   Docker backend execution and long-running stability.
+
+### 2026-07-26 — Async lifecycle hardening checkpoint
+
+- Commit: `902057b35`
+- Scope: inference lease ownership, deadline cancellation and terminal-entry
+  cleanup outside the operation-manager mutex.
+- Focused smokes: operation-manager and session-manager async lifecycle
+  regressions passed.
+- Agent CTest: 16/16 passed with Cozo enabled.
+- The MCP agent-tools executable remained subject to a local Windows
+  `LNK1104` output-lock failure during rebuild; it was not counted as a test
+  pass or failure.
 
 ### 2026-07-21 — Windows Debug assurance run
 
