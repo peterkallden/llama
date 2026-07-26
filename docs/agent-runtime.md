@@ -1227,7 +1227,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
         "enabled": true,
         "transport": "stdio",
         "command": [
-          ".\\build-plan-resident-cozo-debug-3\\bin\\Release\\llama-agent-mcp-stdio-fake-server.exe"
+          ".\\build-agent-current-ninja-debug\\bin\\llama-agent-mcp-stdio-fake-server.exe"
         ],
         "prefix": "local",
         "server_name": "local"
@@ -1255,7 +1255,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
 ) | Set-Content .\work\agent-requests.jsonl -Encoding ascii
 
 Get-Content .\work\agent-requests.jsonl |
-  .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe --config .\work\agent-host.json
+  .\build-agent-current-ninja-debug\bin\llama-agent-daemon.exe --config .\work\agent-host.json
 ```
 
 That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan/data stores, filesystem+Cozo resource storage, agent planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
@@ -1914,6 +1914,7 @@ complete list of every CTest or smoke executable:
 - `llama-agent-tool-runtime-smoke` also verifies the current reflection guardrail for incomplete `memory_get` repairs, so that an empty or underspecified `memory_get` tool step degrades to reasoning with a specific "requires an id from a prior memory_search or recorded memory reference" diagnostic instead of surfacing only the generic schema-contract error
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
+- `llama-agent-runtime-operation-manager-smoke`, verifying deadline cancellation, terminal cleanup outside the operation-manager mutex, and preservation of terminal timeout state without needing a live model
 - `llama-agent-runtime-session-manager-smoke` also verifies that `reset_all()` now routes through lane-owned close semantics instead of bypassing the lane lifecycle with a raw map clear
 - `llama-agent-runtime-session-manager-smoke` now also verifies manager-owned parked states for both `awaiting_tool` and `awaiting_inference`, including `wait_for_tool`, `wait_for_inference`, host-driven cancellation out of the parked tool state, and resumption into host execution after the parked inference state is released
   - that same parked-turn smoke now also checks that the lane/session descriptors preserve `pending_operation_kind` and `pending_operation_detail` while a turn is actually parked
@@ -1979,10 +1980,12 @@ assertion, as intended. This indicates a model planning/selection gap, not a
 successful join path; the host resolver cannot repair a join that the model
 never requested.
 
-The non-smoke CTest baseline can be run as one serial sweep:
+The non-smoke CTest baseline can be run after loading the local agent build
+environment:
 
 ```powershell
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Release -L agent --output-on-failure
+. .\scripts\agent-build-env.ps1
+ctest --test-dir build-agent-current-ninja-debug -L agent --output-on-failure
 ```
 
 The numeric result of a particular sweep belongs in the
@@ -1997,9 +2000,10 @@ The CMake test-pack targets provide the same layers when the agent options are
 enabled:
 
 ```powershell
-cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-build-pack --parallel 1
-cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-ctest-pack --parallel 1
-cmake --build build-plan-resident-cozo-debug-3 --config Release --target llama-agent-beta-test-pack --parallel 1
+. .\scripts\agent-build-env.ps1
+cmake --build build-agent-current-ninja-debug --target llama-agent-build-pack --parallel 4
+cmake --build build-agent-current-ninja-debug --target llama-agent-ctest-pack --parallel 4
+cmake --build build-agent-current-ninja-debug --target llama-agent-beta-test-pack --parallel 4
 ```
 
 `llama-agent-build-pack` is the build gate, `llama-agent-ctest-pack` runs the
@@ -2023,8 +2027,9 @@ Smoke binaries are grouped by the same category split already used in `pocs/agen
 That means the normal build entrypoint for smoke coverage can stay narrow and category-scoped:
 
 ```powershell
-cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-daemon
-cmake --build build-plan-resident-cozo-debug-3 --parallel 1 --target llama-agent-smoke-mcp
+. .\scripts\agent-build-env.ps1
+cmake --build build-agent-current-ninja-debug --parallel 4 --target llama-agent-smoke-daemon
+cmake --build build-agent-current-ninja-debug --parallel 4 --target llama-agent-smoke-mcp
 ```
 
 The regular `tests/` side is now a little easier to slice as well. Agent-adjacent tests carry focused CTest labels such as:
@@ -2038,17 +2043,17 @@ The regular `tests/` side is now a little easier to slice as well. Agent-adjacen
 Example serial runs:
 
 ```powershell
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent --output-on-failure
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-inference --output-on-failure
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-memory --output-on-failure
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -L agent-plan --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -L agent --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -L agent-inference --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -L agent-memory --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -L agent-plan --output-on-failure
 ```
 
 `test-agent-inference` also keeps its aggregate executable run, but its internal scenarios are now exposed as individual CTest cases as well. That makes it possible to run just one inference/runtime scenario without paying for the whole aggregate sweep:
 
 ```powershell
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-session-reuse --output-on-failure
-ctest --test-dir build-plan-resident-cozo-debug-3 -C Debug -R test-agent-inference-runtime-host-agent-smoke --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -R test-agent-inference-runtime-session-reuse --output-on-failure
+ctest --test-dir build-agent-current-ninja-debug -R test-agent-inference-runtime-host-agent-smoke --output-on-failure
 ```
 
 That split is intentional: smoke groups stay category-oriented and close to the `pocs/agent/smoke/*` layout, while the longer-lived `tests/` binaries are driven through CTest labels and named scenarios.
@@ -2153,6 +2158,16 @@ host inference turn). Event types and operation details distinguish the two
 phases today, such as `inference_queued` versus `turn_waiting_for_inference`.
 A future wire-compatible refinement may expose an explicit operation phase, but
 clients should not infer admission state from `kind` alone.
+
+Inference task ownership is explicit at the async boundary. After a successful
+submit, the inference task owns the capacity lease; if operation registration
+fails, the driver requests task cancellation and does not release that lease a
+second time. A deadline marks the operation `timed_out` and invokes its
+registered cancellation callback outside the operation-manager mutex. Terminal
+operation entries are removed under the mutex but destroyed afterward, so
+destruction of an asynchronous task cannot block unrelated operation-manager
+calls. The reference executor still uses `std::async`; a bounded inference
+worker pool remains a later implementation phase.
 
 The current cleanup policy is intentionally conservative. Turn research state
 is released with the turn, terminal operations are removed by operation-manager

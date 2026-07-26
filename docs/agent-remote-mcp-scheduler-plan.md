@@ -266,10 +266,13 @@ optimization inside the inference backend, not a new session protocol.
 The beta smoke pack establishes evidence for the existing operation, transport,
 policy and lane contracts before scheduler work begins.
 
-The current branch has also completed the non-smoke agent CTest baseline:
-`ctest -L agent` passes 55/55 tests in the Release configuration. This covers
-the existing contract, memory, plan, inference, lifecycle, and tooling seams;
-it does not imply that the future worker-pool acceptance criteria are complete.
+The latest recorded Windows/Cozo verification run is documented in the
+[Agent Assurance record](agent-assurance.md): the `agent` label passed 16/16
+tests. The exact count belongs to the build and test configuration, so this
+architecture document does not treat it as a permanent test-count contract.
+The result covers the current contract, memory, plan, lifecycle and tooling
+seams; it does not imply that the future worker-pool acceptance criteria are
+complete.
 
 The verification entry points are intentionally layered: CMake provides
 `llama-agent-build-pack`, `llama-agent-ctest-pack`, and

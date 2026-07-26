@@ -533,7 +533,7 @@ Start that example with its caller token in the environment:
 
 ```powershell
 $env:LLAMA_AGENT_AGENT_TOKEN = "replace-with-a-long-random-secret"
-& .\build-plan-resident-cozo-debug-3\bin\Release\llama-agent-daemon.exe `
+& .\build-agent-current-ninja-debug\bin\llama-agent-daemon.exe `
     --config .\docs\examples\agent-host-config-inbound-mcp-agent.json
 ```
 
