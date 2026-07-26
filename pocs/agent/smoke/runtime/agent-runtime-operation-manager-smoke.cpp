@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 
 int main() {
     common_runtime_operation_manager manager;
@@ -93,8 +94,51 @@ int main() {
         return 1;
     }
 
+    common_runtime_operation race_operation;
+    race_operation.operation_id = "op-poll-cancel-race";
+    auto poll_started = std::make_shared<std::promise<void>>();
+    auto poll_started_future = poll_started->get_future();
+    auto release_poll = std::make_shared<std::promise<void>>();
+    const auto release_poll_future = release_poll->get_future().share();
+    if (!manager.begin(
+            race_operation,
+            [poll_started, release_poll_future](bool & poll_ready, std::string &) {
+                poll_started->set_value();
+                release_poll_future.wait();
+                poll_ready = true;
+                return true;
+            },
+            [](std::string &) { return true; },
+            error)) {
+        std::fprintf(stderr, "race operation setup failed: %s\n", error.c_str());
+        return 1;
+    }
+    bool race_ready = false;
+    std::string race_error;
+    auto poll_future = std::async(std::launch::async, [&manager, &race_ready, &race_error]() {
+        return manager.poll("op-poll-cancel-race", race_ready, race_error);
+    });
+    if (poll_started_future.wait_for(std::chrono::seconds(1)) != std::future_status::ready ||
+            !manager.cancel("op-poll-cancel-race", error)) {
+        release_poll->set_value();
+        poll_future.wait();
+        std::fprintf(stderr, "poll/cancel race setup failed: %s\n", error.c_str());
+        return 1;
+    }
+    release_poll->set_value();
+    if (!poll_future.get() || !race_ready ||
+            !manager.describe("op-poll-cancel-race", status) ||
+            status.state != common_runtime_operation_state::cancelled) {
+        std::fprintf(stderr, "poll overwrote cancellation with completion\n");
+        return 1;
+    }
+
     struct blocking_cleanup_probe {
         std::shared_ptr<std::promise<void>> destruction_started;
+
+        explicit blocking_cleanup_probe(
+                std::shared_ptr<std::promise<void>> destruction_started_value)
+            : destruction_started(std::move(destruction_started_value)) {}
 
         ~blocking_cleanup_probe() {
             destruction_started->set_value();
@@ -104,8 +148,7 @@ int main() {
 
     auto destruction_started = std::make_shared<std::promise<void>>();
     auto destruction_started_future = destruction_started->get_future();
-    auto probe = std::make_shared<blocking_cleanup_probe>(
-        blocking_cleanup_probe{destruction_started});
+    auto probe = std::make_shared<blocking_cleanup_probe>(destruction_started);
     common_runtime_operation cleanup_operation;
     cleanup_operation.operation_id = "op-cleanup";
     if (!manager.begin(
@@ -153,7 +196,7 @@ int main() {
         std::fprintf(stderr, "terminal cleanup held the operation manager mutex\n");
         return 1;
     }
-    if (cleanup_future.get() != 1) {
+    if (cleanup_future.get() != 4) {
         std::fprintf(stderr, "detached terminal cleanup removed an unexpected count\n");
         return 1;
     }

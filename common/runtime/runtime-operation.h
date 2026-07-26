@@ -152,7 +152,8 @@ public:
         if (!callback(ready, error)) {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = operations_.find(operation_id);
-            if (it != operations_.end()) {
+            if (it != operations_.end() &&
+                    it->second.status.state == common_runtime_operation_state::running) {
                 it->second.status.state = common_runtime_operation_state::failed;
                 it->second.status.error = error;
             }
@@ -194,6 +195,10 @@ public:
             error = "operation disappeared during cancellation: " + operation_id;
             return false;
         }
+        if (it->second.status.state != common_runtime_operation_state::running) {
+            error = it->second.status.error;
+            return it->second.status.state == common_runtime_operation_state::cancelled;
+        }
         it->second.status.state = common_runtime_operation_state::cancelled;
         it->second.status.error = error;
         return true;
@@ -203,6 +208,9 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = operations_.find(operation_id);
         if (it == operations_.end()) return false;
+        if (it->second.status.state != common_runtime_operation_state::running) {
+            return false;
+        }
         it->second.status.state = error.empty()
             ? common_runtime_operation_state::completed
             : common_runtime_operation_state::failed;

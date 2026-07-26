@@ -219,6 +219,7 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                             std::lock_guard<std::mutex> lock(lane_mutex);
                             pending_operation.reset();
                             if (active_turn.has_value()) {
+                                active_turn->pending_operation.reset();
                                 active_turn->disposition = common_agent_runtime_turn_disposition::failed;
                                 active_turn->phase = common_agent_runtime_turn_phase::failed;
                             }
@@ -298,6 +299,15 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                                         std::chrono::steady_clock::time_point{}),
                                 },
                                 admission_error)) {
+                            {
+                                std::lock_guard<std::mutex> lock(lane_mutex);
+                                if (active_turn.has_value()) {
+                                    active_turn->inference_capacity_acquired = false;
+                                    active_turn->pending_operation.reset();
+                                    active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                                    active_turn->phase = common_agent_runtime_turn_phase::failed;
+                                }
+                            }
                             error = admission_error;
                             return common_agent_runtime_turn_disposition::failed;
                         }
@@ -327,6 +337,15 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                                 operation_error)) {
                             std::string ignored_error;
                             inference_gate->cancel(waiter_id, ignored_error);
+                            {
+                                std::lock_guard<std::mutex> lock(lane_mutex);
+                                if (active_turn.has_value()) {
+                                    active_turn->inference_capacity_acquired = false;
+                                    active_turn->pending_operation.reset();
+                                    active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                                    active_turn->phase = common_agent_runtime_turn_phase::failed;
+                                }
+                            }
                             error = operation_error;
                             return common_agent_runtime_turn_disposition::failed;
                         }
@@ -365,6 +384,15 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     host, request, inference_gate, lease_id, executor_error);
                 if (!inference_task) {
                     if (inference_gate) inference_gate->release(lease_id);
+                    {
+                        std::lock_guard<std::mutex> lock(lane_mutex);
+                        if (active_turn.has_value()) {
+                            active_turn->inference_capacity_acquired = false;
+                            active_turn->pending_operation.reset();
+                            active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                            active_turn->phase = common_agent_runtime_turn_phase::failed;
+                        }
+                    }
                     error = executor_error;
                     return common_agent_runtime_turn_disposition::failed;
                 }
@@ -395,7 +423,12 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     std::string ignored_cancel_error;
                     inference_task->cancel(ignored_cancel_error);
                     std::lock_guard<std::mutex> lock(lane_mutex);
-                    if (active_turn.has_value()) active_turn->inference_capacity_acquired = false;
+                    if (active_turn.has_value()) {
+                        active_turn->inference_capacity_acquired = false;
+                        active_turn->pending_operation.reset();
+                        active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                        active_turn->phase = common_agent_runtime_turn_phase::failed;
+                    }
                     error = operation_error;
                     return common_agent_runtime_turn_disposition::failed;
                 }
