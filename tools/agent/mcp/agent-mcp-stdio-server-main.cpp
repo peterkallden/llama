@@ -1,7 +1,7 @@
 #include "agent-mcp-stdio-server.h"
 #include "agent-mcp-http-server.h"
 
-#include "../memory/memory-cli-memory.h"
+#include "tools/agent/cli/agent-cli-memory-tools.h"
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"

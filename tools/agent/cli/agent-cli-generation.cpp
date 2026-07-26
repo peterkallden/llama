@@ -1,4 +1,4 @@
-#include "memory-cli-chat.h"
+#include "agent-cli-generation.h"
 
 #include "common.h"
 #include "json-schema-to-grammar.h"

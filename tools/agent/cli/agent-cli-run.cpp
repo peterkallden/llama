@@ -1,8 +1,8 @@
 #include "agent-cli-run.h"
 #include "agent-cli-run-adapter.h"
 
-#include "../memory/memory-cli-chat.h"
-#include "../memory/memory-cli-memory.h"
+#include "tools/agent/cli/agent-cli-generation.h"
+#include "tools/agent/cli/agent-cli-memory-tools.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "agent-cli-host-adapter.h"

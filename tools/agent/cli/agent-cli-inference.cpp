@@ -1,6 +1,6 @@
 #include "agent-cli-inference.h"
 
-#include "../memory/memory-cli-chat.h"
+#include "tools/agent/cli/agent-cli-generation.h"
 
 namespace {
 

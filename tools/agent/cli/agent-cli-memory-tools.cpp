@@ -1,4 +1,4 @@
-#include "memory-cli-memory.h"
+#include "agent-cli-memory-tools.h"
 
 #include "agent/agent-scope.h"
 #include "tools/agent/cli/agent-cli-scope.h"

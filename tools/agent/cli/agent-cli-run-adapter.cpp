@@ -1,6 +1,6 @@
 #include "agent-cli-run-adapter.h"
 
-#include "../memory/memory-cli-memory.h"
+#include "tools/agent/cli/agent-cli-memory-tools.h"
 
 #include "../resource/agent-resource-store.h"
 #include "agent-cli-selection.h"

@@ -4,7 +4,7 @@
 #include "../cli/agent-cli-selection.h"
 #include "../runtime/agent-inference-capacity-gate.h"
 #include "agent/agent-scope.h"
-#include "../memory/memory-cli-memory.h"
+#include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "../data/agent-data-store-factory.h"
