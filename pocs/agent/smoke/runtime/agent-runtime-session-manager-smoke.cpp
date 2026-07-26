@@ -1132,6 +1132,7 @@ int main() {
     auto inference_wait_poll_count = std::make_shared<int>(0);
     auto inference_wait_started = std::make_shared<std::promise<void>>();
     auto inference_wait_started_future = inference_wait_started->get_future();
+    auto inference_wait_cancel_called = std::make_shared<bool>(false);
 
     common_agent_runtime_session_manager_build_config inference_wait_manager_build_config = {
         memory_store,
@@ -1161,7 +1162,7 @@ int main() {
             return false;
         };
     inference_wait_manager_build_config.pending_operation_resolver =
-        [inference_wait_release_future, inference_wait_poll_count, inference_wait_started](
+        [inference_wait_release_future, inference_wait_poll_count, inference_wait_started, inference_wait_cancel_called](
                 const common_agent_runtime_session_host_turn_request & request,
                 std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
                 std::string & error) {
@@ -1185,6 +1186,11 @@ int main() {
                     error.clear();
                     return true;
                 };
+            pending_operation->cancel = [inference_wait_cancel_called](std::string & error) {
+                *inference_wait_cancel_called = true;
+                error.clear();
+                return true;
+            };
             error.clear();
             return true;
         };
@@ -1256,24 +1262,29 @@ int main() {
         return 1;
     }
 
-    inference_wait_release->set_value();
+    common_agent_runtime_active_turn_descriptor cancelled_inference_turn;
+    error.clear();
+    if (!inference_wait_manager.request_cancel_active_turn(
+            "request-11", "", cancelled_inference_turn, error) ||
+            !cancelled_inference_turn.cancellation_requested) {
+        std::fprintf(stderr, "session manager failed to cancel inference before host execution: %s\n", error.c_str());
+        return 1;
+    }
     if (inference_wait_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
-        std::fprintf(stderr, "session manager inference-wait smoke did not finish after release\n");
+        std::fprintf(stderr, "session manager pre-host cancellation smoke did not finish\n");
         return 1;
     }
-    if (inference_wait_future.get()) {
-        std::fprintf(stderr, "session manager inference-wait smoke unexpectedly succeeded\n");
-        return 1;
-    }
-    if (inference_wait_error.find("inference-wait-resolver turn=turn-11") == std::string::npos ||
-            inference_wait_result.error.find("inference-wait-resolver turn=turn-11") == std::string::npos) {
-        std::fprintf(stderr, "session manager inference-wait smoke did not resume into host execution correctly\n");
+    if (inference_wait_future.get() || !inference_wait_result.cancelled ||
+            inference_wait_result.error != "turn cancelled by host" ||
+            !*inference_wait_cancel_called) {
+        std::fprintf(stderr, "session manager pre-host cancellation did not cancel the pending operation\n");
         return 1;
     }
     {
         std::lock_guard<std::mutex> lock(*inference_wait_events_mutex);
-        if (!contains_event_type(*inference_wait_events, "turn.waiting_for_inference")) {
-            std::fprintf(stderr, "session manager inference-wait smoke did not emit turn.waiting_for_inference\n");
+        if (!contains_event_type(*inference_wait_events, "turn.waiting_for_inference") ||
+                !contains_event_type(*inference_wait_events, "turn.cancelled")) {
+            std::fprintf(stderr, "session manager pre-host cancellation did not preserve inference and cancellation events\n");
             return 1;
         }
     }

@@ -439,6 +439,26 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     request_id, request,
                     result, error, turn_events);
             }
+            // Cancellation may arrive after the pending operation reports
+            // ready but before the host turn is entered. Keep that boundary
+            // explicit so a cancelled operation cannot launch a host turn.
+            if (request.execution_control.should_stop()) {
+                result = {};
+                result.cancelled = true;
+                result.error = request.execution_control.stop_reason();
+                error = result.error;
+                {
+                    std::lock_guard<std::mutex> lock(lane_mutex);
+                    if (active_turn.has_value()) {
+                        active_turn->cancellation_requested = true;
+                        active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                        active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+                        active_turn->pending_operation.reset();
+                    }
+                }
+                turn_events.emit(common_agent_daemon_event_type::turn_cancelled, result.error);
+                return common_agent_runtime_turn_disposition::cancelled;
+            }
             const bool ok = host_turn_async
                 ? result.ok
                 : host->run_turn(request, result, error);

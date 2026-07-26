@@ -2137,6 +2137,23 @@ positions that did not match a subscription filter. Clients should resume
 from the delivery cursor and use the metadata for diagnostics or resync
 decisions rather than treating the skipped range as recoverable event data.
 
+The collector also exposes two consumption models with deliberately different
+semantics. The legacy global `take()` API drains the process-wide pending-event
+queue destructively. It does not advance subscription cursors, does not remove
+events from bounded history, and is therefore not an alternative subscription
+for resumable consumers. Subscriptions have their own cursor, replay history,
+filter, and bounded pending queue. New consumers that need independent
+observation or reconnect/resync behavior should use a subscription; callers
+that use `take()` must own the single-consumer coordination for that global
+queue.
+
+Operation kind is currently shared by admission and execution for compatibility
+(`inference` may mean either waiting for inference capacity or executing the
+host inference turn). Event types and operation details distinguish the two
+phases today, such as `inference_queued` versus `turn_waiting_for_inference`.
+A future wire-compatible refinement may expose an explicit operation phase, but
+clients should not infer admission state from `kind` alone.
+
 The current cleanup policy is intentionally conservative. Turn research state
 is released with the turn, terminal operations are removed by operation-manager
 cleanup, session lanes are removed on session close, resources follow their
