@@ -760,8 +760,11 @@ The resource-store slice now follows the same host-owned backend pattern. The CL
 - `--resource-blob-root PATH`
 - `--resource-metadata-backend auto|in-memory|cozo`
 - `--resource-metadata-db PATH`
+- `--resource PATH` (repeatable for text-file reference material in an agent run)
 
 The current implementation supports `fs` and `in-memory` for blob storage, and `in-memory` and `cozo` for metadata. `s3` remains deferred. In the current default shape, blob storage resolves to `fs` and derives a default root if one is not supplied, while metadata resolves to `cozo` when a metadata DB path is present and otherwise stays `in-memory`.
+
+The CLI can now import multiple bounded text files with repeated `--resource PATH` arguments. Each file is read by the host, limited to 1 MiB, stored as a turn-scoped resource, and attached to `common_agent_request::input_resources` as a required read-only reference. The host assigns a media type from the file extension and does not expose the original local path to the agent. This first slice requires the agent runtime and is consumed by the research workspace as `user_supplied` sources. Binary files and document extraction remain deferred; the current resource store exposes a text-oriented `put_text`/`read_text` boundary.
 
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 

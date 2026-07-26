@@ -151,6 +151,21 @@ int run_agent_cli(common_memory_store & store, args a) {
     tooling.tool_view = tool_view.get();
 #endif
 
+    std::vector<common_agent_input_resource> input_resources;
+#ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+    if (a.agent_runtime && !a.resource_paths.empty()) {
+        if (!resource_store) {
+            fprintf(stderr, "--resource requires an initialized resource store\n");
+            return 1;
+        }
+        if (!import_agent_cli_text_resources(
+                a, agent_scope, *resource_store, input_resources, error)) {
+            fprintf(stderr, "%s\n", error.c_str());
+            return 1;
+        }
+    }
+#endif
+
     common_agent_runtime_session runtime_session;
     auto runtime_post_run = make_agent_cli_runtime_post_run(store, a, memory_enabled);
 
@@ -170,7 +185,8 @@ int run_agent_cli(common_memory_store & store, args a) {
             fallback_reason,
             tooling,
             embedding_provider.get(),
-            runtime_post_run);
+            runtime_post_run,
+            std::move(input_resources));
         common_agent_result result;
         if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {
             fprintf(stderr, "%s\n", error.c_str());
@@ -190,7 +206,8 @@ int run_agent_cli(common_memory_store & store, args a) {
         fallback_reason,
         tooling,
         embedding_provider.get(),
-        runtime_post_run);
+        runtime_post_run,
+        std::move(input_resources));
 
     common_agent_result result;
     if (!run_agent_runtime_host_turn(inputs, runtime_session, result, error)) {

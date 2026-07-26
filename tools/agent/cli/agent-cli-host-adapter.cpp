@@ -515,9 +515,11 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         const std::string & fallback_reason,
         agent_embedding_provider * embedding_provider,
         common_agent_request request,
-        common_agent_generation_options generation_options) {
+        common_agent_generation_options generation_options,
+        std::vector<common_agent_input_resource> input_resources) {
     common_agent_runtime_turn_request turn_request;
     turn_request.request = std::move(request);
+    turn_request.request.input_resources = std::move(input_resources);
     turn_request.scope = scope;
     turn_request.inference_options = make_agent_inference_options({
         options.model,
@@ -584,7 +586,8 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         const std::string & fallback_reason,
         const common_agent_runtime_tooling & tooling,
         agent_embedding_provider * embedding_provider,
-        common_agent_runtime_host_post_run post_run) {
+        common_agent_runtime_host_post_run post_run,
+        std::vector<common_agent_input_resource> input_resources) {
     common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
     common_agent_request request;
     request.messages = messages;
@@ -606,7 +609,8 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
         fallback_reason,
         embedding_provider,
         std::move(request),
-        generation_options);
+        generation_options,
+        std::move(input_resources));
     common_agent_runtime_host_build_context build_context{
         store,
         nullptr,
@@ -636,7 +640,8 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_agent_inputs(
         const std::string & fallback_reason,
         const common_agent_runtime_tooling & tooling,
         agent_embedding_provider * embedding_provider,
-        common_agent_runtime_host_post_run post_run) {
+        common_agent_runtime_host_post_run post_run,
+        std::vector<common_agent_input_resource> input_resources) {
     auto turn_request = make_agent_cli_runtime_turn_request(
         options,
         scope,
@@ -645,6 +650,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_agent_inputs(
         memory_enabled,
         fallback_reason,
         embedding_provider);
+    turn_request.request.input_resources = std::move(input_resources);
     common_agent_runtime_host_build_context build_context{
         store,
         &plan_store,

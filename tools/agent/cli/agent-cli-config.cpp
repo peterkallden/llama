@@ -18,6 +18,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
+        "         [--resource PATH ...]\n"
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
@@ -147,6 +148,8 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.resource_metadata_backend = v;
         } else if (strcmp(argv[i], "--resource-metadata-db") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.resource_metadata_db = v;
+        } else if (strcmp(argv[i], "--resource") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.resource_paths.emplace_back(v);
         } else if (strcmp(argv[i], "--agent-profile") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_profile = v; out.agent_profile_explicit = true;
         } else if (strcmp(argv[i], "--plan-scope") == 0) {

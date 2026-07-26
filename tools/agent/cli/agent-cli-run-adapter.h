@@ -6,6 +6,8 @@
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
+#include "agent/agent-contract.h"
+#include "resource/resource-contract.h"
 
 #include <memory>
 #include <string>
@@ -23,6 +25,15 @@ struct common_agent_cli_run_setup {
 };
 
 bool prepare_agent_cli_args(args & options, std::string & error);
+
+class agent_resource_store;
+
+bool import_agent_cli_text_resources(
+    const args & options,
+    const common_agent_scope & scope,
+    agent_resource_store & resource_store,
+    std::vector<common_agent_input_resource> & out,
+    std::string & error);
 
 bool prepare_agent_cli_run_setup(
     common_memory_store & memory_store,

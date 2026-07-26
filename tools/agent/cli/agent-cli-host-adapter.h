@@ -110,7 +110,8 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     const std::string & fallback_reason,
     agent_embedding_provider * embedding_provider = nullptr,
     common_agent_request request = {},
-    common_agent_generation_options generation_options = {});
+    common_agent_generation_options generation_options = {},
+    std::vector<common_agent_input_resource> input_resources = {});
 
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     common_memory_store & store,
@@ -122,7 +123,8 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
     const std::string & fallback_reason,
     const common_agent_runtime_tooling & tooling,
     agent_embedding_provider * embedding_provider,
-    common_agent_runtime_host_post_run post_run);
+    common_agent_runtime_host_post_run post_run,
+    std::vector<common_agent_input_resource> input_resources = {});
 
 common_agent_runtime_host_inputs make_agent_cli_runtime_host_agent_inputs(
     common_memory_store & store,
@@ -138,6 +140,7 @@ common_agent_runtime_host_inputs make_agent_cli_runtime_host_agent_inputs(
     const std::string & fallback_reason,
     const common_agent_runtime_tooling & tooling,
     agent_embedding_provider * embedding_provider,
-    common_agent_runtime_host_post_run post_run);
+    common_agent_runtime_host_post_run post_run,
+    std::vector<common_agent_input_resource> input_resources = {});
 
 int finish_agent_cli_runtime_result(const common_agent_result & result);

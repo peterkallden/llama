@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,46 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP run smoke did not expose the expected composite tool set\n");
         return 1;
     }
+
+    const auto resource_one_path = std::filesystem::current_path() /
+        "llama-agent-cli-run-mcp-resource-one.md";
+    const auto resource_two_path = std::filesystem::current_path() /
+        "llama-agent-cli-run-mcp-resource-two.json";
+    bool resource_files_written = false;
+    {
+        std::ofstream resource_one(resource_one_path, std::ios::binary);
+        std::ofstream resource_two(resource_two_path, std::ios::binary);
+        if (resource_one && resource_two) {
+            resource_one << "# Requirements\n- preserve provenance\n";
+            resource_two << "{\"architecture\":\"resource-store\"}\n";
+            resource_files_written = resource_one.good() && resource_two.good();
+        }
+    }
+    options.resource_paths = {resource_one_path.string(), resource_two_path.string()};
+    common_agent_scope resource_scope;
+    resource_scope.namespace_id = "local";
+    resource_scope.session_id = "run-smoke";
+    resource_scope.turn_id = "resource-turn";
+    std::vector<common_agent_input_resource> imported_resources;
+    if (!resource_files_written || !selection.owned_resource_store ||
+            !import_agent_cli_text_resources(
+                options,
+                resource_scope,
+                *selection.owned_resource_store,
+                imported_resources,
+                error) ||
+            imported_resources.size() != 2 ||
+            imported_resources[0].resource.mime_type != "text/markdown" ||
+            imported_resources[1].resource.mime_type != "application/json" ||
+            imported_resources[0].resource.uri.empty() ||
+            imported_resources[1].resource.uri.empty()) {
+        std::filesystem::remove(resource_one_path);
+        std::filesystem::remove(resource_two_path);
+        std::fprintf(stderr, "CLI MCP run smoke failed to import multiple text resources: %s\n", error.c_str());
+        return 1;
+    }
+    std::filesystem::remove(resource_one_path);
+    std::filesystem::remove(resource_two_path);
 
     const auto mcp_result = selection.tool_view->call({
         "call-1",
