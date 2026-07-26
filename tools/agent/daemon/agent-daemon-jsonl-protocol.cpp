@@ -292,6 +292,22 @@ json make_agent_daemon_jsonl_read_resource_request(
     };
 }
 
+json make_agent_daemon_jsonl_put_resource_request(
+        const agent_daemon_jsonl_put_resource_request & request) {
+    return {
+        {"command", "put_resource"},
+        {"name", request.name},
+        {"description", request.description},
+        {"mime_type", request.mime_type},
+        {"text", request.text},
+        {"scope", request.scope},
+        {"namespace_id", request.namespace_id},
+        {"session_id", request.session_id},
+        {"project_id", request.project_id},
+        {"turn_id", request.turn_id},
+    };
+}
+
 json make_agent_daemon_jsonl_drain_request(
         const agent_daemon_jsonl_drain_request &) {
     return {

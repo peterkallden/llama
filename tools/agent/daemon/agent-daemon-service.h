@@ -47,6 +47,7 @@ enum class common_agent_daemon_command_type {
     reset_session,
     close_session,
     read_resource,
+    put_resource,
     get_status,
     drain,
     shutdown,
@@ -117,6 +118,10 @@ struct common_agent_daemon_resource_payload {
     size_t max_bytes = 8192;
 };
 
+struct common_agent_daemon_resource_put_payload {
+    agent_resource_put_request request;
+};
+
 struct common_agent_daemon_scope_payload {
     agent_resource_read_authority authority;
 };
@@ -129,6 +134,7 @@ struct common_agent_daemon_command {
     std::optional<common_agent_daemon_session_payload> session;
     std::optional<common_agent_daemon_cancel_payload> cancel;
     std::optional<common_agent_daemon_resource_payload> resource;
+    std::optional<common_agent_daemon_resource_put_payload> resource_put;
     std::optional<common_agent_daemon_scope_payload> scope;
     std::string reload_path;
 };

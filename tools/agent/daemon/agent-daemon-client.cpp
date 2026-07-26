@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
 #include <string>
@@ -144,6 +145,40 @@ void print_daemon_resource_listing(
             item.value("size_bytes", size_t{0}),
             item.value("scope", "").c_str());
     }
+}
+
+bool read_daemon_resource_file(
+        const std::filesystem::path & path,
+        std::string & text,
+        std::string & error) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        error = "unable to open resource file: " + path.string();
+        return false;
+    }
+    text.assign(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+    if (text.size() > 1024 * 1024) {
+        error = "resource file exceeds the 1 MiB limit: " + path.string();
+        return false;
+    }
+    if (text.find('\0') != std::string::npos) {
+        error = "resource file contains NUL bytes: " + path.string();
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+std::string daemon_resource_mime_type(const std::filesystem::path & path) {
+    const auto extension = path.extension().string();
+    if (extension == ".md" || extension == ".markdown") return "text/markdown";
+    if (extension == ".json") return "application/json";
+    if (extension == ".csv") return "text/csv";
+    if (extension == ".html" || extension == ".htm") return "text/html";
+    if (extension == ".xml") return "application/xml";
+    return "text/plain";
 }
 
 void print_daemon_turn_failure(
@@ -428,6 +463,13 @@ public:
             agent_daemon_jsonl_resource_response & response,
             std::string & error) {
         return make_admin_client().read_resource(request, response, error);
+    }
+
+    bool put_resource(
+            const agent_daemon_jsonl_put_resource_request & request,
+            agent_daemon_jsonl_resource_response & response,
+            std::string & error) {
+        return make_admin_client().put_resource(request, response, error);
     }
 
     bool drain(agent_daemon_jsonl_lifecycle_response & response, std::string & error) {
@@ -831,6 +873,43 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             continue;
         }
         std::string resource_uri;
+        if (split_daemon_session_command_argument(line, "/resource-put", resource_uri)) {
+            if (resource_uri.empty()) {
+                std::fprintf(stderr, "daemon-session /resource-put requires a file path\n");
+                continue;
+            }
+            const std::filesystem::path path(resource_uri);
+            std::string text;
+            if (!read_daemon_resource_file(path, text, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                continue;
+            }
+            agent_daemon_jsonl_resource_response response;
+            if (!session.put_resource({
+                        path.filename().string(),
+                        "Imported through daemon-session JSONL admin",
+                        daemon_resource_mime_type(path),
+                        std::move(text),
+                        "session",
+                        a.memory_namespace,
+                        a.memory_session,
+                        a.memory_project,
+                        a.memory_turn,
+                    },
+                    response,
+                    error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                session.shutdown(error);
+                return 1;
+            }
+            std::printf(
+                "[daemon-resource-created] uri=%s mime=%s bytes=%zu scope=%s\n",
+                response.resource.uri.c_str(),
+                response.resource.mime_type.c_str(),
+                response.resource.size_bytes,
+                common_runtime_resource_scope_name(response.resource.scope));
+            continue;
+        }
         if (split_daemon_session_command_argument(line, "/resource", resource_uri)) {
             if (resource_uri.empty()) {
                 std::fprintf(stderr, "daemon-session /resource requires a URI\n");
@@ -860,12 +939,12 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             continue;
         }
         if (line == "/help") {
-            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource <uri> /reset /close /drain /quit\n");
+            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!line.empty() && line.front() == '/') {
             std::fprintf(stderr, "unknown daemon-session command: %s\n", line.c_str());
-            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource <uri> /reset /close /drain /quit\n");
+            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!run_one(line)) {

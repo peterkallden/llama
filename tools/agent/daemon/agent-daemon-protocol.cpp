@@ -179,6 +179,40 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "put_resource") {
+        command.type = common_agent_daemon_command_type::put_resource;
+        common_agent_daemon_resource_put_payload payload;
+        payload.request.name = parsed.value("name", "");
+        payload.request.description = parsed.value("description", "");
+        payload.request.mime_type = parsed.value("mime_type", "text/plain");
+        payload.request.text = parsed.value("text", "");
+        payload.request.namespace_id = parsed.value("namespace_id", "default-namespace");
+        payload.request.session_id = parsed.value("session_id", "default-session");
+        payload.request.project_id = parsed.value("project_id", "");
+        payload.request.turn_id = parsed.value("turn_id", "");
+        const auto scope = parsed.value("scope", "turn");
+        if (scope == "turn") {
+            payload.request.scope = common_runtime_resource_scope::turn;
+        } else if (scope == "session") {
+            payload.request.scope = common_runtime_resource_scope::session;
+        } else if (scope == "project") {
+            payload.request.scope = common_runtime_resource_scope::project;
+        } else {
+            error = "put_resource scope must be turn, session, or project";
+            return false;
+        }
+        if (payload.request.name.empty()) {
+            error = "put_resource requires name";
+            return false;
+        }
+        if (payload.request.text.find('\0') != std::string::npos) {
+            error = "put_resource text must not contain NUL bytes";
+            return false;
+        }
+        command.resource_put = std::move(payload);
+        error.clear();
+        return true;
+    }
     if (command_name == "drain") {
         command.type = common_agent_daemon_command_type::drain;
         error.clear();

@@ -62,6 +62,18 @@ struct agent_daemon_jsonl_read_resource_request {
     size_t max_bytes = 8192;
 };
 
+struct agent_daemon_jsonl_put_resource_request {
+    std::string name;
+    std::string description;
+    std::string mime_type = "text/plain";
+    std::string text;
+    std::string scope = "turn";
+    std::string namespace_id;
+    std::string session_id;
+    std::string project_id;
+    std::string turn_id;
+};
+
 struct agent_daemon_jsonl_drain_request {};
 
 struct agent_daemon_jsonl_shutdown_request {};
@@ -250,6 +262,9 @@ nlohmann::ordered_json make_agent_daemon_jsonl_list_plans_request(
 
 nlohmann::ordered_json make_agent_daemon_jsonl_read_resource_request(
     const agent_daemon_jsonl_read_resource_request & request);
+
+nlohmann::ordered_json make_agent_daemon_jsonl_put_resource_request(
+    const agent_daemon_jsonl_put_resource_request & request);
 
 nlohmann::ordered_json make_agent_daemon_jsonl_drain_request(
     const agent_daemon_jsonl_drain_request & request = {});

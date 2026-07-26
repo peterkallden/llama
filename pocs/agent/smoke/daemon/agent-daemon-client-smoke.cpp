@@ -295,6 +295,33 @@ int main(int argc, char ** argv) {
                     };
                     return true;
                 }
+                if (command == "put_resource") {
+                    response = {
+                        {"ok", true},
+                        {"event", "resource_created"},
+                        {"state", "ready"},
+                        {"live", true},
+                        {"ready", true},
+                        {"worker_running", true},
+                        {"accepting_commands", true},
+                        {"shutdown_requested", false},
+                        {"sessions", 1},
+                        {"queued_commands", 0},
+                        {"max_queue_size", 8},
+                        {"queue_capacity_remaining", 8},
+                        {"resource", {
+                            {"resource_id", "r-uploaded"},
+                            {"uri", "agent-resource://resource/r-uploaded"},
+                            {"name", request.value("name", "notes.md")},
+                            {"description", request.value("description", "Uploaded notes")},
+                            {"mime_type", request.value("mime_type", "text/markdown")},
+                            {"size_bytes", request.value("text", "").size()},
+                            {"metadata", nlohmann::ordered_json::object()},
+                        }},
+                        {"content", ""},
+                    };
+                    return true;
+                }
                 if (command == "drain") {
                     response = {
                         {"ok", true},
@@ -385,6 +412,31 @@ int main(int argc, char ** argv) {
             std::fprintf(
                 stderr,
                 "daemon client smoke did not reject mismatched list_resources response: %s\n",
+                negative_error.c_str());
+            return 1;
+        }
+
+        negative_error.clear();
+        if (!admin.put_resource(
+                    {
+                        "notes.md",
+                        "Uploaded notes",
+                        "text/markdown",
+                        "# Notes\n",
+                        "session",
+                        "namespace-a",
+                        "session-a",
+                        "project-a",
+                        "turn-a",
+                    },
+                    resource_response,
+                    negative_error) ||
+                resource_response.event != "resource_created" ||
+                resource_response.resource.name != "notes.md" ||
+                resource_response.resource.mime_type != "text/markdown") {
+            std::fprintf(
+                stderr,
+                "daemon client smoke did not put resource through JSONL: %s\n",
                 negative_error.c_str());
             return 1;
         }

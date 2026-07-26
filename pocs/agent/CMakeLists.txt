@@ -903,6 +903,14 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-cli-run-mcp-smoke>)
     set_property(TEST llama-agent-cli-run-mcp-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-daemon-protocol-ctest
+        COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)
+    set_property(TEST llama-agent-daemon-protocol-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-daemon-client-ctest
+        COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)
+    set_property(TEST llama-agent-daemon-client-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-sandbox-docker-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)
     set_property(TEST llama-agent-sandbox-docker-ctest PROPERTY LABELS sandbox-docker)

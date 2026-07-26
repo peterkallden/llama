@@ -175,6 +175,28 @@ bool agent_daemon_client_admin::read_resource(
     return true;
 }
 
+bool agent_daemon_client_admin::put_resource(
+        const agent_daemon_jsonl_put_resource_request & request,
+        agent_daemon_jsonl_resource_response & response,
+        std::string & error) const {
+    json message;
+    if (!send_request_(make_agent_daemon_jsonl_put_resource_request(request), message, error)) {
+        return false;
+    }
+    if (!parse_response_or_append_message(
+                message,
+                response,
+                error,
+                parse_agent_daemon_jsonl_resource_response)) {
+        return false;
+    }
+    if (response.event != "resource_created") {
+        error = "unexpected daemon put_resource response: " + message.dump();
+        return false;
+    }
+    return true;
+}
+
 bool agent_daemon_client_admin::drain(
         agent_daemon_jsonl_lifecycle_response & response,
         std::string & error) const {

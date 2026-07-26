@@ -42,6 +42,7 @@ enum class common_agent_daemon_event_type {
     plan_step_completed,
     observation_recorded,
     resource_created,
+    resource_create_failed,
     resource_attached,
     session_reset_requested,
     session_reset,
@@ -159,6 +160,7 @@ inline common_agent_daemon_event_category common_agent_daemon_event_category_for
         case common_agent_daemon_event_type::observation_recorded:
             return common_agent_daemon_event_category::observation;
         case common_agent_daemon_event_type::resource_created:
+        case common_agent_daemon_event_type::resource_create_failed:
         case common_agent_daemon_event_type::resource_attached:
         case common_agent_daemon_event_type::resources_listed:
         case common_agent_daemon_event_type::resources_list_failed:
@@ -236,6 +238,7 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::plan_step_completed:    return "plan.step_completed";
         case common_agent_daemon_event_type::observation_recorded:   return "observation.recorded";
         case common_agent_daemon_event_type::resource_created:       return "resource.created";
+        case common_agent_daemon_event_type::resource_create_failed: return "resource.create_failed";
         case common_agent_daemon_event_type::resource_attached:      return "resource.attached";
         case common_agent_daemon_event_type::session_reset_requested: return "session.reset_requested";
         case common_agent_daemon_event_type::session_reset:           return "session.reset";

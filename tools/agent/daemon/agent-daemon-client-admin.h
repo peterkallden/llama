@@ -39,6 +39,10 @@ public:
         const agent_daemon_jsonl_read_resource_request & request,
         agent_daemon_jsonl_resource_response & response,
         std::string & error) const;
+    bool put_resource(
+        const agent_daemon_jsonl_put_resource_request & request,
+        agent_daemon_jsonl_resource_response & response,
+        std::string & error) const;
     bool drain(agent_daemon_jsonl_lifecycle_response & response, std::string & error) const;
     bool reset_session(
         const std::string & session_id,

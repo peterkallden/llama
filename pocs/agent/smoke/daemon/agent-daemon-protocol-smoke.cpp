@@ -26,6 +26,34 @@ int main() {
         std::fprintf(stderr, "failed to parse status command: %s\n", error.c_str());
         return 1;
     }
+
+    common_agent_daemon_command put_resource_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "resource-put-1"},
+                {"command", "put_resource"},
+                {"name", "notes.md"},
+                {"description", "Uploaded notes"},
+                {"mime_type", "text/markdown"},
+                {"text", "# Notes\n"},
+                {"scope", "session"},
+                {"session_id", "session-a"},
+                {"namespace_id", "namespace-a"},
+                {"project_id", "project-a"},
+                {"turn_id", "turn-a"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            put_resource_command,
+            error) ||
+            put_resource_command.type != common_agent_daemon_command_type::put_resource ||
+            !put_resource_command.resource_put.has_value() ||
+            put_resource_command.resource_put->request.name != "notes.md" ||
+            put_resource_command.resource_put->request.scope != common_runtime_resource_scope::session ||
+            put_resource_command.resource_put->request.text != "# Notes\n") {
+        std::fprintf(stderr, "failed to parse put_resource command: %s\n", error.c_str());
+        return 1;
+    }
     if (status_command.type != common_agent_daemon_command_type::get_status) {
         std::fprintf(stderr, "status command parsed to wrong type\n");
         return 1;
