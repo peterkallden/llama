@@ -35,6 +35,7 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         common_runtime_operation_manager & operation_manager,
         std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
         std::optional<common_agent_runtime_turn_execution> & active_turn,
+        std::mutex & lane_mutex,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_session_host_turn_result & result,
         std::string & error,

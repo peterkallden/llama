@@ -36,31 +36,48 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         common_runtime_operation_manager & operation_manager,
         std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
         std::optional<common_agent_runtime_turn_execution> & active_turn,
+        std::mutex & lane_mutex,
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_session_host_turn_result & result,
         std::string & error,
         common_agent_runtime_turn_phase phase,
         const common_agent_event_emitter & turn_events) {
-    if (request.execution_control.should_stop()) {
+    std::string operation_id;
+    common_agent_runtime_pending_operation_kind operation_kind =
+        common_agent_runtime_pending_operation_kind::tool;
+    std::string operation_detail;
+    common_agent_runtime_turn_disposition waiting_disposition =
+        common_agent_runtime_turn_disposition::failed;
+    {
+        std::lock_guard<std::mutex> lock(lane_mutex);
         if (pending_operation.has_value()) {
+            operation_id = pending_operation->pending_operation.operation_id;
+            operation_kind = pending_operation->pending_operation.kind;
+            operation_detail = pending_operation->pending_operation.detail;
+            waiting_disposition = pending_operation->waiting_disposition;
+        }
+    }
+
+    if (request.execution_control.should_stop()) {
+        if (!operation_id.empty()) {
             std::string ignored_error;
-            operation_manager.cancel(
-                pending_operation->pending_operation.operation_id,
-                ignored_error);
-            if (pending_operation->pending_operation.kind ==
+            operation_manager.cancel(operation_id, ignored_error);
+            if (operation_kind ==
                     common_agent_runtime_pending_operation_kind::tool) {
-                turn_events.with_operation(
-                    pending_operation->pending_operation.operation_id).emit(
+                turn_events.with_operation(operation_id).emit(
                     common_agent_daemon_event_type::tool_cancelled,
                     request.execution_control.stop_reason());
             }
         }
-        pending_operation.reset();
-        if (active_turn.has_value()) {
-            active_turn->pending_operation.reset();
-            active_turn->cancellation_requested = true;
-            active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
-            active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+        {
+            std::lock_guard<std::mutex> lock(lane_mutex);
+            pending_operation.reset();
+            if (active_turn.has_value()) {
+                active_turn->pending_operation.reset();
+                active_turn->cancellation_requested = true;
+                active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+            }
         }
         result = {};
         result.cancelled = true;
@@ -70,28 +87,32 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         return common_agent_runtime_turn_disposition::cancelled;
     }
 
-    if (!pending_operation.has_value()) {
+    if (operation_id.empty()) {
         error = "lane phase is missing its pending operation";
-        if (active_turn.has_value()) {
-            active_turn->pending_operation.reset();
-            active_turn->disposition = common_agent_runtime_turn_disposition::failed;
-            active_turn->phase = common_agent_runtime_turn_phase::failed;
+        {
+            std::lock_guard<std::mutex> lock(lane_mutex);
+            if (active_turn.has_value()) {
+                active_turn->pending_operation.reset();
+                active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                active_turn->phase = common_agent_runtime_turn_phase::failed;
+            }
         }
         turn_events.emit(common_agent_daemon_event_type::turn_failed, error);
         return common_agent_runtime_turn_disposition::failed;
     }
 
-    const std::string operation_id = pending_operation->pending_operation.operation_id;
     bool ready = false;
     if (!operation_manager.poll(operation_id, ready, error)) {
-        const auto operation_kind = pending_operation->pending_operation.kind;
         common_runtime_operation_status operation_status;
         const bool has_status = operation_manager.describe(operation_id, operation_status);
-        pending_operation.reset();
-        if (active_turn.has_value()) {
-            active_turn->pending_operation.reset();
-            active_turn->disposition = common_agent_runtime_turn_disposition::failed;
-            active_turn->phase = common_agent_runtime_turn_phase::failed;
+        {
+            std::lock_guard<std::mutex> lock(lane_mutex);
+            pending_operation.reset();
+            if (active_turn.has_value()) {
+                active_turn->pending_operation.reset();
+                active_turn->disposition = common_agent_runtime_turn_disposition::failed;
+                active_turn->phase = common_agent_runtime_turn_phase::failed;
+            }
         }
         if (operation_kind ==
                 common_agent_runtime_pending_operation_kind::tool) {
@@ -105,22 +126,27 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         return common_agent_runtime_turn_disposition::failed;
     }
     if (!ready) {
-        if (active_turn.has_value()) {
-            active_turn->disposition = pending_operation->waiting_disposition;
+        {
+            std::lock_guard<std::mutex> lock(lane_mutex);
+            if (active_turn.has_value()) {
+                active_turn->disposition = waiting_disposition;
+            }
         }
-        return pending_operation->waiting_disposition;
+        return waiting_disposition;
     }
 
-    const auto operation_kind = pending_operation->pending_operation.kind;
     const bool inference_capacity_granted =
         operation_kind == common_agent_runtime_pending_operation_kind::inference &&
-        pending_operation->pending_operation.detail == "waiting for inference capacity";
-    if (active_turn.has_value()) {
-        active_turn->pending_operation.reset();
-        active_turn->disposition = common_agent_runtime_turn_disposition::continue_immediately;
-        active_turn->phase = phase;
+        operation_detail == "waiting for inference capacity";
+    {
+        std::lock_guard<std::mutex> lock(lane_mutex);
+        if (active_turn.has_value()) {
+            active_turn->pending_operation.reset();
+            active_turn->disposition = common_agent_runtime_turn_disposition::continue_immediately;
+            active_turn->phase = phase;
+        }
+        pending_operation.reset();
     }
-    pending_operation.reset();
     turn_events.emit(
         inference_capacity_granted
             ? common_agent_daemon_event_type::inference_capacity_granted
@@ -454,6 +480,7 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 operation_manager,
                 pending_operation,
                 active_turn,
+                lane_mutex,
                 request,
                 result,
                 error,
@@ -533,6 +560,7 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 operation_manager,
                 pending_operation,
                 active_turn,
+                lane_mutex,
                 request,
                 result,
                 error,
