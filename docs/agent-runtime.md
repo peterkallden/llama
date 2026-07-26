@@ -2134,6 +2134,17 @@ Daemon events retain their stable `event_type` names, such as
 diagnostic metadata; it does not replace the event kind or change routing and
 filter semantics.
 
+Turn and inference lifecycle events are deliberately distinct. `turn.started`
+identifies the initial turn start, while `turn.resumed` identifies continuation
+after a pending tool operation. `inference.started` is emitted after the host
+inference task has been submitted and registered, and `inference.completed` is
+emitted when that manager-owned inference operation becomes ready. These events
+do not replace the existing `turn.waiting_for_inference`, `inference.queued`,
+or `inference.capacity_granted` events; those continue to describe admission
+and suspension boundaries. The event names are additive to the JSONL event
+projection, so clients can handle the new lifecycle kinds while retaining the
+existing `event_type`, `event_category`, and context fields.
+
 An event-stream overflow is no longer represented only by a cursor jump. An
 overflow delivery carries `from_sequence`, `to_sequence`, and
 `skipped_sequence_count` metadata. JSONL clients receive that metadata under

@@ -25,9 +25,9 @@ common_agent_daemon_event_type completed_event_for_operation_kind(
         case common_agent_runtime_pending_operation_kind::tool:
             return common_agent_daemon_event_type::tool_completed;
         case common_agent_runtime_pending_operation_kind::inference:
-            return common_agent_daemon_event_type::turn_started;
+            return common_agent_daemon_event_type::inference_completed;
     }
-    return common_agent_daemon_event_type::turn_started;
+    return common_agent_daemon_event_type::inference_completed;
 }
 
 } // namespace
@@ -158,7 +158,7 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
                 : "manager-owned pending inference operation completed"));
     if (operation_kind == common_agent_runtime_pending_operation_kind::tool) {
         turn_events.emit(
-            common_agent_daemon_event_type::turn_started,
+            common_agent_daemon_event_type::turn_resumed,
             "turn resumed after pending tool operation");
     }
     return common_agent_runtime_turn_disposition::continue_immediately;
@@ -466,6 +466,11 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                         active_turn->disposition = common_agent_runtime_turn_disposition::wait_for_inference;
                     }
                 }
+                turn_events
+                    .with_operation("inference:" + request_id)
+                    .emit(
+                        common_agent_daemon_event_type::inference_started,
+                        "session host turn execution started");
                 turn_events
                     .with_operation("inference:" + request_id)
                     .emit(

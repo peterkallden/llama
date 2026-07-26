@@ -90,6 +90,41 @@ int main() {
         }
     }
 
+    const common_agent_daemon_event_type turn_and_inference_lifecycle[] = {
+        common_agent_daemon_event_type::turn_started,
+        common_agent_daemon_event_type::turn_resumed,
+        common_agent_daemon_event_type::inference_queued,
+        common_agent_daemon_event_type::inference_capacity_granted,
+        common_agent_daemon_event_type::inference_started,
+        common_agent_daemon_event_type::inference_completed,
+    };
+    const char * turn_and_inference_lifecycle_names[] = {
+        "turn.started",
+        "turn.resumed",
+        "inference.queued",
+        "inference.capacity_granted",
+        "inference.started",
+        "inference.completed",
+    };
+    for (size_t i = 0;
+            i < sizeof(turn_and_inference_lifecycle) / sizeof(turn_and_inference_lifecycle[0]);
+            ++i) {
+        const auto lifecycle_event = make_common_agent_daemon_event(
+            turn_and_inference_lifecycle[i], "request-1", "turn-1");
+        const auto expected_category =
+            turn_and_inference_lifecycle[i] == common_agent_daemon_event_type::inference_queued ||
+            turn_and_inference_lifecycle[i] == common_agent_daemon_event_type::inference_capacity_granted ||
+            turn_and_inference_lifecycle[i] == common_agent_daemon_event_type::inference_started ||
+            turn_and_inference_lifecycle[i] == common_agent_daemon_event_type::inference_completed
+                ? common_agent_daemon_event_category::inference
+                : common_agent_daemon_event_category::turn;
+        if (std::string(lifecycle_event.type) != turn_and_inference_lifecycle_names[i] ||
+                lifecycle_event.category != expected_category) {
+            std::fprintf(stderr, "turn/inference lifecycle event contract was not preserved\n");
+            return 1;
+        }
+    }
+
     subscription.filter.turn_id = "other-turn";
     if (subscription.filter.matches(event)) {
         std::fprintf(stderr, "event stream contract ignored a turn filter\n");

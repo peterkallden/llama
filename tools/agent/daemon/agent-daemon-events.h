@@ -13,6 +13,7 @@ enum class common_agent_daemon_event_type {
     command_rejected,
     turn_accepted,
     turn_started,
+    turn_resumed,
     turn_rejected,
     turn_cancel_requested,
     turn_cancel_rejected,
@@ -20,6 +21,8 @@ enum class common_agent_daemon_event_type {
     turn_waiting_for_inference,
     inference_queued,
     inference_capacity_granted,
+    inference_started,
+    inference_completed,
     tool_queued,
     turn_completed,
     turn_failed,
@@ -121,6 +124,7 @@ inline common_agent_daemon_event_category common_agent_daemon_event_category_for
             return common_agent_daemon_event_category::command;
         case common_agent_daemon_event_type::turn_accepted:
         case common_agent_daemon_event_type::turn_started:
+        case common_agent_daemon_event_type::turn_resumed:
         case common_agent_daemon_event_type::turn_rejected:
         case common_agent_daemon_event_type::turn_cancel_requested:
         case common_agent_daemon_event_type::turn_cancel_rejected:
@@ -132,6 +136,8 @@ inline common_agent_daemon_event_category common_agent_daemon_event_category_for
             return common_agent_daemon_event_category::turn;
         case common_agent_daemon_event_type::inference_queued:
         case common_agent_daemon_event_type::inference_capacity_granted:
+        case common_agent_daemon_event_type::inference_started:
+        case common_agent_daemon_event_type::inference_completed:
             return common_agent_daemon_event_category::inference;
         case common_agent_daemon_event_type::tool_queued:
         case common_agent_daemon_event_type::tool_started:
@@ -201,6 +207,7 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::command_rejected:        return "command.rejected";
         case common_agent_daemon_event_type::turn_accepted:           return "turn.accepted";
         case common_agent_daemon_event_type::turn_started:            return "turn.started";
+        case common_agent_daemon_event_type::turn_resumed:            return "turn.resumed";
         case common_agent_daemon_event_type::turn_rejected:           return "turn.rejected";
         case common_agent_daemon_event_type::turn_cancel_requested:   return "turn.cancel_requested";
         case common_agent_daemon_event_type::turn_cancel_rejected:    return "turn.cancel_rejected";
@@ -208,6 +215,8 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::turn_waiting_for_inference: return "turn.waiting_for_inference";
         case common_agent_daemon_event_type::inference_queued:       return "inference.queued";
         case common_agent_daemon_event_type::inference_capacity_granted: return "inference.capacity_granted";
+        case common_agent_daemon_event_type::inference_started:       return "inference.started";
+        case common_agent_daemon_event_type::inference_completed:     return "inference.completed";
         case common_agent_daemon_event_type::tool_queued:            return "tool.queued";
         case common_agent_daemon_event_type::turn_completed:          return "turn.completed";
         case common_agent_daemon_event_type::turn_failed:             return "turn.failed";
