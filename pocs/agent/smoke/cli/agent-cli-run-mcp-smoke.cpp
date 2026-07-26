@@ -52,7 +52,7 @@ int main(int argc, char ** argv) {
         "--max-reflection-rounds", "3",
         "--max-plan-revisions", "2",
         "--max-research-iterations", "1",
-        "--tool-profile", "minimal",
+        "--tool-profile", "cli-research-read",
         "--mcp-tool-command", server_path.string(),
         "--mcp-tool-server-name", "github",
         "--mcp-tool-prefix", "github",
@@ -76,6 +76,20 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP run smoke failed to prepare args: %s\n", error.c_str());
         return 1;
     }
+
+    // The built-in minimal profile deliberately denies network-backed tools.
+    // This smoke exercises explicit native+MCP composition, so provide a
+    // host-owned profile that permits the configured MCP read surface while
+    // keeping native exposure limited to deterministic utilities.
+    common_tool_profile profile;
+    profile.id = options.tool_profile;
+    profile.members = {
+        {"calculator", 1, true, "{}"},
+        {"time_now", 1, true, "{}"},
+    };
+    profile.allow_network = true;
+    profile.allow_policy_gated_writes = false;
+    options.tool_profiles = {{profile.id, profile}};
     if (options.thinking_mode != "deliberate" ||
             options.max_reflection_rounds != 3 ||
             options.max_plan_revisions != 2 ||
