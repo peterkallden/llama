@@ -899,6 +899,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
     set_property(TEST llama-agent-sandbox-contract-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-cli-run-mcp-ctest
+        COMMAND $<TARGET_FILE:llama-agent-cli-run-mcp-smoke>)
+    set_property(TEST llama-agent-cli-run-mcp-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-sandbox-docker-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)
     set_property(TEST llama-agent-sandbox-docker-ctest PROPERTY LABELS sandbox-docker)
