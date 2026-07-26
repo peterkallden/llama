@@ -1265,9 +1265,11 @@ That example exercises the current end-to-end foreground daemon shape: resident 
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
-That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `list_sessions`, `get_session`, `list_resources`, `list_memories`, `list_plans`, `read_resource`, `drain`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
+That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `list_sessions`, `get_session`, `list_resources`, `read_resource`, `put_resource`, `list_memories`, `list_plans`, `drain`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/resource <uri>`, `/memories`, `/plans`, `/reset`, `/close`, `/drain`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
 
 The `/resources` command now renders one bounded descriptor line per registered resource, including its resource id, URI, display name, media type, byte size, and scope. The `/resource <uri>` command remains the explicit read/fetch operation and returns the bounded text content for an authorized URI. This distinction is intentional: resource-store entries are discoverable and fetchable through the resource contract, while ordinary repository/workspace files remain source-tree data accessed through workspace or repository tools. Sandbox-produced files only appear in the resource listing when the selected sandbox backend imports them as resource references; a file written directly into a source tree is not implicitly published as a downloadable artifact.
+
+The JSONL/admin path now also has an explicit `put_resource` command. It accepts bounded text plus a display name, media type, description, scope, and authority envelope, and returns the created descriptor through the same resource response used by `read_resource`. The current implementation limits text uploads to 1 MiB and rejects NUL bytes. The interactive `/resource-put <path>` command is a convenience wrapper that reads a local text file and submits it through this JSONL command; it stores the result at session scope. Binary upload and byte-oriented resource reads remain deferred.
 
 The CLI-side diagnostics seam is a little cleaner now too. The child-process adapter still reads daemon stderr separately from protocol stdout, but it suppresses the high-volume routine model/bootstrap chatter in the ordinary admin/test path and only forwards warnings, errors, and unexpected lines by default. That keeps `daemon-chat` and `daemon-session` usable as foreground integration tools without making the protocol consumer scrape through several hundred lines of model-loader noise. For deeper debugging, the adapter still becomes more permissive when agent tracing is enabled.
 
@@ -1285,7 +1287,7 @@ Those child-process adapters now also pass through the same daemon-owned tool co
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. The current session manager treats namespace plus session as the live resident lane, while status responses still report the currently bound project/scope for that lane. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
-There is now also a focused smoke for that foreground client seam itself: `scripts/test-agent-daemon-client-clean-io-smoke.ps1` checks that `daemon-session` keeps protocol-oriented output on stdout, keeps routine loader/bootstrap chatter off stderr in the ordinary path, preserves the small admin/test command surface (`/help`, `/status`, `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, `/quit`), and renders the typed `/status` summary instead of raw JSON. A separate `llama-agent-daemon-client-smoke` target now exercises the same subprocess seam against a fake JSONL daemon so `/sessions`, `/session`, `/resources`, `/memories`, `/plans`, `/resource`, `/reset`, `/close`, and `/drain` are covered without needing a live model.
+There is now also a focused smoke for that foreground client seam itself: `scripts/test-agent-daemon-client-clean-io-smoke.ps1` checks that `daemon-session` keeps protocol-oriented output on stdout, keeps routine loader/bootstrap chatter off stderr in the ordinary path, preserves the small admin/test command surface (`/help`, `/status`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, `/quit`), and renders the typed `/status` summary instead of raw JSON. Separate protocol and client CTest smokes now exercise `put_resource`, resource listing, and resource reading against the JSONL seam without needing a live model.
 
 Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
 
@@ -2042,13 +2044,13 @@ and the sandbox backend tests under their own backend labels:
 
 | Label | Scope | Current Cozo build |
 |---|---|---:|
-| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 17 |
+| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 19 |
 | `sandbox-docker` | Docker backend smoke; uses CTest skip code 77 when Docker is unavailable | 1 |
 | `sandbox-kubernetes` | Kubernetes backend smoke | 1 |
 
-The current build registers 61 CTest cases in total. The three labels above
-account for 19 label memberships; the two sandbox labels are separate from the
-authoritative `agent` test slice and are therefore not included in its 17-test
+The current build registers 63 CTest cases in total. The three labels above
+account for 21 label memberships; the two sandbox labels are separate from the
+authoritative `agent` test slice and are therefore not included in its 19-test
 count. Other repository tests are registered without an agent label in this
 build. Counts are configuration-dependent and should be refreshed with
 `ctest --test-dir BUILD_DIR -N` rather than treated as a permanent contract.

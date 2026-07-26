@@ -100,7 +100,7 @@ try {
     if ($stdoutLines[1] -notmatch "sessions=1") {
         throw "Expected status line to include sessions=1, got: $($stdoutLines[1])"
     }
-    if ($stdoutLines[2] -ne "[daemon-help] /status /reset /close /quit") {
+    if ($stdoutLines[2] -ne "[daemon-help] /status /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit") {
         throw "Expected help line on stdout, got: $($stdoutLines[2])"
     }
     if ($stderrLines.Count -ne 0) {

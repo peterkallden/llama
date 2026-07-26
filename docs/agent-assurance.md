@@ -139,12 +139,12 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `88c6e4bb9` |
+| Commit | `ab5e728af` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
 | Cozo | `LLAMA_MEMORY_COZO=ON`, `LLAMA_PLAN_COZO=ON`, configured Cozo 0.7.6 MSVC release library and DLL |
-| CTest | Agent label 17/17 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
+| CTest | Agent label 19/19 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
 | Complete model-free smokes | 28/28 passed; Docker backend smoke skipped (exit 77); resident model-backed smoke not run (requires `--model`) |
 | Decision | Conditional assurance; model-backed, Linux, Docker backend and long-running gates remain open |
 
@@ -184,21 +184,20 @@ the complete agent CTest label passed 16/16 after the changes.
 
 ### Registered CTest inventory
 
-The current Cozo-enabled build registers 61 CTest cases in total. The agent
-verification slice is the `agent` label with 17 tests; the latest run passed
-15 and reproduced two unrelated local failures. The sandbox labels are
-separate backend slices:
+The current Cozo-enabled build registers 63 CTest cases in total. The agent
+verification slice is the `agent` label with 19 tests; the latest run passed
+19/19. The sandbox labels are separate backend slices:
 
 | Label | Registered tests | Current result |
 |---|---:|---|
-| `agent` | 17 | 15 passed; 2 failed for the documented local baseline issues |
+| `agent` | 19 | 19 passed |
 | `sandbox-kubernetes` | 1 | 1 passed |
 | `sandbox-docker` | 1 | 1 skipped; backend unavailable |
 | Other repository tests | 43 | Not part of the agent assurance sweep |
 
-The 61-test inventory is configuration-dependent. It includes general
+The 63-test inventory is configuration-dependent. It includes general
 repository tests whose executables were not built or run in this focused agent
-verification, so the total inventory must not be reported as a 61-test agent
+verification, so the total inventory must not be reported as a 63-test agent
 pass.
 
 Commands and full output should be retained in the task handoff or CI log;
@@ -330,6 +329,17 @@ previous result when the branch or test configuration changes.
   exits with MSVC `0xc0000409`, and `test-agent-data-store-cozo` cannot open
   its Cozo database (`code 14`); both failures reproduce independently of
   this change.
+
+### 2026-07-26 - JSONL resource import checkpoint
+
+- Commit: `ab5e728af`
+- Scope: add the scoped `put_resource` JSONL command and the interactive
+  `/resource-put <path>` admin-client wrapper for bounded text imports. The
+  response returns the created descriptor through the resource response path.
+- Focused protocol and client smokes: passed, including JSONL resource import,
+  listing, and read-back coverage.
+- Agent CTest: 19/19 passed with the repo-local `TEMP`/`TMP` build-test
+  directory and four-way build.
 
 ### 2026-07-26 — Lane-state ownership checkpoint
 
