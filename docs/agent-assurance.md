@@ -185,12 +185,13 @@ the complete agent CTest label passed 16/16 after the changes.
 ### Registered CTest inventory
 
 The current Cozo-enabled build registers 61 CTest cases in total. The agent
-verification slice is the `agent` label with 17 tests, all of which passed in
-the current run. The sandbox labels are separate backend slices:
+verification slice is the `agent` label with 17 tests; the latest run passed
+15 and reproduced two unrelated local failures. The sandbox labels are
+separate backend slices:
 
 | Label | Registered tests | Current result |
 |---|---:|---|
-| `agent` | 17 | 17 passed |
+| `agent` | 17 | 15 passed; 2 failed for the documented local baseline issues |
 | `sandbox-kubernetes` | 1 | 1 passed |
 | `sandbox-docker` | 1 | 1 skipped; backend unavailable |
 | Other repository tests | 43 | Not part of the agent assurance sweep |
@@ -316,6 +317,19 @@ previous result when the branch or test configuration changes.
 - The MCP agent-tools executable remained subject to a local Windows
   `LNK1104` output-lock failure during rebuild; it was not counted as a test
   pass or failure.
+
+### 2026-07-26 - Resource listing and fetch checkpoint
+
+- Commit: `10f0638fb`
+- Scope: `daemon-session /resources` now renders bounded descriptors for each
+  registered resource, while `/resource <uri>` remains the explicit scoped
+  text read/fetch operation. Workspace files and sandbox files are not treated
+  as downloadable resources unless a backend publishes resource references.
+- Focused daemon-client smoke: passed, including resource listing and fetch.
+- Agent CTest: 15/17 passed in the current build. `test-tool-adapters` still
+  exits with MSVC `0xc0000409`, and `test-agent-data-store-cozo` cannot open
+  its Cozo database (`code 14`); both failures reproduce independently of
+  this change.
 
 ### 2026-07-26 — Lane-state ownership checkpoint
 
