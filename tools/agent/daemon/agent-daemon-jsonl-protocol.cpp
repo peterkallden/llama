@@ -209,6 +209,9 @@ json make_agent_daemon_jsonl_turn_request(
         {"n_predict", request.n_predict},
         {"mode", request.mode},
     };
+    if (!request.resource_refs.empty()) {
+        turn_request["resource_refs"] = request.resource_refs;
+    }
     if (request.include_summary) {
         turn_request["include_summary"] = true;
     }

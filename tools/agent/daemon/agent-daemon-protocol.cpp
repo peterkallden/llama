@@ -245,6 +245,22 @@ bool parse_agent_daemon_turn_request(
     request.namespace_id = parsed.value("namespace_id", "default-namespace");
     request.project_id = parsed.value("project_id", "");
     request.turn_id = parsed.value("turn_id", "");
+    if (parsed.contains("resource_refs")) {
+        if (!parsed["resource_refs"].is_array()) {
+            error = "resource_refs must be an array";
+            return false;
+        }
+        for (const auto & value : parsed["resource_refs"]) {
+            if (!value.is_string() || value.get<std::string>().empty()) {
+                error = "resource_refs must contain non-empty strings";
+                return false;
+            }
+            common_agent_input_resource input_resource;
+            input_resource.resource.uri = value.get<std::string>();
+            input_resource.role = "reference";
+            request.input_resources.push_back(std::move(input_resource));
+        }
+    }
     if (parsed.contains("_caller_allow_policy_gated_writes") &&
             parsed["_caller_allow_policy_gated_writes"].is_boolean()) {
         request.allow_policy_gated_writes = parsed["_caller_allow_policy_gated_writes"].get<bool>();

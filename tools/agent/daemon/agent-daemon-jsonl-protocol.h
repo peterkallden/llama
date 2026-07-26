@@ -22,6 +22,7 @@ struct agent_daemon_jsonl_turn_request {
     std::string plan_scope;
     int n_predict = 0;
     std::string mode = "chat";
+    std::vector<std::string> resource_refs;
     bool include_summary = false;
     std::optional<size_t> turn_timeout_ms;
     std::optional<uint32_t> inference_step_timeout_ms;

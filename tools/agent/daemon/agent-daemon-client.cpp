@@ -664,7 +664,8 @@ bool validate_daemon_command_args(const char * argv0, const args & a, bool requi
 agent_daemon_jsonl_turn_request make_daemon_client_request(
         const args & a,
         const std::string & prompt,
-        const std::string & turn_id = {}) {
+        const std::string & turn_id = {},
+        const std::vector<std::string> & resource_refs = {}) {
     agent_daemon_jsonl_turn_request request;
     request.prompt = prompt;
     request.session_id = a.memory_session;
@@ -675,6 +676,7 @@ agent_daemon_jsonl_turn_request make_daemon_client_request(
     request.plan_scope = effective_plan_scope_for_daemon_request(a);
     request.n_predict = a.n_predict;
     request.mode = a.agent_runtime ? "agent" : "chat";
+    request.resource_refs = resource_refs;
     request.include_summary = a.include_summary;
     request.turn_timeout_ms = a.turn_timeout_ms;
     request.inference_step_timeout_ms = a.inference_step_timeout_ms;
@@ -683,6 +685,39 @@ agent_daemon_jsonl_turn_request make_daemon_client_request(
     request.mcp_request_timeout_ms = a.mcp_request_timeout_ms;
     request.mcp_shutdown_timeout_ms = a.mcp_shutdown_timeout_ms;
     return request;
+}
+
+bool import_daemon_cli_resources(
+        agent_daemon_client_session & session,
+        const args & a,
+        const std::string & scope,
+        std::vector<std::string> & resource_refs,
+        std::string & error) {
+    for (const auto & resource_path : a.resource_paths) {
+        const std::filesystem::path path(resource_path);
+        std::string text;
+        if (!read_daemon_resource_file(path, text, error)) {
+            return false;
+        }
+        agent_daemon_jsonl_resource_response response;
+        if (!session.put_resource({
+                    path.filename().string(),
+                    "Imported through daemon CLI --resource",
+                    daemon_resource_mime_type(path),
+                    std::move(text),
+                    scope,
+                    a.memory_namespace,
+                    a.memory_session,
+                    a.memory_project,
+                    a.memory_turn,
+                },
+                response,
+                error)) {
+            return false;
+        }
+        resource_refs.push_back(response.resource.uri);
+    }
+    return true;
 }
 
 } // namespace
@@ -699,8 +734,15 @@ int run_daemon_chat_command(const char * argv0, const args & a) {
         return 1;
     }
 
+    std::vector<std::string> resource_refs;
+    if (!import_daemon_cli_resources(session, a, "turn", resource_refs, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        session.shutdown(error);
+        return 1;
+    }
+
     agent_daemon_jsonl_turn_response response;
-    if (!session.run_turn(make_daemon_client_request(a, a.prompt), response, error)) {
+    if (!session.run_turn(make_daemon_client_request(a, a.prompt, {}, resource_refs), response, error)) {
         print_daemon_turn_failure(response, error);
         session.shutdown(error);
         return 1;
@@ -728,10 +770,17 @@ int run_daemon_session_command(const char * argv0, const args & a) {
         return 1;
     }
 
+    std::vector<std::string> resource_refs;
+    if (!import_daemon_cli_resources(session, a, "session", resource_refs, error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        session.shutdown(error);
+        return 1;
+    }
+
     int prompts_sent = 0;
     auto run_one = [&](const std::string & prompt, const std::string & turn_id = std::string()) -> bool {
         agent_daemon_jsonl_turn_response response;
-        if (!session.run_turn(make_daemon_client_request(a, prompt, turn_id), response, error)) {
+        if (!session.run_turn(make_daemon_client_request(a, prompt, turn_id, resource_refs), response, error)) {
             print_daemon_turn_failure(response, error);
             return false;
         }
@@ -908,6 +957,7 @@ int run_daemon_session_command(const char * argv0, const args & a) {
                 response.resource.mime_type.c_str(),
                 response.resource.size_bytes,
                 common_runtime_resource_scope_name(response.resource.scope));
+            resource_refs.push_back(response.resource.uri);
             continue;
         }
         if (split_daemon_session_command_argument(line, "/resource", resource_uri)) {

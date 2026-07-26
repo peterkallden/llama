@@ -115,16 +115,43 @@ int main() {
         const std::string command = request.value("command", "");
         json response;
         if (command == "run_turn") {
+            const auto resource_refs = request.value("resource_refs", json::array());
             response = {
                 {"ok", true},
                 {"event", "turn_completed"},
                 {"cancelled", false},
-                {"response", "stub turn response"},
+                {"response", "stub turn response resources=" + std::to_string(resource_refs.size())},
                 {"failure_class", "execution"},
                 {"response_generation_status", "completed"},
                 {"response_stop_reason", "eos"},
                 {"runtime_reused", true},
                 {"event_count", 1},
+            };
+        } else if (command == "put_resource") {
+            response = {
+                {"ok", true},
+                {"event", "resource_created"},
+                {"state", "ready"},
+                {"live", true},
+                {"ready", true},
+                {"worker_running", true},
+                {"accepting_commands", true},
+                {"shutdown_requested", false},
+                {"sessions", 1},
+                {"queued_commands", 0},
+                {"max_queue_size", 8},
+                {"queue_capacity_remaining", 8},
+                {"resource", {
+                    {"resource_id", "r-cli-input"},
+                    {"uri", "agent-resource://resource/r-cli-input"},
+                    {"name", request.value("name", "input.md")},
+                    {"description", request.value("description", "CLI input")},
+                    {"mime_type", request.value("mime_type", "text/markdown")},
+                    {"size_bytes", request.value("text", "").size()},
+                    {"scope", request.value("scope", "session")},
+                    {"metadata", json::object()},
+                }},
+                {"content", ""},
             };
         } else if (command == "status") {
             response = make_status_payload("status");

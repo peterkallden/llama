@@ -137,6 +137,7 @@ int main(int argc, char ** argv) {
 #endif
     const auto stdin_path = temp_root / "stdin.txt";
     const auto stdout_path = temp_root / "stdout.txt";
+    const auto resource_path = temp_root / "cli-input.md";
 
     std::filesystem::copy_file(
         fake_daemon_source,
@@ -146,6 +147,15 @@ int main(int argc, char ** argv) {
     if (ec) {
         std::fprintf(stderr, "failed to stage fake daemon executable: %s\n", ec.message().c_str());
         return 1;
+    }
+
+    {
+        std::ofstream resource_stream(resource_path, std::ios::binary);
+        resource_stream << "# CLI input\n";
+        if (!resource_stream.good()) {
+            std::fprintf(stderr, "failed to write CLI resource smoke input\n");
+            return 1;
+        }
     }
 
     {
@@ -177,6 +187,7 @@ int main(int argc, char ** argv) {
     options.agent_plan = "off";
     options.n_predict = 32;
     options.n_gpu_layers = 0;
+    options.resource_paths = {resource_path.string()};
 
     int rc = 1;
     {
@@ -199,7 +210,7 @@ int main(int argc, char ** argv) {
         (std::istreambuf_iterator<char>(stdout_stream)),
         std::istreambuf_iterator<char>());
 
-    if (!contains(output, "stub turn response")) {
+    if (!contains(output, "stub turn response resources=1")) {
         std::fprintf(stderr, "daemon client smoke missing turn response: %s\n", output.c_str());
         return 1;
     }

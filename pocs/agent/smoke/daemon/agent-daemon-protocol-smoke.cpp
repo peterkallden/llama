@@ -210,6 +210,7 @@ int main() {
                 {"include_summary", true},
                 {"memory_scope", "project"},
                 {"plan_scope", "project"},
+                {"resource_refs", json::array({"agent-resource://resource/r-1"})},
                 {"n_predict", 42},
                 {"turn_timeout_ms", 12000},
                 {"inference_step_timeout_ms", 777},
@@ -232,6 +233,8 @@ int main() {
             turn_command.turn->request.turn.mode != common_agent_runtime_host_mode::agent ||
             turn_command.turn->request.turn.memory_scope != common_memory_scope::project ||
             turn_command.turn->request.turn.plan_scope != common_plan_scope::project ||
+            turn_command.turn->request.turn.input_resources.size() != 1 ||
+            turn_command.turn->request.turn.input_resources[0].resource.uri != "agent-resource://resource/r-1" ||
             turn_command.turn->request.turn.n_predict != 42 ||
             turn_command.turn->request.turn.execution_control.timeout_policy.turn_timeout_ms != 12000 ||
             turn_command.turn->request.turn.execution_control.timeout_policy.inference_step_timeout_ms != 777 ||
