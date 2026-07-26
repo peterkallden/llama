@@ -8,15 +8,20 @@
 #include "agent/deliberation-policy.h"
 
 #include <ctime>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace {
 
 constexpr size_t k_max_cli_text_resource_bytes = 1024 * 1024;
 
 std::string cli_resource_mime_type(const std::filesystem::path & path) {
-    const auto extension = path.extension().string();
+    auto extension = path.extension().string();
+    for (auto & character : extension) {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
     if (extension == ".md" || extension == ".markdown") return "text/markdown";
     if (extension == ".json") return "application/json";
     if (extension == ".csv") return "text/csv";
@@ -144,7 +149,13 @@ bool import_agent_cli_text_resources(
         agent_resource_store & resource_store,
         std::vector<common_agent_input_resource> & out,
         std::string & error) {
-    out.clear();
+    struct prepared_resource {
+        std::filesystem::path path;
+        std::string text;
+        std::string mime_type;
+    };
+    std::vector<prepared_resource> prepared;
+    prepared.reserve(options.resource_paths.size());
     for (const auto & resource_path : options.resource_paths) {
         const std::filesystem::path path(resource_path);
         std::error_code filesystem_error;
@@ -173,11 +184,16 @@ bool import_agent_cli_text_resources(
             return false;
         }
 
+        prepared.push_back({path, std::move(text), cli_resource_mime_type(path)});
+    }
+
+    out.clear();
+    for (auto & item : prepared) {
         agent_resource_put_request request;
-        request.name = path.filename().string();
+        request.name = item.path.filename().string();
         request.description = "User-supplied text resource: " + request.name;
-        request.mime_type = cli_resource_mime_type(path);
-        request.text = std::move(text);
+        request.mime_type = std::move(item.mime_type);
+        request.text = std::move(item.text);
         request.scope = common_runtime_resource_scope::turn;
         request.namespace_id = scope.namespace_id;
         request.session_id = scope.session_id;
@@ -190,13 +206,13 @@ bool import_agent_cli_text_resources(
 
         agent_resource_descriptor descriptor;
         if (!resource_store.put_text(request, descriptor, error)) {
-            error = "failed to import --resource file " + resource_path + ": " + error;
+            error = "failed to import --resource file " + item.path.string() + ": " + error;
             return false;
         }
         common_agent_input_resource input_resource;
         input_resource.resource = descriptor;
         input_resource.role = "reference";
-        input_resource.required = true;
+        input_resource.required = false;
         out.push_back(std::move(input_resource));
     }
     error.clear();

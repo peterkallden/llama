@@ -11,6 +11,7 @@
 #include <sheredom/subprocess.h>
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -172,7 +173,10 @@ bool read_daemon_resource_file(
 }
 
 std::string daemon_resource_mime_type(const std::filesystem::path & path) {
-    const auto extension = path.extension().string();
+    auto extension = path.extension().string();
+    for (auto & character : extension) {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
     if (extension == ".md" || extension == ".markdown") return "text/markdown";
     if (extension == ".json") return "application/json";
     if (extension == ".csv") return "text/csv";
@@ -693,18 +697,28 @@ bool import_daemon_cli_resources(
         const std::string & scope,
         std::vector<std::string> & resource_refs,
         std::string & error) {
+    struct prepared_resource {
+        std::filesystem::path path;
+        std::string text;
+        std::string mime_type;
+    };
+    std::vector<prepared_resource> prepared;
+    prepared.reserve(a.resource_paths.size());
     for (const auto & resource_path : a.resource_paths) {
         const std::filesystem::path path(resource_path);
         std::string text;
         if (!read_daemon_resource_file(path, text, error)) {
             return false;
         }
+        prepared.push_back({path, std::move(text), daemon_resource_mime_type(path)});
+    }
+    for (auto & item : prepared) {
         agent_daemon_jsonl_resource_response response;
         if (!session.put_resource({
-                    path.filename().string(),
+                    item.path.filename().string(),
                     "Imported through daemon CLI --resource",
-                    daemon_resource_mime_type(path),
-                    std::move(text),
+                    std::move(item.mime_type),
+                    std::move(item.text),
                     scope,
                     a.memory_namespace,
                     a.memory_session,

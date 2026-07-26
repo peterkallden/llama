@@ -55,9 +55,10 @@ bool common_agent_research_create_workspace(
         source.authority = "user-supplied";
         source.kind = common_agent_research_source_kind::user_supplied;
         source.resource_ref = input.resource;
-        source.content_hash = input.resource.uri;
+        // A URI identifies the stored object, but is not a content hash.
+        source.content_hash.clear();
         source.quality_score = 1.0;
-        source.primary_source = input.required || input.role == "primary_source";
+        source.primary_source = input.role == "primary_source";
         source.role = input.role;
         source.required = input.required;
         if (!common_agent_research_add_source(workspace, std::move(source), error)) return false;

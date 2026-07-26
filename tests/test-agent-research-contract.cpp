@@ -23,7 +23,7 @@ int main() {
     input_resource.resource.uri = "agent-resource://factory-turn/upload-1";
     input_resource.resource.name = "notes.txt";
     input_resource.resource.mime_type = "text/plain";
-    input_resource.role = "primary_source";
+    input_resource.role = "reference";
     input_resource.required = true;
     factory_request.input_resources.push_back(input_resource);
     common_memory_hit memory_hit;
@@ -44,8 +44,10 @@ int main() {
     assert(factory_workspace.sources.front().kind == common_agent_research_source_kind::user_supplied);
     assert(factory_workspace.sources.front().resource_ref &&
         factory_workspace.sources.front().resource_ref->uri == input_resource.resource.uri);
-    assert(factory_workspace.sources.front().role == "primary_source" &&
-        factory_workspace.sources.front().required);
+    assert(factory_workspace.sources.front().role == "reference" &&
+        factory_workspace.sources.front().required &&
+        !factory_workspace.sources.front().primary_source &&
+        factory_workspace.sources.front().content_hash.empty());
     assert(factory_workspace.sources.back().kind == common_agent_research_source_kind::memory);
     assert(factory_workspace.sources.back().memory_id == memory_hit.memory.id);
     const auto input_context = common_agent_render_input_resource_context(factory_request.input_resources);

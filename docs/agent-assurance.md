@@ -351,6 +351,18 @@ previous result when the branch or test configuration changes.
 - Focused daemon protocol and client CTests: 2/2 passed, including CLI resource
   forwarding and turn-request resource references.
 
+### 2026-07-26 - Text-resource import semantics checkpoint
+
+- Scope: validated all repeated CLI resource paths before any store write,
+  normalized extension-based media types case-insensitively, kept ordinary
+  references optional, and separated requiredness from explicit primary-source
+  authority. Research sources no longer report a resource URI as a content hash.
+- Reflective, deliberate, and research prompt paths already render the same
+  bounded host-approved input-resource catalog; no mode-specific transport was
+  added.
+- Binary resources, UTF-8 validation, content digests, and document extraction
+  remain backlog items for the text-only resource slice.
+
 ### 2026-07-26 — Lane-state ownership checkpoint
 
 - Commit: `94cb3169d`

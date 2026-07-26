@@ -128,7 +128,7 @@ int main(int argc, char ** argv) {
     const auto resource_one_path = std::filesystem::current_path() /
         "llama-agent-cli-run-mcp-resource-one.md";
     const auto resource_two_path = std::filesystem::current_path() /
-        "llama-agent-cli-run-mcp-resource-two.json";
+        "llama-agent-cli-run-mcp-resource-two.JSON";
     bool resource_files_written = false;
     {
         std::ofstream resource_one(resource_one_path, std::ios::binary);
@@ -155,6 +155,9 @@ int main(int argc, char ** argv) {
             imported_resources.size() != 2 ||
             imported_resources[0].resource.mime_type != "text/markdown" ||
             imported_resources[1].resource.mime_type != "application/json" ||
+            imported_resources[0].required ||
+            imported_resources[0].role != "reference" ||
+            imported_resources[1].required ||
             imported_resources[0].resource.uri.empty() ||
             imported_resources[1].resource.uri.empty()) {
         std::filesystem::remove(resource_one_path);
