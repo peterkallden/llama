@@ -1,7 +1,7 @@
 #include "memory-cli-memory.h"
 
 #include "agent/agent-scope.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "common.h"
 #include "llama.h"
 #include "memory/memory-context.h"

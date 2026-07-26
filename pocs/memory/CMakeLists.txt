@@ -50,7 +50,7 @@ endif()
 set(TARGET llama-memory-poc)
 add_executable(${TARGET}
     memory.cpp
-    ../common/cli-config.cpp
+    ../../tools/agent/cli/agent-cli-options.cpp
     memory-cli-chat.cpp
     memory-cli-memory.cpp
     ../../tools/agent/cli/agent-cli-command.cpp

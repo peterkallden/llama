@@ -51,7 +51,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/runtime/agent-server-inference.cpp
     ../../tools/agent/runtime/agent-runtime-assembly.cpp
     ../../tools/agent/cli/agent-cli-runtime.cpp
-    ../common/cli-config.cpp
+    ../../tools/agent/cli/agent-cli-options.cpp
     ../memory/memory-cli-chat.cpp
     ../memory/memory-cli-memory.cpp
     ../../tools/agent/cli/agent-cli-selection.cpp

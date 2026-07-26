@@ -3,7 +3,7 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"
-#include "common/cli-config.h"
+#include "tools/agent/cli/agent-cli-options.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 

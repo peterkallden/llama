@@ -5,7 +5,7 @@
 #include "../tooling/agent-tool-provider.h"
 
 #include "agent/agent-package-json.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "plan/plan-json.h"
 
 #include <algorithm>

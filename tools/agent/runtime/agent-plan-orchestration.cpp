@@ -2,7 +2,7 @@
 
 #include "../cli/agent-cli-selection.h"
 #include "../tooling/agent-tool-provider.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/blueprint-selector.h"
 

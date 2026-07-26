@@ -14,7 +14,7 @@
 #include "tools/agent/runtime/agent-runtime-tooling.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "chat-peg-parser.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 
 #include <cassert>
 #include <deque>

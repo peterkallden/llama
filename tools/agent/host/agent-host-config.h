@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common/cli-config.h"
+#include "tools/agent/cli/agent-cli-options.h"
 #include "../host/agent-host-mcp-provider-config.h"
 #include "agent/tool-catalog.h"
 #include "agent/sandbox-host-config.h"

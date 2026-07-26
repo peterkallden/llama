@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent/agent-scope.h"
-#include "common/cli-config.h"
+#include "tools/agent/cli/agent-cli-options.h"
 
 inline common_plan_scope common_cli_matching_plan_scope(common_memory_scope scope) {
     switch (scope) {

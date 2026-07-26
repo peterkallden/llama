@@ -8,8 +8,8 @@
 #include "../host/agent-host-config.h"
 #include "../resource/agent-resource-store.h"
 #include "../tooling/agent-tool-provider.h"
-#include "common/cli-config.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-options.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "memory/memory-in-memory.h"
 #ifdef LLAMA_MEMORY_USE_COZO
 #include "memory/cozo/memory-cozo.h"

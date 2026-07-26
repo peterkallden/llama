@@ -11,7 +11,7 @@
 #include "../diagnostics/agent-clangd-provider.h"
 #include "../data/agent-data-store-factory.h"
 #include "../tooling/agent-sandbox-helper.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 
 #include <algorithm>
 #include <cstdio>

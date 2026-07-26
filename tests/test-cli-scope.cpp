@@ -1,4 +1,4 @@
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 
 #include <cassert>
 

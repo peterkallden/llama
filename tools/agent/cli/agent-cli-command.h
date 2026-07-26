@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/cli-config.h"
+#include "tools/agent/cli/agent-cli-options.h"
 #include "memory/memory-store.h"
 
 int run_agent_command_main(const char * argv0, int argc, char ** argv);

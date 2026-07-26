@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../common/cli-config.h"
+#include "tools/agent/cli/agent-cli-options.h"
 
 #include "../runtime/agent-plan-orchestration.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
 

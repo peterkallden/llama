@@ -1,4 +1,4 @@
-#include "common/cli-config.h"
+#include "agent-cli-options.h"
 
 #include "memory/memory-in-memory.h"
 

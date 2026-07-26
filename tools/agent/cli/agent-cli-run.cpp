@@ -25,7 +25,7 @@
 
 #include "chat.h"
 #include "common.h"
-#include "common/cli-scope.h"
+#include "tools/agent/cli/agent-cli-scope.h"
 #include "llama.h"
 #include "memory/memory-context.h"
 #include "memory/memory-policy.h"
