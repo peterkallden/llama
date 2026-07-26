@@ -139,7 +139,7 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `722b3f645` |
+| Commit | `94cb3169d` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
@@ -150,7 +150,7 @@ passes.
 
 ### Async lifecycle hardening
 
-The current checkpoint (`722b3f645`) closes the async lifecycle findings and
+The async lifecycle checkpoint (`722b3f645`) closes the async lifecycle findings and
 the later poll/cancel terminal-state race:
 
 - After a successful inference submit, the task owns the inference-capacity
@@ -259,7 +259,7 @@ date, and test counts.
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
 - Date: 2026-07-26
-- Commit: `902057b35`
+- Commit: `94cb3169d`
 - Reviewer: pending
 - Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
   passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
@@ -297,6 +297,14 @@ previous result when the branch or test configuration changes.
 - The MCP agent-tools executable remained subject to a local Windows
   `LNK1104` output-lock failure during rebuild; it was not counted as a test
   pass or failure.
+
+### 2026-07-26 — Lane-state ownership checkpoint
+
+- Commit: `94cb3169d`
+- Scope: pending-operation helper snapshots and mutates lane state under the
+  lane mutex while keeping callbacks and host execution outside the lock.
+- Focused smokes: operation-manager and session-manager runtime smokes passed.
+- Agent CTest: 16/16 passed with Cozo enabled.
 
 ### 2026-07-21 — Windows Debug assurance run
 

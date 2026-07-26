@@ -2114,6 +2114,16 @@ The ownership rule remains:
 > One state object has one owner and one source of truth. Other layers keep IDs,
 > references, or bounded projections.
 
+Lane state follows the same ownership rule. The lane turn driver is the sole
+writer of `active_turn` and the lane-owned `pending_operation` while a turn is
+being drained. The lane mutex protects snapshots, cancellation bookkeeping,
+transition handoffs and the helper's state mutations. Pending-operation
+callbacks and host execution run outside that mutex. Session reset and close
+first mark the lane transition, wait for the current lane message to finish,
+and only then clear or erase lane state. This keeps external lifecycle calls
+from racing a driver-owned continuation while avoiding a mutex held across
+external work.
+
 ### Event taxonomy and overflow metadata
 
 Daemon events retain their stable `event_type` names, such as
