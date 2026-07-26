@@ -139,12 +139,12 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `e57f5839d` |
+| Commit | `88c6e4bb9` |
 | Date | `2026-07-26` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
 | Cozo | `LLAMA_MEMORY_COZO=ON`, `LLAMA_PLAN_COZO=ON`, configured Cozo 0.7.6 MSVC release library and DLL |
-| CTest | Agent label 16/16 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
+| CTest | Agent label 17/17 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
 | Complete model-free smokes | 28/28 passed; Docker backend smoke skipped (exit 77); resident model-backed smoke not run (requires `--model`) |
 | Decision | Conditional assurance; model-backed, Linux, Docker backend and long-running gates remain open |
 
@@ -177,27 +177,27 @@ the complete agent CTest label passed 16/16 after the changes.
 |---|---:|---:|---:|---:|---|
 | Agent contracts/runtime (`test-agent-*`) | 8 | 0 | 0 | 8 | Passed |
 | Tooling (`test-tool-*`, clangd, Cozo) | 5 | 0 | 0 | 5 | Passed |
-| Agent runtime CTest smokes | 3 | 0 | 0 | 3 | Passed |
-| **Agent CTest total** | **16** | **0** | **0** | **16** | **Passed** |
+| Agent runtime CTest smokes | 4 | 0 | 0 | 4 | Passed |
+| **Agent CTest total** | **17** | **0** | **0** | **17** | **Passed** |
 | Sandbox Kubernetes (`sandbox-kubernetes`) | 1 | 0 | 0 | 1 | Passed |
 | Sandbox Docker (`sandbox-docker`) | 0 | 0 | 1 | 1 | Skipped; backend unavailable |
 
 ### Registered CTest inventory
 
-The current Cozo-enabled build registers 60 CTest cases in total. The agent
-verification slice is the `agent` label with 16 tests, all of which passed in
+The current Cozo-enabled build registers 61 CTest cases in total. The agent
+verification slice is the `agent` label with 17 tests, all of which passed in
 the current run. The sandbox labels are separate backend slices:
 
 | Label | Registered tests | Current result |
 |---|---:|---|
-| `agent` | 16 | 16 passed |
+| `agent` | 17 | 17 passed |
 | `sandbox-kubernetes` | 1 | 1 passed |
 | `sandbox-docker` | 1 | 1 skipped; backend unavailable |
-| Other repository tests | 42 | Not part of the agent assurance sweep |
+| Other repository tests | 43 | Not part of the agent assurance sweep |
 
-The 60-test inventory is configuration-dependent. It includes general
+The 61-test inventory is configuration-dependent. It includes general
 repository tests whose executables were not built or run in this focused agent
-verification, so the total inventory must not be reported as a 60-test agent
+verification, so the total inventory must not be reported as a 61-test agent
 pass.
 
 Commands and full output should be retained in the task handoff or CI log;
@@ -259,9 +259,9 @@ date, and test counts.
 
 - Decision: Conditional beta assurance for Windows/Debug model-free scope
 - Date: 2026-07-26
-- Commit: `e57f5839d`
+- Commit: `88c6e4bb9`
 - Reviewer: pending
-- Notes: The complete model-free agent CTest label passed 16/16; Kubernetes
+- Notes: The complete model-free agent CTest label passed 17/17; Kubernetes
   passed 1/1 and Docker was skipped. Direct model-free smokes passed 28/30,
   with one Docker backend skip and the resident model-backed smoke not run.
   Linux, model-backed Qwen/Nomic execution, semantic indexing, checkpointing
@@ -304,6 +304,13 @@ previous result when the branch or test configuration changes.
 - Focused smoke: CLI/MCP smoke imported two text resources and verified their
   media types and resource references.
 - Agent CTest: 16/16 passed with Cozo enabled.
+
+### 2026-07-26 - CLI resource CTest checkpoint
+
+- Commit: `88c6e4bb9`
+- Scope: register the CLI/MCP smoke, including multi-file text-resource import,
+  as an `agent`-labeled CTest instead of relying on manual smoke execution.
+- Agent CTest: 17/17 passed with Cozo enabled.
 - Deferred backlog: binary resources, PDF/document extraction, and byte-oriented
   resource transport remain out of scope for this text-only slice.
 - The MCP agent-tools executable remained subject to a local Windows

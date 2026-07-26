@@ -2040,13 +2040,13 @@ and the sandbox backend tests under their own backend labels:
 
 | Label | Scope | Current Cozo build |
 |---|---|---:|
-| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 16 |
+| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 17 |
 | `sandbox-docker` | Docker backend smoke; uses CTest skip code 77 when Docker is unavailable | 1 |
 | `sandbox-kubernetes` | Kubernetes backend smoke | 1 |
 
-The current build registers 60 CTest cases in total. The three labels above
-account for 18 label memberships; the two sandbox labels are separate from the
-authoritative `agent` test slice and are therefore not included in its 16-test
+The current build registers 61 CTest cases in total. The three labels above
+account for 19 label memberships; the two sandbox labels are separate from the
+authoritative `agent` test slice and are therefore not included in its 17-test
 count. Other repository tests are registered without an agent label in this
 build. Counts are configuration-dependent and should be refreshed with
 `ctest --test-dir BUILD_DIR -N` rather than treated as a permanent contract.
