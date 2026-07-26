@@ -1,5 +1,6 @@
 #include "tools/agent/runtime/agent-runtime-session-manager.h"
 #include "tools/agent/runtime/agent-inference-capacity-gate.h"
+#include "tools/agent/runtime/agent-runtime-turn-driver.h"
 
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
@@ -14,6 +15,59 @@
 #include <vector>
 
 namespace {
+
+class lease_failure_task final : public common_agent_runtime_inference_task {
+public:
+    lease_failure_task(
+            std::shared_ptr<common_agent_inference_capacity_gate> gate,
+            std::string lease_id,
+            std::shared_ptr<int> cancel_calls)
+        : gate(std::move(gate))
+        , lease_id(std::move(lease_id))
+        , cancel_calls(std::move(cancel_calls)) {}
+
+    bool poll(
+            bool & ready,
+            common_agent_runtime_session_host_turn_result &, std::string & error) override {
+        ready = false;
+        error.clear();
+        return true;
+    }
+
+    bool cancel(std::string & error) override {
+        ++*cancel_calls;
+        gate->release(lease_id);
+        error.clear();
+        return true;
+    }
+
+private:
+    std::shared_ptr<common_agent_inference_capacity_gate> gate;
+    std::string lease_id;
+    std::shared_ptr<int> cancel_calls;
+};
+
+class lease_failure_executor final : public common_agent_runtime_inference_executor {
+public:
+    lease_failure_executor(
+            std::shared_ptr<common_agent_inference_capacity_gate> gate,
+            std::shared_ptr<int> cancel_calls)
+        : gate(std::move(gate)), cancel_calls(std::move(cancel_calls)) {}
+
+    std::shared_ptr<common_agent_runtime_inference_task> submit(
+            common_agent_runtime_session_host *,
+            common_agent_runtime_session_host_turn_request,
+            const std::shared_ptr<common_agent_inference_capacity_gate> &,
+            std::string lease_id,
+            std::string & error) override {
+        error.clear();
+        return std::make_shared<lease_failure_task>(gate, std::move(lease_id), cancel_calls);
+    }
+
+private:
+    std::shared_ptr<common_agent_inference_capacity_gate> gate;
+    std::shared_ptr<int> cancel_calls;
+};
 
 bool contains_event_type(
         const std::vector<common_agent_daemon_event> & events,
@@ -122,6 +176,59 @@ int main() {
         return 1;
     }
     std::printf("inference_admission=priority_fifo_cancel\n");
+
+    auto lease_failure_gate = std::make_shared<common_agent_inference_capacity_gate>(1);
+    auto lease_failure_cancel_calls = std::make_shared<int>(0);
+    common_runtime_operation_manager lease_failure_operations;
+    common_runtime_operation duplicate_inference;
+    duplicate_inference.operation_id = "inference:lease-failure-request";
+    if (!lease_failure_operations.begin(
+            duplicate_inference,
+            [](bool & ready, std::string &) {
+                ready = false;
+                return true;
+            },
+            {},
+            admission_error)) {
+        std::fprintf(stderr, "lease failure duplicate operation setup failed\n");
+        return 1;
+    }
+    std::optional<common_agent_runtime_session_manager_pending_operation> lease_failure_pending;
+    auto lease_failure_active = std::make_optional(
+        make_common_agent_runtime_turn_execution(
+            "lease-failure-request",
+            "lease-failure-turn",
+            common_agent_runtime_host_mode::chat,
+            false,
+            std::make_shared<common_agent_runtime_cancellation_state>()));
+    lease_failure_active->phase = common_agent_runtime_turn_phase::awaiting_inference;
+    common_agent_runtime_session_host_turn_request lease_failure_request;
+    lease_failure_request.turn_id = "lease-failure-turn";
+    lease_failure_request.execution_control = make_common_agent_runtime_execution_control({});
+    common_agent_runtime_session_host_turn_result lease_failure_result;
+    std::string lease_failure_error;
+    std::mutex lease_failure_mutex;
+    const auto lease_failure_disposition = advance_common_agent_runtime_turn(
+        nullptr,
+        lease_failure_pending,
+        lease_failure_active,
+        lease_failure_mutex,
+        lease_failure_operations,
+        {},
+        lease_failure_gate,
+        std::make_shared<lease_failure_executor>(lease_failure_gate, lease_failure_cancel_calls),
+        "lease-failure-request",
+        lease_failure_request,
+        lease_failure_result,
+        lease_failure_error,
+        common_agent_event_emitter());
+    if (lease_failure_disposition != common_agent_runtime_turn_disposition::failed ||
+            *lease_failure_cancel_calls != 1 ||
+            lease_failure_gate->active() != 0) {
+        std::fprintf(stderr, "inference lease registration failure did not cancel its task exactly once\n");
+        return 1;
+    }
+    std::printf("inference_registration_failure_cancel=exactly_once\n");
 
     common_memory_in_memory_store memory_store;
     common_plan_in_memory_store plan_store;

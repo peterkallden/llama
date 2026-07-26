@@ -115,6 +115,8 @@ public:
             std::string & error) {
         ready = false;
         poll_callback callback;
+        cancel_callback timeout_callback;
+        bool timed_out = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = operations_.find(operation_id);
@@ -131,9 +133,20 @@ public:
                 it->second.status.state = common_runtime_operation_state::timed_out;
                 it->second.status.error = "operation deadline exceeded";
                 error = it->second.status.error;
-                return false;
+                timeout_callback = it->second.cancel;
+                timed_out = true;
             }
-            callback = it->second.poll;
+            if (!timed_out) {
+                callback = it->second.poll;
+            }
+        }
+
+        if (timed_out) {
+            if (timeout_callback) {
+                std::string ignored_error;
+                timeout_callback(ignored_error);
+            }
+            return false;
         }
 
         if (!callback(ready, error)) {
@@ -216,17 +229,19 @@ public:
     }
 
     size_t cleanup_terminal() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        size_t removed = 0;
-        for (auto it = operations_.begin(); it != operations_.end();) {
-            if (it->second.status.state != common_runtime_operation_state::running) {
-                it = operations_.erase(it);
-                ++removed;
-            } else {
-                ++it;
+        std::vector<entry> removed;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto it = operations_.begin(); it != operations_.end();) {
+                if (it->second.status.state != common_runtime_operation_state::running) {
+                    removed.push_back(std::move(it->second));
+                    it = operations_.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
-        return removed;
+        return removed.size();
     }
 
 private:

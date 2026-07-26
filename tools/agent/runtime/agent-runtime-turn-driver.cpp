@@ -392,7 +392,8 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                         pending.take_poll_callback(),
                         pending.take_cancel_callback(),
                         operation_error)) {
-                    if (inference_gate) inference_gate->release(lease_id);
+                    std::string ignored_cancel_error;
+                    inference_task->cancel(ignored_cancel_error);
                     std::lock_guard<std::mutex> lock(lane_mutex);
                     if (active_turn.has_value()) active_turn->inference_capacity_acquired = false;
                     error = operation_error;

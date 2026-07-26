@@ -2,7 +2,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <future>
+#include <memory>
 #include <string>
+#include <thread>
 
 int main() {
     common_runtime_operation_manager manager;
@@ -50,15 +53,24 @@ int main() {
     common_runtime_operation expiring;
     expiring.operation_id = "op-expire";
     expiring.deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
-    if (!manager.begin(expiring, [](bool &, std::string &) { return true; }, {}, error)) {
+    bool timeout_cancel_called = false;
+    if (!manager.begin(
+            expiring,
+            [](bool &, std::string &) { return true; },
+            [&timeout_cancel_called](std::string &) {
+                timeout_cancel_called = true;
+                return true;
+            },
+            error)) {
         std::fprintf(stderr, "expiring begin failed: %s\n", error.c_str());
         return 1;
     }
     if (manager.poll("op-expire", ready, error) ||
             error != "operation deadline exceeded" ||
+            !timeout_cancel_called ||
             !manager.describe("op-expire", status) ||
             status.state != common_runtime_operation_state::timed_out) {
-        std::fprintf(stderr, "deadline transition failed: %s\n", error.c_str());
+        std::fprintf(stderr, "deadline transition/cancellation failed: %s\n", error.c_str());
         return 1;
     }
 
@@ -77,7 +89,72 @@ int main() {
             !cancel_called ||
             !manager.describe("op-cancel", status) ||
             status.state != common_runtime_operation_state::cancelled) {
-        std::fprintf(stderr, "cancellation transition failed: %s\n", error.c_str());
+            std::fprintf(stderr, "cancellation transition failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    struct blocking_cleanup_probe {
+        std::shared_ptr<std::promise<void>> destruction_started;
+
+        ~blocking_cleanup_probe() {
+            destruction_started->set_value();
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    };
+
+    auto destruction_started = std::make_shared<std::promise<void>>();
+    auto destruction_started_future = destruction_started->get_future();
+    auto probe = std::make_shared<blocking_cleanup_probe>(
+        blocking_cleanup_probe{destruction_started});
+    common_runtime_operation cleanup_operation;
+    cleanup_operation.operation_id = "op-cleanup";
+    if (!manager.begin(
+            cleanup_operation,
+            [probe](bool & ready, std::string &) {
+                ready = true;
+                return true;
+            },
+            {},
+            error) || !manager.poll("op-cleanup", ready, error)) {
+        std::fprintf(stderr, "cleanup operation setup failed: %s\n", error.c_str());
+        return 1;
+    }
+    probe.reset();
+
+    common_runtime_operation live_operation;
+    live_operation.operation_id = "op-live";
+    if (!manager.begin(
+            live_operation,
+            [](bool & ready, std::string &) {
+                ready = false;
+                return true;
+            },
+            {},
+            error)) {
+        std::fprintf(stderr, "live operation setup failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    auto cleanup_future = std::async(std::launch::async, [&manager]() {
+        return manager.cleanup_terminal();
+    });
+    if (destruction_started_future.wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
+        cleanup_future.wait();
+        std::fprintf(stderr, "terminal cleanup did not begin destroying its detached entry\n");
+        return 1;
+    }
+    common_runtime_operation_status live_status;
+    auto describe_future = std::async(std::launch::async, [&manager, &live_status]() {
+        return manager.describe("op-live", live_status);
+    });
+    if (describe_future.wait_for(std::chrono::milliseconds(250)) != std::future_status::ready ||
+            !describe_future.get()) {
+        cleanup_future.wait();
+        std::fprintf(stderr, "terminal cleanup held the operation manager mutex\n");
+        return 1;
+    }
+    if (cleanup_future.get() != 1) {
+        std::fprintf(stderr, "detached terminal cleanup removed an unexpected count\n");
         return 1;
     }
 
