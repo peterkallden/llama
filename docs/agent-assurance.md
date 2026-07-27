@@ -486,3 +486,21 @@ previous result when the branch or test configuration changes.
   not counted as passed in this checkpoint.
 - Compile database inspection shows each extracted MCP server implementation
   source compiling once per configuration.
+
+### 2026-07-27 - Daemon protocol and Cozo storage library checkpoint
+
+- Scope: extracted the reusable daemon JSONL protocol implementation into
+  `llama-agent-daemon-protocol` and the Cozo data-store family into
+  `llama-agent-storage-cozo`. The daemon protocol library is static so the
+  temporary fake-daemon client smoke can stage its executable without DLL
+  deployment. Cozo storage remains conditional on `LLAMA_MEMORY_COZO`.
+- Focused Windows/MSVC Debug build: 91/91 steps passed with four build
+  workers. This included the runtime-support library, daemon JSONL protocol
+  smokes, daemon client fixture, Cozo data-store CTest, and Cozo seed tool.
+- Agent CTest: first run exposed a stale daemon-client smoke binary because it
+  was not part of the focused target build. After rebuilding that consumer,
+  the daemon-client CTest passed; the complete 19-test agent label was then
+  rerun and passed.
+- Compile database inspection shows the extracted daemon JSONL and Cozo data
+  sources compile once per configuration. The test and seed consumers now
+  link the Cozo library instead of compiling a second copy of its sources.

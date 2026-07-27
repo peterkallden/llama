@@ -7,7 +7,6 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-client.cpp
-    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
@@ -52,6 +51,12 @@ if (LLAMA_AGENT_RUNTIME)
     # Keep the source-list fallback above for memory-only builds, where the
     # agent runtime library is intentionally not available.
     set(AGENT_MEMORY_RUNTIME_SOURCES)
+endif()
+
+if (NOT LLAMA_AGENT_RUNTIME)
+    list(APPEND AGENT_MEMORY_RUNTIME_SOURCES
+        ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
+    )
 endif()
 
 set(TARGET llama-memory-poc)

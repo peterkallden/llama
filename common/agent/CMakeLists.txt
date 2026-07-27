@@ -15,3 +15,31 @@ if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     set_target_properties(${TARGET} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
+
+if (LLAMA_MEMORY_COZO)
+    add_library(llama-agent-storage-cozo
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-schema.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-query.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-aggregate.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-join.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-reader.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-encoding.cpp
+    )
+    target_include_directories(llama-agent-storage-cozo
+        PUBLIC ${PROJECT_SOURCE_DIR}/tools/agent/data
+        PRIVATE ${COZO_INCLUDE_DIR}
+    )
+    target_compile_features(llama-agent-storage-cozo PUBLIC cxx_std_17)
+    target_link_libraries(llama-agent-storage-cozo
+        PUBLIC llama-agent-poc
+        PRIVATE Threads::Threads
+    )
+    llama_link_cozo(llama-agent-storage-cozo)
+    if (BUILD_SHARED_LIBS)
+        set_target_properties(llama-agent-storage-cozo PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            WINDOWS_EXPORT_ALL_SYMBOLS ON
+        )
+    endif()
+endif()

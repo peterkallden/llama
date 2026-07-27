@@ -1897,6 +1897,20 @@ services, MCP servers, and optional Cozo storage may be split into narrower
 libraries when their real dependency boundaries have been measured. Do not
 create a new library solely to mirror a directory name.
 
+Two narrow extractions now follow that rule. `llama-agent-daemon-protocol`
+owns the reusable JSONL serialization/parsing implementation used by the
+daemon protocol smokes and fake-daemon fixture. It is intentionally static so
+that a subprocess fixture can be copied to a temporary directory without
+requiring a separate DLL staging step. `llama-agent-storage-cozo` owns the
+Cozo data-store implementation and is created only when `LLAMA_MEMORY_COZO`
+is enabled. The runtime-support library links both narrow libraries where
+needed; tests and seed tools link the Cozo library directly rather than
+compiling the same data sources again.
+
+Daemon service and host-configuration sources remain in the runtime-support
+library. The narrow libraries therefore reduce repeated compilation without
+moving orchestration or ownership into a lower-level utility target.
+
 Agent support libraries follow the repository's `BUILD_SHARED_LIBS` policy. They
 use target-scoped include directories, compile definitions, and link libraries;
 they do not rely on smoke targets carrying the implementation source list. The

@@ -10,7 +10,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
     ../../tools/agent/daemon/agent-daemon-client.cpp
-    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
@@ -62,13 +61,6 @@ link_libraries(cpp-httplib)
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
         ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
-        ../../tools/agent/data/agent-data-store-cozo.cpp
-        ../../tools/agent/data/agent-data-store-cozo-schema.cpp
-        ../../tools/agent/data/agent-data-store-cozo-query.cpp
-        ../../tools/agent/data/agent-data-store-cozo-aggregate.cpp
-        ../../tools/agent/data/agent-data-store-cozo-join.cpp
-        ../../tools/agent/data/agent-data-store-cozo-reader.cpp
-        ../../tools/agent/data/agent-data-store-cozo-encoding.cpp
     )
 endif()
 
@@ -110,6 +102,7 @@ if (WIN32)
 endif()
 if (LLAMA_MEMORY_COZO)
     target_include_directories(llama-agent-runtime-support PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-storage-cozo)
     llama_link_cozo(llama-agent-runtime-support)
 endif()
 if (BUILD_SHARED_LIBS)
@@ -123,6 +116,26 @@ endif()
 # defined above as the single source list, but must not be added directly to
 # executable targets below.
 set(AGENT_RUNTIME_SOURCES)
+
+add_library(llama-agent-daemon-protocol STATIC
+    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
+)
+target_include_directories(llama-agent-daemon-protocol
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/vendor
+)
+target_compile_features(llama-agent-daemon-protocol PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-daemon-protocol PUBLIC llama-common Threads::Threads)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-daemon-protocol PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-protocol)
 
 set(AGENT_MCP_SERVER_SOURCES
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
@@ -625,7 +638,6 @@ set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-jsonl-protocol-smoke.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
-    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -633,6 +645,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/vendor
 )
 target_link_libraries(${TARGET} PRIVATE
+    llama-agent-daemon-protocol
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
@@ -641,7 +654,6 @@ set(TARGET llama-agent-daemon-event-stream-contract-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-event-stream-contract-smoke.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
-    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -649,6 +661,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/vendor
 )
 target_link_libraries(${TARGET} PRIVATE
+    llama-agent-daemon-protocol
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
@@ -656,7 +669,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-daemon-client-fake-daemon)
 add_executable(${TARGET}
     agent-daemon-client-fake-daemon.cpp
-    ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -664,6 +676,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/vendor
 )
 target_link_libraries(${TARGET} PRIVATE
+    llama-agent-daemon-protocol
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)

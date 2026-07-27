@@ -361,30 +361,14 @@ if (LLAMA_AGENT_RUNTIME)
 
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)
-        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-poc)
+        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)
         target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-schema.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-query.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-aggregate.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-join.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-reader.cpp)
-        target_sources(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-encoding.cpp)
-        llama_link_cozo(test-agent-data-store-cozo)
         set_property(TEST test-agent-data-store-cozo PROPERTY LABELS agent)
 
         add_executable(llama-agent-data-store-cozo-seed
-            agent-data-store-cozo-seed.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-schema.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-query.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-aggregate.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-join.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-reader.cpp
-            ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-encoding.cpp)
-        target_link_libraries(llama-agent-data-store-cozo-seed PRIVATE llama-agent-poc)
+            agent-data-store-cozo-seed.cpp)
+        target_link_libraries(llama-agent-data-store-cozo-seed PRIVATE llama-agent-storage-cozo)
         target_include_directories(llama-agent-data-store-cozo-seed PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
         target_compile_features(llama-agent-data-store-cozo-seed PRIVATE cxx_std_17)
-        llama_link_cozo(llama-agent-data-store-cozo-seed)
     endif()
 endif()
