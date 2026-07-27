@@ -18,8 +18,10 @@
 #define dup _dup
 #define dup2 _dup2
 #define fileno _fileno
+inline int close_fd(int fd) { return _close(fd); }
 #else
 #include <unistd.h>
+inline int close_fd(int fd) { return ::close(fd); }
 #endif
 
 namespace {
@@ -109,12 +111,12 @@ private:
         std::fflush(stderr);
         if (stdout_fd >= 0) {
             dup2(stdout_fd, fileno(stdout));
-            _close(stdout_fd);
+            close_fd(stdout_fd);
             stdout_fd = -1;
         }
         if (stderr_fd >= 0) {
             dup2(stderr_fd, fileno(stderr));
-            _close(stderr_fd);
+            close_fd(stderr_fd);
             stderr_fd = -1;
         }
         if (capture != nullptr) {
