@@ -7,9 +7,11 @@
 #include "memory/memory-context.h"
 #include "plan/plan-in-memory.h"
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
