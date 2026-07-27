@@ -470,3 +470,19 @@ previous result when the branch or test configuration changes.
 - Compile database inspection shows core runtime sources compiling once per
   configuration; remaining repeated sources are explicit MCP-server and daemon
   fixtures reserved for the next library split.
+
+### 2026-07-27 - MCP server library checkpoint
+
+- Scope: extracted the shared MCP server implementation into
+  `llama-agent-mcp-server` without changing daemon or host-config ownership.
+  MCP server smokes and the daemon executable now link the library instead of
+  compiling the same server implementation sources independently.
+- Focused MCP/CLI/daemon build: 23/23 changed build steps completed with four
+  build workers.
+- Agent CTest: 19/19 passed with Cozo enabled.
+- Direct MCP provider, stdio client, and HTTP client smokes passed. The direct
+  stdio-server integration smoke was stopped after it produced no output for
+  several minutes; it is not registered under the `agent` CTest label and is
+  not counted as passed in this checkpoint.
+- Compile database inspection shows each extracted MCP server implementation
+  source compiling once per configuration.

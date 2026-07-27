@@ -124,6 +124,40 @@ endif()
 # executable targets below.
 set(AGENT_RUNTIME_SOURCES)
 
+set(AGENT_MCP_SERVER_SOURCES
+    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
+    ../../tools/agent/mcp/agent-mcp-http-server.cpp
+    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
+    ../../tools/agent/mcp/agent-mcp-auth.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
+)
+
+add_library(llama-agent-mcp-server ${AGENT_MCP_SERVER_SOURCES})
+target_include_directories(llama-agent-mcp-server
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-mcp-server PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-mcp-server
+    PUBLIC
+        llama-agent-runtime-support
+        llama-common
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-mcp-server PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
     ../../tools/agent/cli/agent-cli-main.cpp
@@ -371,7 +405,6 @@ set(TARGET llama-agent-mcp-stdio-server-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-stdio-server-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
-    ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-server-tool-registry.cpp
 )
 add_dependencies(${TARGET}
     llama-agent-mcp-stdio-server
@@ -402,11 +435,6 @@ add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
-    ../../tools/agent/mcp/agent-mcp-http-server.cpp
-    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
@@ -432,11 +460,6 @@ set(TARGET llama-agent-mcp-http-vertical-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-vertical-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
-    ../../tools/agent/mcp/agent-mcp-http-server.cpp
-    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -460,13 +483,8 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 set(TARGET llama-agent-mcp-agent-tools-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-agent-tools-smoke.cpp
-    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-task.cpp
-    ../../tools/agent/mcp/agent-mcp-http-server.cpp
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
@@ -527,9 +545,6 @@ target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 set(TARGET llama-agent-mcp-stdio-fake-server)
 add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-stdio-fake-server.cpp
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
-    ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
     ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
@@ -544,12 +559,6 @@ set(TARGET llama-agent-mcp-stdio-server)
 add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-stdio-server-main.cpp
     ${AGENT_RUNTIME_SOURCES}
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
-    ../../tools/agent/mcp/agent-mcp-stdio-server.cpp
-    ../../tools/agent/mcp/agent-mcp-http-server.cpp
-    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -709,7 +718,6 @@ set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-mcp-config-smoke.cpp
     ${AGENT_RUNTIME_SOURCES}
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
@@ -836,11 +844,6 @@ add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-tcp.cpp
     ../../tools/agent/daemon/agent-daemon-unix.cpp
     ${AGENT_RUNTIME_SOURCES}
-    ../../tools/agent/mcp/agent-mcp-http-server.cpp
-    ../../tools/agent/mcp/agent-mcp-agent-tools.cpp
-    ../../tools/agent/mcp/agent-mcp-auth.cpp
-    ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -885,6 +888,20 @@ set(AGENT_RUNTIME_LIBRARY_TARGETS
 
 foreach(TARGET ${AGENT_RUNTIME_LIBRARY_TARGETS})
     target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+endforeach()
+
+set(AGENT_MCP_SERVER_LIBRARY_TARGETS
+    llama-agent-mcp-stdio-fake-server
+    llama-agent-mcp-stdio-server-smoke
+    llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-mcp-http-vertical-smoke
+    llama-agent-mcp-agent-tools-smoke
+    llama-agent-mcp-stdio-server
+    llama-agent-daemon-mcp-config-smoke
+    llama-agent-daemon
+)
+foreach(TARGET ${AGENT_MCP_SERVER_LIBRARY_TARGETS})
+    target_link_libraries(${TARGET} PRIVATE llama-agent-mcp-server)
 endforeach()
 
 set(AGENT_RUNTIME_TARGETS
