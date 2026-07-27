@@ -31,6 +31,19 @@ bool tool_async_enabled(
         tool_name) != context.async_exposed_tool_names.end();
 }
 
+std::chrono::steady_clock::time_point effective_async_deadline(
+        const agent_tool_context & context,
+        uint32_t timeout_ms) {
+    auto deadline = context.execution_control.deadline.value_or(
+        std::chrono::steady_clock::time_point::max());
+    if (timeout_ms > 0) {
+        deadline = std::min(
+            deadline,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms));
+    }
+    return deadline;
+}
+
 bool is_definition_allowed(
         const common_tool_definition & definition,
         const common_tool_registry & registry,
@@ -289,14 +302,22 @@ public:
         pending.kind = common_runtime_operation_kind::tool;
         pending.subject_name = call.name;
         pending.operation_id = "native-tool-op-" + std::to_string(++next_async_operation_id);
+        const auto cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
+        agent_tool_context async_context = context;
+        async_context.execution_control.cancellation = cancellation;
+        async_context.execution_control.deadline = effective_async_deadline(
+            context,
+            effective_timeout_ms(context, definitions.at(call.name)));
+        pending.deadline = *async_context.execution_control.deadline;
         {
             std::lock_guard<std::mutex> lock(async_mutex);
             async_calls.emplace(
                 pending.operation_id,
-                std::async(std::launch::async, [this, call]() mutable {
+                std::async(std::launch::async, [this, call, async_context]() mutable {
                     std::string ignored_error;
-                    return execute_validated_call(call, ignored_error);
+                    return execute_validated_call(call, async_context, ignored_error);
                 }));
+            async_cancellations.emplace(pending.operation_id, cancellation);
         }
         error.clear();
         return true;
@@ -323,6 +344,21 @@ public:
         result = it->second.get();
         error = result.ok ? std::string() : result.raw_diagnostic;
         async_calls.erase(it);
+        async_cancellations.erase(pending.operation_id);
+        return true;
+    }
+
+    bool cancel_call_async(
+            const agent_tool_pending_call & pending,
+            std::string & error) override {
+        std::lock_guard<std::mutex> lock(async_mutex);
+        const auto it = async_cancellations.find(pending.operation_id);
+        if (it == async_cancellations.end()) {
+            error = "async tool operation is unknown";
+            return false;
+        }
+        it->second->request_cancel("tool operation cancelled");
+        error.clear();
         return true;
     }
 
@@ -399,6 +435,13 @@ private:
     agent_tool_result execute_validated_call(
             const agent_tool_call & call,
             std::string & error) {
+        return execute_validated_call(call, context, error);
+    }
+
+    agent_tool_result execute_validated_call(
+            const agent_tool_call & call,
+            const agent_tool_context & execution_context,
+            std::string & error) {
         auto definition_it = definitions.find(call.name);
         if (definition_it == definitions.end()) {
             error = "tool is unavailable in this runtime view";
@@ -413,12 +456,12 @@ private:
 
         const auto started_at = std::chrono::steady_clock::now();
         const auto execution = registry.execute({call.name, call.arguments_json});
-        if (context.execution_control.should_stop()) {
-            auto result = make_execution_control_failure_result(context, call);
+        if (execution_context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(execution_context, call);
             error = result.raw_diagnostic;
             return result;
         }
-        const uint32_t timeout_ms = effective_timeout_ms(context, definition_it->second);
+        const uint32_t timeout_ms = effective_timeout_ms(execution_context, definition_it->second);
         const auto elapsed_ms = (uint32_t) std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started_at).count();
         if (timeout_ms > 0 && elapsed_ms > timeout_ms) {
@@ -431,7 +474,7 @@ private:
                 "The tool call exceeded the configured timeout.",
                 error);
         }
-        auto result = normalize_execution_result(context, definition_it->second, call, execution);
+        auto result = normalize_execution_result(execution_context, definition_it->second, call, execution);
         error = result.ok ? std::string() : result.raw_diagnostic;
         return result;
     }
@@ -443,6 +486,7 @@ private:
     mutable std::mutex state_mutex;
     mutable std::mutex async_mutex;
     std::map<std::string, std::future<agent_tool_result>> async_calls;
+    std::map<std::string, std::shared_ptr<common_agent_runtime_cancellation_state>> async_cancellations;
     std::atomic<uint64_t> next_async_operation_id = 0;
 };
 
@@ -520,14 +564,22 @@ public:
         pending.kind = common_runtime_operation_kind::tool;
         pending.subject_name = call.name;
         pending.operation_id = "mcp-tool-op-" + std::to_string(++next_async_operation_id);
+        const auto cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
+        agent_tool_context async_context = context;
+        async_context.execution_control.cancellation = cancellation;
+        async_context.execution_control.deadline = effective_async_deadline(
+            context,
+            context.default_timeout_ms);
+        pending.deadline = *async_context.execution_control.deadline;
         {
             std::lock_guard<std::mutex> lock(async_mutex);
             async_calls.emplace(
                 pending.operation_id,
-                std::async(std::launch::async, [this, call]() mutable {
+                std::async(std::launch::async, [this, call, async_context]() mutable {
                     std::string ignored_error;
-                    return execute_validated_call(call, ignored_error);
+                    return execute_validated_call(call, async_context, ignored_error);
                 }));
+            async_cancellations.emplace(pending.operation_id, cancellation);
         }
         error.clear();
         return true;
@@ -554,6 +606,21 @@ public:
         result = it->second.get();
         error = result.ok ? std::string() : result.raw_diagnostic;
         async_calls.erase(it);
+        async_cancellations.erase(pending.operation_id);
+        return true;
+    }
+
+    bool cancel_call_async(
+            const agent_tool_pending_call & pending,
+            std::string & error) override {
+        std::lock_guard<std::mutex> lock(async_mutex);
+        const auto it = async_cancellations.find(pending.operation_id);
+        if (it == async_cancellations.end()) {
+            error = "async MCP tool operation is unknown";
+            return false;
+        }
+        it->second->request_cancel("MCP tool operation cancelled");
+        error.clear();
         return true;
     }
 
@@ -630,6 +697,13 @@ private:
     agent_tool_result execute_validated_call(
             const agent_tool_call & call,
             std::string & error) {
+        return execute_validated_call(call, context, error);
+    }
+
+    agent_tool_result execute_validated_call(
+            const agent_tool_call & call,
+            const agent_tool_context & execution_context,
+            std::string & error) {
         auto it = definitions.find(call.name);
         if (it == definitions.end()) {
             error = "tool is unavailable in this MCP runtime view";
@@ -654,9 +728,9 @@ private:
                 "MCP tool arguments do not satisfy the registered contract.",
                 error);
         }
-        if (!client.call_tool(context, it->second, normalized_arguments, execution, error)) {
-            if (context.execution_control.should_stop()) {
-                auto result = make_execution_control_failure_result(context, call);
+        if (!client.call_tool(execution_context, it->second, normalized_arguments, execution, error)) {
+            if (execution_context.execution_control.should_stop()) {
+                auto result = make_execution_control_failure_result(execution_context, call);
                 error = result.raw_diagnostic;
                 return result;
             }
@@ -668,14 +742,14 @@ private:
                 "The MCP tool client failed to execute the requested tool.",
                 error);
         }
-        if (context.execution_control.should_stop()) {
-            auto result = make_execution_control_failure_result(context, call);
+        if (execution_context.execution_control.should_stop()) {
+            auto result = make_execution_control_failure_result(execution_context, call);
             error = result.raw_diagnostic;
             return result;
         }
         const auto elapsed_ms = (uint32_t) std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started_at).count();
-        if (context.default_timeout_ms > 0 && elapsed_ms > context.default_timeout_ms) {
+        if (execution_context.default_timeout_ms > 0 && elapsed_ms > execution_context.default_timeout_ms) {
             error = "MCP tool execution exceeded timeout";
             return make_failure_result(
                 call,
@@ -687,7 +761,7 @@ private:
         }
 
         const size_t result_limit = std::min(
-            context.default_max_result_bytes,
+            execution_context.default_max_result_bytes,
             it->second.max_result_bytes);
         auto result = normalize_mcp_execution_result(call, execution, result_limit);
         error = result.ok ? std::string() : result.raw_diagnostic;
@@ -713,6 +787,7 @@ private:
     mutable std::mutex state_mutex;
     mutable std::mutex async_mutex;
     std::map<std::string, std::future<agent_tool_result>> async_calls;
+    std::map<std::string, std::shared_ptr<common_agent_runtime_cancellation_state>> async_cancellations;
     std::atomic<uint64_t> next_async_operation_id = 0;
 };
 
@@ -799,6 +874,17 @@ public:
             return false;
         }
         return view->poll_call_async(pending, ready, result, error);
+    }
+
+    bool cancel_call_async(
+            const agent_tool_pending_call & pending,
+            std::string & error) override {
+        auto * view = find_owner(pending.subject_name);
+        if (view == nullptr) {
+            error = "tool is unavailable in this composite runtime view";
+            return false;
+        }
+        return view->cancel_call_async(pending, error);
     }
 
 private:

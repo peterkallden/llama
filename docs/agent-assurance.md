@@ -171,6 +171,27 @@ race. The turn-driver smoke coverage also verifies the existing admission and
 registration cancellation paths. The two focused runtime smokes passed, and
 the complete agent CTest label passed 16/16 after the changes.
 
+### Async tool cancellation and preemptive deadlines
+
+The 2026-07-27 tool-runtime checkpoint adds explicit cancellation and deadline
+propagation for host-owned asynchronous native and MCP tool calls:
+
+- Each async call owns a cancellation state that is exposed through the runtime
+  adapter and can be signalled by the operation manager.
+- Effective per-call deadlines are copied into the pending operation reference,
+  so manager polling can transition the operation to `timed_out` and invoke the
+  cancellation callback outside the manager mutex.
+- MCP stdio enforces cancellation/deadlines through bounded request handling and
+  subprocess termination; MCP HTTP uses the remaining deadline to bound
+  connect/read timeouts.
+- Native synchronous handlers observe the same state before and after execution;
+  interruption during a handler remains cooperative and is intentionally not
+  claimed as hard preemption.
+
+The native provider smoke now covers explicit cancellation of an in-flight async
+fetch. Focused tool provider/runtime CTests passed 2/2 after the implementation;
+the full agent label remains the final assurance gate for this checkpoint.
+
 ### CTest evidence
 
 | Batch | Passed | Failed | Skipped | Total | Result |
@@ -369,9 +390,9 @@ previous result when the branch or test configuration changes.
   enforced a shared MCP result-size limit over structured plus text content,
   executed normalized MCP arguments, and reduced repair skeletons to required
   schema properties with safe defaults/minimums.
-- Deferred by design: explicit async-tool cancellation, preemptive deadlines
-  for synchronous native executors, interactive per-call confirmation, and
-  stricter fuzzy resolution for policy-gated tools.
+- Deferred by design: hard interruption for synchronous native executors,
+  interactive per-call confirmation, and stricter fuzzy resolution for
+  policy-gated tools.
 
 ### 2026-07-26 — Lane-state ownership checkpoint
 

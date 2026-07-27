@@ -206,6 +206,12 @@ public:
         return true;
     }
 
+    bool cancel_async(
+            const common_runtime_operation_ref & pending,
+            std::string & error) const override {
+        return tool_view.cancel_call_async(pending, error);
+    }
+
 private:
     agent_tool_view & tool_view;
 };

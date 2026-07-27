@@ -201,9 +201,17 @@ defaults or numeric minimums when available. Optional properties are omitted
 so that a repair suggestion cannot look like a complete call while silently
 inventing unrelated arguments.
 
-The following items remain deliberately separate backlog work: explicit
-per-operation cancellation for async native/MCP tools, preemptive deadlines
-for synchronous native executors, a distinct per-call confirmation protocol
+Async native and MCP tool calls now carry an operation-owned cancellation state
+and an effective deadline. The host can cancel a pending call explicitly, while
+the operation manager can mark it timed out and invoke the cancellation callback
+outside its mutex. MCP stdio enforces the deadline by terminating the bounded
+request subprocess when necessary; MCP HTTP bounds connect/read timeouts by the
+remaining deadline. Native handlers receive the same cancellation/deadline state
+and are checked before and after the synchronous handler call, so cancellation
+is cooperative until native handlers gain an interruptible execution seam.
+
+The following items remain deliberately separate backlog work: a bounded native
+worker/executor with hard interruption, a distinct per-call confirmation protocol
 for write tools, and stricter fuzzy-name policy for policy-gated tools. The
 current `requires_confirmation` flag remains an exposure/policy gate; it is not
 presented as an interactive approval handshake.
@@ -1102,7 +1110,7 @@ The new host-config slice is intentionally modest. It currently models:
 - tool profile, repository root, and a list of configured MCP providers
 - a few daemon-style limits such as queue capacity and max turn seconds
 
-In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting; transport-specific timeout, cancellation and broader streaming hardening remain follow-up work.
+In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.
 

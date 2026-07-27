@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -65,6 +66,20 @@ void configure_client(
         static_cast<time_t>((request_timeout_ms % 1000) * 1000));
 }
 
+uint32_t bounded_timeout_ms(
+        uint32_t configured_timeout_ms,
+        const std::optional<std::chrono::steady_clock::time_point> & deadline) {
+    if (!deadline.has_value()) return configured_timeout_ms;
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= *deadline) return 1;
+    const auto remaining = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        *deadline - now).count());
+    const uint64_t bounded = configured_timeout_ms == 0
+        ? remaining
+        : std::min<uint64_t>(configured_timeout_ms, remaining);
+    return static_cast<uint32_t>(std::max<uint64_t>(1, bounded));
+}
+
 } // namespace
 
 struct agent_mcp_http_client::impl {
@@ -80,12 +95,14 @@ agent_mcp_http_client::agent_mcp_http_client(agent_mcp_http_client_config config
 
 agent_mcp_http_client::~agent_mcp_http_client() = default;
 
-bool agent_mcp_http_client::initialize(std::string & error) {
+bool agent_mcp_http_client::initialize(
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
     if (state->initialized) {
         return true;
     }
     json response;
-    if (!send_request("initialize", make_mcp_initialize_params(), response, error)) {
+    if (!send_request("initialize", make_mcp_initialize_params(), response, error, deadline)) {
         return false;
     }
     if (!response.contains("result") || !response["result"].is_object()) {
@@ -97,7 +114,7 @@ bool agent_mcp_http_client::initialize(std::string & error) {
         error = "MCP HTTP initialize response negotiated an unsupported protocol version";
         return false;
     }
-    if (!send_notification("notifications/initialized", json::object(), error)) {
+    if (!send_notification("notifications/initialized", json::object(), error, deadline)) {
         return false;
     }
     state->initialized = true;
@@ -107,16 +124,18 @@ bool agent_mcp_http_client::initialize(std::string & error) {
 bool agent_mcp_http_client::send_notification(
         const std::string & method,
         const json & params,
-        std::string & error) {
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
     json ignored;
-    return send_request(method, params, ignored, error);
+    return send_request(method, params, ignored, error, deadline);
 }
 
 bool agent_mcp_http_client::send_request(
         const std::string & method,
         const json & params,
         json & response,
-        std::string & error) {
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
     std::lock_guard<std::mutex> lock(state->request_mutex);
     parsed_url url;
     if (!parse_url(config.url, url, error)) {
@@ -151,14 +170,16 @@ bool agent_mcp_http_client::send_request(
     }
 
     httplib::Result result;
+    const uint32_t connect_timeout_ms = bounded_timeout_ms(config.connect_timeout_ms, deadline);
+    const uint32_t request_timeout_ms = bounded_timeout_ms(config.request_timeout_ms, deadline);
     if (url.scheme == "http") {
         httplib::Client client(url.host, url.port);
-        configure_client(client, config.connect_timeout_ms, config.request_timeout_ms);
+        configure_client(client, connect_timeout_ms, request_timeout_ms);
         result = client.Post(url.path, headers, body, "application/json");
     } else {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
         httplib::SSLClient client(url.host, url.port);
-        configure_client(client, config.connect_timeout_ms, config.request_timeout_ms);
+        configure_client(client, connect_timeout_ms, request_timeout_ms);
         result = client.Post(url.path, headers, body, "application/json");
 #endif
     }
@@ -222,14 +243,15 @@ bool agent_mcp_http_client::call_tool(
         const std::string & arguments_json,
         mcp_agent_tool_call_result & result,
         std::string & error) {
-    if (!initialize(error)) return false;
+    if (!initialize(error, context.execution_control.deadline)) return false;
     const json arguments = json::parse(arguments_json, nullptr, false);
     if (arguments.is_discarded() || !arguments.is_object()) {
         error = "MCP HTTP tool arguments must be a JSON object";
         return false;
     }
     json response;
-    if (!send_request("tools/call", make_mcp_tools_call_params(tool.name, arguments), response, error) ||
+    if (!send_request("tools/call", make_mcp_tools_call_params(tool.name, arguments), response, error,
+            context.execution_control.deadline) ||
             !response.contains("result")) return false;
     return parse_mcp_tool_call_result(response["result"], result, error);
 }

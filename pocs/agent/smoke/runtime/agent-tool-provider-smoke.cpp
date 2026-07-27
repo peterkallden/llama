@@ -325,6 +325,41 @@ int main() {
         std::fprintf(stderr, "web_fetch async call failed: %s\n", fetch_result.content_json.c_str());
         return 1;
     }
+
+    agent_tool_pending_call cancelled_fetch;
+    if (!research_view->begin_call_async({
+            "call-2f",
+            "web_fetch",
+            R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+        }, cancelled_fetch, error)) {
+        std::fprintf(stderr, "web_fetch cancellation async start failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (!research_view->cancel_call_async(cancelled_fetch, error)) {
+        std::fprintf(stderr, "web_fetch cancellation signal failed: %s\n", error.c_str());
+        return 1;
+    }
+    bool cancelled_fetch_ready = false;
+    agent_tool_result cancelled_fetch_result;
+    for (int attempt = 0; attempt < 40 && !cancelled_fetch_ready; ++attempt) {
+        if (!research_view->poll_call_async(
+                    cancelled_fetch,
+                    cancelled_fetch_ready,
+                    cancelled_fetch_result,
+                    error)) {
+            std::fprintf(stderr, "web_fetch cancellation poll failed: %s\n", error.c_str());
+            return 1;
+        }
+        if (!cancelled_fetch_ready) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    if (!cancelled_fetch_ready || cancelled_fetch_result.ok ||
+            cancelled_fetch_result.failure_code != "tool_call_cancelled") {
+        std::fprintf(stderr, "web_fetch cancellation did not produce the expected terminal result\n");
+        return 1;
+    }
+
     const auto sync_fetch_result = research_view->call({
         "call-2d",
         "web_fetch",

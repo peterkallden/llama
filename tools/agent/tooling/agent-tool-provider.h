@@ -109,6 +109,10 @@ public:
         bool & ready,
         agent_tool_result & result,
         std::string & error) = 0;
+
+    virtual bool cancel_call_async(
+        const agent_tool_pending_call & pending,
+        std::string & error) = 0;
 };
 
 class agent_tool_provider {
@@ -315,16 +319,20 @@ public:
         std::string & error);
 
 private:
-    bool initialize(std::string & error);
+    bool initialize(
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline = {});
     bool send_notification(
         const std::string & method,
         const nlohmann::ordered_json & params,
-        std::string & error);
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline = {});
     bool send_request(
         const std::string & method,
         const nlohmann::ordered_json & params,
         nlohmann::ordered_json & response,
-        std::string & error);
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline = {});
 
     agent_mcp_http_client_config config;
     struct impl;

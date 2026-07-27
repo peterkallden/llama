@@ -63,6 +63,13 @@ public:
         error = "asynchronous tool execution is unavailable";
         return false;
     }
+
+    virtual bool cancel_async(
+            const common_runtime_operation_ref &,
+            std::string & error) const {
+        error = "asynchronous tool cancellation is unavailable";
+        return false;
+    }
 };
 
 enum class common_reflection_decision { accept, revise, request_action, replan, abort };

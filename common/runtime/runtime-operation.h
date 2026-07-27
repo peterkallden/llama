@@ -34,6 +34,9 @@ struct common_runtime_operation_ref {
     std::string operation_id;
     common_runtime_operation_kind kind = common_runtime_operation_kind::tool;
     std::string subject_name;
+    // The producer's effective deadline is copied into the operation-manager
+    // entry when an async operation is registered.
+    std::chrono::steady_clock::time_point deadline{};
 };
 
 enum class common_runtime_operation_state {
