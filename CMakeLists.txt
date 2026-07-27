@@ -290,6 +290,11 @@ endif()
 
 if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+# The agent runtime implementation and its model-free tests live in pocs/agent.
+# They must be available independently of the optional example programs.
+if (LLAMA_BUILD_COMMON AND (LLAMA_BUILD_EXAMPLES OR LLAMA_AGENT_RUNTIME))
     add_subdirectory(pocs)
 endif()
 
