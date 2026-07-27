@@ -139,12 +139,12 @@ passes.
 | Field | Value |
 |---|---|
 | Branch | `pocs/agent-tool-profiles` |
-| Commit | `ab5e728af` |
-| Date | `2026-07-26` |
+| Commit | This checkpoint; see `git log` for the immutable commit id |
+| Date | `2026-07-27` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug semantics, Cozo enabled, Ninja, four-way build; separate debug information disabled to avoid PDB/ILK disk exhaustion |
 | Cozo | `LLAMA_MEMORY_COZO=ON`, `LLAMA_PLAN_COZO=ON`, configured Cozo 0.7.6 MSVC release library and DLL |
-| CTest | Agent label 19/19 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
+| CTest | Agent label 20/20 passed; Kubernetes label 1/1 passed; Docker label skipped in the normal run and hung when elevated, so no Docker backend pass is claimed |
 | Complete model-free smokes | 28/28 passed; Docker backend smoke skipped (exit 77); resident model-backed smoke not run (requires `--model`) |
 | Decision | Conditional assurance; model-backed, Linux, Docker backend and long-running gates remain open |
 
@@ -205,18 +205,18 @@ the full agent label remains the final assurance gate for this checkpoint.
 
 ### Registered CTest inventory
 
-The current Cozo-enabled build registers 63 CTest cases in total. The agent
-verification slice is the `agent` label with 19 tests; the latest run passed
-19/19. The sandbox labels are separate backend slices:
+The current Cozo-enabled build registers 64 CTest cases in total. The agent
+verification slice is the `agent` label with 20 tests; the latest run passed
+20/20. The sandbox labels are separate backend slices:
 
 | Label | Registered tests | Current result |
 |---|---:|---|
-| `agent` | 19 | 19 passed |
+| `agent` | 20 | 20 passed |
 | `sandbox-kubernetes` | 1 | 1 passed |
 | `sandbox-docker` | 1 | 1 skipped; backend unavailable |
-| Other repository tests | 43 | Not part of the agent assurance sweep |
+| Other repository tests | 44 | Not part of the agent assurance sweep |
 
-The 63-test inventory is configuration-dependent. It includes general
+The 64-test inventory is configuration-dependent. It includes general
 repository tests whose executables were not built or run in this focused agent
 verification, so the total inventory must not be reported as a 63-test agent
 pass.
@@ -504,3 +504,20 @@ previous result when the branch or test configuration changes.
 - Compile database inspection shows the extracted daemon JSONL and Cozo data
   sources compile once per configuration. The test and seed consumers now
   link the Cozo library instead of compiling a second copy of its sources.
+
+### 2026-07-27 - MCP stdio bounded-read regression checkpoint
+
+- Scope: removed the remaining blocking `FILE*` stdout-read fallback from the
+  MCP stdio client. The async/no-wait subprocess configuration now uses the
+  incremental `subprocess_read_stdout()` path for both bounded and unbounded
+  request reads. Windows binary-mode setup remains inside the `_WIN32` guard;
+  framing and timeout behavior are platform-neutral.
+- Build: `llama-agent-mcp-stdio-client-smoke` rebuilt successfully with four
+  workers in the Cozo-enabled Windows/MSVC Debug tree.
+- Focused checks: direct stdio client smoke passed; CLI/MCP and stdio client
+  CTests passed 2/2.
+- Agent CTest: 20/20 passed. The new
+  `llama-agent-mcp-stdio-client-ctest` covers normal framed reads, malformed
+  server diagnostics, and termination of a hanging server within its request
+  deadline.
+- Registered inventory: 64 total CTest cases, with 20 under the `agent` label.

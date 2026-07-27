@@ -1465,7 +1465,9 @@ That seam now has two concrete test paths:
 - an in-process fake MCP client used to exercise provider filtering and result normalization
 - a first stdio-based MCP client adapter that speaks JSON-RPC-style `Content-Length` framed messages to a subprocess
 
-The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. Request deadlines now run the blocking read in a bounded helper and terminate the child process on expiry; reconnect logic, approval model, streaming event path, and broader capability surface remain deferred.
+The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. The subprocess is started with the async/no-wait sheredom options, and all stdout response reads use `subprocess_read_stdout()` into an incremental byte buffer. The client must not mix those options with blocking `FILE*` reads such as `fgetc()` or `fread()`; on Windows that can leave a pipe read blocked and can also make timeout cleanup hang while joining a reader thread. A request deadline now terminates the child process on expiry, while the no-deadline configuration uses the same non-blocking subprocess read path without imposing a synthetic deadline. Reconnect logic, approval model, streaming event path, and broader capability surface remain deferred.
+
+The regression contract is covered by `llama-agent-mcp-stdio-client-smoke`, registered as `llama-agent-mcp-stdio-client-ctest` under the `agent` label. The smoke exercises ordinary framed responses, malformed-server diagnostics, and a hanging `tools/list` server that must be terminated within the configured request deadline. This is intentionally a transport-lifecycle check rather than a newline-format check: MCP framing remains `Content-Length` plus CRLF separators, but the transport read API is the portability boundary.
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
@@ -1994,7 +1996,7 @@ complete list of every CTest or smoke executable:
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-agent-tools-smoke`, verifying the explicit opt-in `delegate_task`, `summarize`, and `review_plan` MCP tool profile, including tool filtering, write-policy rejection, delegation-depth bounds, and dispatcher callback failure mapping
 - `llama-agent-mcp-http-vertical-smoke`, verifying the first complete inbound vertical path: MCP `delegate_task`, deliberate request with host escalation to research, plan creation, research gap/evidence acquisition through `memory_get` and `resource_read`, answer verification, a separate SSE event stream, and a result-only terminal response
-- `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including malformed `tools/list` diagnostics
+- `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including normal framed reads, malformed `tools/list` diagnostics, and bounded termination of a hanging server
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion
@@ -2130,13 +2132,13 @@ and the sandbox backend tests under their own backend labels:
 
 | Label | Scope | Current Cozo build |
 |---|---|---:|
-| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 19 |
+| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 20 |
 | `sandbox-docker` | Docker backend smoke; uses CTest skip code 77 when Docker is unavailable | 1 |
 | `sandbox-kubernetes` | Kubernetes backend smoke | 1 |
 
-The current build registers 63 CTest cases in total. The three labels above
-account for 21 label memberships; the two sandbox labels are separate from the
-authoritative `agent` test slice and are therefore not included in its 19-test
+The current build registers 64 CTest cases in total. The three labels above
+account for 22 label memberships; the two sandbox labels are separate from the
+authoritative `agent` test slice and are therefore not included in its 20-test
 count. Other repository tests are registered without an agent label in this
 build. Counts are configuration-dependent and should be refreshed with
 `ctest --test-dir BUILD_DIR -N` rather than treated as a permanent contract.

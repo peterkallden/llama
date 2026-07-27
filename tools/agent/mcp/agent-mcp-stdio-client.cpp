@@ -6,11 +6,9 @@
 #include <cstdio>
 #include <cstring>
 #include <chrono>
-#include <future>
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include <tuple>
 #include <utility>
 
 #ifdef _WIN32
@@ -32,68 +30,6 @@ std::vector<char *> to_cstr_vec(const std::vector<std::string> & values) {
     return result;
 }
 
-bool read_header_line(FILE * stream, std::string & line) {
-    line.clear();
-    for (;;) {
-        const int ch = std::fgetc(stream);
-        if (ch == EOF) {
-            return !line.empty();
-        }
-        if (ch == '\n') {
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            return true;
-        }
-        line.push_back(static_cast<char>(ch));
-    }
-}
-
-bool read_json_rpc_message(FILE * stream, json & message, std::string & error) {
-    message = json();
-    error.clear();
-
-    size_t content_length = 0;
-    bool have_content_length = false;
-    std::string line;
-    while (read_header_line(stream, line)) {
-        if (line.empty()) {
-            break;
-        }
-
-        constexpr const char * prefix = "Content-Length:";
-        if (line.rfind(prefix, 0) == 0) {
-            std::string value = line.substr(std::strlen(prefix));
-            while (!value.empty() && value.front() == ' ') {
-                value.erase(value.begin());
-            }
-            content_length = static_cast<size_t>(std::strtoull(value.c_str(), nullptr, 10));
-            have_content_length = true;
-        }
-    }
-
-    if (!have_content_length) {
-        error = "MCP server response missing Content-Length header";
-        return false;
-    }
-
-    std::string body(content_length, '\0');
-    const size_t read_count = std::fread(body.data(), 1, content_length, stream);
-    if (read_count != content_length) {
-        error = "failed to read complete MCP server response body";
-        return false;
-    }
-
-    const auto parsed = json::parse(body, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object()) {
-        error = "MCP server returned invalid JSON-RPC payload";
-        return false;
-    }
-
-    message = parsed;
-    return true;
-}
-
 bool write_json_rpc_message(FILE * stream, const json & message, std::string & error) {
     error.clear();
     const std::string body = message.dump();
@@ -109,6 +45,96 @@ bool write_json_rpc_message(FILE * stream, const json & message, std::string & e
         return false;
     }
     return true;
+}
+
+bool try_parse_buffered_json_rpc_message(
+        std::string & buffer,
+        json & message,
+        std::string & error) {
+    message = json();
+    error.clear();
+
+    const size_t header_end = buffer.find("\r\n\r\n");
+    if (header_end == std::string::npos) {
+        return false;
+    }
+
+    size_t content_length = 0;
+    bool have_content_length = false;
+    size_t line_begin = 0;
+    while (line_begin < header_end) {
+        size_t line_end = buffer.find("\r\n", line_begin);
+        if (line_end == std::string::npos || line_end > header_end) {
+            line_end = header_end;
+        }
+        std::string line = buffer.substr(line_begin, line_end - line_begin);
+        constexpr const char * prefix = "Content-Length:";
+        if (line.rfind(prefix, 0) == 0) {
+            std::string value = line.substr(std::strlen(prefix));
+            while (!value.empty() && value.front() == ' ') {
+                value.erase(value.begin());
+            }
+            content_length = static_cast<size_t>(std::strtoull(value.c_str(), nullptr, 10));
+            have_content_length = true;
+        }
+        line_begin = line_end + 2;
+    }
+
+    if (!have_content_length) {
+        error = "MCP server response missing Content-Length header";
+        return true;
+    }
+
+    const size_t body_begin = header_end + 4;
+    const size_t frame_end = body_begin + content_length;
+    if (buffer.size() < frame_end) {
+        return false;
+    }
+
+    const std::string body = buffer.substr(body_begin, content_length);
+    const auto parsed = json::parse(body, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+        error = "MCP server returned invalid JSON-RPC payload";
+        buffer.erase(0, frame_end);
+        return true;
+    }
+
+    message = parsed;
+    buffer.erase(0, frame_end);
+    return true;
+}
+
+bool read_json_rpc_message_from_subprocess(
+        subprocess_s & process,
+        std::string & buffer,
+        json & message,
+        std::string & error,
+        std::optional<std::chrono::steady_clock::time_point> deadline) {
+    for (;;) {
+        if (try_parse_buffered_json_rpc_message(buffer, message, error)) {
+            return error.empty();
+        }
+        if (deadline.has_value() && std::chrono::steady_clock::now() >= *deadline) {
+            error = "MCP request timeout";
+            return false;
+        }
+
+        char chunk[4096];
+        const unsigned count = subprocess_read_stdout(&process, chunk, sizeof(chunk));
+        if (count > 0) {
+            buffer.append(chunk, count);
+            continue;
+        }
+        if (!subprocess_alive(&process)) {
+            if (buffer.empty()) {
+                error = "MCP server response missing Content-Length header";
+            } else {
+                error = "failed to read complete MCP server response body";
+            }
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 }
 
 void append_tail(std::string & tail, const char * data, size_t size, size_t max_size) {
@@ -149,6 +175,7 @@ struct agent_mcp_stdio_client::impl {
     bool running = false;
     bool initialized = false;
     bool joined = false;
+    std::string stdout_buffer;
     std::string stderr_tail;
     std::mutex request_mutex;
     static constexpr size_t max_stderr_tail_bytes = 4096;
@@ -166,6 +193,7 @@ bool agent_mcp_stdio_client::ensure_started(
         std::string & error,
         std::optional<std::chrono::steady_clock::time_point> deadline) {
     error.clear();
+    deadline = effective_deadline(deadline);
     if (state->initialized) {
         return true;
     }
@@ -180,6 +208,7 @@ bool agent_mcp_stdio_client::ensure_started(
         const int options =
             subprocess_option_no_window |
             subprocess_option_enable_async |
+            subprocess_option_enable_async_no_wait |
             subprocess_option_inherit_environment;
 
         if (subprocess_create(argv.data(), options, &state->proc) != 0) {
@@ -201,6 +230,7 @@ bool agent_mcp_stdio_client::ensure_started(
 #endif
         state->running = true;
         state->joined = false;
+        state->stdout_buffer.clear();
         state->stderr_tail.clear();
     }
 
@@ -240,6 +270,7 @@ bool agent_mcp_stdio_client::send_request(
         std::optional<std::chrono::steady_clock::time_point> deadline) {
     std::lock_guard<std::mutex> request_lock(state->request_mutex);
     response = json();
+    deadline = effective_deadline(deadline);
     if (!state->running || !state->in || !state->out) {
         error = "MCP stdio client is not running";
         return false;
@@ -257,31 +288,28 @@ bool agent_mcp_stdio_client::send_request(
         json message;
         bool read_ok = false;
         std::string read_error;
-        if (!deadline.has_value()) {
-            read_ok = read_json_rpc_message(state->out, message, read_error);
-        } else {
-            std::promise<std::tuple<bool, json, std::string>> promise;
-            auto future = promise.get_future();
-            std::thread reader([&promise, stream = state->out]() mutable {
-                json read_message;
-                std::string error;
-                const bool ok = read_json_rpc_message(stream, read_message, error);
-                promise.set_value({ok, std::move(read_message), std::move(error)});
-            });
-            const auto wait_result = future.wait_until(*deadline);
-            if (wait_result != std::future_status::ready) {
-                subprocess_terminate(&state->proc);
-                subprocess_join(&state->proc, &state->exit_code);
+        read_ok = read_json_rpc_message_from_subprocess(
+            state->proc,
+            state->stdout_buffer,
+            message,
+            read_error,
+            deadline);
+        if (!read_ok && read_error == "MCP request timeout") {
+            subprocess_terminate(&state->proc);
+            state->initialized = false;
+            collect_stderr_tail();
+            const auto terminate_deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(config.shutdown_timeout_ms > 0 ? config.shutdown_timeout_ms : 100);
+            if (terminate_process_until(terminate_deadline)) {
                 state->joined = true;
-                state->running = false;
-                state->initialized = false;
-                reader.join();
-                collect_stderr_tail();
-                error = "MCP request timeout; server process terminated";
-                return false;
             }
-            std::tie(read_ok, message, read_error) = future.get();
-            reader.join();
+            subprocess_destroy(&state->proc);
+            state->running = false;
+            state->in = nullptr;
+            state->out = nullptr;
+            state->err = nullptr;
+            error = "MCP request timeout; server process terminated";
+            return false;
         }
         if (!read_ok) {
             error = read_error;
@@ -303,6 +331,31 @@ bool agent_mcp_stdio_client::send_request(
             return true;
         }
     }
+}
+
+std::optional<std::chrono::steady_clock::time_point> agent_mcp_stdio_client::effective_deadline(
+        std::optional<std::chrono::steady_clock::time_point> deadline) const {
+    if (deadline.has_value() || config.request_timeout_ms == 0) {
+        return deadline;
+    }
+    return std::chrono::steady_clock::now() + std::chrono::milliseconds(config.request_timeout_ms);
+}
+
+bool agent_mcp_stdio_client::terminate_process_until(std::chrono::steady_clock::time_point deadline) {
+    if (!state || !state->running || state->joined) {
+        return true;
+    }
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!subprocess_alive(&state->proc)) {
+            subprocess_join(&state->proc, &state->exit_code);
+            return true;
+        }
+        collect_stderr_tail();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    return false;
 }
 
 void agent_mcp_stdio_client::shutdown_process() {
@@ -331,8 +384,9 @@ void agent_mcp_stdio_client::shutdown_process() {
             if (subprocess_alive(&state->proc)) {
                 subprocess_terminate(&state->proc);
             }
-            subprocess_join(&state->proc, &state->exit_code);
-            state->joined = true;
+            const auto terminate_deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(config.shutdown_timeout_ms > 0 ? config.shutdown_timeout_ms : 100);
+            state->joined = terminate_process_until(terminate_deadline);
         }
         collect_stderr_tail();
         subprocess_destroy(&state->proc);

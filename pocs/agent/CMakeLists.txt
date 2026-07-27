@@ -138,6 +138,9 @@ endif()
 target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-protocol)
 
 set(AGENT_MCP_SERVER_SOURCES
+    ../../common/agent/schema-contract.cpp
+    ../../tools/agent/mcp/agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-task.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
@@ -158,7 +161,6 @@ target_include_directories(llama-agent-mcp-server
 target_compile_features(llama-agent-mcp-server PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-mcp-server
     PUBLIC
-        llama-agent-runtime-support
         llama-common
         Threads::Threads
     PRIVATE
@@ -1013,6 +1015,11 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-cli-run-mcp-ctest
         COMMAND $<TARGET_FILE:llama-agent-cli-run-mcp-smoke>)
     set_property(TEST llama-agent-cli-run-mcp-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-mcp-stdio-client-ctest
+        COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-client-smoke>)
+    set_property(TEST llama-agent-mcp-stdio-client-ctest PROPERTY LABELS agent)
+    set_tests_properties(llama-agent-mcp-stdio-client-ctest PROPERTIES TIMEOUT 120)
 
     add_test(NAME llama-agent-daemon-protocol-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)

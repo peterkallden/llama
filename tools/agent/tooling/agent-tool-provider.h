@@ -230,7 +230,7 @@ struct agent_mcp_stdio_client_config {
     std::string server_name;
     std::vector<std::string> command_line;
     std::map<std::string, std::string> environment;
-    uint32_t request_timeout_ms = 0;
+    uint32_t request_timeout_ms = 30000;
     uint32_t shutdown_timeout_ms = 1000;
 };
 
@@ -274,6 +274,9 @@ private:
     void collect_stderr_tail();
     void capture_exit_if_needed();
     std::string with_transport_context(const std::string & base_error) const;
+    std::optional<std::chrono::steady_clock::time_point> effective_deadline(
+        std::optional<std::chrono::steady_clock::time_point> deadline) const;
+    bool terminate_process_until(std::chrono::steady_clock::time_point deadline);
     void shutdown_process();
 
     agent_mcp_stdio_client_config config;
