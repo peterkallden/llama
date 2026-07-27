@@ -2150,6 +2150,17 @@ ctest --test-dir build-agent-current-ninja-debug -L agent --output-on-failure
 ctest --test-dir build-agent-current-ninja-debug -L sandbox-kubernetes --output-on-failure
 ```
 
+The repository also has a Linux-only GitHub Actions workflow at
+`.github/workflows/agent-ci.yml`. It runs for `master` and
+`feature/llama-agent` (and for pull requests targeting either branch), enables
+the Cozo memory/plan/data path, requires both `clang` and `clangd`, builds the
+agent pack with four workers, and runs the `agent` CTest label. The same job
+creates an ephemeral `kind` cluster with a local-path storage provisioner and
+runs the real `sandbox-kubernetes` CTest label with the Kubernetes smoke
+explicitly enabled. This workflow is intentionally separate from the generic
+CPU/backend workflows: Cozo provisioning, agent options and Kubernetes
+preconditions are part of the agent assurance contract, not global defaults.
+
 The current `agent` label is the authoritative model-free agent CTest slice;
 focused inference, memory, plan and tooling coverage is represented by the
 named tests within that label rather than by separate labels in this build.
