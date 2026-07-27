@@ -349,6 +349,9 @@ bool agent_mcp_stdio_client::terminate_process_until(std::chrono::steady_clock::
     while (std::chrono::steady_clock::now() < deadline) {
         if (!subprocess_alive(&state->proc)) {
             subprocess_join(&state->proc, &state->exit_code);
+            state->joined = true;
+            // subprocess_join() closes the child's stdin stream.
+            state->in = nullptr;
             return true;
         }
         collect_stderr_tail();
@@ -440,6 +443,8 @@ void agent_mcp_stdio_client::capture_exit_if_needed() {
     collect_stderr_tail();
     subprocess_join(&state->proc, &state->exit_code);
     state->joined = true;
+    // subprocess_join() closes the child's stdin stream.
+    state->in = nullptr;
 }
 
 std::string agent_mcp_stdio_client::with_transport_context(const std::string & base_error) const {
