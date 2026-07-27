@@ -378,6 +378,9 @@ void agent_mcp_stdio_client::shutdown_process() {
         if (state->in != nullptr) {
             std::fclose(state->in);
             state->in = nullptr;
+            // subprocess_destroy() owns this field as well.  Clear it after
+            // closing the stream so the underlying FILE is not freed twice.
+            state->proc.stdin_file = nullptr;
         }
         collect_stderr_tail();
         if (!state->joined) {
