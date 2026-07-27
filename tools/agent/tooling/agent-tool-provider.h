@@ -150,6 +150,7 @@ struct mcp_agent_tool_definition {
     bool uses_network = false;
     bool writes_memory = false;
     bool writes_plan = false;
+    size_t max_result_bytes = 16 * 1024;
 };
 
 struct mcp_agent_tool_call_result {

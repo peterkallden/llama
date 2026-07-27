@@ -18,6 +18,8 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
 
 class fake_mcp_tool_client final : public agent_mcp_tool_client {
 public:
+    std::string last_arguments;
+
     bool list_tools(
             const agent_tool_context &,
             std::vector<mcp_agent_tool_definition> & tools,
@@ -56,6 +58,7 @@ public:
             const std::string & arguments_json,
             mcp_agent_tool_call_result & result,
             std::string & error) override {
+        last_arguments = arguments_json;
         if (tool.name == "search_issues") {
             result.ok = true;
             result.structured_content_json = R"({"items":[{"title":"stub issue"}]})";
@@ -104,10 +107,32 @@ int main() {
     const auto search_result = read_only_view->call({
         "call-1",
         "github_search_issues",
-        R"({"query":"resident inference"})",
+        R"({ "query": "resident inference" })",
     }, error);
     if (!search_result.ok || search_result.content_json.find("stub issue") == std::string::npos) {
         std::fprintf(stderr, "search_issues did not return the expected result: %s\n", search_result.content_json.c_str());
+        return 1;
+    }
+    if (client.last_arguments != R"({"query":"resident inference"})") {
+        std::fprintf(stderr, "MCP provider did not execute normalized arguments: %s\n", client.last_arguments.c_str());
+        return 1;
+    }
+
+    agent_tool_context limited_context = read_only_context;
+    limited_context.turn_id = "turn-limited-result";
+    limited_context.default_max_result_bytes = 8;
+    std::unique_ptr<agent_tool_view> limited_view = provider.resolve_tools(limited_context, error);
+    if (!limited_view) {
+        std::fprintf(stderr, "limited MCP provider resolve failed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto limited_result = limited_view->call({
+        "call-limited",
+        "github_search_issues",
+        R"({"query":"x"})",
+    }, error);
+    if (limited_result.ok || limited_result.failure_code != "tool_result_too_large") {
+        std::fprintf(stderr, "MCP result-size limit was not enforced\n");
         return 1;
     }
 

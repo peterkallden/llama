@@ -363,6 +363,16 @@ previous result when the branch or test configuration changes.
 - Binary resources, UTF-8 validation, content digests, and document extraction
   remain backlog items for the text-only resource slice.
 
+### 2026-07-27 - Tool execution hardening checkpoint
+
+- Scope: made native and MCP call-slot reservation atomic after validation,
+  enforced a shared MCP result-size limit over structured plus text content,
+  executed normalized MCP arguments, and reduced repair skeletons to required
+  schema properties with safe defaults/minimums.
+- Deferred by design: explicit async-tool cancellation, preemptive deadlines
+  for synchronous native executors, interactive per-call confirmation, and
+  stricter fuzzy resolution for policy-gated tools.
+
 ### 2026-07-26 — Lane-state ownership checkpoint
 
 - Commit: `94cb3169d`

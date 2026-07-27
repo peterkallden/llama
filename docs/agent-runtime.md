@@ -183,6 +183,31 @@ provider-backed tool may register resources in the store. Tool metadata must
 therefore keep execution class separate from capability, effect, risk and
 artifact production.
 
+### Tool execution hardening
+
+The resolved native and MCP views reserve the per-turn tool-call budget after
+validation and under the same mutex as the counter update. Validation may run
+concurrently, but two calls cannot reserve the final available slot.
+
+Native results and MCP results are normalized through the same host-owned
+result-size boundary. MCP structured content and text content are counted
+together, using the lower of the runtime default and the MCP definition limit.
+MCP arguments are normalized and validated before the normalized JSON is sent
+to the client; the provider does not validate one representation and execute a
+different one.
+
+Tool repair context now contains only schema-required properties, using schema
+defaults or numeric minimums when available. Optional properties are omitted
+so that a repair suggestion cannot look like a complete call while silently
+inventing unrelated arguments.
+
+The following items remain deliberately separate backlog work: explicit
+per-operation cancellation for async native/MCP tools, preemptive deadlines
+for synchronous native executors, a distinct per-call confirmation protocol
+for write tools, and stricter fuzzy-name policy for policy-gated tools. The
+current `requires_confirmation` flag remains an exposure/policy gate; it is not
+presented as an interactive approval handshake.
+
 ## Tool catalog
 
 The current foundation catalog is intentionally small and semantic. Host

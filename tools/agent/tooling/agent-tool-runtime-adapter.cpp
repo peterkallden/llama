@@ -112,10 +112,21 @@ public:
             const auto schema = json::parse(tool.parameters, nullptr, false);
             if (!schema.is_object() || !schema.contains("properties") || !schema["properties"].is_object()) continue;
             json skeleton = json::object();
+            std::vector<std::string> required;
+            if (schema.contains("required") && schema["required"].is_array()) {
+                for (const auto & item : schema["required"]) {
+                    if (item.is_string()) required.push_back(item.get<std::string>());
+                }
+            }
             size_t count = 0;
-            for (const auto & [name, property] : schema["properties"].items()) {
-                if (count++ >= 24) break;
+            for (const auto & name : required) {
+                if (count++ >= 24 || !schema["properties"].contains(name)) break;
+                const auto & property = schema["properties"][name];
                 if (property.contains("default")) skeleton[name] = property["default"];
+                else if (property.contains("minimum") &&
+                        (property.value("type", "") == "integer" || property.value("type", "") == "number")) {
+                    skeleton[name] = property["minimum"];
+                }
                 else if (property.value("type", "") == "string") skeleton[name] = "";
                 else if (property.value("type", "") == "integer" || property.value("type", "") == "number") skeleton[name] = 0;
                 else if (property.value("type", "") == "boolean") skeleton[name] = false;

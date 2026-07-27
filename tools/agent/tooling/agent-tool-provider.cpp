@@ -189,7 +189,8 @@ std::string make_mcp_exposed_name(
 
 agent_tool_result normalize_mcp_execution_result(
         const agent_tool_call & call,
-        const mcp_agent_tool_call_result & execution) {
+        const mcp_agent_tool_call_result & execution,
+        size_t result_limit) {
     if (!execution.ok) {
         return make_failure_result(
             call,
@@ -198,6 +199,17 @@ agent_tool_result normalize_mcp_execution_result(
             execution.retryable,
             execution.safe_summary.empty() ? "The MCP tool call failed." : execution.safe_summary,
             execution.raw_diagnostic);
+    }
+
+    if (execution.structured_content_json.size() > result_limit ||
+            execution.text_content.size() > result_limit - execution.structured_content_json.size()) {
+        return make_failure_result(
+            call,
+            "tool_result_too_large",
+            common_tool_failure_class::limit,
+            false,
+            "The MCP tool result exceeded the configured result limit.",
+            "MCP tool result bytes exceeded configured limit");
     }
 
     if (!execution.structured_content_json.empty()) {
@@ -323,14 +335,6 @@ private:
             error = result.raw_diagnostic;
             return false;
         }
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            if (call_count >= context.max_calls) {
-                error = "tool call limit reached";
-                return false;
-            }
-        }
-
         auto definition_it = definitions.find(call.name);
         if (definition_it == definitions.end()) {
             error = "tool is unavailable in this runtime view";
@@ -345,6 +349,10 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(state_mutex);
+            if (call_count >= context.max_calls) {
+                error = "tool call limit reached";
+                return false;
+            }
             ++call_count;
         }
         error.clear();
@@ -478,11 +486,7 @@ public:
         }
 
         std::string normalized_arguments;
-        if (!common_schema_normalize_and_validate_object(
-                call.arguments_json,
-                it->second.input_schema_json,
-                normalized_arguments,
-                error)) {
+        if (!normalize_arguments(call, it->second, normalized_arguments, error)) {
             return false;
         }
 
@@ -562,14 +566,6 @@ private:
             error = result.raw_diagnostic;
             return false;
         }
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            if (call_count >= context.max_calls) {
-                error = "tool call limit reached";
-                return false;
-            }
-        }
-
         auto it = definitions.find(call.name);
         if (it == definitions.end()) {
             error = "tool is unavailable in this MCP runtime view";
@@ -584,6 +580,10 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(state_mutex);
+            if (call_count >= context.max_calls) {
+                error = "tool call limit reached";
+                return false;
+            }
             ++call_count;
         }
         error.clear();
@@ -644,7 +644,17 @@ private:
 
         const auto started_at = std::chrono::steady_clock::now();
         mcp_agent_tool_call_result execution;
-        if (!client.call_tool(context, it->second, call.arguments_json, execution, error)) {
+        std::string normalized_arguments;
+        if (!normalize_arguments(call, it->second, normalized_arguments, error)) {
+            return make_failure_result(
+                call,
+                "tool.invalid_arguments",
+                common_tool_failure_class::validation,
+                false,
+                "MCP tool arguments do not satisfy the registered contract.",
+                error);
+        }
+        if (!client.call_tool(context, it->second, normalized_arguments, execution, error)) {
             if (context.execution_control.should_stop()) {
                 auto result = make_execution_control_failure_result(context, call);
                 error = result.raw_diagnostic;
@@ -676,9 +686,24 @@ private:
                 error);
         }
 
-        auto result = normalize_mcp_execution_result(call, execution);
+        const size_t result_limit = std::min(
+            context.default_max_result_bytes,
+            it->second.max_result_bytes);
+        auto result = normalize_mcp_execution_result(call, execution, result_limit);
         error = result.ok ? std::string() : result.raw_diagnostic;
         return result;
+    }
+
+    bool normalize_arguments(
+            const agent_tool_call & call,
+            const mcp_agent_tool_definition & definition,
+            std::string & normalized_arguments,
+            std::string & error) const {
+        return common_schema_normalize_and_validate_object(
+            call.arguments_json,
+            definition.input_schema_json,
+            normalized_arguments,
+            error);
     }
     agent_tool_context context;
     agent_mcp_tool_client & client;
