@@ -420,3 +420,34 @@ previous result when the branch or test configuration changes.
 - Focused smokes: event-stream contract, operation-manager and
   session-manager runtime smokes passed.
 - Agent CTest: 16/16 passed with Cozo enabled.
+
+### 2026-07-27 - Cross-platform agent assurance checkpoint
+
+- Branch: `pocs/agent-tool-profiles`, synchronized with the current
+  `feature/llama-agent` upstream merge.
+- Focused Windows/MSVC Debug build: completed for the registered agent CTest
+  targets and sandbox targets using four parallel build workers. The focused
+  Ninja invocation completed 188/188 build steps.
+- Agent CTest: 19/19 passed with Cozo enabled. This includes the tool provider,
+  tool runtime, CLI/MCP, daemon protocol/client, sandbox contract, and the
+  model-free agent/runtime contract tests.
+- Direct focused smokes: tool provider, tool runtime, sandbox contract, CLI/MCP
+  run, daemon protocol, and daemon client passed.
+- Docker sandbox: skipped with the declared return code because the Docker
+  backend was unavailable. This is not counted as a Docker pass.
+- Kubernetes sandbox: the contract CTest passed, while the live Kubernetes
+  backend remained skipped because `LLAMA_AGENT_KUBERNETES_SMOKE=1` and a
+  configured cluster were not supplied.
+- Local Windows configuration confirmed that the CANN option and SOC/ACL graph
+  arguments are accepted, but the CANN configure step cannot proceed without
+  `ASCEND_TOOLKIT_HOME` or `CANN_INSTALL_DIR`. CANN hardware/runtime coverage
+  remains not run.
+- The local configuration did not provide OpenSSL, so HTTPS support was
+  disabled in this Windows build. HTTP/MCP contract coverage therefore does not
+  claim an OpenSSL-enabled HTTPS runtime pass.
+- The broad all-agent target sweep was intentionally stopped after it exposed
+  redundant per-smoke compilation of shared agent sources. The focused CTest
+  targets were then rebuilt and passed; the duplicate-source build shape is a
+  follow-up build-system optimization, not a test failure.
+- Remaining unregistered MCP, daemon, resource, deliberate, research, and
+  live-backend smoke executables were not rebuilt or counted in this checkpoint.
