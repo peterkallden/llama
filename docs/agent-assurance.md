@@ -451,3 +451,22 @@ previous result when the branch or test configuration changes.
   follow-up build-system optimization, not a test failure.
 - Remaining unregistered MCP, daemon, resource, deliberate, research, and
   live-backend smoke executables were not rebuilt or counted in this checkpoint.
+
+### 2026-07-27 - Agent library build-structure checkpoint
+
+- Scope: extracted the shared `tools/agent` implementation used by the agent
+  CLI, daemon, resource, runtime, and MCP-client targets into the reusable
+  `llama-agent-runtime-support` library. Agent-enabled `pocs/memory` builds now
+  link that library instead of compiling a second copy of the runtime source
+  list.
+- The library follows the repository `BUILD_SHARED_LIBS` policy, uses explicit
+  target-scoped dependencies, and carries the existing Cozo link contract when
+  `LLAMA_MEMORY_COZO=ON`.
+- Focused agent build: 106/106 steps passed with four build workers after the
+  shared library's first Cozo compile was rerun serially to avoid the known
+  MSVC object-file lock on this Windows workspace.
+- Memory POC target: 7/7 steps passed with four build workers.
+- Agent CTest: 19/19 passed with Cozo enabled.
+- Compile database inspection shows core runtime sources compiling once per
+  configuration; remaining repeated sources are explicit MCP-server and daemon
+  fixtures reserved for the next library split.

@@ -47,6 +47,13 @@ if (LLAMA_MEMORY_COZO)
     )
 endif()
 
+if (LLAMA_AGENT_RUNTIME)
+    # The shared agent implementation is configured before this POC target.
+    # Keep the source-list fallback above for memory-only builds, where the
+    # agent runtime library is intentionally not available.
+    set(AGENT_MEMORY_RUNTIME_SOURCES)
+endif()
+
 set(TARGET llama-memory-poc)
 add_executable(${TARGET}
     memory.cpp
@@ -72,7 +79,11 @@ target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_RUNTIME)
-    target_link_libraries(${TARGET} PRIVATE llama-agent-poc server-context)
+    target_link_libraries(${TARGET} PRIVATE
+        llama-agent-poc
+        llama-agent-runtime-support
+        server-context
+    )
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 endif()
 

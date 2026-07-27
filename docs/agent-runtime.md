@@ -1874,6 +1874,43 @@ steps should extend them without creating a second runtime path.
 
   The intended direction is still a host/service process that owns the loaded-model manager, session manager, store manager, tool execution surface, policy decisions, and trace sink, with the CLI eventually acting as a client/admin tool against that daemon rather than a parallel owner of the agent loop.
 
+### Agent build and library structure
+
+The agent build keeps reusable implementation out of individual smoke
+executables. The current first extraction is `llama-agent-runtime-support`, an
+internal library containing the shared implementation used by the CLI, daemon,
+resource, runtime, and MCP-client targets. Smoke executables should normally
+compile only their focused `pocs/agent/smoke/<area>/*.cpp` source and link the
+library they exercise.
+
+The dependency direction is intentionally one-way:
+
+```text
+common/*
+    -> llama-agent-poc
+    -> llama-agent-runtime-support
+    -> CLI, daemon, MCP, and smoke targets
+```
+
+`common/agent` must not depend on implementation under `tools/agent`. Daemon
+services, MCP servers, and optional Cozo storage may be split into narrower
+libraries when their real dependency boundaries have been measured. Do not
+create a new library solely to mirror a directory name.
+
+Agent support libraries follow the repository's `BUILD_SHARED_LIBS` policy. They
+use target-scoped include directories, compile definitions, and link libraries;
+they do not rely on smoke targets carrying the implementation source list. The
+Cozo-specific implementation remains optional and must continue to be guarded
+by the existing Cozo build options and explicit factory/linking contracts.
+
+CTest labels and smoke groups are independent build and verification concepts:
+the category targets (`llama-agent-smoke-runtime`, `llama-agent-smoke-mcp`,
+`llama-agent-smoke-cli`, `llama-agent-smoke-daemon`, and
+`llama-agent-smoke-resource`) control build grouping, while labels such as
+`agent`, `sandbox-docker`, and `sandbox-kubernetes` control test selection.
+New tests should preserve both structures and should not add a label merely to
+make a target build.
+
 ### Adding a new test or smoke
 
 When a new contract or externally visible seam is added, keep its first
@@ -1882,8 +1919,8 @@ regression proof close to the owning layer and add it to the pack deliberately:
 1. Put a focused C++ smoke under `pocs/agent/smoke/<area>/` and keep reusable
    contracts/implementation under `common/*` or `tools/agent/*`; `pocs/agent`
    should remain the harness and migration/build-glue layer.
-2. Add an executable in `pocs/agent/CMakeLists.txt`, link only the existing
-   runtime sources needed by the seam, and add the target to
+2. Add an executable in `pocs/agent/CMakeLists.txt`, link only the reusable
+   support libraries and explicit fixture sources needed by the seam, and add the target to
    `AGENT_RUNTIME_TARGETS` plus its category list (`runtime`, `mcp`, `cli`,
    `daemon`, or `resource`). This makes it available to both the category
    smoke and `llama-agent-smoke-all`/`llama-agent-build-pack`.

@@ -72,6 +72,58 @@ if (LLAMA_MEMORY_COZO)
     )
 endif()
 
+# Shared implementation for the agent CLI, daemon, and model-free smoke
+# targets.  Keep the source list here so the implementation is compiled once
+# per build configuration instead of once per executable target.
+add_library(llama-agent-runtime-support ${AGENT_RUNTIME_SOURCES})
+target_include_directories(llama-agent-runtime-support
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-runtime-support PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-runtime-support
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-runtime-support
+    PUBLIC
+        llama-memory
+        llama-common
+        llama
+        llama-agent-poc
+        server-context
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (WIN32)
+    target_link_libraries(llama-agent-runtime-support PUBLIC ws2_32)
+endif()
+if (LLAMA_MEMORY_COZO)
+    target_include_directories(llama-agent-runtime-support PRIVATE ${COZO_INCLUDE_DIR})
+    llama_link_cozo(llama-agent-runtime-support)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-support PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+# The implementation is now owned by the library.  The variable remains
+# defined above as the single source list, but must not be added directly to
+# executable targets below.
+set(AGENT_RUNTIME_SOURCES)
+
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
     ../../tools/agent/cli/agent-cli-main.cpp
@@ -805,6 +857,35 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
+
+set(AGENT_RUNTIME_LIBRARY_TARGETS
+    llama-agent-cli
+    llama-agent-resident-smoke
+    llama-agent-tool-provider-smoke
+    llama-agent-tool-runtime-smoke
+    llama-agent-mcp-tool-provider-smoke
+    llama-agent-mcp-stdio-client-smoke
+    llama-agent-mcp-http-client-smoke
+    llama-agent-mcp-stdio-server-smoke
+    llama-agent-mcp-http-inbound-dispatcher-smoke
+    llama-agent-mcp-http-vertical-smoke
+    llama-agent-cli-mcp-selection-smoke
+    llama-agent-cli-run-mcp-smoke
+    llama-agent-mcp-stdio-server
+    llama-agent-daemon-dispatcher-smoke
+    llama-agent-daemon-protocol-smoke
+    llama-agent-daemon-client-smoke
+    llama-agent-daemon-wait-events-smoke
+    llama-agent-daemon-mcp-config-smoke
+    llama-agent-runtime-session-host-tooling-smoke
+    llama-agent-runtime-session-manager-smoke
+    llama-agent-resource-store-smoke
+    llama-agent-daemon
+)
+
+foreach(TARGET ${AGENT_RUNTIME_LIBRARY_TARGETS})
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+endforeach()
 
 set(AGENT_RUNTIME_TARGETS
     llama-agent-cli
