@@ -123,12 +123,13 @@ jobs:
             -DLLAMA_BUILD_TESTS=ON \
             -DBUILD_TESTING=ON \
             -DLLAMA_TESTS_INSTALL=OFF \
+            -DLLAMA_AGENT_PACKAGE_INSTALL=ON \
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_APP=OFF \
             -DLLAMA_BUILD_SERVER=ON \
             -DLLAMA_BUILD_UI=OFF \
             -DLLAMA_USE_PREBUILT_UI=OFF \
-            -DLLAMA_TOOLS_INSTALL=ON \
+            -DLLAMA_TOOLS_INSTALL=OFF \
             -DLLAMA_MEMORY=ON \
             -DLLAMA_MEMORY_COZO=ON \
             -DLLAMA_PLAN=ON \

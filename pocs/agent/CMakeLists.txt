@@ -205,7 +205,7 @@ endif()
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
-if(LLAMA_TOOLS_INSTALL)
+if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
@@ -876,11 +876,11 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
-if(LLAMA_TOOLS_INSTALL)
+if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon RUNTIME)
 endif()
 
-if(LLAMA_TOOLS_INSTALL)
+if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     file(GLOB AGENT_HOST_CONFIG_EXAMPLES CONFIGURE_DEPENDS
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-*.json)
     install(FILES
