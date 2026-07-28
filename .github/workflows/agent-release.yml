@@ -1,0 +1,155 @@
+name: Agent release
+
+on:
+  push:
+    tags:
+      - agent-v*
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag, for example agent-v0.1.0
+        required: true
+        type: string
+      source_ref:
+        description: Branch or commit to build
+        required: true
+        default: feature/llama-agent
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  COZO_VERSION: '0.7.6'
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+jobs:
+  release-linux:
+    name: Build and publish Linux agent release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+
+      - name: Install build and agent dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            clangd \
+            cmake \
+            curl \
+            git \
+            libssl-dev \
+            ninja-build \
+            zlib1g-dev
+
+      - name: Provision Cozo C API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cozo_root="$RUNNER_TEMP/cozo-${COZO_VERSION}"
+          cozo_lib="$RUNNER_TEMP/libcozo_c-${COZO_VERSION}.so"
+          git clone --depth 1 --branch "v${COZO_VERSION}" \
+            https://github.com/cozodb/cozo.git "$cozo_root"
+          curl --fail --location --retry 3 \
+            "https://github.com/cozodb/cozo/releases/download/v${COZO_VERSION}/libcozo_c-${COZO_VERSION}-x86_64-unknown-linux-gnu.so.gz" \
+            | gzip -d > "$cozo_lib"
+          test -s "$cozo_root/cozo-lib-c/cozo_c.h"
+          test -s "$cozo_lib"
+          {
+            echo "COZO_INCLUDE_DIR=$cozo_root/cozo-lib-c"
+            echo "COZO_LIBRARY=$cozo_lib"
+            echo "LD_LIBRARY_PATH=$RUNNER_TEMP:${LD_LIBRARY_PATH:-}"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-agent-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLLAMA_BUILD_TESTS=ON \
+            -DBUILD_TESTING=ON \
+            -DLLAMA_TESTS_INSTALL=OFF \
+            -DLLAMA_AGENT_PACKAGE_INSTALL=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DLLAMA_TOOLS_INSTALL=OFF \
+            -DLLAMA_MEMORY=ON \
+            -DLLAMA_MEMORY_COZO=ON \
+            -DLLAMA_PLAN=ON \
+            -DLLAMA_PLAN_COZO=ON \
+            -DLLAMA_AGENT_RUNTIME=ON \
+            -DLLAMA_AGENT_TOOLS_CLANG=ON \
+            -DCOZO_INCLUDE_DIR="$COZO_INCLUDE_DIR" \
+            -DCOZO_LIBRARY="$COZO_LIBRARY"
+
+      - name: Build release agent pack
+        shell: bash
+        run: cmake --build build-agent-release --parallel 4 --target llama-agent-build-pack
+
+      - name: Run release agent tests
+        shell: bash
+        run: ctest --test-dir build-agent-release -L agent --output-on-failure --timeout 900
+
+      - name: Install and package release
+        id: package
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          SOURCE_REF: ${{ inputs.source_ref || github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" == agent-v* ]] || {
+            echo "Release tag must use the agent-v* format" >&2
+            exit 1
+          }
+
+          rm -rf agent-package
+          cmake --install build-agent-release --prefix agent-package
+          mkdir -p agent-package/lib
+          cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+
+          printf '%s\n' \
+            "release_tag=$RELEASE_TAG" \
+            "source_ref=$SOURCE_REF" \
+            "commit_sha=$(git rev-parse HEAD)" \
+            "cozo_version=$COZO_VERSION" \
+            "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > agent-package/AGENT-RELEASE-MANIFEST.txt
+
+          archive="llama-agent-${RELEASE_TAG}-linux-x64.tar.gz"
+          tar -czf "$archive" -C agent-package .
+          sha256sum "$archive" > "${archive}.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          SOURCE_REF: ${{ inputs.source_ref || github.ref }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            "$ARCHIVE" \
+            "${ARCHIVE}.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_REF" \
+            --title "llama-agent $RELEASE_TAG" \
+            --generate-notes

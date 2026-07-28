@@ -2184,6 +2184,16 @@ keeps the five newest packages. These are short-lived integration artifacts,
 not versioned releases; stable release packages remain a separate, manually
 tagged release process.
 
+The manual/tagged release workflow is `.github/workflows/agent-release.yml`.
+It accepts `agent-v*` tags, or can be started manually with an explicit release
+tag and source ref. The workflow performs a clean Linux Cozo build, runs the
+`agent` CTest label, installs the relocatable package, includes the complete
+configuration and daemon/MCP examples, writes release provenance, generates a
+SHA-256 checksum, and publishes the archive as a GitHub Release. This is
+intentionally separate from the automatic feature artifacts: feature packages
+are short-lived integration snapshots, while an `agent-v*` release is an
+explicit versioned distribution decision.
+
 The current `agent` label is the authoritative model-free agent CTest slice;
 focused inference, memory, plan and tooling coverage is represented by the
 named tests within that label rather than by separate labels in this build.
