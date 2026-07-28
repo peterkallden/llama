@@ -64,6 +64,13 @@ struct common_agent_daemon_reload_result {
     std::string warning;
 };
 
+struct common_agent_daemon_provider_readiness {
+    std::string id;
+    std::string status = "not_configured";
+    bool required = false;
+    std::string warning;
+};
+
 struct common_agent_daemon_runtime {
     std::shared_ptr<common_agent_daemon_config_store> config_store;
     std::unique_ptr<common_memory_store> memory_store;
@@ -73,6 +80,12 @@ struct common_agent_daemon_runtime {
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
+    common_agent_runtime_tooling provider_probe_tooling;
+    std::vector<common_agent_daemon_provider_readiness> provider_readiness;
+    std::function<bool(
+        common_agent_runtime_tooling & tooling,
+        std::vector<common_agent_daemon_provider_readiness> & providers,
+        std::string & error)> probe_mcp_providers;
     std::function<bool(
         const struct common_agent_daemon_tool_payload & payload,
         agent_tool_result & result,
@@ -159,13 +172,7 @@ struct common_agent_daemon_readiness {
     std::string plan_store = "unavailable";
     std::string resource_store = "unavailable";
     std::string tool_profile;
-    struct provider {
-        std::string id;
-        std::string status = "not_configured";
-        bool required = false;
-        std::string warning;
-    };
-    std::vector<provider> providers;
+    std::vector<common_agent_daemon_provider_readiness> providers;
     std::vector<std::string> warnings;
 };
 

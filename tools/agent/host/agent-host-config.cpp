@@ -1184,6 +1184,7 @@ void apply_agent_host_config_to_args(
     options.max_research_iterations = config.max_research_iterations;
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
+    options.n_threads = config.n_threads;
     options.max_tool_rounds = config.max_tool_rounds;
     options.turn_timeout_ms = config.turn_timeout_ms;
     options.inference_step_timeout_ms = config.inference_step_timeout_ms;

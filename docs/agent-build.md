@@ -91,12 +91,14 @@ cmake -S . -B build-agent-windows `
   -DLLAMA_AGENT_CLANGD_EXECUTABLE="PATH_TO_CLANGD\\clangd.exe"
 ```
 
-Build with four workers:
+Build with one worker on MSVC. The agent tree is intentionally serial here:
+Cozo-enabled Debug builds can exhaust the MSVC compiler heap when several large
+translation units compile concurrently.
 
 ```powershell
 cmake --build build-agent-windows `
   --config Debug `
-  --parallel 4
+  --parallel 1
 ```
 
 For a package-oriented build, use the agent build-pack target when it is
@@ -105,7 +107,7 @@ available in the configured tree:
 ```powershell
 cmake --build build-agent-windows `
   --config Release `
-  --parallel 4 `
+  --parallel 1 `
   --target llama-agent-build-pack
 ```
 

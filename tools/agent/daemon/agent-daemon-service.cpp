@@ -273,6 +273,15 @@ common_agent_daemon_service::common_agent_daemon_service(
     state_value = (this->runtime.host || this->runtime.tool_executor)
         ? common_agent_daemon_state::ready
         : common_agent_daemon_state::failed;
+    if (this->runtime.probe_mcp_providers) {
+        std::string probe_error;
+        if (!this->runtime.probe_mcp_providers(
+                this->runtime.provider_probe_tooling,
+                this->runtime.provider_readiness,
+                probe_error)) {
+            state_value = common_agent_daemon_state::failed;
+        }
+    }
 }
 
 namespace {
@@ -296,7 +305,7 @@ common_agent_daemon_readiness make_daemon_readiness(
                 if (!configured.enabled) {
                     continue;
                 }
-                common_agent_daemon_readiness::provider provider;
+                common_agent_daemon_provider_readiness provider;
                 provider.id = configured.id.empty() ? configured.server_name : configured.id;
                 provider.required = configured.required;
                 provider.status = "unprobed";
@@ -306,16 +315,36 @@ common_agent_daemon_readiness make_daemon_readiness(
         }
     }
 
+    if (!runtime.provider_readiness.empty()) {
+        readiness.providers = runtime.provider_readiness;
+    }
+
+    bool required_provider_failed = false;
+    bool optional_provider_degraded = false;
+    for (const auto & provider : readiness.providers) {
+        if (provider.status == "ready") {
+            continue;
+        }
+        if (provider.required) {
+            required_provider_failed = true;
+        } else if (provider.status == "degraded") {
+            optional_provider_degraded = true;
+        }
+    }
+
     const bool core_ready = runtime.host != nullptr &&
         runtime.memory_store != nullptr &&
         runtime.plan_store != nullptr;
-    if (state == common_agent_daemon_state::failed || !core_ready) {
+    if (state == common_agent_daemon_state::failed || !core_ready || required_provider_failed) {
         readiness.health = "failed";
         if (!runtime.host) readiness.warnings.push_back("runtime is not initialized");
         if (!runtime.memory_store) readiness.warnings.push_back("memory store is unavailable");
         if (!runtime.plan_store) readiness.warnings.push_back("plan store is unavailable");
     } else if (state == common_agent_daemon_state::ready) {
-        readiness.health = "ready";
+        readiness.health = optional_provider_degraded ? "degraded" : "ready";
+        if (optional_provider_degraded) {
+            readiness.warnings.push_back("one or more optional MCP providers are degraded");
+        }
     } else {
         readiness.health = "draining";
     }
@@ -520,7 +549,7 @@ bool common_agent_daemon_service::populate_status_outcome(
     outcome.status.live = state_value != common_agent_daemon_state::stopped;
     outcome.status.readiness = readiness();
     outcome.status.ready = state_value == common_agent_daemon_state::ready &&
-        outcome.status.readiness.health == "ready";
+        outcome.status.readiness.health != "failed";
     if (runtime.host) {
         outcome.status.sessions = runtime.host->list_sessions();
         outcome.status.session_count = outcome.status.sessions.size();

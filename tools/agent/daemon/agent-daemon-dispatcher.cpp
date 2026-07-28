@@ -591,7 +591,7 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     status.ready = status.state == common_agent_daemon_state::ready &&
         accepting_commands &&
         worker_running &&
-        status.readiness.health == "ready";
+        status.readiness.health != "failed";
 }
 
 void common_agent_daemon_dispatcher::worker_loop() {

@@ -448,6 +448,74 @@ int main(int argc, char ** argv) {
         reload_error.clear();
         return true;
     };
+    common_memory_store * probe_memory_store = runtime.memory_store.get();
+    common_plan_store * probe_plan_store = runtime.plan_store.get();
+    agent_resource_store * probe_resource_store = runtime.resource_store.get();
+    common_agent_data_store * probe_data_store = runtime.data_store.get();
+    runtime.probe_mcp_providers = [
+        probe_options = options,
+        probe_memory_store,
+        probe_plan_store,
+        probe_resource_store,
+        probe_data_store](
+            common_agent_runtime_tooling & retained_tooling,
+            std::vector<common_agent_daemon_provider_readiness> & provider_status,
+            std::string & probe_error) {
+        retained_tooling = {};
+        provider_status.clear();
+        bool all_required_ready = true;
+        for (const auto & configured : probe_options.mcp_providers) {
+            if (!configured.enabled) {
+                continue;
+            }
+
+            common_agent_daemon_provider_readiness status;
+            status.id = configured.id.empty() ? configured.server_name : configured.id;
+            status.required = configured.required;
+
+            daemon_options provider_options = probe_options;
+            provider_options.mcp_providers = {configured};
+            common_agent_runtime_session_host_turn_request probe_request;
+            probe_request.mode = common_agent_runtime_host_mode::chat;
+            probe_request.session_id = "daemon-provider-probe";
+            probe_request.namespace_id = "local";
+            probe_request.project_id = "llama-agent";
+            probe_request.turn_id = "daemon-provider-probe";
+            probe_request.memory_scope = common_memory_scope::session;
+            probe_request.plan_scope = common_plan_scope::turn;
+
+            common_agent_runtime_tooling provider_tooling;
+            std::string provider_error;
+            const bool provider_ready = resolve_agent_daemon_tooling(
+                provider_options,
+                nullptr,
+                probe_request,
+                *probe_memory_store,
+                *probe_plan_store,
+                probe_resource_store,
+                provider_tooling,
+                provider_error,
+                probe_data_store);
+            if (provider_ready) {
+                status.status = "ready";
+                for (auto & resource : provider_tooling.owned_resources) {
+                    retained_tooling.owned_resources.push_back(std::move(resource));
+                }
+            } else {
+                status.status = "degraded";
+                status.warning = provider_error.empty()
+                    ? "provider probe failed"
+                    : provider_error;
+                if (status.required) {
+                    all_required_ready = false;
+                }
+            }
+            provider_status.push_back(std::move(status));
+        }
+        probe_error.clear();
+        return all_required_ready;
+    };
+
     agent_mcp_server_tool_registry http_registry;
     common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity, options.worker_count);
     if (options.http_enabled && !dispatcher.build_http_tool_catalog(options, http_registry, error)) {

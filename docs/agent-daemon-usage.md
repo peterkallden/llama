@@ -778,16 +778,24 @@ include a `readiness` object with the core runtime and store checks:
 ```
 
 `ready: true` is a serving gate: the daemon has an initialized runtime,
-required stores and an active worker that can accept commands. A daemon may be
-`live` while it is starting, draining or stopping, but clients must not use
-`live` as a substitute for readiness. Optional MCP-provider health is not
-claimed by this core check; provider probing and `ready with warnings` policy
-will be added when providers expose a shared health seam. Until then, provider
-configuration and tool-resolution errors remain reported through the existing
-tooling/configuration diagnostics.
+required stores, an active worker that can accept commands, and no failed
+required MCP provider. At startup, configured MCP providers are probed through
+the standard MCP initialize and tool-discovery path. There is no portable MCP
+health method, so this probe is deliberately bounded to handshake and
+`tools/list`.
 
-Configured providers are reported as `unprobed` until the provider-probe
-phase is enabled. `required` is host policy, not a client-selected capability.
+An optional provider that fails its probe produces `health: "degraded"`, keeps
+`ready: true`, and includes a warning. A required provider that fails produces
+`health: "failed"` and keeps `ready: false`. `required` is host policy, not a
+client-selected capability. A daemon may be `live` while it is starting,
+draining or stopping, but clients must not use `live` as a substitute for
+readiness.
+
+Provider probes retain their established client resources for the daemon
+lifetime so a successful startup probe does not immediately destroy the MCP
+session. Configuration reload currently reports provider changes for future
+operations; provider readiness is evaluated at daemon startup and a reload
+that changes providers requires a restart for a fresh probe.
 
 ## Current limitations
 
