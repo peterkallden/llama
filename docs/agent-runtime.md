@@ -1227,10 +1227,10 @@ One concrete "full current functionality" foreground run looks like this on Wind
   },
   "runtime": {
     "default_mode": "agent",
-    "thinking_mode": "reflective",
-    "max_reflection_rounds": 1,
-    "max_plan_revisions": 0,
-    "max_research_iterations": 0,
+    "thinking_mode": "research",
+    "max_reflection_rounds": 2,
+    "max_plan_revisions": 2,
+    "max_research_iterations": 4,
     "memory_learn": "post-turn",
     "agent_plan": "auto",
     "n_predict": 96
@@ -1296,7 +1296,7 @@ Get-Content .\work\agent-requests.jsonl |
   .\build-agent-current-ninja-debug\bin\llama-agent-daemon.exe --config .\work\agent-host.json
 ```
 
-That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan/data stores, filesystem+Cozo resource storage, agent planning with reflection and memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config.
+That example exercises the current end-to-end foreground daemon shape: resident `server-context` inference, Cozo-backed memory/plan/data stores, filesystem+Cozo resource storage, bounded research iterations with reflection and plan revisions, post-turn memory learning, repository/native tools, and one MCP stdio provider under the same host-owned config. The packaged full configuration uses these enabled settings so longer tests exercise the orchestration paths; the bounds keep a test turn finite.
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
