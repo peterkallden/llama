@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUILD_DIR="build-plan-resident-cozo-debug-3"
-CONFIGURATION="Release"
+BUILD_DIR="${LLAMA_AGENT_BUILD_DIR:-build-agent}"
+CONFIGURATION="${LLAMA_AGENT_CONFIGURATION:-RelWithDebInfo}"
 TIMEOUT_SECONDS=120
 INCLUDE_CTEST=0
 KEEP_LOGS=0
 
 usage() {
     echo "usage: $0 [--build-dir DIR] [--configuration CONFIG] [--include-ctest] [--keep-logs]"
+    echo "       defaults: LLAMA_AGENT_BUILD_DIR=build-agent, LLAMA_AGENT_CONFIGURATION=RelWithDebInfo"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -25,7 +26,22 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ "$BUILD_DIR" = /* ]]; then BUILD_ROOT="$BUILD_DIR"; else BUILD_ROOT="$REPO_ROOT/$BUILD_DIR"; fi
-BIN="$BUILD_ROOT/bin/$CONFIGURATION"
+resolve_executable() {
+    local target="$1"
+    local single_config="$BUILD_ROOT/bin/$target"
+    local multi_config="$BUILD_ROOT/bin/$CONFIGURATION/$target"
+
+    if [[ -x "$single_config" ]]; then
+        printf '%s\n' "$single_config"
+    elif [[ -x "$multi_config" ]]; then
+        printf '%s\n' "$multi_config"
+    else
+        echo "Required executable not found in either:" >&2
+        echo "  $single_config" >&2
+        echo "  $multi_config" >&2
+        return 1
+    fi
+}
 LOG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/llama-agent-beta-test.XXXXXX")"
 declare -a RESULTS=()
 cleanup() {
@@ -74,8 +90,7 @@ smokes=(
 )
 
 for target in "${smokes[@]}"; do
-    executable="$BIN/$target"
-    [[ -x "$executable" ]] || { echo "Required executable not found: $executable" >&2; exit 1; }
+    executable="$(resolve_executable "$target")" || exit 1
     run_suite "$target" "$executable"
 done
 
