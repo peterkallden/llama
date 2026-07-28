@@ -445,6 +445,31 @@ void append_agent_daemon_status_snapshot(
     response["state"] = common_agent_daemon_state_name(status.state);
     response["live"] = status.live;
     response["ready"] = status.ready;
+    response["readiness"] = {
+        {"health", status.readiness.health},
+        {"model", status.readiness.model},
+        {"inference", status.readiness.inference},
+        {"stores", {
+            {"memory", status.readiness.memory_store},
+            {"plan", status.readiness.plan_store},
+            {"resource", status.readiness.resource_store},
+        }},
+        {"tool_profile", status.readiness.tool_profile},
+        {"warnings", status.readiness.warnings},
+    };
+    json providers = json::array();
+    for (const auto & provider : status.readiness.providers) {
+        json item = {
+            {"id", provider.id},
+            {"status", provider.status},
+            {"required", provider.required},
+        };
+        if (!provider.warning.empty()) {
+            item["warning"] = provider.warning;
+        }
+        providers.push_back(std::move(item));
+    }
+    response["readiness"]["providers"] = std::move(providers);
     response["worker_running"] = status.worker_running;
     response["worker_count"] = status.worker_count;
     response["workers_running"] = status.workers_running;
@@ -698,6 +723,18 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
             "memory_learning",
             "scoped_sessions",
         })},
+        {"readiness", {
+            {"health", "unknown"},
+            {"model", options.model.empty() ? "not_configured" : "configured"},
+            {"inference", "available"},
+            {"stores", {
+                {"memory", "configured"},
+                {"plan", "configured"},
+                {"resource", "configured"},
+            }},
+            {"tool_profile", options.tool_profile.empty() ? "minimal" : options.tool_profile},
+            {"warnings", json::array({"runtime readiness is reported by status"})},
+        }},
     };
     common_tool_profile_snapshot snapshot;
     std::string tooling_error;

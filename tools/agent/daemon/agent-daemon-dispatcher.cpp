@@ -586,10 +586,12 @@ void common_agent_daemon_dispatcher::fill_status_snapshot_locked(
     status.turns_completed = turns_completed;
     status.tools_completed = tools_completed;
     status.state = service.state();
+    status.readiness = service.readiness();
     status.live = status.state != common_agent_daemon_state::stopped && worker_running;
     status.ready = status.state == common_agent_daemon_state::ready &&
         accepting_commands &&
-        worker_running;
+        worker_running &&
+        status.readiness.health == "ready";
 }
 
 void common_agent_daemon_dispatcher::worker_loop() {

@@ -275,6 +275,59 @@ common_agent_daemon_service::common_agent_daemon_service(
         : common_agent_daemon_state::failed;
 }
 
+namespace {
+
+common_agent_daemon_readiness make_daemon_readiness(
+        const common_agent_daemon_runtime & runtime,
+        common_agent_daemon_state state) {
+    common_agent_daemon_readiness readiness;
+    readiness.model = runtime.host ? "loaded" : "unavailable";
+    readiness.inference = runtime.host ? "available" : "unavailable";
+    readiness.memory_store = runtime.memory_store ? "ready" : "unavailable";
+    readiness.plan_store = runtime.plan_store ? "ready" : "unavailable";
+    readiness.resource_store = runtime.resource_store ? "ready" : "unavailable";
+    if (runtime.config_store) {
+        const auto options = runtime.config_store->snapshot();
+        if (options) {
+            readiness.tool_profile = options->tool_profile.empty()
+                ? "minimal"
+                : options->tool_profile;
+            for (const auto & configured : options->mcp_providers) {
+                if (!configured.enabled) {
+                    continue;
+                }
+                common_agent_daemon_readiness::provider provider;
+                provider.id = configured.id.empty() ? configured.server_name : configured.id;
+                provider.required = configured.required;
+                provider.status = "unprobed";
+                provider.warning = "provider probe has not run";
+                readiness.providers.push_back(std::move(provider));
+            }
+        }
+    }
+
+    const bool core_ready = runtime.host != nullptr &&
+        runtime.memory_store != nullptr &&
+        runtime.plan_store != nullptr;
+    if (state == common_agent_daemon_state::failed || !core_ready) {
+        readiness.health = "failed";
+        if (!runtime.host) readiness.warnings.push_back("runtime is not initialized");
+        if (!runtime.memory_store) readiness.warnings.push_back("memory store is unavailable");
+        if (!runtime.plan_store) readiness.warnings.push_back("plan store is unavailable");
+    } else if (state == common_agent_daemon_state::ready) {
+        readiness.health = "ready";
+    } else {
+        readiness.health = "draining";
+    }
+    return readiness;
+}
+
+}
+
+common_agent_daemon_readiness common_agent_daemon_service::readiness() const {
+    return make_daemon_readiness(runtime, state_value);
+}
+
 bool common_agent_daemon_service::execute(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_result & result,
@@ -465,7 +518,9 @@ bool common_agent_daemon_service::populate_status_outcome(
     outcome.event = "status";
     outcome.status.state = state_value;
     outcome.status.live = state_value != common_agent_daemon_state::stopped;
-    outcome.status.ready = state_value == common_agent_daemon_state::ready;
+    outcome.status.readiness = readiness();
+    outcome.status.ready = state_value == common_agent_daemon_state::ready &&
+        outcome.status.readiness.health == "ready";
     if (runtime.host) {
         outcome.status.sessions = runtime.host->list_sessions();
         outcome.status.session_count = outcome.status.sessions.size();

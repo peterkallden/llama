@@ -474,6 +474,7 @@ bool parse_agent_daemon_jsonl_status_response(
     response.state = message.value("state", std::string());
     response.live = message.value("live", false);
     response.ready = message.value("ready", false);
+    response.readiness = message.value("readiness", json::object());
     response.worker_running = message.value("worker_running", false);
     response.worker_count = message.value("worker_count", 1);
     response.workers_running = message.value("workers_running", 0);

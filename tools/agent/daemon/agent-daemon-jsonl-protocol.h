@@ -160,6 +160,7 @@ struct agent_daemon_jsonl_status_response {
     std::string state;
     bool live = false;
     bool ready = false;
+    nlohmann::ordered_json readiness;
     bool worker_running = false;
     int worker_count = 1;
     int workers_running = 0;

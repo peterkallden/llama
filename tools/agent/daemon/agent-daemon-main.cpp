@@ -362,7 +362,7 @@ int main(int argc, char ** argv) {
         require_restart(!tool_profiles_equal(candidate.tool_profiles, options.tool_profiles),
             "tools.profiles");
         auto provider_equal = [](const auto & a, const auto & b) {
-            return a.id == b.id && a.enabled == b.enabled &&
+            return a.id == b.id && a.enabled == b.enabled && a.required == b.required &&
                 a.type == b.type && a.transport == b.transport &&
                 a.command == b.command && a.url == b.url &&
                 a.token_env == b.token_env && a.allowed_tools == b.allowed_tools &&

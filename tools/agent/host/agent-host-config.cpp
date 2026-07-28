@@ -140,6 +140,7 @@ bool read_mcp_provider(
     read_optional(value, "type", provider.type);
     read_optional(value, "id", provider.id);
     read_optional(value, "enabled", provider.enabled);
+    read_optional(value, "required", provider.required);
     read_optional(value, "transport", provider.transport);
     read_optional(value, "url", provider.url);
     read_optional(value, "token_env", provider.token_env);
@@ -580,6 +581,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"type", provider.type},
             {"id", provider.id},
             {"enabled", provider.enabled},
+            {"required", provider.required},
             {"transport", provider.transport},
             {"url", provider.url},
             {"token_env", provider.token_env},

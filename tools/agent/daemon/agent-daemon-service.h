@@ -149,10 +149,31 @@ struct common_agent_daemon_active_turn_status {
     std::string pending_operation_detail;
 };
 
+struct common_agent_daemon_readiness {
+    // Lifecycle state and operational readiness are intentionally separate.
+    // `health` describes whether the daemon can serve work now.
+    std::string health = "failed";
+    std::string model = "unavailable";
+    std::string inference = "unavailable";
+    std::string memory_store = "unavailable";
+    std::string plan_store = "unavailable";
+    std::string resource_store = "unavailable";
+    std::string tool_profile;
+    struct provider {
+        std::string id;
+        std::string status = "not_configured";
+        bool required = false;
+        std::string warning;
+    };
+    std::vector<provider> providers;
+    std::vector<std::string> warnings;
+};
+
 struct common_agent_daemon_status {
     common_agent_daemon_state state = common_agent_daemon_state::starting;
     bool live = false;
     bool ready = false;
+    common_agent_daemon_readiness readiness;
     bool worker_running = false;
     size_t worker_count = 1;
     size_t workers_running = 0;
@@ -281,6 +302,7 @@ public:
     bool shutdown_requested() const { return shutdown_requested_flag.load(); }
     common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
     common_agent_daemon_state state() const { return state_value.load(); }
+    common_agent_daemon_readiness readiness() const;
     common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value.load(); }
     std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
 

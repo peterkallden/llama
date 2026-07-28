@@ -7,6 +7,7 @@ struct agent_host_mcp_provider_config {
     std::string type = "mcp";
     std::string id;
     bool enabled = true;
+    bool required = false;
     std::string transport = "stdio";
     std::vector<std::string> command;
     std::string url;

@@ -483,6 +483,11 @@ int main() {
         std::fprintf(stderr, "ready response mismatch\n");
         return 1;
     }
+    if (ready.value("readiness", json::object()).value("health", "") != "unknown" ||
+            ready.value("readiness", json::object()).value("warnings", json::array()).empty()) {
+        std::fprintf(stderr, "ready response readiness handshake mismatch\n");
+        return 1;
+    }
 
     common_agent_daemon_command_result status_result;
     status_result.ok = true;
@@ -505,6 +510,15 @@ int main() {
     status_result.status.state = common_agent_daemon_state::ready;
     status_result.status.live = true;
     status_result.status.ready = true;
+    status_result.status.readiness.health = "ready";
+    status_result.status.readiness.model = "loaded";
+    status_result.status.readiness.inference = "available";
+    status_result.status.readiness.memory_store = "ready";
+    status_result.status.readiness.plan_store = "ready";
+    status_result.status.readiness.resource_store = "ready";
+    status_result.status.readiness.tool_profile = "minimal";
+    status_result.status.readiness.providers.push_back({
+        "local-mcp", "ready", false, {}});
     status_result.status.worker_running = true;
     status_result.status.accepting_commands = true;
     status_result.status.shutdown_requested = false;
@@ -547,6 +561,9 @@ int main() {
             status_response.value("active_turn_disposition", "") != "continue_immediately" ||
             status_response.value("active_pending_operation_kind", "") != "inference" ||
             status_response.value("active_pending_operation_detail", "") != "session host turn execution" ||
+            status_response.value("readiness", json::object()).value("health", "") != "ready" ||
+            status_response.value("readiness", json::object()).value("stores", json::object()).value("memory", "") != "ready" ||
+            status_response.value("readiness", json::object()).value("providers", json::array()).size() != 1 ||
             !status_response.contains("session_keys") ||
             !status_response["session_keys"].is_array() ||
             status_response["session_keys"].size() != 1 ||

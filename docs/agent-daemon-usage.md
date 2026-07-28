@@ -749,6 +749,46 @@ dispatcher counters: `commands_accepted`, `commands_completed`,
 host metrics slice; a later service host can project the same counters to
 Prometheus text without making metrics an MCP tool.
 
+### Readiness is an operational gate
+
+The daemon keeps lifecycle state (`starting`, `ready`, `draining`, `stopping`,
+`stopped` or `failed`) separate from operational readiness. Status responses
+include a `readiness` object with the core runtime and store checks:
+
+```json
+"readiness": {
+  "health": "ready",
+  "model": "loaded",
+  "inference": "available",
+  "stores": {
+    "memory": "ready",
+    "plan": "ready",
+    "resource": "ready"
+  },
+  "tool_profile": "research",
+  "providers": [
+    {
+      "id": "local-mcp",
+      "status": "ready",
+      "required": false
+    }
+  ],
+  "warnings": []
+}
+```
+
+`ready: true` is a serving gate: the daemon has an initialized runtime,
+required stores and an active worker that can accept commands. A daemon may be
+`live` while it is starting, draining or stopping, but clients must not use
+`live` as a substitute for readiness. Optional MCP-provider health is not
+claimed by this core check; provider probing and `ready with warnings` policy
+will be added when providers expose a shared health seam. Until then, provider
+configuration and tool-resolution errors remain reported through the existing
+tooling/configuration diagnostics.
+
+Configured providers are reported as `unprobed` until the provider-probe
+phase is enabled. `required` is host policy, not a client-selected capability.
+
 ## Current limitations
 
 - foreground process only;

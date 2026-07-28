@@ -1041,6 +1041,13 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)
     set_property(TEST llama-agent-daemon-protocol-ctest PROPERTY LABELS agent)
 
+    # The protocol smoke contains the executable readiness-gate contract. Keep
+    # a separately named CTest entry so assurance reports expose readiness as
+    # an explicit check without introducing a second daemon fixture.
+    add_test(NAME llama-agent-daemon-readiness-ctest
+        COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)
+    set_property(TEST llama-agent-daemon-readiness-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-daemon-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)
     set_property(TEST llama-agent-daemon-client-ctest PROPERTY LABELS agent)

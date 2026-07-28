@@ -47,6 +47,25 @@ int main() {
         return 1;
     }
 
+    const json readiness_probe_payload = {
+        {"ok", true},
+        {"event", "status"},
+        {"state", "ready"},
+        {"live", true},
+        {"ready", true},
+        {"readiness", {
+            {"health", "ready"},
+            {"inference", "available"},
+        }},
+    };
+    agent_daemon_jsonl_status_response parsed_status;
+    if (!parse_agent_daemon_jsonl_status_response(readiness_probe_payload, parsed_status, error) ||
+            parsed_status.readiness.value("health", "") != "ready" ||
+            parsed_status.readiness.value("inference", "") != "available") {
+        std::fprintf(stderr, "status readiness contract mismatch: %s\n", error.c_str());
+        return 1;
+    }
+
     const auto cancel_request = make_agent_daemon_jsonl_cancel_request({
         "req-2",
         "turn-2",

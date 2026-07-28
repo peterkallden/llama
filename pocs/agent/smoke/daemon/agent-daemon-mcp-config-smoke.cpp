@@ -72,6 +72,7 @@ int main(int argc, char ** argv) {
                         {"type", "mcp"},
                         {"id", "github"},
                         {"enabled", true},
+                        {"required", true},
                         {"transport", "stdio"},
                         {"command", json::array({server_path.string()})},
                         {"prefix", "github"},
@@ -150,6 +151,11 @@ int main(int argc, char ** argv) {
     }
     if (loaded_config.worker_count != 2) {
         std::fprintf(stderr, "host config worker_count mismatch\n");
+        return 1;
+    }
+    if (loaded_config.mcp_providers.empty() ||
+            !loaded_config.mcp_providers.front().required) {
+        std::fprintf(stderr, "host config MCP required policy mismatch\n");
         return 1;
     }
     if (loaded_config.n_threads != 4) {
