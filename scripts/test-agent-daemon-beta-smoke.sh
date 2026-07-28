@@ -3,6 +3,7 @@ set -euo pipefail
 
 BUILD_DIR="${LLAMA_AGENT_BUILD_DIR:-build-agent}"
 CONFIGURATION="${LLAMA_AGENT_CONFIGURATION:-RelWithDebInfo}"
+CHAT_MODEL="${LLAMA_AGENT_CHAT_MODEL:-}"
 TIMEOUT_SECONDS=120
 INCLUDE_CTEST=0
 KEEP_LOGS=0
@@ -10,6 +11,7 @@ KEEP_LOGS=0
 usage() {
     echo "usage: $0 [--build-dir DIR] [--configuration CONFIG] [--include-ctest] [--keep-logs]"
     echo "       defaults: LLAMA_AGENT_BUILD_DIR=build-agent, LLAMA_AGENT_CONFIGURATION=RelWithDebInfo"
+    echo "       optional model-backed foreground smoke: LLAMA_AGENT_CHAT_MODEL=PATH"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -97,6 +99,16 @@ done
 if [[ "$INCLUDE_CTEST" -eq 1 ]]; then
     ctest_bin="$(command -v ctest)"
     run_suite ctest-agent "$ctest_bin" --test-dir "$BUILD_ROOT" -C "$CONFIGURATION" -L agent --output-on-failure
+fi
+
+if [[ -n "$CHAT_MODEL" ]]; then
+    daemon_smoke="$REPO_ROOT/scripts/test-agent-daemon-smoke.sh"
+    run_suite daemon-foreground "$daemon_smoke" \
+        --build-dir "$BUILD_DIR" \
+        --configuration "$CONFIGURATION" \
+        --chat-model "$CHAT_MODEL"
+else
+    echo "suite=daemon-foreground status=skipped reason=LLAMA_AGENT_CHAT_MODEL_not_set"
 fi
 
 failed=0

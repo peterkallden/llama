@@ -239,6 +239,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -KeepLogs
 ```
 
+The Linux beta test pack runs the equivalent foreground daemon smoke when
+`LLAMA_AGENT_CHAT_MODEL` points to a model file. Without that variable, the
+model-backed smoke is reported as skipped while the deterministic pack still
+runs:
+
+```bash
+export LLAMA_AGENT_CHAT_MODEL=/path/to/model.gguf
+./scripts/test-agent-daemon-beta-smoke.sh --include-ctest --keep-logs
+```
+
 The matching Linux entry point is
 `scripts/test-agent-daemon-beta-smoke.sh`. Model-backed runs should be
 reported separately from model-free tests because they depend on model
