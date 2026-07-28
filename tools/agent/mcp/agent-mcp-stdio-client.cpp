@@ -256,6 +256,10 @@ bool agent_mcp_stdio_client::send_notification(
         const std::string & method,
         const json & params,
         std::string & error) {
+    if (!state->running || !state->in) {
+        error = "MCP stdio client is not writable";
+        return false;
+    }
     return write_json_rpc_message(
         state->in,
         make_mcp_jsonrpc_notification(method, params),
