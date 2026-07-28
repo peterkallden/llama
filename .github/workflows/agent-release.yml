@@ -25,13 +25,23 @@ concurrency:
 
 env:
   COZO_VERSION: '0.7.6'
+  CUDA_TOOLKIT_PACKAGE: cuda-toolkit-13-3
+  VULKAN_SDK_VERSION: '1.4.350.1'
+  VULKAN_SDK_SHA256: 6cce33c7e5383814150c5041820769d93c65a1fd883002e5949b067045a07daa
   CMAKE_BUILD_PARALLEL_LEVEL: 4
 
 jobs:
-  release-linux:
-    name: Build and publish Linux agent release
+  build-release:
+    name: Build ${{ matrix.backend }} agent release
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - cpu
+          - cuda
+          - vulkan
 
     steps:
       - name: Checkout release source
@@ -39,7 +49,7 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.ref }}
 
-      - name: Install build and agent dependencies
+      - name: Install common build dependencies
         shell: bash
         run: |
           set -euo pipefail
@@ -52,7 +62,52 @@ jobs:
             git \
             libssl-dev \
             ninja-build \
+            xz-utils \
             zlib1g-dev
+
+      - name: Install CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Official NVIDIA CUDA Toolkit repository and download instructions:
+          # https://developer.nvidia.com/cuda-downloads
+          curl --fail --location --retry 3 \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+            --output "$RUNNER_TEMP/cuda-keyring.deb"
+          sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
+          nvcc --version
+
+      - name: Install Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Official LunarG Vulkan SDK and installation documentation:
+          # https://vulkan.lunarg.com/sdk/home
+          # https://vulkan.lunarg.com/doc/view/latest/linux/getting_started.html
+          vulkan_archive="$RUNNER_TEMP/vulkan-sdk.tar.xz"
+          curl --fail --location --retry 3 \
+            "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkan_sdk.tar.xz" \
+            --output "$vulkan_archive"
+          echo "${VULKAN_SDK_SHA256}  ${vulkan_archive}" | sha256sum --check --strict
+          vulkan_root="$RUNNER_TEMP/vulkan-sdk"
+          mkdir -p "$vulkan_root"
+          tar -xf "$vulkan_archive" -C "$vulkan_root"
+          vulkan_sdk_dir="$(find "$vulkan_root" -mindepth 2 -maxdepth 2 -type d -name x86_64 -print -quit)"
+          test -n "$vulkan_sdk_dir"
+          test -s "$vulkan_sdk_dir/include/vulkan/vulkan.h"
+          {
+            echo "VULKAN_SDK=$vulkan_sdk_dir"
+            echo "PATH=$vulkan_sdk_dir/bin:$PATH"
+            echo "LD_LIBRARY_PATH=$vulkan_sdk_dir/lib:${LD_LIBRARY_PATH:-}"
+            echo "CMAKE_PREFIX_PATH=$vulkan_sdk_dir:$vulkan_sdk_dir/lib/VulkanLoader:${CMAKE_PREFIX_PATH:-}"
+          } >> "$GITHUB_ENV"
+          export VULKAN_SDK="$vulkan_sdk_dir"
+          export PATH="$VULKAN_SDK/bin:$PATH"
+          vulkaninfo --summary || true
 
       - name: Provision Cozo C API
         shell: bash
@@ -75,10 +130,34 @@ jobs:
 
       - name: Configure release build
         shell: bash
+        env:
+          BACKEND: ${{ matrix.backend }}
         run: |
           set -euo pipefail
-          cmake -S . -B build-agent-release -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          backend_flags=(
+            -DGGML_CPU=ON
+            -DGGML_OPENMP=ON
+            -DGGML_CUDA=OFF
+            -DGGML_VULKAN=OFF
+            -DGGML_NATIVE=OFF
+          )
+          case "$BACKEND" in
+            cuda)
+              backend_flags+=( -DGGML_CUDA=ON )
+              ;;
+            vulkan)
+              backend_flags+=( -DGGML_VULKAN=ON )
+              ;;
+            cpu)
+              ;;
+            *)
+              echo "Unknown backend: $BACKEND" >&2
+              exit 1
+              ;;
+          esac
+
+          cmake -S . -B "build-agent-release-$BACKEND" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DLLAMA_BUILD_TESTS=ON \
             -DBUILD_TESTING=ON \
             -DLLAMA_TESTS_INSTALL=OFF \
@@ -95,20 +174,35 @@ jobs:
             -DLLAMA_PLAN_COZO=ON \
             -DLLAMA_AGENT_RUNTIME=ON \
             -DLLAMA_AGENT_TOOLS_CLANG=ON \
+            "${backend_flags[@]}" \
             -DCOZO_INCLUDE_DIR="$COZO_INCLUDE_DIR" \
             -DCOZO_LIBRARY="$COZO_LIBRARY"
 
       - name: Build release agent pack
         shell: bash
-        run: cmake --build build-agent-release --parallel 4 --target llama-agent-build-pack
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          cmake --build "build-agent-release-$BACKEND" \
+            --parallel 4 \
+            --target llama-agent-build-pack
 
       - name: Run release agent tests
         shell: bash
-        run: ctest --test-dir build-agent-release -L agent --output-on-failure --timeout 900
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          ctest --test-dir "build-agent-release-$BACKEND" \
+            -L agent \
+            --output-on-failure \
+            --timeout 900
 
       - name: Install and package release
         id: package
         env:
+          BACKEND: ${{ matrix.backend }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           SOURCE_REF: ${{ inputs.source_ref || github.ref }}
         shell: bash
@@ -118,37 +212,65 @@ jobs:
             echo "Release tag must use the agent-v* format" >&2
             exit 1
           }
+          release_version="${RELEASE_TAG#agent-}"
 
-          rm -rf agent-package
-          cmake --install build-agent-release --prefix agent-package
-          mkdir -p agent-package/lib
-          cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+          package_dir="agent-package-$BACKEND"
+          rm -rf "$package_dir"
+          cmake --install "build-agent-release-$BACKEND" --prefix "$package_dir"
+          mkdir -p "$package_dir/lib"
+          cp "$COZO_LIBRARY" "$package_dir/lib/libcozo_c.so"
 
           printf '%s\n' \
             "release_tag=$RELEASE_TAG" \
+            "backend=$BACKEND" \
             "source_ref=$SOURCE_REF" \
             "commit_sha=$(git rev-parse HEAD)" \
             "cozo_version=$COZO_VERSION" \
             "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > agent-package/AGENT-RELEASE-MANIFEST.txt
+            > "$package_dir/AGENT-RELEASE-MANIFEST.txt"
 
-          archive="llama-agent-${RELEASE_TAG}-linux-x64.tar.gz"
-          tar -czf "$archive" -C agent-package .
+          archive="llama-agent-${release_version}-${BACKEND}-linux-x64.tar.gz"
+          tar -czf "$archive" -C "$package_dir" .
           sha256sum "$archive" > "${archive}.sha256"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload backend package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-release-${{ matrix.backend }}
+          path: |
+            llama-agent-v*-${{ matrix.backend }}-linux-x64.tar.gz
+            llama-agent-v*-${{ matrix.backend }}-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Publish verified agent release
+    needs: build-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Download backend packages
+        uses: actions/download-artifact@v6
+        with:
+          pattern: llama-agent-release-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create combined checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           SOURCE_REF: ${{ inputs.source_ref || github.ref }}
-          ARCHIVE: ${{ steps.package.outputs.archive }}
         shell: bash
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
-            "$ARCHIVE" \
-            "${ARCHIVE}.sha256" \
+            artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_REF" \
             --title "llama-agent $RELEASE_TAG" \
