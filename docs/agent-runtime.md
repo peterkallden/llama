@@ -686,11 +686,14 @@ turn's deadline, cancellation state or escalation count.
 
 ## Current Shape
 
-The core runtime remains in-process, and an individual turn still executes
-mostly synchronously once it enters the session host. The daemon can queue and
-dispatch commands through a bounded worker pool, and selected native/MCP tools
-can use the pending-operation poll/cancel seam; this is not yet a fully
-asynchronous resident runtime.
+The core runtime remains in-process, but it already has asynchronous internal
+seams for inference tasks, selected native/MCP tool calls, and pending
+operations. The public `run_turn()` session-host API still blocks until its
+lane reaches a terminal result, so the current design is not yet a fully
+non-blocking or coroutine-based resident runtime. The daemon can queue and
+dispatch commands through a bounded worker pool, while the pending-operation
+poll/cancel seam allows selected work to wait, resume, time out, or cancel
+without changing the synchronous result contract.
 
 ```text
 llama-agent CLI / llama-memory chat compatibility
