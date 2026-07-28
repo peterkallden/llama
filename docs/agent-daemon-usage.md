@@ -592,6 +592,15 @@ llama-agent in either of two different roles:
 | Let an IDE/agent delegate work to llama-agent | `llama-agent-daemon --http-agent-tools` over inbound MCP HTTP | llama-agent receives `delegate_task` |
 | Local administration and test control | JSONL stdin/stdout or TCP | daemon control plane, not an IDE tool surface |
 
+These are two related but distinct host shapes. `llama-agent-daemon` is the
+resident agent runtime: it owns sessions, turns, queueing, cancellation,
+status, and the JSONL control plane. It can also host inbound MCP over HTTP
+and expose `delegate_task` when `mcp.inbound` and agent tools are enabled.
+`llama-agent-mcp-stdio-server` is a standalone MCP transport adapter for a
+client that launches an MCP subprocess over stdin/stdout. It is not a second
+daemon runtime. Both binaries are included in the agent package because they
+serve different integration directions.
+
 The local stdio example is
 [vscode-mcp.json](examples/vscode-mcp.json). Copy it to `.vscode/mcp.json`,
 replace the executable and repository paths, then use **MCP: List Servers**
