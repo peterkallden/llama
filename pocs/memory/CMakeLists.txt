@@ -96,6 +96,9 @@ if (LLAMA_MEMORY_COZO)
     llama_link_cozo(${TARGET})
 endif()
 
-if(LLAMA_TOOLS_INSTALL)
+# The agent package installs its host/runtime binaries separately. The legacy
+# memory PoC is still built for agent-backed tests, but is not part of that
+# package and therefore must not add an install-time dependency on its binary.
+if(LLAMA_TOOLS_INSTALL AND NOT LLAMA_AGENT_RUNTIME)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
