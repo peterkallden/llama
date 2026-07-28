@@ -2172,6 +2172,18 @@ portable `agent-config.example.json` is a complete starting configuration with
 disabled network transports and placeholder paths; token values remain outside
 the package and are supplied through environment variables.
 
+The feature branch also has a separate `.github/workflows/agent-package.yml`
+workflow for integration packages. It is activated by completion of either
+agent verification workflow, but publishes only when both `Agent CI (Linux)`
+and `Agent dynamic analysis` have succeeded for the same commit on
+`feature/llama-agent`. It downloads the already-tested Linux package rather
+than rebuilding it, adds a small manifest and SHA-256 checksum, and publishes
+an artifact named with the UTC date, workflow run id and commit provenance.
+The workflow deletes older artifacts with the same feature-package prefix and
+keeps the five newest packages. These are short-lived integration artifacts,
+not versioned releases; stable release packages remain a separate, manually
+tagged release process.
+
 The current `agent` label is the authoritative model-free agent CTest slice;
 focused inference, memory, plan and tooling coverage is represented by the
 named tests within that label rather than by separate labels in this build.
