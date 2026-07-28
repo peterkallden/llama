@@ -56,8 +56,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-selection.cpp
 )
 
-link_libraries(cpp-httplib)
-
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
         ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
@@ -111,11 +109,6 @@ if (BUILD_SHARED_LIBS)
         WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
 endif()
-
-# The implementation is now owned by the library.  The variable remains
-# defined above as the single source list, but must not be added directly to
-# executable targets below.
-set(AGENT_RUNTIME_SOURCES)
 
 add_library(llama-agent-daemon-protocol STATIC
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
@@ -177,7 +170,6 @@ set(TARGET llama-agent-cli)
 add_executable(${TARGET}
     ../../tools/agent/cli/agent-cli-main.cpp
     ../../tools/agent/cli/agent-cli-command.cpp
-    ${AGENT_RUNTIME_SOURCES}
     ../../tools/agent/cli/agent-cli-run.cpp
 )
 set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME llama-agent)
@@ -191,19 +183,8 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
-if (WIN32)
-    target_link_libraries(${TARGET} PRIVATE ws2_32)
-endif()
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
@@ -212,7 +193,6 @@ endif()
 set(TARGET llama-agent-resident-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-resident-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -224,21 +204,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -250,21 +221,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-tool-runtime-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-runtime-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -276,21 +238,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-tool-provider-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -302,16 +255,8 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-sandbox-contract-smoke)
 add_executable(${TARGET}
@@ -366,7 +311,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-stdio-client-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-stdio-client-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
@@ -379,21 +323,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-http-client-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-client-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -405,21 +340,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-stdio-server-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-stdio-server-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET}
     llama-agent-mcp-stdio-server
@@ -432,24 +358,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-http-inbound-dispatcher-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-server-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
-    ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
-    ../../tools/agent/daemon/agent-daemon-service.cpp
-    ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
@@ -460,21 +374,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-http-vertical-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-vertical-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -484,16 +389,8 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-agent-tools-smoke)
 add_executable(${TARGET}
@@ -512,7 +409,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-cli-mcp-selection-smoke)
 add_executable(${TARGET}
     smoke/cli/agent-cli-mcp-selection-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
@@ -522,21 +418,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-cli-run-mcp-smoke)
 add_executable(${TARGET}
     smoke/cli/agent-cli-run-mcp-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
@@ -546,16 +433,8 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-mcp-stdio-fake-server)
 add_executable(${TARGET}
@@ -573,7 +452,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-stdio-server)
 add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-stdio-server-main.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -581,21 +459,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-dispatcher-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-dispatcher-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -603,21 +472,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-protocol-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-protocol-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -625,16 +485,8 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
 add_executable(${TARGET}
@@ -686,7 +538,6 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-daemon-client-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-client-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-daemon-client-fake-daemon)
 target_include_directories(${TARGET} PRIVATE
@@ -696,21 +547,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-wait-events-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-wait-events-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -718,21 +560,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon-mcp-config-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-mcp-config-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 add_dependencies(${TARGET} llama-agent-mcp-stdio-fake-server)
 target_include_directories(${TARGET} PRIVATE
@@ -740,58 +573,32 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-runtime-session-host-tooling-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-runtime-session-host-tooling-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-runtime-session-manager-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-runtime-session-manager-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-runtime-operation-manager-smoke)
 add_executable(${TARGET}
@@ -835,46 +642,28 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-resource-store-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-store-smoke.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
     ../../tools/agent/daemon/agent-daemon-tcp.cpp
     ../../tools/agent/daemon/agent-daemon-unix.cpp
-    ${AGENT_RUNTIME_SOURCES}
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE
-    llama-memory
-    llama-common
-    llama
-    llama-agent-poc
-    server-context
-    ${CMAKE_THREAD_LIBS_INIT}
-)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
-target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon RUNTIME)
@@ -891,35 +680,6 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/llama-agent-daemon.service
         DESTINATION share/llama-agent/examples)
 endif()
-
-set(AGENT_RUNTIME_LIBRARY_TARGETS
-    llama-agent-cli
-    llama-agent-resident-smoke
-    llama-agent-tool-provider-smoke
-    llama-agent-tool-runtime-smoke
-    llama-agent-mcp-tool-provider-smoke
-    llama-agent-mcp-stdio-client-smoke
-    llama-agent-mcp-http-client-smoke
-    llama-agent-mcp-stdio-server-smoke
-    llama-agent-mcp-http-inbound-dispatcher-smoke
-    llama-agent-mcp-http-vertical-smoke
-    llama-agent-cli-mcp-selection-smoke
-    llama-agent-cli-run-mcp-smoke
-    llama-agent-mcp-stdio-server
-    llama-agent-daemon-dispatcher-smoke
-    llama-agent-daemon-protocol-smoke
-    llama-agent-daemon-client-smoke
-    llama-agent-daemon-wait-events-smoke
-    llama-agent-daemon-mcp-config-smoke
-    llama-agent-runtime-session-host-tooling-smoke
-    llama-agent-runtime-session-manager-smoke
-    llama-agent-resource-store-smoke
-    llama-agent-daemon
-)
-
-foreach(TARGET ${AGENT_RUNTIME_LIBRARY_TARGETS})
-    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
-endforeach()
 
 set(AGENT_MCP_SERVER_LIBRARY_TARGETS
     llama-agent-mcp-stdio-fake-server
