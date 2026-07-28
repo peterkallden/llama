@@ -686,7 +686,11 @@ turn's deadline, cancellation state or escalation count.
 
 ## Current Shape
 
-The current implementation is still in-process and synchronous.
+The core runtime remains in-process, and an individual turn still executes
+mostly synchronously once it enters the session host. The daemon can queue and
+dispatch commands through a bounded worker pool, and selected native/MCP tools
+can use the pending-operation poll/cancel seam; this is not yet a fully
+asynchronous resident runtime.
 
 ```text
 llama-agent CLI / llama-memory chat compatibility
@@ -751,7 +755,13 @@ The JSONL client/transport seam is now moving in the same direction. It no longe
 
 That same client/admin layer now also renders failed daemon turns through a small typed summary rather than only echoing raw error text. When a turn is rejected, cancelled, or times out, the current `daemon-chat` and `daemon-session` path can now surface the daemon `event` together with failure class, generation status, stop reason, and cancel state in one stable line.
 
-The daemon ready event now advertises a small protocol version plus capability list, and turn results now expose a few host-relevant runtime signals such as runtime reuse, reflection/revision flags, event count and memory-learning summary. That keeps admin/test clients from having to infer runtime behavior from stderr.
+The daemon ready event now advertises a small protocol version plus capability
+list. That initial `ready` event confirms JSONL protocol availability; the
+operational readiness gate is exposed through the subsequent `status` response
+and its `readiness` object. Turn results also expose a few host-relevant
+runtime signals such as runtime reuse, reflection/revision flags, event count
+and memory-learning summary. That keeps admin/test clients from having to
+infer runtime behavior from stderr.
 
 That turn surface now also carries a slightly clearer failure/result contract. A failed or cancelled turn no longer only has `error` plus a boolean cancel flag; the session/daemon path now preserves a stable `failure_class` together with generation `status` and `stop_reason`, so timeout-versus-cancel-versus-generic execution failure is visible at the host boundary before any later async worker or richer event streaming work lands. The same shaping now applies to early daemon-side rejections too, so a missing turn payload, lifecycle rejection, or pre-expired deadline does not fall back to a thinner one-off error shape.
 
@@ -1302,7 +1312,7 @@ The packaged full configuration selects the built-in `all-configured` tool profi
 
 On top of that, the CLI now has two thin child-process adapters. `daemon-chat` starts the foreground daemon, sends one turn, reads one response, and shuts the child down. `daemon-session` keeps the same foreground child alive across multiple prompts in the same admin/test session. Both paths still go through the same runtime request/result contracts rather than delegating multi-turn state to a backend conversation loop, and the CLI reads protocol from stdout while relaying daemon diagnostics from stderr separately.
 
-That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `list_sessions`, `get_session`, `list_resources`, `read_resource`, `put_resource`, `list_memories`, `list_plans`, `drain`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/resource <uri>`, `/memories`, `/plans`, `/reset`, `/close`, `/drain`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
+That CLI session path is now a little less turn-only as well. The child-process adapter has explicit request helpers for daemon `status`, `list_sessions`, `get_session`, `list_resources`, `read_resource`, `put_resource`, `list_memories`, `list_plans`, `drain`, `reset_session`, `close_session`, and `shutdown`, and `daemon-session` exposes a small admin/test command set over stdin: `/help`, `/status`, `/status --verbose`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/resource <uri>`, `/memories`, `/plans`, `/reset`, `/close`, `/drain`, and `/quit`. The implementation also normalizes Windows-style stdin a bit more carefully, including a first-line UTF-8 BOM edge that showed up in PowerShell piping during smoke verification.
 
 The `/resources` command now renders one bounded descriptor line per registered resource, including its resource id, URI, display name, media type, byte size, and scope. The `/resource <uri>` command remains the explicit read/fetch operation and returns the bounded text content for an authorized URI. This distinction is intentional: resource-store entries are discoverable and fetchable through the resource contract, while ordinary repository/workspace files remain source-tree data accessed through workspace or repository tools. Sandbox-produced files only appear in the resource listing when the selected sandbox backend imports them as resource references; a file written directly into a source tree is not implicitly published as a downloadable artifact.
 
@@ -1312,7 +1322,11 @@ The CLI-side diagnostics seam is a little cleaner now too. The child-process ada
 
 That foreground client path is now also slightly less ad hoc internally. It has a tiny JSONL transport wrapper around the child-process stdio pipes, and the admin/test command handlers no longer peel turn/session/status results straight out of raw `ordered_json` with repeated `response.value(...)` calls. Instead they consume a few small protocol-shaped result parsers for turn, status, and lifecycle/session events while still speaking the same external JSONL wire format.
 
-The `daemon-session` admin/test surface is now a little friendlier too. Its `/status` command no longer echoes the raw daemon JSON object back to stdout; it renders one compact typed summary of lifecycle state, queue health, active work, and bound sessions while still relying on the same parsed JSONL status contract underneath.
+The `daemon-session` admin/test surface is now a little friendlier too. Its
+`/status` command renders one compact typed summary of lifecycle state, queue
+health, active work, and bound sessions, while `/status --verbose` renders the
+complete parsed JSONL status payload including readiness, providers, warnings,
+sessions and metrics.
 
 That rendering is now its own small CLI-facing seam rather than another helper hidden in the wire-protocol file. The JSONL parser still owns the transport/status DTOs, while the foreground client owns the tiny status-summary contract and rendering policy that turns those DTOs into a stable human-facing admin/test line.
 
@@ -1324,7 +1338,7 @@ Those child-process adapters now also pass through the same daemon-owned tool co
 
 The daemon-facing request shape now carries host-owned scope data such as namespace, session, project, memory scope and plan scope. The current session manager treats namespace plus session as the live resident lane, while status responses still report the currently bound project/scope for that lane. That is still intentionally modest: it is enough to drive multi-turn resident smoke and integration tests, while keeping the future service-owned session model explicit.
 
-There is now also a focused smoke for that foreground client seam itself: `scripts/test-agent-daemon-client-clean-io-smoke.ps1` checks that `daemon-session` keeps protocol-oriented output on stdout, keeps routine loader/bootstrap chatter off stderr in the ordinary path, preserves the small admin/test command surface (`/help`, `/status`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, `/quit`), and renders the typed `/status` summary instead of raw JSON. Separate protocol and client CTest smokes now exercise `put_resource`, resource listing, and resource reading against the JSONL seam without needing a live model.
+There is now also a focused smoke for that foreground client seam itself: `scripts/test-agent-daemon-client-clean-io-smoke.ps1` checks that `daemon-session` keeps protocol-oriented output on stdout, keeps routine loader/bootstrap chatter off stderr in the ordinary path, preserves the small admin/test command surface (`/help`, `/status`, `/status --verbose`, `/sessions`, `/session`, `/resources`, `/resource-put <path>`, `/memories`, `/plans`, `/resource <uri>`, `/reset`, `/close`, `/drain`, `/quit`), and renders the compact or verbose status form as requested. Separate protocol and client CTest smokes now exercise `put_resource`, resource listing, and resource reading against the JSONL seam without needing a live model.
 
 Each keyed session host still manages one active resident runtime at a time and still matches reuse from the current host-owned session/scope contract. That is sufficient for the current foreground daemon and smoke coverage, but it is still an early manager shape rather than the final host/service session model.
 
@@ -1562,7 +1576,13 @@ The first shared memory-tool migration now sits underneath that provider path as
 
 The remaining CLI coupling around embeddings has also been narrowed further. The CLI path still supplies one concrete embedding implementation, but profile-tool bindings and runtime memory-learning hooks now reach it through a small `agent_embedding_provider` seam rather than capturing CLI options directly inside the native tool bindings.
 
-Tool execution is synchronous in this slice. That is deliberate: it preserves current behavior while the runtime boundary stabilizes. A future worker model needs explicit semantics for cancellation, timeouts, ordering, result delivery, and shared-state access.
+The default runtime tool path remains synchronous once a tool call is entered,
+but the provider/view seam now supports selected async-capable tools through
+`begin_call_async(...)` and `poll_call_async(...)`. The daemon/session pending
+operation path can carry those calls with explicit cancellation, deadlines and
+terminal outcomes. A future broader worker model still needs explicit
+semantics for cancellation, timeouts, ordering, result delivery and
+shared-state access.
 
 The cancellation/timeout seam now also reaches a little deeper into the runtime-owned tool and inference paths. Resolved `agent_tool_context` values now carry the shared execution-control contract, native and MCP-backed tool views fail early when a host cancellation or turn deadline has already fired, and the current runtime checks the same seam again immediately after synchronous tool execution. That is still cooperative rather than preemptive, but it means the provider-backed tool surface now has one host-owned place to report `tool_call_cancelled`, `tool_call_deadline_exceeded`, or timeout-class failures instead of only treating those conditions as outer daemon concerns.
 

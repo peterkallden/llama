@@ -42,9 +42,9 @@ outbound HTTP client behind the existing MCP tool-client interface. It accepts
 `max_result_bytes`. The local HTTP smoke proves initialize, Bearer auth,
 session-id retention, tool listing/call, resource listing/read, and bounded
 JSON responses. HTTPS still requires an OpenSSL-enabled cpp-httplib build.
-The current client uses configured connection/read timeouts; propagation of the
-caller operation deadline and active cancellation through the HTTP library is
-still a required follow-up. The inbound listener is now wired into the daemon
+The current client uses configured connection/read timeouts and bounds those
+values by the caller operation deadline for tool calls. Active cancellation
+through the HTTP library is still a required follow-up. The inbound listener is now wired into the daemon
 host and dispatcher. It derives caller identity, namespace, project, tool
 profile, allowlists and write authority from the authenticated token profile
 or JWT policy template, then projects that policy onto the host-resolved tool
