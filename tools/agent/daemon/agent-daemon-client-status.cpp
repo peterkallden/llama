@@ -92,6 +92,25 @@ std::string render_agent_daemon_client_status_summary(
     return rendered;
 }
 
+std::string render_agent_daemon_client_status_verbose(
+        const agent_daemon_jsonl_status_response & response) {
+    if (response.payload.is_object()) {
+        return response.payload.dump(2);
+    }
+
+    return nlohmann::ordered_json{{
+        "event", response.event,
+    }, {
+        "state", response.state,
+    }, {
+        "live", response.live,
+    }, {
+        "ready", response.ready,
+    }, {
+        "readiness", response.readiness,
+    }}.dump(2);
+}
+
 agent_daemon_client_lifecycle_summary make_agent_daemon_client_lifecycle_summary(
         const agent_daemon_jsonl_lifecycle_response & response) {
     agent_daemon_client_lifecycle_summary summary;

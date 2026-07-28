@@ -818,15 +818,20 @@ int run_daemon_session_command(const char * argv0, const args & a) {
         if (line == "/quit" || line == "/exit") {
             break;
         }
-        if (line == "/status") {
+        if (line == "/status" || line == "/status --verbose") {
             agent_daemon_jsonl_status_response response;
             if (!session.status(response, error)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 session.shutdown(error);
                 return 1;
             }
-            const auto summary = make_agent_daemon_client_status_summary(response);
-            std::printf("[daemon-status] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
+            if (line == "/status --verbose") {
+                std::printf("[daemon-status]\n%s\n",
+                    render_agent_daemon_client_status_verbose(response).c_str());
+            } else {
+                const auto summary = make_agent_daemon_client_status_summary(response);
+                std::printf("[daemon-status] %s\n", render_agent_daemon_client_status_summary(summary).c_str());
+            }
             continue;
         }
         if (line == "/sessions") {
@@ -1003,12 +1008,12 @@ int run_daemon_session_command(const char * argv0, const args & a) {
             continue;
         }
         if (line == "/help") {
-            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
+            std::printf("[daemon-help] /status [/status --verbose] /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!line.empty() && line.front() == '/') {
             std::fprintf(stderr, "unknown daemon-session command: %s\n", line.c_str());
-            std::printf("[daemon-help] /status /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
+        std::printf("[daemon-help] /status [/status --verbose] /sessions /session /resources /memories /plans /resource-put <path> /resource <uri> /reset /close /drain /quit\n");
             continue;
         }
         if (!run_one(line)) {

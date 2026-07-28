@@ -65,6 +65,12 @@ int main() {
         std::fprintf(stderr, "status readiness contract mismatch: %s\n", error.c_str());
         return 1;
     }
+    const auto verbose_status = render_agent_daemon_client_status_verbose(parsed_status);
+    if (verbose_status.find("readiness") == std::string::npos ||
+            verbose_status.find("inference") == std::string::npos) {
+        std::fprintf(stderr, "verbose status rendering omitted readiness details\n");
+        return 1;
+    }
 
     const auto cancel_request = make_agent_daemon_jsonl_cancel_request({
         "req-2",

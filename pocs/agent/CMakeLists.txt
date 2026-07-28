@@ -1048,6 +1048,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)
     set_property(TEST llama-agent-daemon-readiness-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-daemon-jsonl-protocol-ctest
+        COMMAND $<TARGET_FILE:llama-agent-daemon-jsonl-protocol-smoke>)
+    set_property(TEST llama-agent-daemon-jsonl-protocol-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-daemon-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)
     set_property(TEST llama-agent-daemon-client-ctest PROPERTY LABELS agent)

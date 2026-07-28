@@ -25,6 +25,9 @@ agent_daemon_client_status_summary make_agent_daemon_client_status_summary(
 std::string render_agent_daemon_client_status_summary(
     const agent_daemon_client_status_summary & summary);
 
+std::string render_agent_daemon_client_status_verbose(
+    const agent_daemon_jsonl_status_response & response);
+
 agent_daemon_client_lifecycle_summary make_agent_daemon_client_lifecycle_summary(
     const agent_daemon_jsonl_lifecycle_response & response);
 

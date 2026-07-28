@@ -743,6 +743,12 @@ lane information. A later service host may wrap the same daemon service and
 dispatcher contracts with HTTP, named pipes or a supervisor without changing
 the JSON/runtime ownership model.
 
+The interactive daemon client supports both `/status` for a compact summary and
+`/status --verbose` for the complete JSONL status payload, including readiness,
+provider details, warnings, sessions and metrics. Both commands use the same
+JSONL `{"command":"status"}` request; verbose mode only changes client-side
+rendering.
+
 Every status-shaped JSONL response also contains a small `metrics` object with
 dispatcher counters: `commands_accepted`, `commands_completed`,
 `commands_failed`, `turns_completed`, and `tools_completed`. This is the first
