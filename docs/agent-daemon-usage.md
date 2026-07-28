@@ -2,7 +2,9 @@
 
 The current daemon is a foreground JSONL process. It reads one JSON command
 per line from stdin and writes one JSON response per line to stdout. The first
-response is `ready`; diagnostics and warnings go to stderr. It can also host
+JSONL response is `ready`, which confirms protocol availability; use the
+`status` command to verify operational readiness. Diagnostics and warnings go
+to stderr. It can also host
 the inbound MCP HTTP listener in the same foreground process. It is not yet a
 detached Windows service or supervised production host.
 
