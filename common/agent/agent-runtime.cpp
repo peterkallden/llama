@@ -39,20 +39,7 @@ static void append_trace(
 static common_agent_deliberation_policy policy_after_escalation(
         const common_agent_deliberation_policy & current,
         common_agent_thinking_mode target) {
-    auto resolved = make_common_agent_deliberation_policy(target);
-    resolved.requested_mode = current.requested_mode;
-    resolved.allow_escalation = current.allow_escalation;
-    resolved.maximum_mode = current.maximum_mode;
-    resolved.max_escalations = current.max_escalations - 1;
-    resolved.max_reflection_rounds = std::max(
-        resolved.max_reflection_rounds, current.max_reflection_rounds);
-    resolved.max_plan_revisions = std::max(
-        resolved.max_plan_revisions, current.max_plan_revisions);
-    resolved.max_tool_rounds = std::max(
-        resolved.max_tool_rounds, current.max_tool_rounds);
-    resolved.max_research_iterations = std::max(
-        resolved.max_research_iterations, current.max_research_iterations);
-    return resolved;
+    return make_common_agent_escalated_policy(current, target);
 }
 
 static void append_event(

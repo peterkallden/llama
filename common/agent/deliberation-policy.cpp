@@ -87,6 +87,32 @@ common_agent_deliberation_policy make_common_agent_deliberation_policy(
     return policy;
 }
 
+common_agent_deliberation_policy make_common_agent_escalated_policy(
+        const common_agent_deliberation_policy & current,
+        common_agent_thinking_mode target) {
+    auto resolved = make_common_agent_deliberation_policy(target);
+    resolved.requested_mode = current.requested_mode;
+    resolved.allow_escalation = current.allow_escalation;
+    resolved.maximum_mode = current.maximum_mode;
+    resolved.max_escalations = std::max(0, current.max_escalations - 1);
+
+    // Reflection is a per-mode budget. A positive plan/research limit is also
+    // a caller-provided cap and must survive an escalation.
+    resolved.max_reflection_rounds = std::max(
+        resolved.max_reflection_rounds, current.max_reflection_rounds);
+    if (current.max_plan_revisions > 0) {
+        resolved.max_plan_revisions = std::min(
+            resolved.max_plan_revisions, current.max_plan_revisions);
+    }
+    resolved.max_tool_rounds = std::max(
+        resolved.max_tool_rounds, current.max_tool_rounds);
+    if (current.max_research_iterations > 0) {
+        resolved.max_research_iterations = std::min(
+            resolved.max_research_iterations, current.max_research_iterations);
+    }
+    return resolved;
+}
+
 common_agent_escalation_decision resolve_common_agent_escalation(
         const common_agent_deliberation_policy & policy,
         const common_agent_escalation_signals & signals) {

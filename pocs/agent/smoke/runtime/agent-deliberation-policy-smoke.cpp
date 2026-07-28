@@ -58,6 +58,23 @@ int main() {
         return fail("auto request did not resolve to reflective");
     }
 
+    if (!resolve_common_agent_deliberation_policy(
+            "auto", 2, 2, 4, resolved, error)) {
+        return fail("bounded auto policy did not resolve");
+    }
+    const auto auto_research = make_common_agent_escalated_policy(
+        resolved, common_agent_thinking_mode::research);
+    if (auto_research.max_reflection_rounds != 2 ||
+            auto_research.max_plan_revisions != 2 ||
+            auto_research.max_research_iterations != 4) {
+        return fail("configured caps were not preserved during escalation");
+    }
+    const auto auto_deliberate = make_common_agent_escalated_policy(
+        resolved, common_agent_thinking_mode::deliberate);
+    if (auto_deliberate.max_plan_revisions != 2) {
+        return fail("plan revision cap was not preserved for deliberate mode");
+    }
+
     common_agent_escalation_signals signals;
     signals.multiple_constraints = true;
     auto escalation = resolve_common_agent_escalation(reflective, signals);

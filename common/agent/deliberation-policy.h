@@ -84,6 +84,10 @@ const char * common_agent_reflection_next_action_name(common_agent_reflection_ne
 common_agent_deliberation_policy make_common_agent_deliberation_policy(
         common_agent_thinking_mode mode);
 
+common_agent_deliberation_policy make_common_agent_escalated_policy(
+        const common_agent_deliberation_policy & current,
+        common_agent_thinking_mode target);
+
 bool parse_common_agent_thinking_request(
         const std::string & value,
         common_agent_thinking_request & request);
