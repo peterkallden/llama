@@ -2161,6 +2161,15 @@ explicitly enabled. This workflow is intentionally separate from the generic
 CPU/backend workflows: Cozo provisioning, agent options and Kubernetes
 preconditions are part of the agent assurance contract, not global defaults.
 
+On a successful run, the same workflow also installs a relocatable Linux agent
+package and uploads it as the `llama-agent-linux-package` workflow artifact. The
+package contains `llama-agent`, `llama-agent-daemon`,
+`llama-agent-mcp-stdio-server`, the Cozo shared library used by this build, and
+the daemon configuration examples under `share/llama-agent/examples`. The
+portable `agent-config.example.json` is a complete starting configuration with
+disabled network transports and placeholder paths; token values remain outside
+the package and are supplied through environment variables.
+
 The current `agent` label is the authoritative model-free agent CTest slice;
 focused inference, memory, plan and tooling coverage is represented by the
 named tests within that label rather than by separate labels in this build.

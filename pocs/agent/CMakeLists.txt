@@ -876,6 +876,22 @@ target_link_libraries(${TARGET} PRIVATE
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
 
+if(LLAMA_TOOLS_INSTALL)
+    install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon RUNTIME)
+endif()
+
+if(LLAMA_TOOLS_INSTALL)
+    file(GLOB AGENT_HOST_CONFIG_EXAMPLES CONFIGURE_DEPENDS
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-*.json)
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
+        ${AGENT_HOST_CONFIG_EXAMPLES}
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-daemon-requests.jsonl
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/llama-agent-daemon.service
+        DESTINATION share/llama-agent/examples)
+endif()
+
 set(AGENT_RUNTIME_LIBRARY_TARGETS
     llama-agent-cli
     llama-agent-resident-smoke

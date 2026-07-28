@@ -127,6 +127,7 @@ jobs:
             -DLLAMA_BUILD_SERVER=ON \
             -DLLAMA_BUILD_UI=OFF \
             -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DLLAMA_TOOLS_INSTALL=ON \
             -DLLAMA_MEMORY=ON \
             -DLLAMA_MEMORY_COZO=ON \
             -DLLAMA_PLAN=ON \
@@ -149,6 +150,22 @@ jobs:
         env:
           LLAMA_AGENT_KUBERNETES_SMOKE: '1'
         run: ctest --test-dir build-agent-ci -L sandbox-kubernetes --output-on-failure --timeout 300
+
+      - name: Install agent package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --install build-agent-ci --prefix agent-package
+          mkdir -p agent-package/lib
+          cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+
+      - name: Upload agent package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-linux-package
+          path: agent-package/**
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload agent test diagnostics
         if: failure()
