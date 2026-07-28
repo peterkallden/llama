@@ -23,7 +23,7 @@ jobs:
       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Wait for both verification workflows
@@ -49,7 +49,7 @@ jobs:
                 'map(select(.headSha == $sha)) | sort_by(.databaseId) | last // empty'
           }
 
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 120); do
             ci_run="$(find_run agent-ci.yml)"
             sanitizer_run="$(find_run agent-dynamic-analysis.yml)"
 
@@ -77,7 +77,7 @@ jobs:
               echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/60)"
             fi
 
-            sleep 10
+            sleep 15
           done
 
           echo "Timed out waiting for verification workflows for $COMMIT_SHA" >&2
