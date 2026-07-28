@@ -1227,7 +1227,7 @@ One concrete "full current functionality" foreground run looks like this on Wind
   },
   "runtime": {
     "default_mode": "agent",
-    "thinking_mode": "research",
+    "thinking_mode": "auto",
     "max_reflection_rounds": 2,
     "max_plan_revisions": 2,
     "max_research_iterations": 4,
