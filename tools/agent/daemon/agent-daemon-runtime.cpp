@@ -142,6 +142,7 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
 common_agent_runtime_config make_daemon_runtime_config(const daemon_options & options) {
     common_agent_runtime_config config;
     config.generation_config.n_predict = options.n_predict;
+    config.generation_config.n_threads = options.n_threads;
     config.generation_config.context_budgets = options.context_budgets;
     config.context_budgets = options.context_budgets;
     config.enable_memory_learning = options.memory_learn == "post-turn";
@@ -173,6 +174,7 @@ common_agent_runtime_resident_request_config make_resident_request_config(
         "server-context",
         common_memory_scope::session,
         common_plan_scope::turn,
+        options.n_threads,
     };
 }
 

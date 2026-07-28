@@ -249,6 +249,7 @@ bool parse_agent_host_config_json(
         const auto & runtime = parsed["runtime"];
         read_optional(runtime, "context_size", config.runtime_context_size);
         read_optional(runtime, "n_predict", config.n_predict);
+        read_optional(runtime, "n_threads", config.n_threads);
         if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
             const auto & budgets = runtime["context_budgets"];
             read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
@@ -638,6 +639,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars},
                 {"deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars},
             }},
+            {"n_threads", config.n_threads},
             {"n_gpu_layers", config.n_gpu_layers},
             {"default_mode", config.default_mode},
             {"thinking_mode", config.thinking_mode},
@@ -809,6 +811,10 @@ bool validate_agent_host_config(
     }
     if (config.inference_max_active == 0) {
         error = "limits.inference_max_active must be greater than zero";
+        return false;
+    }
+    if (config.n_threads < 1) {
+        error = "runtime.n_threads must be greater than zero";
         return false;
     }
     const auto & budgets = config.context_budgets;
@@ -1068,6 +1074,7 @@ void apply_agent_host_config_to_daemon_options(
     options.max_plan_revisions = config.max_plan_revisions;
     options.max_research_iterations = config.max_research_iterations;
     options.n_predict = config.n_predict;
+    options.n_threads = config.n_threads;
     options.context_budgets = config.context_budgets;
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;

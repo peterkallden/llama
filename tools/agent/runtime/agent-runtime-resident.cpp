@@ -38,6 +38,7 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.policy.agent_inference_backend = config.inference_backend;
     turn_request.orchestration_config.prompt = config.prompt;
     turn_request.generation_options.n_predict = config.n_predict;
+    turn_request.generation_options.n_threads = config.n_threads;
     return turn_request;
 }
 

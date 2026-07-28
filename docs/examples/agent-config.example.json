@@ -8,6 +8,7 @@
   "runtime": {
     "context_size": 0,
     "n_predict": 128,
+    "n_threads": 4,
     "n_gpu_layers": 0,
     "default_mode": "agent",
     "thinking_mode": "auto",

@@ -57,6 +57,7 @@ int main(int argc, char ** argv) {
             }},
             {"runtime", {
                 {"thinking_mode", "deliberate"},
+                {"n_threads", 4},
                 {"max_reflection_rounds", 3},
                 {"max_plan_revisions", 2},
                 {"context_budgets", {
@@ -151,6 +152,16 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "host config worker_count mismatch\n");
         return 1;
     }
+    if (loaded_config.n_threads != 4) {
+        std::fprintf(stderr, "host config n_threads mismatch\n");
+        return 1;
+    }
+    daemon_options applied_daemon_options;
+    apply_agent_host_config_to_daemon_options(loaded_config, applied_daemon_options);
+    if (applied_daemon_options.n_threads != 4) {
+        std::fprintf(stderr, "host config n_threads was not applied to daemon options\n");
+        return 1;
+    }
     if (loaded_config.context_budgets.plan_chars != 4096 ||
             loaded_config.context_budgets.tool_observation_chars != 8192) {
         std::fprintf(stderr, "host context budgets mismatch\n");
@@ -173,6 +184,7 @@ int main(int argc, char ** argv) {
     args stdio_options;
     apply_agent_host_config_to_args(loaded_config, stdio_options);
     if (stdio_options.thinking_mode != "deliberate" ||
+            stdio_options.n_threads != 4 ||
             stdio_options.max_reflection_rounds != 3 ||
             stdio_options.max_plan_revisions != 2) {
         std::fprintf(stderr, "deliberation config was not applied to stdio args\n");

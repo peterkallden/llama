@@ -38,4 +38,5 @@ struct common_agent_runtime_resident_request_config {
     std::string inference_backend = "server-context";
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
+    int n_threads = 2;
 };

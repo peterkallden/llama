@@ -285,6 +285,7 @@ The intended host configuration shape is:
   "runtime": {
     "default_mode": "agent",
     "thinking_mode": "reflective",
+    "n_threads": 4,
     "max_reflection_rounds": 1,
     "max_plan_revisions": 0,
     "max_research_iterations": 0
@@ -296,6 +297,13 @@ The intended host configuration shape is:
   }
 }
 ```
+
+`runtime.n_threads` controls the CPU thread count used by daemon-owned model
+generation. It is propagated to the resident turn request and to the shared
+runtime generation configuration, so planning, reflection, tool-call repair
+and final response generation use the same configured value. It defaults to
+`2` and must be greater than zero. The setting is restart-required when the
+daemon configuration is reloaded.
 
 The earlier two PoC mode flags are no longer accepted. Use
 `default_mode=chat|agent`
