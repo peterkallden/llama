@@ -45,12 +45,20 @@ int main() {
     const auto all_configured = catalog.load_profile("all-configured", error);
     bool all_configured_has_data_join = false;
     bool all_configured_has_data_aggregate = false;
+    bool all_configured_has_repository_log = false;
+    bool all_configured_has_repository_status = false;
+    bool all_configured_has_repository_changed_files = false;
     for (const auto & definition : all_configured) {
         all_configured_has_data_join = all_configured_has_data_join || definition.name == "data.join";
         all_configured_has_data_aggregate = all_configured_has_data_aggregate || definition.name == "data.aggregate";
+        all_configured_has_repository_log = all_configured_has_repository_log || definition.name == "repository.log";
+        all_configured_has_repository_status = all_configured_has_repository_status || definition.name == "repository.status";
+        all_configured_has_repository_changed_files = all_configured_has_repository_changed_files || definition.name == "repository.changed_files";
     }
-    if (!all_configured_has_data_join || !all_configured_has_data_aggregate) {
-        std::fprintf(stderr, "all-configured profile did not expose the data tools required by this smoke\n");
+    if (!all_configured_has_data_join || !all_configured_has_data_aggregate ||
+            !all_configured_has_repository_log || !all_configured_has_repository_status ||
+            !all_configured_has_repository_changed_files) {
+        std::fprintf(stderr, "all-configured profile did not expose the complete catalog required by this smoke\n");
         return 1;
     }
 

@@ -49,7 +49,7 @@
     "metadata_db": "data/resources.cozo"
   },
   "tools": {
-    "profile": "local-minimal",
+    "profile": "all-configured",
     "repository_root": ".",
     "capabilities": {
       "utility.read": ["calculator", "time_now"],
