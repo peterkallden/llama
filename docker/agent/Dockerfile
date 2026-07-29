@@ -1,6 +1,8 @@
-FROM ubuntu:24.04
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
 
 ARG PACKAGE_ARCHIVE=agent-package.tar.gz
+ARG BACKEND=cpu
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -9,6 +11,7 @@ RUN apt-get update \
         ca-certificates \
         libgomp1 \
         libssl3 \
+        libvulkan1 \
         zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

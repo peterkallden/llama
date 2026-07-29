@@ -139,6 +139,22 @@ the data and log directories. A deployment-specific configuration can be
 mounted at `/etc/llama-agent/config.json` and passed with
 `--config /etc/llama-agent/config.json`.
 
+The same workflow also publishes verified release images from successful
+`Agent release` runs. Release images use a separate package name and backend
+tag, so they do not overwrite the feature image:
+
+```text
+ghcr.io/peterkallden/llama/llama-agent:cpu-amd64-latest
+ghcr.io/peterkallden/llama/llama-agent:cuda-amd64-latest
+ghcr.io/peterkallden/llama/llama-agent:vulkan-amd64-latest
+```
+
+Versioned release tags use the release version, for example
+`cpu-amd64-v0.1.0`. The CUDA image supplies the CUDA runtime libraries; the
+CUDA driver remains a host requirement. The Vulkan image supplies the Vulkan
+loader, while the host remains responsible for the device driver and device
+access.
+
 The host may use a separate embedding model for semantic memory or resource
 search. It is optional and is configured as an override alongside the
 generation model:
