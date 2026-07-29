@@ -160,6 +160,14 @@ jobs:
           cmake --install build-agent-ci --prefix agent-package
           mkdir -p agent-package/lib
           cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+          test -f agent-package/bin/llama-agent
+          test -f agent-package/bin/llama-agent-daemon
+          test -f agent-package/bin/llama-agent-mcp-stdio-server
+          test -f agent-package/lib/libllama-agent-poc.so
+          test -f agent-package/lib/libllama-agent-mcp-core.so
+          test -f agent-package/lib/libllama-agent-mcp-server.so
+          test -f agent-package/lib/libllama-agent-runtime-support.so
+          test -f agent-package/lib/libllama-agent-storage-cozo.so
 
       - name: Upload agent package
         uses: actions/upload-artifact@v6

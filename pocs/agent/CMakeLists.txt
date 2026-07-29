@@ -187,6 +187,28 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+# Install the shared agent runtime closure when producing an agent package.
+# The executables below depend on these libraries when BUILD_SHARED_LIBS is
+# enabled (the default for the supported Linux and MSVC builds). Keep this
+# separate from the smoke targets so package installation does not pull test
+# binaries into the runtime package.
+if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
+    set(AGENT_PACKAGE_LIBRARY_TARGETS
+        llama-agent-poc
+        llama-agent-mcp-core
+        llama-agent-mcp-server
+        llama-agent-runtime-support
+    )
+    if(TARGET llama-agent-storage-cozo)
+        list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-storage-cozo)
+    endif()
+    install(TARGETS ${AGENT_PACKAGE_LIBRARY_TARGETS}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+    )
+endif()
+
 set(TARGET llama-agent-cli)
 add_executable(${TARGET}
     ../../tools/agent/cli/agent-cli-main.cpp

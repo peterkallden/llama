@@ -219,6 +219,14 @@ jobs:
           cmake --install "build-agent-release-$BACKEND" --prefix "$package_dir"
           mkdir -p "$package_dir/lib"
           cp "$COZO_LIBRARY" "$package_dir/lib/libcozo_c.so"
+          test -f "$package_dir/bin/llama-agent"
+          test -f "$package_dir/bin/llama-agent-daemon"
+          test -f "$package_dir/bin/llama-agent-mcp-stdio-server"
+          test -f "$package_dir/lib/libllama-agent-poc.so"
+          test -f "$package_dir/lib/libllama-agent-mcp-core.so"
+          test -f "$package_dir/lib/libllama-agent-mcp-server.so"
+          test -f "$package_dir/lib/libllama-agent-runtime-support.so"
+          test -f "$package_dir/lib/libllama-agent-storage-cozo.so"
 
           printf '%s\n' \
             "release_tag=$RELEASE_TAG" \

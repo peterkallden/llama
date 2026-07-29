@@ -74,7 +74,7 @@ jobs:
                 exit 0
               fi
             else
-              echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/60)"
+              echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/120)"
             fi
 
             sleep 15
@@ -98,6 +98,11 @@ jobs:
           test -f package-source/bin/llama-agent
           test -f package-source/bin/llama-agent-daemon
           test -f package-source/bin/llama-agent-mcp-stdio-server
+          test -f package-source/lib/libllama-agent-poc.so
+          test -f package-source/lib/libllama-agent-mcp-core.so
+          test -f package-source/lib/libllama-agent-mcp-server.so
+          test -f package-source/lib/libllama-agent-runtime-support.so
+          test -f package-source/lib/libllama-agent-storage-cozo.so
 
       - name: Create dated package
         id: package
