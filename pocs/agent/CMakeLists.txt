@@ -12,8 +12,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
-    ../../tools/agent/mcp/agent-mcp-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-task.cpp
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
     ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
@@ -78,6 +76,7 @@ target_include_directories(llama-agent-runtime-support
         ${PROJECT_SOURCE_DIR}/tools/agent/resource
         ${PROJECT_SOURCE_DIR}/tools/agent/data
         ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+        ${PROJECT_SOURCE_DIR}/tools/mtmd
         ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_compile_features(llama-agent-runtime-support PUBLIC cxx_std_17)
@@ -110,6 +109,29 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+# Shared MCP contracts and task lifecycle implementation. Keep this separate
+# from the runtime and server assemblies so these sources are compiled once
+# and reused by both sides.
+add_library(llama-agent-mcp-core
+    ../../tools/agent/mcp/agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-task.cpp
+)
+target_include_directories(llama-agent-mcp-core
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+)
+target_compile_features(llama-agent-mcp-core PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-mcp-core PUBLIC llama-common Threads::Threads)
+target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-mcp-core)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-mcp-core PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-daemon-protocol STATIC
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
@@ -132,8 +154,6 @@ target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-prot
 
 set(AGENT_MCP_SERVER_SOURCES
     ../../common/agent/schema-contract.cpp
-    ../../tools/agent/mcp/agent-mcp-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-task.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
@@ -156,6 +176,7 @@ target_link_libraries(llama-agent-mcp-server
     PUBLIC
         llama-common
         Threads::Threads
+        llama-agent-mcp-core
     PRIVATE
         cpp-httplib
 )
@@ -395,15 +416,13 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-agent-tools-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-agent-tools-smoke.cpp
-    ../../tools/agent/mcp/agent-mcp-protocol.cpp
-    ../../tools/agent/mcp/agent-mcp-task.cpp
     ../../common/agent/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-common cpp-httplib ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${TARGET} PRIVATE llama-agent-mcp-core llama-common cpp-httplib ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-cli-mcp-selection-smoke)
