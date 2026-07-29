@@ -943,9 +943,3 @@ elseif (UNIX)
         USES_TERMINAL
     )
 endif()
-
-if (LLAMA_MEMORY_COZO)
-    foreach(TARGET ${AGENT_RUNTIME_TARGETS})
-        llama_link_cozo(${TARGET})
-    endforeach()
-endif()

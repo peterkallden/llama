@@ -115,6 +115,36 @@ cmake --build build-agent-windows `
 for packaging and release validation; it should not be used as a substitute
 for the Debug assurance run.
 
+## Generic build scripts
+
+The repository provides small wrappers for building an already configured
+tree. They do not configure CMake; this keeps compiler, Cozo, and backend
+options explicit in the platform-specific configure step above.
+
+On Windows, use PowerShell from the repository root:
+
+```powershell
+.\scripts\agent-build.ps1 `
+  -BuildDir E:\llama-builds\agent-tool-profiles-debug `
+  -Configuration Debug `
+  -Target llama-agent-cli, llama-agent-daemon `
+  -Parallel 2
+```
+
+On Linux, use Bash from the repository root:
+
+```bash
+bash scripts/agent-build.sh \
+  --build-dir build-agent-linux \
+  --config RelWithDebInfo \
+  --target llama-agent-build-pack \
+  --parallel 4
+```
+
+Both scripts accept repeated target values and a verbose mode. Defaults can
+also be supplied through `LLAMA_AGENT_BUILD_DIR`,
+`LLAMA_AGENT_CONFIGURATION`, and `LLAMA_AGENT_BUILD_PARALLEL_LEVEL`.
+
 ## Linux configure and build
 
 The following configuration follows the working agent CI shape. Cozo paths
