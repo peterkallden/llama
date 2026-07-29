@@ -22,6 +22,59 @@ The socket file is created with the configured Unix mode, so its owner/group
 provides an additional local access boundary. Authentication policy still
 applies after the OS accepts the connection.
 
+## Bootstrap a first configuration
+
+The repository includes
+[`scripts/agent-config-bootstrap.sh`](../scripts/agent-config-bootstrap.sh) for
+creating a complete starting configuration. It uses Cozo for the memory, plan
+and structured-data stores, enables the normal agent deliberation defaults,
+and keeps network transports disabled unless they are selected explicitly.
+
+Run it from the repository root in Bash:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --model models/model.gguf \
+  --embedding-model models/embedding.gguf \
+  --cozo-root data \
+  --repository-root . \
+  --threads 4 \
+  --gpu-layers 0 \
+  --output agent-daemon-config.json
+```
+
+The generated file can then be used by the daemon:
+
+```bash
+./build-agent/bin/llama-agent-daemon \
+  --config agent-daemon-config.json
+```
+
+The script also provides a compact view of the current external tool catalog:
+
+```bash
+./scripts/agent-config-bootstrap.sh --list-tools
+```
+
+Memory, planning, deliberation, reflection, research and resource handling are
+internal agent capabilities. They are not disabled by the external MCP/JSONL
+tool allowlist. Use `--enable-tools` to restrict the tools exposed to an
+authenticated caller:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --transport jsonl-tcp \
+  --auth-mode opaque \
+  --token-env LLAMA_AGENT_TOKEN \
+  --token-profile minimal \
+  --enable-tools repository.read,repository.search \
+  --output agent-daemon-config.json
+```
+
+Use `--enable-tools none` for an authenticated endpoint with no externally
+callable tools. The allowlist is written to the inbound caller authorization;
+it does not widen the host-owned tool profile.
+
 ## Start from a host configuration file
 
 The recommended starting point is a config file rather than a long command
@@ -46,6 +99,45 @@ The model path and MCP command/URL in those files are examples and must be
 changed for the local machine.
 For a minimal custom capability/profile setup, use
 [agent-host-config-capabilities.json](examples/agent-host-config-capabilities.json).
+
+## Container persistence and model mounts
+
+The feature Docker image uses explicit paths for data that must survive a
+container replacement:
+
+| Container path | Purpose | Recommended mount |
+| --- | --- | --- |
+| `/models` | Generation and optional embedding GGUF files | Read-only bind mount or model volume |
+| `/var/lib/llama-agent/data` | Memory, plan, structured data and resource stores | Persistent named volume or bind mount |
+| `/var/log/llama-agent` | Daemon diagnostics | Persistent named volume or bind mount |
+
+The image includes
+`agent-config.docker.example.json`, which points to these paths. It expects
+`/models/model.gguf` and `/models/embedding.gguf`; omit or edit the embedding
+model entry when a separate embedding model is not used. The entrypoint keeps
+diagnostics visible through the container runtime and also appends them to
+`/var/log/llama-agent/daemon.log`. JSONL protocol output remains on stdout.
+
+For example, with Docker-managed named volumes:
+
+```bash
+docker volume create llama-agent-models
+docker volume create llama-agent-data
+docker volume create llama-agent-logs
+
+docker run --rm \
+  --name llama-agent-dev \
+  --mount source=llama-agent-models,target=/models,readonly \
+  --mount source=llama-agent-data,target=/var/lib/llama-agent/data \
+  --mount source=llama-agent-logs,target=/var/log/llama-agent \
+  ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
+```
+
+The model volume must contain the files named by the configuration. For a
+host bind mount, ensure that the container user can read `/models` and write
+the data and log directories. A deployment-specific configuration can be
+mounted at `/etc/llama-agent/config.json` and passed with
+`--config /etc/llama-agent/config.json`.
 
 The host may use a separate embedding model for semantic memory or resource
 search. It is optional and is configured as an override alongside the
@@ -80,6 +172,36 @@ from inbound delegation, where another agent connects inward and calls
 
 The copyable remote provider example is
 [agent-host-config-remote-http.json](examples/agent-host-config-remote-http.json).
+The bootstrap script can import the `tools.providers` array from a separate
+JSON file, which keeps provider configuration independent from the general
+daemon settings:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --providers-file docs/examples/agent-providers.json \
+  --output agent-daemon-config.json
+```
+
+The same input can be supplied through stdin. This is useful for Docker
+entrypoints and deployment templating:
+
+```bash
+cat providers.json | \
+  ./scripts/agent-config-bootstrap.sh \
+    --providers-file - \
+    --output agent-daemon-config.json
+```
+
+The provider input must be a JSON array containing the existing provider
+objects. It may contain `token_env` names, but must not contain secret values;
+provide those values through the process environment at runtime. Use
+`--providers-file none` to explicitly generate a configuration without remote
+providers.
+
+The provider allowlist and the caller allowlist are independent: provider
+`allowed_tools` limits what the daemon imports from a remote MCP server, while
+`--enable-tools` limits what an authenticated MCP/JSONL caller can invoke.
+
 Its essential shape is:
 
 ```json

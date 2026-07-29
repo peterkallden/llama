@@ -347,6 +347,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-tool-adapters.cpp
         test-tool-catalog.cpp
         test-agent-clangd-protocol.cpp
+        test-agent-config-bootstrap.cpp
     )
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
@@ -355,6 +356,13 @@ if (LLAMA_AGENT_RUNTIME)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-config-bootstrap")
+            file(TO_CMAKE_PATH
+                "${PROJECT_SOURCE_DIR}/scripts/agent-config-bootstrap.sh"
+                AGENT_BOOTSTRAP_SCRIPT_PATH)
+            target_compile_definitions(${TEST_NAME} PRIVATE
+                LLAMA_AGENT_BOOTSTRAP_SCRIPT_PATH="${AGENT_BOOTSTRAP_SCRIPT_PATH}")
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()

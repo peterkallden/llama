@@ -909,6 +909,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-contract
     test-agent-research-contract
     test-agent-clangd-protocol
+    test-agent-config-bootstrap
     test-memory-store
     test-memory-retrieval
     test-memory-context
