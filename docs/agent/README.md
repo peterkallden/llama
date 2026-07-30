@@ -25,12 +25,12 @@ distribution readiness:
 
 Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
-[Agent Assurance](../agent-assurance.md).
+[Agent Assurance](agent-assurance.md).
 
 ## Quick start
 
 For prerequisites, supported build profiles, environment setup, CMake options,
-and CTest labels, see [Agent Build](../agent-build.md). A first daemon
+and CTest labels, see [Agent Build](agent-build.md). A first daemon
 configuration can be generated with
 [`scripts/agent-config-bootstrap.sh`](../../scripts/agent-config-bootstrap.sh):
 
@@ -43,7 +43,7 @@ configuration can be generated with
 ```
 
 The daemon and its JSONL control plane are described in
-[Agent Daemon Usage](../agent-daemon-usage.md). That guide also covers
+[Agent Daemon Usage](agent-daemon-usage.md). That guide also covers
 persistent stores, model mounts, daemon logs, authentication, tool exposure,
 remote MCP providers, status/readiness, and Docker usage.
 
@@ -51,7 +51,7 @@ remote MCP providers, status/readiness, and Docker usage.
 
 - **Runtime orchestration** — sessions, turns, thinking modes, reflection,
   deliberate planning, research, cancellation, deadlines, and bounded async
-  execution. See [Agent Runtime](../agent-runtime.md).
+  execution. See [Agent Runtime](agent-runtime.md).
 - **Tools and capabilities** — host-owned profiles, local tools, diagnostics,
   repository/workspace operations, data tools, resources, and optional remote
   MCP providers.
@@ -61,16 +61,16 @@ remote MCP providers, status/readiness, and Docker usage.
 - **Daemon and protocols** — foreground JSONL administration, TCP and Unix
   transports, inbound MCP, readiness/status reporting, and systemd examples.
 - **Sandbox workspaces** — controlled Docker/Kubernetes execution and artifact
-  handling. See [Agent Sandbox Workspaces](../agent-sandbox-workspaces.md).
+  handling. See [Agent Sandbox Workspaces](agent-sandbox-workspaces.md).
 
 ## MCP integration
 
 The runtime can expose approved agent tools to MCP clients and can connect to
 approved external MCP providers. Stdio, HTTP, JSONL, authentication,
 delegation, and provider configuration are covered by
-[Agent Daemon Usage](../agent-daemon-usage.md). The bounded agent-to-agent MCP
+[Agent Daemon Usage](agent-daemon-usage.md). The bounded agent-to-agent MCP
 design is documented in the
-[Remote MCP Scheduler Plan](../agent-remote-mcp-scheduler-plan.md).
+[Remote MCP Scheduler Plan](agent-remote-mcp-scheduler-plan.md).
 
 ## Configuration and examples
 
@@ -101,6 +101,6 @@ Agent verification is split by dependency and execution cost:
   assurance;
 - release packaging runs only after the configured release checks pass.
 
-See [Agent Assurance](../agent-assurance.md) for recorded results and known
-limitations, and [Agent Build](../agent-build.md) for reproducible local and
+See [Agent Assurance](agent-assurance.md) for recorded results and known
+limitations, and [Agent Build](agent-build.md) for reproducible local and
 CI-compatible commands.

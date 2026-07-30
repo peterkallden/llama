@@ -546,7 +546,7 @@ are character budgets unless stated otherwise:
 }
 ```
 
-See also [`docs/examples/agent-runtime-context-budgets.json`](examples/agent-runtime-context-budgets.json).
+See also [`docs/examples/agent-runtime-context-budgets.json`](../examples/agent-runtime-context-budgets.json).
 
 The budgets are used as follows:
 

@@ -11,11 +11,11 @@ detached Windows service or supervised production host.
 The same JSONL protocol can optionally be served over TCP. TCP is a transport
 adapter for the existing dispatcher, not a second daemon implementation. The
 stdin/stdout mode remains the simplest local administration mode. A copyable
-TCP configuration is [agent-host-config-jsonl-tcp.json](examples/agent-host-config-jsonl-tcp.json).
+TCP configuration is [agent-host-config-jsonl-tcp.json](../examples/agent-host-config-jsonl-tcp.json).
 
 For a background Linux service, use the Unix domain socket configuration
-[agent-host-config-jsonl-unix.json](examples/agent-host-config-jsonl-unix.json)
-and the systemd example [llama-agent-daemon.service](examples/llama-agent-daemon.service).
+[agent-host-config-jsonl-unix.json](../examples/agent-host-config-jsonl-unix.json)
+and the systemd example [llama-agent-daemon.service](../examples/llama-agent-daemon.service).
 The daemon remains a foreground process under systemd (`Type=simple`); systemd
 owns restart, logging and stop timeout while the daemon owns runtime shutdown.
 The socket file is created with the configured Unix mode, so its owner/group
@@ -25,7 +25,7 @@ applies after the OS accepts the connection.
 ## Bootstrap a first configuration
 
 The repository includes
-[`scripts/agent-config-bootstrap.sh`](../scripts/agent-config-bootstrap.sh) for
+[`scripts/agent-config-bootstrap.sh`](../../scripts/agent-config-bootstrap.sh) for
 creating a complete starting configuration. It uses Cozo for the memory, plan
 and structured-data stores, enables the normal agent deliberation defaults,
 and keeps network transports disabled unless they are selected explicitly.
@@ -88,17 +88,17 @@ $env:REMOTE_GITHUB_MCP_TOKEN = "replace-with-a-token"
 ```
 
 For a local stdio MCP provider, use
-[agent-host-config-stdio.json](examples/agent-host-config-stdio.json). For a
+[agent-host-config-stdio.json](../examples/agent-host-config-stdio.json). For a
 remote provider, use
-[agent-host-config-remote-http.json](examples/agent-host-config-remote-http.json).
+[agent-host-config-remote-http.json](../examples/agent-host-config-remote-http.json).
 For inbound MCP authentication, the home, lab and enterprise examples are
-[agent-host-config-inbound-mcp-home.json](examples/agent-host-config-inbound-mcp-home.json),
-[agent-host-config-inbound-mcp-auth.json](examples/agent-host-config-inbound-mcp-auth.json)
-and [agent-host-config-inbound-mcp-jwt.json](examples/agent-host-config-inbound-mcp-jwt.json).
+[agent-host-config-inbound-mcp-home.json](../examples/agent-host-config-inbound-mcp-home.json),
+[agent-host-config-inbound-mcp-auth.json](../examples/agent-host-config-inbound-mcp-auth.json)
+and [agent-host-config-inbound-mcp-jwt.json](../examples/agent-host-config-inbound-mcp-jwt.json).
 The model path and MCP command/URL in those files are examples and must be
 changed for the local machine.
 For a minimal custom capability/profile setup, use
-[agent-host-config-capabilities.json](examples/agent-host-config-capabilities.json).
+[agent-host-config-capabilities.json](../examples/agent-host-config-capabilities.json).
 
 ## Container persistence and model mounts
 
@@ -187,7 +187,7 @@ from inbound delegation, where another agent connects inward and calls
 `delegate_task` on llama-agent.
 
 The copyable remote provider example is
-[agent-host-config-remote-http.json](examples/agent-host-config-remote-http.json).
+[agent-host-config-remote-http.json](../examples/agent-host-config-remote-http.json).
 The bootstrap script can import the `tools.providers` array from a separate
 JSON file, which keeps provider configuration independent from the general
 daemon settings:
@@ -333,7 +333,7 @@ falls back to an unsandboxed process.
 
 For a local subprocess provider, use the same model with
 `"transport": "stdio"` and a `command` array; see
-[agent-host-config-stdio.json](examples/agent-host-config-stdio.json).
+[agent-host-config-stdio.json](../examples/agent-host-config-stdio.json).
 
 The intended failure behavior is bounded: authentication or handshake errors
 keep the provider unavailable, tool timeouts become failed tool outcomes, and
@@ -472,7 +472,7 @@ in flags or checked-in JSON.
 ## JSONL commands
 
 The copyable request sequence is in
-[agent-daemon-requests.jsonl](examples/agent-daemon-requests.jsonl). It
+[agent-daemon-requests.jsonl](../examples/agent-daemon-requests.jsonl). It
 demonstrates status, one chat turn, and graceful shutdown.
 
 ```powershell
@@ -608,7 +608,7 @@ JSONL on stdin/stdout for local administration. Both transports use the same
 dispatcher, worker pool and runtime tool executor:
 
 For multiple inbound callers, use the host configuration example
-[agent-host-config-inbound-mcp-auth.json](examples/agent-host-config-inbound-mcp-auth.json)
+[agent-host-config-inbound-mcp-auth.json](../examples/agent-host-config-inbound-mcp-auth.json)
 and export its `token_env` variables before starting the daemon:
 
 ```powershell
@@ -625,7 +625,7 @@ llama-agent-daemon.exe --config docs/examples/agent-host-config-inbound-mcp-home
 ```
 
 For enterprise JWT, replace the issuer, audience and JWKS URL in
-[agent-host-config-inbound-mcp-jwt.json](examples/agent-host-config-inbound-mcp-jwt.json).
+[agent-host-config-inbound-mcp-jwt.json](../examples/agent-host-config-inbound-mcp-jwt.json).
 The authorization server issues the access token; the daemon only verifies it
 and maps it to the configured native policy. Use an OpenSSL-enabled build.
 
@@ -682,7 +682,7 @@ timeout and result contracts. `allowed_tools` still applies to these names.
 Propagation of depth across chained outbound MCP clients, richer delegation
 profiles and dedicated audit events remain follow-up work.
 The copyable JSON variant is
-[agent-host-config-inbound-mcp-agent.json](examples/agent-host-config-inbound-mcp-agent.json).
+[agent-host-config-inbound-mcp-agent.json](../examples/agent-host-config-inbound-mcp-agent.json).
 
 Start that example with its caller token in the environment:
 
@@ -757,14 +757,14 @@ daemon runtime. Both binaries are included in the agent package because they
 serve different integration directions.
 
 The local stdio example is
-[vscode-mcp.json](examples/vscode-mcp.json). Copy it to `.vscode/mcp.json`,
+[vscode-mcp.json](../examples/vscode-mcp.json). Copy it to `.vscode/mcp.json`,
 replace the executable and repository paths, then use **MCP: List Servers**
 and **Chat: Configure Tools** in VS Code. The same `servers` shape can be
 used in the supported `mcp.json` locations in Visual Studio. These clients
 perform the MCP handshake and query `tools/list` before exposing tools.
 
 For inbound delegation, use the HTTP server configuration above and use the
-copyable [vscode-mcp-inbound.json](examples/vscode-mcp-inbound.json) instead
+copyable [vscode-mcp-inbound.json](../examples/vscode-mcp-inbound.json) instead
 of the stdio entry:
 
 ```json

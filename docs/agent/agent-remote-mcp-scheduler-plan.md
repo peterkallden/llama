@@ -64,28 +64,28 @@ delegation profile remain follow-up hardening.
 
 The complete examples are kept as JSON files so they can be copied and adapted:
 
-- [stdio host configuration](examples/agent-host-config-stdio.json)
-- [capability/profile host configuration](examples/agent-host-config-capabilities.json)
-- [remote Streamable HTTP host configuration](examples/agent-host-config-remote-http.json)
-- [inbound MCP home/single-secret configuration](examples/agent-host-config-inbound-mcp-home.json)
-- [inbound MCP multi-token configuration](examples/agent-host-config-inbound-mcp-auth.json)
-- [inbound MCP enterprise/JWT configuration](examples/agent-host-config-inbound-mcp-jwt.json)
-- [inbound MCP agent-to-agent configuration](examples/agent-host-config-inbound-mcp-agent.json)
-- [JSONL TCP administration configuration](examples/agent-host-config-jsonl-tcp.json)
-- [JSONL Unix-socket configuration](examples/agent-host-config-jsonl-unix.json)
-- [systemd service unit](examples/llama-agent-daemon.service)
-- [Visual Studio Code stdio MCP configuration](examples/vscode-mcp.json)
-- [Visual Studio Code inbound HTTP MCP configuration](examples/vscode-mcp-inbound.json)
+- [stdio host configuration](../examples/agent-host-config-stdio.json)
+- [capability/profile host configuration](../examples/agent-host-config-capabilities.json)
+- [remote Streamable HTTP host configuration](../examples/agent-host-config-remote-http.json)
+- [inbound MCP home/single-secret configuration](../examples/agent-host-config-inbound-mcp-home.json)
+- [inbound MCP multi-token configuration](../examples/agent-host-config-inbound-mcp-auth.json)
+- [inbound MCP enterprise/JWT configuration](../examples/agent-host-config-inbound-mcp-jwt.json)
+- [inbound MCP agent-to-agent configuration](../examples/agent-host-config-inbound-mcp-agent.json)
+- [JSONL TCP administration configuration](../examples/agent-host-config-jsonl-tcp.json)
+- [JSONL Unix-socket configuration](../examples/agent-host-config-jsonl-unix.json)
+- [systemd service unit](../examples/llama-agent-daemon.service)
+- [Visual Studio Code stdio MCP configuration](../examples/vscode-mcp.json)
+- [Visual Studio Code inbound HTTP MCP configuration](../examples/vscode-mcp-inbound.json)
 
 The mode and scheduler settings are shown explicitly in the examples:
 
 | Use case | `default_mode` | `thinking_mode` | Tool profile | Example |
 | --- | --- | --- | --- | --- |
-| Local bounded agent | `agent` | `reflective` | `minimal` | [home/inbound MCP](examples/agent-host-config-inbound-mcp-home.json) |
-| Delegated agent work | `agent` | `deliberate` | `minimal` | [agent-to-agent MCP](examples/agent-host-config-inbound-mcp-agent.json) |
-| Local research provider | `agent` | `research` | `research` | [stdio MCP](examples/agent-host-config-stdio.json) |
-| Remote research provider | `agent` | `research` | `research` | [Streamable HTTP MCP](examples/agent-host-config-remote-http.json) |
-| JSONL administration | `agent` | `reflective` | `minimal` | [TCP](examples/agent-host-config-jsonl-tcp.json) / [Unix](examples/agent-host-config-jsonl-unix.json) |
+| Local bounded agent | `agent` | `reflective` | `minimal` | [home/inbound MCP](../examples/agent-host-config-inbound-mcp-home.json) |
+| Delegated agent work | `agent` | `deliberate` | `minimal` | [agent-to-agent MCP](../examples/agent-host-config-inbound-mcp-agent.json) |
+| Local research provider | `agent` | `research` | `research` | [stdio MCP](../examples/agent-host-config-stdio.json) |
+| Remote research provider | `agent` | `research` | `research` | [Streamable HTTP MCP](../examples/agent-host-config-remote-http.json) |
+| JSONL administration | `agent` | `reflective` | `minimal` | [TCP](../examples/agent-host-config-jsonl-tcp.json) / [Unix](../examples/agent-host-config-jsonl-unix.json) |
 
 All host examples use `limits.inference_max_active: 1` to make the initial
 single-lane inference behavior explicit. `limits.worker_count` controls
@@ -281,7 +281,7 @@ PowerShell and Bash execution. The wrappers share suite names, timeout/failure
 semantics, temporary-log cleanup, and machine-readable `suite=...` output.
 
 When adding a new test or smoke, follow the checklist in
-`docs/agent-runtime.md` under “Adding a new test or smoke”. In particular, add
+`agent-runtime.md` under “Adding a new test or smoke”. In particular, add
 the target to its CMake category and to both platform beta runners; otherwise
 the test can exist and build successfully while remaining absent from the
 actual verification pack.

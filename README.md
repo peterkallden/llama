@@ -12,6 +12,9 @@
 
 LLM inference in C/C++
 
+> This fork includes the [llama-agent runtime](docs/agent/README.md) with persistent sessions, host-controlled tools, memory, planning, research, and daemon support.
+> It also provides MCP integration for exposing agent capabilities to clients and connecting approved external tools and services.
+
 ## Recent API changes
 
 - [Changelog for `libllama` API](https://github.com/ggml-org/llama.cpp/issues/9289)

@@ -39,7 +39,7 @@ Install or make available:
 
 Start from a Visual Studio Developer PowerShell or an equivalent environment
 that exposes MSVC, the Windows SDK, the linker, and CMake. The repository also
-contains [scripts/agent-build-env.ps1](../scripts/agent-build-env.ps1), which
+contains [scripts/agent-build-env.ps1](../../scripts/agent-build-env.ps1), which
 adds the local CMake and LLVM tools without modifying the user or system PATH
 permanently.
 
@@ -60,7 +60,7 @@ Install or make available:
 - Kubernetes and `kubectl`, when running Kubernetes sandbox tests
 
 The Linux dependency and Cozo setup used by CI is defined in
-[agent-ci.yml](../.github/workflows/agent-ci.yml). It provisions Cozo 0.7.6,
+[agent-ci.yml](../../.github/workflows/agent-ci.yml). It provisions Cozo 0.7.6,
 uses the `alpine:3.20` Kubernetes smoke image, and builds with four parallel
 workers.
 
@@ -330,7 +330,7 @@ evidence that sandbox execution passed. Start the runtime and rerun the label.
 - [Agent assurance](agent-assurance.md)
 - [Agent runtime](agent-runtime.md)
 - [Agent daemon usage](agent-daemon-usage.md)
-- [Agent CI workflow](../.github/workflows/agent-ci.yml)
-- [Agent dynamic analysis workflow](../.github/workflows/agent-dynamic-analysis.yml)
-- [Agent release workflow](../.github/workflows/agent-release.yml)
-- [Local build environment](../scripts/agent-build-env.ps1)
+- [Agent CI workflow](../../.github/workflows/agent-ci.yml)
+- [Agent dynamic analysis workflow](../../.github/workflows/agent-dynamic-analysis.yml)
+- [Agent release workflow](../../.github/workflows/agent-release.yml)
+- [Local build environment](../../scripts/agent-build-env.ps1)
