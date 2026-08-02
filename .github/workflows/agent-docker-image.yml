@@ -24,7 +24,7 @@ on:
       source_ref:
         description: Source ref containing the Docker files
         required: true
-        default: feature/llama-agent
+        default: kallden/agent-packaging
         type: string
 
 permissions:
@@ -42,11 +42,12 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent feature package' &&
-       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
+       (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
+        github.event.workflow_run.head_branch == 'kallden/agent-packaging') &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.image_channel == 'dev')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out image definition
         uses: actions/checkout@v6
@@ -136,7 +137,7 @@ jobs:
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.image_channel == 'release')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

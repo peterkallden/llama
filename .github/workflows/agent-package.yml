@@ -7,34 +7,94 @@ on:
       - Agent dynamic analysis
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch containing the verified package source
+        required: true
+        default: kallden/agent-packaging
+        type: string
+      ci_run_id:
+        description: Successful Agent CI run ID for source_ref
+        required: true
+        type: string
+      sanitizer_run_id:
+        description: Successful dynamic analysis run ID for source_ref
+        required: true
+        type: string
 
 permissions:
   actions: write
   contents: read
 
 concurrency:
-  group: agent-feature-package-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.head_sha }}
+  group: agent-feature-package-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
   cancel-in-progress: true
 
 jobs:
   package:
     name: Package verified feature build
     if: >-
-      github.event.workflow_run.head_branch == 'feature/llama-agent' &&
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_run' &&
+       (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
+        github.event.workflow_run.head_branch == 'kallden/agent-packaging') &&
+       github.event.workflow_run.conclusion == 'success') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
 
     steps:
       - name: Wait for both verification workflows
         id: verification
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
-          BRANCH_NAME: ${{ github.event.workflow_run.head_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+          BRANCH_NAME: ${{ github.event.workflow_run.head_branch || inputs.source_ref }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          SANITIZER_RUN_ID: ${{ inputs.sanitizer_run_id }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            ci_run="$(gh run view "$CI_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json databaseId,status,conclusion,headSha,headBranch)"
+            sanitizer_run="$(gh run view "$SANITIZER_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json databaseId,status,conclusion,headSha,headBranch)"
+
+            ci_status="$(jq -r '.status' <<< "$ci_run")"
+            ci_conclusion="$(jq -r '.conclusion // empty' <<< "$ci_run")"
+            sanitizer_status="$(jq -r '.status' <<< "$sanitizer_run")"
+            sanitizer_conclusion="$(jq -r '.conclusion // empty' <<< "$sanitizer_run")"
+            ci_sha="$(jq -r '.headSha' <<< "$ci_run")"
+            sanitizer_sha="$(jq -r '.headSha' <<< "$sanitizer_run")"
+            ci_branch="$(jq -r '.headBranch' <<< "$ci_run")"
+            sanitizer_branch="$(jq -r '.headBranch' <<< "$sanitizer_run")"
+
+            [[ "$ci_status" == completed && "$ci_conclusion" == success ]] || {
+              echo "Agent CI run $CI_RUN_ID did not succeed" >&2
+              exit 1
+            }
+            [[ "$sanitizer_status" == completed && "$sanitizer_conclusion" == success ]] || {
+              echo "Dynamic analysis run $SANITIZER_RUN_ID did not succeed" >&2
+              exit 1
+            }
+            [[ "$ci_sha" == "$sanitizer_sha" ]] || {
+              echo "Verification runs do not target the same commit" >&2
+              exit 1
+            }
+            [[ "$ci_branch" == "$BRANCH_NAME" && "$sanitizer_branch" == "$BRANCH_NAME" ]] || {
+              echo "Verification runs do not target $BRANCH_NAME" >&2
+              exit 1
+            }
+
+            echo "ci_run_id=$CI_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$ci_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           find_run() {
             local workflow="$1"
@@ -49,7 +109,7 @@ jobs:
                 'map(select(.headSha == $sha)) | sort_by(.databaseId) | last // empty'
           }
 
-          for attempt in $(seq 1 120); do
+          for attempt in $(seq 1 180); do
             ci_run="$(find_run agent-ci.yml)"
             sanitizer_run="$(find_run agent-dynamic-analysis.yml)"
 
@@ -74,13 +134,13 @@ jobs:
                 exit 0
               fi
             else
-              echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/120)"
+              echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/180)"
             fi
 
             sleep 15
           done
 
-          echo "Timed out waiting for verification workflows for $COMMIT_SHA" >&2
+          echo "Timed out waiting 45 minutes for verification workflows for $COMMIT_SHA" >&2
           exit 1
 
       - name: Download tested agent package
