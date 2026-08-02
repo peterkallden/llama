@@ -2176,8 +2176,8 @@ ctest --test-dir build-agent-current-ninja-debug -L sandbox-kubernetes --output-
 ```
 
 The repository also has a Linux-only GitHub Actions workflow at
-`.github/workflows/agent-ci.yml`. It runs for `master` and
-`feature/llama-agent` (and for pull requests targeting either branch), enables
+`.github/workflows/agent-ci.yml`. It runs for non-`master` pushes and for pull
+requests targeting `master` or `feature/llama-agent`, enables
 the Cozo memory/plan/data path, requires both `clang` and `clangd`, builds the
 agent pack with four workers, and runs the `agent` CTest label. The same job
 creates an ephemeral `kind` cluster with a local-path storage provisioner and
@@ -2199,7 +2199,8 @@ The development branch also has a separate
 `.github/workflows/agent-package.yml` workflow for integration packages. It is
 activated by completion of either agent verification workflow, but publishes
 only when both `Agent CI (Linux)` and `Agent dynamic analysis` have succeeded
-for the same commit on `feature/llama-agent` or `kallden/agent-packaging`. It
+for the same commit on a non-`master` branch. Pull-request workflow runs are
+not packaged. It
 downloads the already-tested Linux package rather than rebuilding it, adds a
 small manifest and SHA-256 checksum, and publishes an artifact named with the
 UTC date, workflow run id and commit provenance. The workflow also supports a

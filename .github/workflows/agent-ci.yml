@@ -3,10 +3,8 @@ name: Agent CI (Linux)
 on:
   workflow_dispatch:
   push:
-    branches:
+    branches-ignore:
       - master
-      - feature/llama-agent
-      - kallden/agent-packaging
     paths:
       - '.github/workflows/agent-ci.yml'
       - 'common/agent/**'

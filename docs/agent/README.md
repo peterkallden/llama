@@ -20,7 +20,7 @@ distribution readiness:
 | --- | --- |
 | [Agent CI](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
 | [Dynamic analysis](../../.github/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
-| [Development package](../../.github/workflows/agent-package.yml) | Verified development package from `feature/llama-agent` or `kallden/agent-packaging` |
+| [Development package](../../.github/workflows/agent-package.yml) | Verified development package from non-master branches |
 | [Agent release](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
 | [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from a development package and backend images from releases |
 
@@ -33,8 +33,7 @@ evidence-based milestone record is maintained in
 - [Agent releases](https://github.com/peterkallden/llama/releases) contain
   versioned CPU, CUDA, and Vulkan packages published from `agent-v*` tags.
 - [Development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
-  are dated workflow artifacts for testing `feature/llama-agent` or
-  `kallden/agent-packaging`.
+  are dated workflow artifacts for testing non-master development branches.
 
 ## Quick start
 

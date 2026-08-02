@@ -42,10 +42,13 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package' &&
-       (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
-        github.event.workflow_run.head_branch == 'kallden/agent-packaging') &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_branch != 'master' &&
+       github.event.workflow_run.head_branch != '' &&
        github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && inputs.image_channel == 'dev')
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.image_channel == 'dev' &&
+       inputs.source_ref != 'master')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

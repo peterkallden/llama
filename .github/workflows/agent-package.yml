@@ -36,10 +36,11 @@ jobs:
     name: Package verified development build
     if: >-
       (github.event_name == 'workflow_run' &&
-       (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
-        github.event.workflow_run.head_branch == 'kallden/agent-packaging') &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_branch != 'master' &&
+       github.event.workflow_run.head_branch != '' &&
        github.event.workflow_run.conclusion == 'success') ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' && inputs.source_ref != 'master')
     runs-on: ubuntu-24.04
     timeout-minutes: 75
 
@@ -58,6 +59,11 @@ jobs:
           set -euo pipefail
 
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$BRANCH_NAME" != master ]] || {
+              echo "Refusing to create a development package from master" >&2
+              exit 1
+            }
+
             ci_run="$(gh run view "$CI_RUN_ID" \
               --repo "$GITHUB_REPOSITORY" \
               --json databaseId,status,conclusion,headSha,headBranch)"
