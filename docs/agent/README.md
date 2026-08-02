@@ -17,11 +17,11 @@ distribution readiness:
 
 | Workflow | State it represents |
 | --- | --- |
-| [Agent CI](../../actions/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
-| [Dynamic analysis](../../actions/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
-| [Feature package](../../actions/workflows/agent-package.yml) | Verified feature-branch package from `feature/llama-agent` |
-| [Agent release](../../actions/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
-| [Docker images](../../actions/workflows/agent-docker-image.yml) | Dev image from the feature package and backend images from releases |
+| [Agent CI](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
+| [Dynamic analysis](../../.github/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
+| [Feature package](../../.github/workflows/agent-package.yml) | Verified feature-branch package from `feature/llama-agent` |
+| [Agent release](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
+| [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from the feature package and backend images from releases |
 
 Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
