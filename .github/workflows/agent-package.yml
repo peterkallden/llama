@@ -98,6 +98,7 @@ jobs:
           test -f package-source/bin/llama-agent
           test -f package-source/bin/llama-agent-daemon
           test -f package-source/bin/llama-agent-mcp-stdio-server
+          test -x package-source/bin/llama-agent-config-bootstrap
           test -f package-source/lib/libllama-agent-poc.so
           test -f package-source/lib/libllama-agent-mcp-core.so
           test -f package-source/lib/libllama-agent-mcp-server.so

@@ -711,6 +711,11 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
+    install(PROGRAMS
+        ${PROJECT_SOURCE_DIR}/scripts/agent-config-bootstrap.sh
+        DESTINATION bin
+        RENAME llama-agent-config-bootstrap)
+
     file(GLOB AGENT_HOST_CONFIG_EXAMPLES CONFIGURE_DEPENDS
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-*.json)
     install(FILES

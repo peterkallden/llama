@@ -222,6 +222,7 @@ jobs:
           test -f "$package_dir/bin/llama-agent"
           test -f "$package_dir/bin/llama-agent-daemon"
           test -f "$package_dir/bin/llama-agent-mcp-stdio-server"
+          test -x "$package_dir/bin/llama-agent-config-bootstrap"
           test -f "$package_dir/lib/libllama-agent-poc.so"
           test -f "$package_dir/lib/libllama-agent-mcp-core.so"
           test -f "$package_dir/lib/libllama-agent-mcp-server.so"

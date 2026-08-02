@@ -167,6 +167,7 @@ jobs:
           test -f agent-package/bin/llama-agent
           test -f agent-package/bin/llama-agent-daemon
           test -f agent-package/bin/llama-agent-mcp-stdio-server
+          test -x agent-package/bin/llama-agent-config-bootstrap
           test -f agent-package/lib/libllama-agent-poc.so
           test -f agent-package/lib/libllama-agent-mcp-core.so
           test -f agent-package/lib/libllama-agent-mcp-server.so
