@@ -1,4 +1,4 @@
-name: Agent feature package
+name: Agent development package
 
 on:
   workflow_run:
@@ -28,12 +28,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-feature-package-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+  group: agent-development-package-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
   cancel-in-progress: true
 
 jobs:
   package:
-    name: Package verified feature build
+    name: Package verified development build
     if: >-
       (github.event_name == 'workflow_run' &&
        (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
@@ -153,7 +153,7 @@ jobs:
           rm -rf package-source
           gh run download "$CI_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --name llama-agent-linux-package \
+            --name llama-agent-dev-linux-package \
             --dir package-source
           test -f package-source/bin/llama-agent
           test -f package-source/bin/llama-agent-daemon
@@ -172,7 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package_id="llama-agent-feature-$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
+          package_id="llama-agent-dev-$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
           archive="${package_id}.tar.gz"
 
           printf '%s\n' \
@@ -188,7 +188,7 @@ jobs:
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
-      - name: Publish feature package artifact
+      - name: Publish development package artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.package.outputs.package_id }}
@@ -198,7 +198,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Retain only the five newest feature packages
+      - name: Retain only the five newest development packages
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -207,7 +207,7 @@ jobs:
           gh api --paginate \
             "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
             --jq '.artifacts[]
-              | select(.name | startswith("llama-agent-feature-"))
+              | select(.name | startswith("llama-agent-dev-"))
               | [.created_at, (.id | tostring)]
               | @tsv' \
             | sort -r \
@@ -215,7 +215,7 @@ jobs:
             | cut -f2 \
             | while IFS= read -r artifact_id; do
                 if [[ -n "$artifact_id" ]]; then
-                  echo "Deleting older feature package artifact $artifact_id"
+                  echo "Deleting older development package artifact $artifact_id"
                   gh api --method DELETE \
                     "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
                 fi

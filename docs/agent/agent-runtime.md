@@ -2187,7 +2187,7 @@ CPU/backend workflows: Cozo provisioning, agent options and Kubernetes
 preconditions are part of the agent assurance contract, not global defaults.
 
 On a successful run, the same workflow also installs a relocatable Linux agent
-package and uploads it as the `llama-agent-linux-package` workflow artifact. The
+package and uploads it as the `llama-agent-dev-linux-package` workflow artifact. The
 package contains `llama-agent`, `llama-agent-daemon`,
 `llama-agent-mcp-stdio-server`, the Cozo shared library used by this build, and
 the daemon configuration examples under `share/llama-agent/examples`. The
@@ -2205,9 +2205,9 @@ small manifest and SHA-256 checksum, and publishes an artifact named with the
 UTC date, workflow run id and commit provenance. The workflow also supports a
 manual run with explicit successful CI and dynamic-analysis run IDs when the
 verification workflows were dispatched manually. It deletes older artifacts
-with the same feature-package prefix and keeps the five newest packages. These
-are short-lived integration artifacts, not versioned releases; stable release
-packages remain a separate, manually tagged release process.
+with the same development-package prefix and keeps the five newest packages.
+These are short-lived integration artifacts, not versioned releases; stable
+release packages remain a separate, manually tagged release process.
 
 The manual/tagged release workflow is `.github/workflows/agent-release.yml`.
 It accepts `agent-v*` tags, or can be started manually with an explicit release
@@ -2215,8 +2215,8 @@ tag and source ref. The workflow performs a clean Linux Cozo build, runs the
 `agent` CTest label, installs the relocatable package, includes the complete
 configuration and daemon/MCP examples, writes release provenance, generates a
 SHA-256 checksum, and publishes the archive as a GitHub Release. This is
-intentionally separate from the automatic feature artifacts: feature packages
-are short-lived integration snapshots, while an `agent-v*` release is an
+intentionally separate from the automatic development artifacts: development
+packages are short-lived integration snapshots, while an `agent-v*` release is an
 explicit versioned distribution decision.
 
 The current `agent` label is the authoritative model-free agent CTest slice;

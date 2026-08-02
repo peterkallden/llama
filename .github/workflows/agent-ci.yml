@@ -179,7 +179,7 @@ jobs:
       - name: Upload agent package
         uses: actions/upload-artifact@v6
         with:
-          name: llama-agent-linux-package
+          name: llama-agent-dev-linux-package
           path: agent-package/**
           if-no-files-found: error
           retention-days: 14

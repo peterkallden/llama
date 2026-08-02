@@ -3,7 +3,7 @@ name: Agent Docker images
 on:
   workflow_run:
     workflows:
-      - Agent feature package
+      - Agent development package
       - Agent release
     types:
       - completed
@@ -41,7 +41,7 @@ jobs:
     name: Build and publish dev CPU image
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Agent feature package' &&
+       github.event.workflow_run.name == 'Agent development package' &&
        (github.event.workflow_run.head_branch == 'feature/llama-agent' ||
         github.event.workflow_run.head_branch == 'kallden/agent-packaging') &&
        github.event.workflow_run.conclusion == 'success') ||
@@ -54,7 +54,7 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
 
-      - name: Download feature package
+      - name: Download development package
         id: package
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,8 +67,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --dir package-artifact
 
-          archive="$(find package-artifact -type f -name 'llama-agent-feature-*.tar.gz' -print -quit)"
-          checksum="$(find package-artifact -type f -name 'llama-agent-feature-*.tar.gz.sha256' -print -quit)"
+          archive="$(find package-artifact -type f -name 'llama-agent-dev-*.tar.gz' -print -quit)"
+          checksum="$(find package-artifact -type f -name 'llama-agent-dev-*.tar.gz.sha256' -print -quit)"
           test -n "$archive"
           test -n "$checksum"
           (cd "$(dirname "$archive")" && sha256sum --check "$(basename "$checksum")")
@@ -80,7 +80,7 @@ jobs:
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
           package_id="$(basename "$archive" .tar.gz)"
-          safe_package_tag="${package_id#llama-agent-feature-}"
+          safe_package_tag="${package_id#llama-agent-dev-}"
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
           echo "safe_package_tag=$safe_package_tag" >> "$GITHUB_OUTPUT"
 
@@ -122,7 +122,7 @@ jobs:
           tags: ${{ steps.image.outputs.tags }}
           labels: |
             org.opencontainers.image.title=llama-agent-dev
-            org.opencontainers.image.description=llama-agent feature package image
+            org.opencontainers.image.description=llama-agent development package image
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
             org.opencontainers.image.version=${{ steps.package.outputs.package_id }}

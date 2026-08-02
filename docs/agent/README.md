@@ -2,7 +2,7 @@
 
 [![Agent CI](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml)
 [![Dynamic analysis](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml)
-[![Feature package](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
+[![Development package](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
 [![Docker images](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml)
 [![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
 
@@ -20,9 +20,9 @@ distribution readiness:
 | --- | --- |
 | [Agent CI](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
 | [Dynamic analysis](../../.github/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
-| [Feature package](../../.github/workflows/agent-package.yml) | Verified development package from `feature/llama-agent` or `kallden/agent-packaging` |
+| [Development package](../../.github/workflows/agent-package.yml) | Verified development package from `feature/llama-agent` or `kallden/agent-packaging` |
 | [Agent release](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
-| [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from the feature package and backend images from releases |
+| [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from a development package and backend images from releases |
 
 Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
