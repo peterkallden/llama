@@ -4,6 +4,7 @@
 [![Dynamic analysis](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml)
 [![Feature package](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
 [![Docker images](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml)
+[![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
 
 `llama-agent` is a resident agent runtime built on llama.cpp. It provides
 host-controlled tools and capabilities, persistent memory and planning,
@@ -26,6 +27,13 @@ distribution readiness:
 Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
 [Agent Assurance](agent-assurance.md).
+
+## Distribution
+
+- [Agent releases](https://github.com/peterkallden/llama/releases) contain
+  versioned CPU, CUDA, and Vulkan packages published from `agent-v*` tags.
+- [Development packages from `feature/llama-agent`](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml?query=branch%3Afeature%2Fllama-agent)
+  are dated workflow artifacts for testing the current feature branch.
 
 ## Quick start
 
