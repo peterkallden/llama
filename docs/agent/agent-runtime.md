@@ -2203,9 +2203,9 @@ for the same commit on a non-`master` branch. Pull-request workflow runs are
 not packaged. It
 downloads the already-tested Linux package rather than rebuilding it, adds a
 small manifest and SHA-256 checksum, and publishes an artifact named with the
-development branch, UTC date, workflow run id and commit provenance. The
-manifest repeats the source branch and exact commit SHA so the package remains
-traceable after download. The workflow also supports a manual run with explicit
+UTC date, workflow run id and commit provenance. The manifest records the
+source branch and exact commit SHA so the package remains traceable after
+download. The workflow also supports a manual run with explicit
 successful CI and dynamic-analysis run IDs when the
 verification workflows were dispatched manually. It deletes older artifacts
 with the same development-package prefix and keeps the five newest packages.
