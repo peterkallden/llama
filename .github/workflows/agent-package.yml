@@ -175,14 +175,18 @@ jobs:
         id: package
         env:
           COMMIT_SHA: ${{ steps.verification.outputs.commit_sha }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_ref }}
         shell: bash
         run: |
           set -euo pipefail
-          package_id="llama-agent-dev-$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
+          safe_branch="$(printf '%s' "$SOURCE_BRANCH" | tr '/ _' '---' | tr -cd '[:alnum:].-')"
+          [[ -n "$safe_branch" ]] || { echo "Could not derive a safe branch name" >&2; exit 1; }
+          package_id="llama-agent-dev-${safe_branch}-$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
           archive="${package_id}.tar.gz"
 
           printf '%s\n' \
             "package_id=$package_id" \
+            "source_branch=$SOURCE_BRANCH" \
             "commit_sha=$COMMIT_SHA" \
             "source_ci_run_id=${{ steps.verification.outputs.ci_run_id }}" \
             "package_workflow_run_id=$GITHUB_RUN_ID" \
