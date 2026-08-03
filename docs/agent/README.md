@@ -95,7 +95,9 @@ Copyable configurations and protocol fixtures are available in
 - [`llama-agent-daemon.service`](../examples/llama-agent-daemon.service)
 
 The packaged Docker image uses persistent mounts for `/models`,
-`/var/lib/llama-agent/data`, and `/var/log/llama-agent`. Published images are
+`/etc/llama-agent`, `/var/lib/llama-agent/data`, and `/var/log/llama-agent`.
+The entrypoint bootstraps `/etc/llama-agent/config.json` only when it is
+missing. Published images are
 available through the repository's [Packages](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
 page when the corresponding workflows have completed successfully.
 

@@ -108,6 +108,7 @@ container replacement:
 | Container path | Purpose | Recommended mount |
 | --- | --- | --- |
 | `/models` | Generation and optional embedding GGUF files | Read-only bind mount or model volume |
+| `/etc/llama-agent` | Generated daemon configuration | Persistent named volume or bind mount |
 | `/var/lib/llama-agent/data` | Memory, plan, structured data and resource stores | Persistent named volume or bind mount |
 | `/var/log/llama-agent` | Daemon diagnostics | Persistent named volume or bind mount |
 
@@ -122,12 +123,14 @@ For example, with Docker-managed named volumes:
 
 ```bash
 docker volume create llama-agent-models
+docker volume create llama-agent-config
 docker volume create llama-agent-data
 docker volume create llama-agent-logs
 
 docker run --rm \
   --name llama-agent-dev \
   --mount source=llama-agent-models,target=/models,readonly \
+  --mount source=llama-agent-config,target=/etc/llama-agent \
   --mount source=llama-agent-data,target=/var/lib/llama-agent/data \
   --mount source=llama-agent-logs,target=/var/log/llama-agent \
   ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
@@ -135,9 +138,13 @@ docker run --rm \
 
 The model volume must contain the files named by the configuration. For a
 host bind mount, ensure that the container user can read `/models` and write
-the data and log directories. A deployment-specific configuration can be
-mounted at `/etc/llama-agent/config.json` and passed with
-`--config /etc/llama-agent/config.json`.
+the configuration, data and log directories. The entrypoint generates
+`/etc/llama-agent/config.json` with `llama-agent-config-bootstrap` when the
+file is missing, and leaves an existing configuration unchanged. The model,
+embedding model, store root, workspace root and selected runtime defaults can
+be overridden through the corresponding `LLAMA_AGENT_*` environment variables
+before first startup. A deployment-specific configuration can also be mounted
+at `/etc/llama-agent/config.json` and is used automatically.
 
 The same workflow also publishes verified release images from successful
 `Agent release` runs. Release images use a separate package name and backend

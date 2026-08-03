@@ -32,12 +32,13 @@ RUN chmod 0755 /usr/local/bin/llama-agent-entrypoint
 ENV PATH=/opt/llama-agent/bin:${PATH}
 ENV LD_LIBRARY_PATH=/opt/llama-agent/lib
 
-# Mount models read-only, while the stores and daemon log are retained outside
-# the container lifecycle. Bind mounts or named volumes can override these.
-VOLUME ["/models", "/var/lib/llama-agent/data", "/var/log/llama-agent"]
+# Mount models read-only, while the configuration, stores and daemon log are
+# retained outside the container lifecycle. Bind mounts or named volumes can
+# override these.
+VOLUME ["/models", "/etc/llama-agent", "/var/lib/llama-agent/data", "/var/log/llama-agent"]
 
 USER llama-agent
 WORKDIR /var/lib/llama-agent
 
 ENTRYPOINT ["/usr/local/bin/llama-agent-entrypoint"]
-CMD ["llama-agent-daemon", "--config", "/opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json"]
+CMD ["llama-agent-daemon"]
