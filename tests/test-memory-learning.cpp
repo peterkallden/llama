@@ -46,8 +46,11 @@ int main() {
     request.memory_scope = common_memory_scope::global; // Must not influence automatic learning scope.
     common_plan_state plan;
     plan.id = "plan-a";
+    plan.purpose = "Safely verify durable agent memory.";
     plan.goal = "Verify persisted memory";
     plan.success_criteria = "The record can be read back.";
+    plan.constraints.push_back({"bounded", "Use only bounded repository reads.", true});
+    plan.assumptions.push_back({"repository", "The repository is available locally.", 0.9f, true, {"read-back"}});
     plan.status = common_plan_status::completed;
     common_plan_step verify{"verify", "Verify", "Verify persistence"};
     verify.mode = common_plan_step_mode::tool;
@@ -104,6 +107,9 @@ int main() {
             const auto blueprint = plans.get(*promotion.blueprint_id, error);
             assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
             assert(blueprint->scope == common_plan_scope::project && blueprint->project_id == "project-a");
+            assert(blueprint->purpose == plan.purpose);
+            assert(blueprint->constraints.size() == 1 && blueprint->constraints.front().id == "bounded");
+            assert(blueprint->assumptions.size() == 1 && blueprint->assumptions.front().id == "repository");
             assert(!blueprint->steps.front().tool_call && blueprint->steps.front().mode == common_plan_step_mode::reasoning);
             assert(blueprint->steps.back().mode == common_plan_step_mode::final_response);
         }

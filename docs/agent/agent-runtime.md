@@ -1862,6 +1862,34 @@ steps should extend them without creating a second runtime path.
 
   The current implementation is still intentionally conservative: the overlay is only a renderer over already retrieved memories, not a new retrieval path, scoring policy, or compaction store. The next useful step is therefore to make symbolic retrieval/selection a little smarter per stage, especially so planning and reflection can emphasize project-scoped constraints and decisions while reasoning can keep favoring procedure memories plus any directly relevant symbolic guidance.
 
+### Blueprint applicability and asynchronous learning
+
+Blueprint selection and post-turn learning share one contract. A blueprint is
+not applicable merely because its description is topically similar to the
+request: its purpose, goal, success criteria, constraints, assumptions, and
+step contributions describe the execution boundary that selection must
+respect.
+
+Promotion therefore preserves the plan purpose, constraints, and assumptions
+alongside the reusable goal, success criteria, and steps. This keeps a learned
+blueprint usable by later asynchronous turns: the host can snapshot the
+caller-owned objective, resolved capability profile, scope, identity, and
+budgets before selection, then evaluate the persisted blueprint against that
+same snapshot. Selection may rank eligible candidates, but it must not make a
+candidate executable when its assumptions are known false or its hard
+constraints cannot be honored.
+
+The async runtime must also keep the ordering explicit:
+
+`resumable task plan -> deterministic blueprint eligibility -> model ranking ->
+instantiation -> execution -> verified post-turn learning/promotion`
+
+Events and traces describe this flow; they are not a second decision path.
+Learning reads the completed, stable plan result and uses the shared memory
+policy with stronger evidence requirements for procedure promotion. Decisions
+and constraints remain explicit-first knowledge, while a promoted blueprint is
+created only after repeated verified procedural use.
+
   The current stage-aware selector is still only the first cut. It uses bounded kind-based weighting on the already retrieved hit set rather than a new retrieval pass. A later refinement can add project/session affinity, tool/step metadata boosts, evidence reuse hints, and more explicit cross-links, but that should stay above the same host-owned memory authority and below prompt rendering.
 
   The same principle applies to session policy. Blueprints are still the right inspiration for the declarative shape, but not the right runtime type to reuse directly. A later host/session layer can own stable policy packs per project or per resident lane, while retrieval overlays stay ephemeral and evidence-driven. That keeps executable plan structure, durable symbolic memory, and host/session policy related but distinct.

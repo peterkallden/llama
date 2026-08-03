@@ -299,8 +299,16 @@ common_procedure_blueprint_promotion_result common_memory_post_turn_learner::pro
             blueprint.project_id = procedure.project_id;
             blueprint.kind = common_plan_kind::blueprint;
             blueprint.scope = blueprint_scope_for(procedure);
+            // Preserve the plan's applicability contract.  A promoted
+            // blueprint must carry the same stable purpose and execution
+            // boundaries that were verified with the procedure; otherwise
+            // later selection cannot distinguish a compatible objective
+            // from a merely topical one.
+            blueprint.purpose = plan.purpose.empty() ? procedure.summary : plan.purpose;
             blueprint.goal = plan.goal.empty() ? procedure.summary : plan.goal;
             blueprint.success_criteria = plan.success_criteria.empty() ? "Complete the reusable procedure safely." : plan.success_criteria;
+            blueprint.constraints = plan.constraints;
+            blueprint.assumptions = plan.assumptions;
             blueprint.created_at = plan.updated_at;
             blueprint.updated_at = plan.updated_at;
             bool has_final = false;
