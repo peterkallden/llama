@@ -171,6 +171,36 @@ int main() {
     assert(selection_result.logical_id && *selection_result.logical_id == "agent-regression");
     assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
 
+    common_plan_state build_blueprint = *blueprint;
+    build_blueprint.id = "build-repair-blueprint";
+    build_blueprint.purpose = "Diagnose and repair repository build failures.";
+    build_blueprint.goal = "Repair the failing build.";
+    build_blueprint.success_criteria = "The affected build succeeds.";
+    assert(plans.create(build_blueprint, error));
+    common_plan_state explanation_blueprint = *blueprint;
+    explanation_blueprint.id = "architecture-explanation-blueprint";
+    explanation_blueprint.purpose = "Explain repository architecture and runtime boundaries.";
+    explanation_blueprint.goal = "Produce an architecture explanation.";
+    explanation_blueprint.success_criteria = "The explanation is evidence-backed.";
+    assert(plans.create(explanation_blueprint, error));
+    selection_request.prompt = "Fix the repository build failure and verify the result.";
+    common_memory_policy_pack selection_policy;
+    selection_policy.purpose = "Repair a repository build failure.";
+    selection_policy.goal = "Restore a passing build.";
+    selection_policy.success_criteria = "The affected build succeeds.";
+    selection_request.policy_pack = selection_policy;
+    selection_config.task_plan_id = "ranked-build-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"build-repair", build_blueprint.id, "Repository work",
+          build_blueprint.purpose, build_blueprint.goal, build_blueprint.success_criteria},
+         {"architecture", explanation_blueprint.id, "Repository work",
+          explanation_blueprint.purpose, explanation_blueprint.goal, explanation_blueprint.success_criteria}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    assert(selection_result.logical_id && *selection_result.logical_id == "build-repair");
+    assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
+    selection_request.policy_pack.reset();
+
     common_agent_bootstrap_package custom;
     custom.name = "custom";
     custom.version = "v1";

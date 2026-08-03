@@ -27,6 +27,8 @@ enum class common_agent_event_type {
     memory_rejected,
     memory_candidate_extracted,
     memory_candidate_not_stored,
+    memory_capture_confirmation_required,
+    memory_capture_confirmed,
     blueprint_promoted,
     tool_executed,
     tool_rejected,
@@ -69,6 +71,8 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::memory_rejected: return "memory_rejected";
         case common_agent_event_type::memory_candidate_extracted: return "memory_candidate_extracted";
         case common_agent_event_type::memory_candidate_not_stored: return "memory_candidate_not_stored";
+        case common_agent_event_type::memory_capture_confirmation_required: return "memory_capture_confirmation_required";
+        case common_agent_event_type::memory_capture_confirmed: return "memory_capture_confirmed";
         case common_agent_event_type::blueprint_promoted: return "blueprint_promoted";
         case common_agent_event_type::tool_executed: return "tool_executed";
         case common_agent_event_type::tool_rejected: return "tool_rejected";
@@ -247,6 +251,9 @@ struct common_agent_request {
     // A host may deliberately submit one bounded memory candidate through
     // the same native memory policy used by post-turn learning.
     std::optional<common_memory_candidate> explicit_memory_candidate;
+    // Explicit capture is a two-turn-safe workflow: storage requires a
+    // host/user confirmation on the request that persists the candidate.
+    bool explicit_memory_confirmed = false;
     std::optional<common_agent_tool_call> tool_call;
     // Optional live delivery for host-owned event streams. The runtime still
     // records every event in common_agent_result::events for compatibility.

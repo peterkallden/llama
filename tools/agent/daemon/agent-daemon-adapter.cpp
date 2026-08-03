@@ -165,6 +165,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.memory_learn_min_reuse = std::stof(value);
         } else if (std::strcmp(argv[i], "--agent-plan") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.agent_plan = value;
+        } else if (std::strcmp(argv[i], "--agent-blueprint") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.agent_blueprint = value;
         } else if (std::strcmp(argv[i], "--tool-profile") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.tool_profile = value;
         } else if (std::strcmp(argv[i], "--repository-root") == 0) {
@@ -317,6 +319,10 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--agent-plan must be off or auto\n");
         return false;
     }
+    if (options.agent_blueprint != "off" && options.agent_blueprint != "auto" && options.agent_blueprint.empty()) {
+        std::fprintf(stderr, "--agent-blueprint must be off, auto, or a blueprint id\n");
+        return false;
+    }
     if (options.max_tool_rounds > 4) {
         std::fprintf(stderr, "--max-tool-rounds must be between 0 and 4\n");
         return false;
@@ -368,7 +374,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
-        "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
+        "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-blueprint off|auto|ID] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
         "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [-ngl N]\n"
         "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN] [--http-agent-tools]\n"

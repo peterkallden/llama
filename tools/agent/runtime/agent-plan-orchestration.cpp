@@ -228,7 +228,10 @@ bool maybe_auto_select_blueprint(
         selection_config.blocked_constraint_ids = context.tooling->blocked_constraint_ids;
     }
     common_blueprint_selection_result selection;
-    const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+    auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+    if (context.policy_pack != nullptr) {
+        selection_request.policy_pack = *context.policy_pack;
+    }
     if (!common_agent_select_and_instantiate_blueprint(
             context.plan_store,
             selection_request,

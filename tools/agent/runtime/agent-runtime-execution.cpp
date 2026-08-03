@@ -75,6 +75,10 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memory_enabled,
         inputs.tooling,
         inputs.input_resources,
+        inputs.research_should_stop,
+        inputs.research_stop_reason,
+        inputs.explicit_memory_candidate,
+        inputs.explicit_memory_confirmed,
     };
 }
 
@@ -101,6 +105,8 @@ common_agent_request make_agent_runtime_driver_request(
     request.deliberation_policy = execution.policy.deliberation_policy;
     request.research_should_stop = execution.research_should_stop;
     request.research_stop_reason = execution.research_stop_reason;
+    request.explicit_memory_candidate = execution.explicit_memory_candidate;
+    request.explicit_memory_confirmed = execution.explicit_memory_confirmed;
     apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
 }
@@ -155,6 +161,7 @@ bool run_agent_runtime_driver(
         execution.scope,
         execution.plan_store,
         execution.installed_blueprint_candidates,
+        &execution.policy_pack,
         &execution.tooling,
         execution.pre_turn_events,
         execution.pre_turn_trace,

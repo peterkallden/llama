@@ -4,6 +4,7 @@
 #include "../cli/agent-cli-selection.h"
 
 #include <limits>
+#include <algorithm>
 
 using json = nlohmann::ordered_json;
 
@@ -721,6 +722,7 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
             "planning",
             "reflection",
             "memory_learning",
+            "blueprint_selection",
             "scoped_sessions",
         })},
         {"readiness", {
@@ -733,6 +735,7 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
                 {"resource", "configured"},
             }},
             {"tool_profile", options.tool_profile.empty() ? "minimal" : options.tool_profile},
+            {"agent_blueprint", options.agent_blueprint},
             {"warnings", json::array({"runtime readiness is reported by status"})},
         }},
     };
@@ -759,6 +762,14 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
             {"allow_network", snapshot.allow_network.value_or(false)},
             {"allow_policy_gated_writes", snapshot.allow_policy_gated_writes.value_or(false)},
         };
+        std::vector<std::string> effective_capabilities;
+        for (const auto & definition : snapshot.tools) {
+            effective_capabilities.insert(effective_capabilities.end(),
+                definition.capabilities.begin(), definition.capabilities.end());
+        }
+        std::sort(effective_capabilities.begin(), effective_capabilities.end());
+        effective_capabilities.erase(std::unique(effective_capabilities.begin(), effective_capabilities.end()), effective_capabilities.end());
+        response["tooling"]["effective_capabilities"] = std::move(effective_capabilities);
     } else {
         response["tooling"] = {
             {"profile", options.tool_profile.empty() ? "minimal" : options.tool_profile},

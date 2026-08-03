@@ -65,6 +65,7 @@ struct common_agent_orchestration_runtime_context {
     const common_agent_scope & scope;
     common_plan_store & plan_store;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    const std::optional<common_memory_policy_pack> * policy_pack = nullptr;
     const common_agent_runtime_tooling * tooling = nullptr;
     std::vector<common_agent_event> & pre_turn_events;
     std::vector<common_runtime_trace_entry> & pre_turn_trace;

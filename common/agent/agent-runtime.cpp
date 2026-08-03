@@ -1236,7 +1236,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::memory_learning, common_runtime_trace_kind::summary,
             std::string(common_memory_learning_decision_name(learning.decision)) + ": " + learning.reason, plan.id);
         if (learning.decision == common_memory_learning_decision::accepted) {
-            append_event(result, request, {common_agent_event_type::memory_remembered, "post-turn candidate stored", learning.stored_memory_id.value_or(""), plan.id});
+            append_event(result, request, {request.explicit_memory_candidate
+                    ? common_agent_event_type::memory_capture_confirmed
+                    : common_agent_event_type::memory_remembered,
+                request.explicit_memory_candidate
+                    ? "explicit memory candidate passed confirmation and native policy"
+                    : "post-turn candidate stored",
+                learning.stored_memory_id.value_or(""), plan.id});
+        } else if (learning.decision == common_memory_learning_decision::awaiting_confirmation) {
+            append_event(result, request, {common_agent_event_type::memory_capture_confirmation_required,
+                "explicit memory candidate requires confirmation before persistence", {}, plan.id});
         } else if (learning.decision == common_memory_learning_decision::no_candidate) {
             append_event(result, request, {common_agent_event_type::memory_candidate_extracted, "post-turn no candidate", {}, plan.id});
         } else {

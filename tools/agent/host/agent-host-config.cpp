@@ -275,6 +275,7 @@ bool parse_agent_host_config_json(
         read_optional(runtime, "max_research_iterations", config.max_research_iterations);
         read_optional(runtime, "memory_learn", config.memory_learn);
         read_optional(runtime, "agent_plan", config.agent_plan);
+        read_optional(runtime, "agent_blueprint", config.agent_blueprint);
         read_optional(runtime, "memory_learn_show_candidate", config.memory_learn_show_candidate);
         read_optional(runtime, "memory_learn_min_confidence", config.memory_learn_min_confidence);
         read_optional(runtime, "memory_learn_min_reuse", config.memory_learn_min_reuse);
@@ -650,6 +651,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"max_research_iterations", config.max_research_iterations},
             {"memory_learn", config.memory_learn},
             {"agent_plan", config.agent_plan},
+            {"agent_blueprint", config.agent_blueprint},
             {"memory_learn_show_candidate", config.memory_learn_show_candidate},
             {"memory_learn_min_confidence", config.memory_learn_min_confidence},
             {"memory_learn_min_reuse", config.memory_learn_min_reuse},
@@ -1081,6 +1083,7 @@ void apply_agent_host_config_to_daemon_options(
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
+    options.agent_blueprint = config.agent_blueprint;
     options.backend = config.memory_backend;
     options.memory_db = config.memory_db;
     options.plan_backend = config.plan_backend;
@@ -1184,6 +1187,7 @@ void apply_agent_host_config_to_args(
     options.max_research_iterations = config.max_research_iterations;
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
+    options.agent_blueprint = config.agent_blueprint;
     options.n_threads = config.n_threads;
     options.max_tool_rounds = config.max_tool_rounds;
     options.turn_timeout_ms = config.turn_timeout_ms;

@@ -27,6 +27,7 @@ public:
 
 enum class common_memory_learning_decision {
     no_candidate,
+    awaiting_confirmation,
     rejected,
     accepted,
     duplicate,

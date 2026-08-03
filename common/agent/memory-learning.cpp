@@ -71,6 +71,7 @@ static bool same_procedure_scope(const common_memory_record & procedure, const c
 const char * common_memory_learning_decision_name(common_memory_learning_decision decision) {
     switch (decision) {
         case common_memory_learning_decision::no_candidate: return "no_candidate";
+        case common_memory_learning_decision::awaiting_confirmation: return "awaiting_confirmation";
         case common_memory_learning_decision::rejected:     return "rejected";
         case common_memory_learning_decision::accepted:     return "accepted";
         case common_memory_learning_decision::duplicate:    return "duplicate";
@@ -128,6 +129,11 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
             return std::none_of(plan.observations.begin(), plan.observations.end(), [&](const common_plan_observation & observation) { return observation.id == id; });
         }), candidate.evidence_ids.end());
     outcome.candidate = candidate;
+    if (explicit_capture && !request.explicit_memory_confirmed) {
+        outcome.decision = common_memory_learning_decision::awaiting_confirmation;
+        outcome.reason = "explicit memory candidate requires host confirmation before persistence";
+        return outcome;
+    }
     const bool allowed_kind = candidate.kind == common_memory_kind::procedure ||
         candidate.kind == common_memory_kind::preference || candidate.kind == common_memory_kind::fact ||
         (explicit_capture && (candidate.kind == common_memory_kind::decision || candidate.kind == common_memory_kind::constraint));

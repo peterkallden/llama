@@ -44,6 +44,7 @@ struct daemon_options {
     int n_gpu_layers = 0;
     std::string memory_learn = "off";
     std::string agent_plan = "off";
+    std::string agent_blueprint = "off";
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;

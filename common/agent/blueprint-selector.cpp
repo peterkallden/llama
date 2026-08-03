@@ -35,17 +35,31 @@ std::set<std::string> keyword_set(const std::string & text) {
 const common_blueprint_candidate * keyword_fallback(
         const common_agent_request & request,
         const std::vector<common_blueprint_candidate> & candidates) {
-    const auto request_words = keyword_set(request.prompt);
+    std::string request_text = request.prompt;
+    if (request.policy_pack) {
+        request_text += " " + request.policy_pack->purpose + " " + request.policy_pack->goal +
+            " " + request.policy_pack->success_criteria;
+        for (const auto & constraint : request.policy_pack->constraints) request_text += " " + constraint;
+        for (const auto & procedure : request.policy_pack->preferred_procedures) request_text += " " + procedure;
+    }
+    const auto request_words = keyword_set(request_text);
     const common_blueprint_candidate * best = nullptr;
     size_t best_score = 0;
     bool tied = false;
     for (const auto & candidate : candidates) {
-        std::string candidate_text = candidate.logical_id + " " + candidate.description + " " +
-            candidate.purpose + " " + candidate.goal + " " + candidate.success_criteria;
-        for (const auto & contribution : candidate.contributions) candidate_text += " " + contribution;
-        auto candidate_words = keyword_set(candidate_text);
+        const auto overlap = [&](const std::string & text) {
+            const auto words = keyword_set(text);
+            size_t value = 0;
+            for (const auto & word : request_words) value += words.count(word);
+            return value;
+        };
         size_t score = 0;
-        for (const auto & word : request_words) score += candidate_words.count(word);
+        score += overlap(candidate.purpose) * 6;
+        score += overlap(candidate.goal) * 5;
+        score += overlap(candidate.success_criteria) * 4;
+        score += overlap(candidate.description) * 2;
+        for (const auto & contribution : candidate.contributions) score += overlap(contribution) * 3;
+        for (const auto & constraint : candidate.constraints) score += overlap(constraint.description);
         if (score > best_score) { best = &candidate; best_score = score; tied = false; }
         else if (score != 0 && score == best_score) tied = true;
     }

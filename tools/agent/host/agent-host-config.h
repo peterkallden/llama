@@ -38,6 +38,7 @@ struct agent_host_config {
     size_t max_research_iterations = 0;
     std::string memory_learn = "off";
     std::string agent_plan = "off";
+    std::string agent_blueprint = "off";
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;

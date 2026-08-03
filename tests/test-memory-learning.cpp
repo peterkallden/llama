@@ -87,6 +87,10 @@ int main() {
     explicit_decision.rationale = "Explicit project decision.";
     explicit_decision.confidence = 0.9f;
     request.explicit_memory_candidate = explicit_decision;
+    const auto pending_explicit = learner.learn(request, plan, result);
+    assert(pending_explicit.decision == common_memory_learning_decision::awaiting_confirmation);
+    assert(pending_explicit.candidate && !pending_explicit.stored_memory_id);
+    request.explicit_memory_confirmed = true;
     const auto explicit_result = learner.learn(request, plan, result);
     assert(explicit_result.decision == common_memory_learning_decision::accepted && explicit_result.stored_memory_id);
     const auto explicit_stored = store.get(*explicit_result.stored_memory_id, error);
@@ -95,6 +99,7 @@ int main() {
     assert(explicit_stored->metadata.at("acquisition_source") == "explicit_user_statement");
     assert(explicit_stored->metadata.at("explicit_user_provenance") == "true");
     request.explicit_memory_candidate.reset();
+    request.explicit_memory_confirmed = false;
 
     candidate_extractor.next.candidate = explicit_decision;
     assert(learner.learn(request, plan, result).decision == common_memory_learning_decision::rejected);

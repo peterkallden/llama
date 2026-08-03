@@ -180,6 +180,8 @@ bool run_agent_runtime_host(
             };
             driver_execution.research_should_stop = execution.turn_request.request.research_should_stop;
             driver_execution.research_stop_reason = execution.turn_request.request.research_stop_reason;
+            driver_execution.explicit_memory_candidate = execution.turn_request.request.explicit_memory_candidate;
+            driver_execution.explicit_memory_confirmed = execution.turn_request.request.explicit_memory_confirmed;
             return run_agent_runtime_driver(driver_execution, result, error);
         }
 

@@ -1932,7 +1932,42 @@ decision or constraint after normal validation. Inferred post-turn learning
 continues to allow only fact, preference, or evidence-backed procedure
 candidates; it cannot promote a model claim into a decision or constraint.
 Explicit capture does not create a blueprint directly and does not bypass
-scope, conflict, duplicate, or persistence policy.
+scope, conflict, duplicate, or persistence policy. It is also confirmation
+gated: the first asynchronous request may return the candidate with
+`awaiting_confirmation` and emit `memory_capture_confirmation_required`, but
+it does not write to the store. A later host-owned request may replay the same
+candidate with `explicit_memory_confirmed`; only then can the normal native
+memory policy persist it and emit `memory_capture_confirmed`.
+
+This is the deliberate/research knowledge-gap pattern, not a second learning
+store. A deliberate or research turn can inspect the repository and retrieved
+memory, identify bounded unanswered questions, ask the maintainer for focused
+answers, and summarize those answers as explicit candidates. The summary is
+then confirmed as a separate turn before persistence. The runtime keeps the
+candidate in the result/request boundary while that exchange is in progress;
+the research workspace remains turn-scoped and is not silently promoted to
+durable memory. Facts, decisions, and constraints are therefore explicit-first,
+while inferred procedures still require completed-plan evidence and later
+verification before promotion.
+
+When the model declines or reports low confidence, native fallback ranking uses
+the caller prompt together with the policy-pack purpose, goal, success criteria,
+constraints, and preferred procedures. Purpose and goal overlap receive the
+strongest weight, followed by success criteria and step contributions. This
+ranking is only applied after deterministic eligibility filtering; it cannot
+select a blueprint that is outside scope, has a known-false assumption, lacks
+a resolved required capability, or conflicts with a host-blocked hard
+constraint.
+
+The daemon exposes the same path through `--agent-blueprint off|auto|ID` and
+the `runtime.agent_blueprint` configuration field. Before automatic ranking,
+the daemon resolves the active host tool profile for the turn and passes its
+semantic capability set to native selection. A blueprint requirement such as
+`development.build` is compared with that set, not with a model-selected tool
+name. The `ready` response reports the configured profile, effective
+capabilities, and blueprint-selection capability; selection diagnostics remain
+in the existing event and trace vectors so asynchronous clients can observe
+the same decision path as foreground hosts.
 
 Hard constraint filtering is similarly host-owned. The active tooling context
 may provide exact blocked constraint identifiers; native selection rejects a

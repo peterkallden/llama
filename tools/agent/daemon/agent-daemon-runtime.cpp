@@ -155,7 +155,7 @@ common_agent_orchestration_config make_daemon_orchestration_config(const daemon_
     common_agent_orchestration_config config;
     config.prompt = "";
     config.agent_plan = options.agent_plan;
-    config.agent_blueprint = "off";
+    config.agent_blueprint = options.agent_blueprint;
     return config;
 }
 
