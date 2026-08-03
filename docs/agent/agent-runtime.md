@@ -1891,6 +1891,13 @@ The async runtime must also keep the ordering explicit:
 `resumable task plan -> deterministic blueprint eligibility -> model ranking ->
 instantiation -> execution -> verified post-turn learning/promotion`
 
+Resumable task plans are checked before blueprint candidate availability. If a
+task plan can be resumed, an empty or stale blueprint list must not prevent the
+continuation. For a new task, native code then filters candidates against the
+persisted plan kind and the current namespace/scope identity before invoking
+the model selector. This keeps model ranking bounded to executable candidates
+and reuses the same scope contract used by task-plan resumption.
+
 Events and traces describe this flow; they are not a second decision path.
 Learning reads the completed, stable plan result and uses the shared memory
 policy with stronger evidence requirements for procedure promotion. Decisions

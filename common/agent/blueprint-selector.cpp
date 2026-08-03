@@ -70,12 +70,6 @@ bool common_agent_select_and_instantiate_blueprint(
         error = "blueprint selection requires task plan and session ids";
         return false;
     }
-    if (candidates.empty() || candidates.size() > config.maximum_candidates) {
-        result.outcome = common_blueprint_selection_outcome::failed_safely;
-        result.reason = candidates.empty() ? "no installed blueprint candidates" : "too many blueprint candidates";
-        return true;
-    }
-
     const auto existing = plan_store.get(config.task_plan_id, error);
     if (!error.empty()) return false;
     if (existing) {
@@ -89,8 +83,35 @@ bool common_agent_select_and_instantiate_blueprint(
         return true;
     }
 
+    if (candidates.empty() || candidates.size() > config.maximum_candidates) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        result.reason = candidates.empty() ? "no installed blueprint candidates" : "too many blueprint candidates";
+        return true;
+    }
+
+    // Native eligibility is resolved before model ranking. This uses the
+    // persisted plan as the source of truth, so a selector cannot choose a
+    // missing, non-blueprint, or out-of-scope record by logical id.
+    std::vector<common_blueprint_candidate> eligible;
+    eligible.reserve(candidates.size());
+    for (const auto & candidate : candidates) {
+        const auto blueprint = plan_store.get(candidate.persisted_id, error);
+        if (!error.empty()) return false;
+        if (!blueprint || blueprint->kind != common_plan_kind::blueprint ||
+                !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id)) {
+            continue;
+        }
+        eligible.push_back(candidate);
+    }
+    if (eligible.empty()) {
+        result.outcome = common_blueprint_selection_outcome::declined;
+        result.reason = "no eligible blueprint candidates in the current scope";
+        return true;
+    }
+
     std::string selection_error;
-    const auto choice = selector.select(request, candidates, selection_error);
+    const auto choice = selector.select(request, eligible, selection_error);
     result.confidence = choice.confidence;
     result.reason = choice.reason.empty() ? selection_error : choice.reason;
     if (!selection_error.empty() || choice.decision == common_blueprint_selection_decision::failed) {
@@ -99,7 +120,7 @@ bool common_agent_select_and_instantiate_blueprint(
     }
     const common_blueprint_candidate * candidate = nullptr;
     if (choice.decision == common_blueprint_selection_decision::instantiate && choice.logical_id && choice.confidence >= config.minimum_confidence) {
-        const auto found = std::find_if(candidates.begin(), candidates.end(), [&](const auto & value) {
+        const auto found = std::find_if(eligible.begin(), eligible.end(), [&](const auto & value) {
             return value.logical_id == *choice.logical_id;
         });
         if (found == candidates.end()) {
@@ -109,7 +130,7 @@ bool common_agent_select_and_instantiate_blueprint(
         }
         candidate = &*found;
     } else {
-        candidate = keyword_fallback(request, candidates);
+        candidate = keyword_fallback(request, eligible);
         if (candidate) {
             result.confidence = 0.0f;
             result.reason = "native keyword fallback after model declined or reported low confidence";
