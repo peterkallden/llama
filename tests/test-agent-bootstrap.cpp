@@ -114,6 +114,15 @@ int main() {
     selection_config.task_plan_id = "selected-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector, {}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
+
+    common_plan_state invalid_assumption = *blueprint;
+    invalid_assumption.id = "invalid-assumption-blueprint";
+    invalid_assumption.assumptions.push_back({"workspace", "A controlled workspace is available.", 0.1f, false, {}});
+    assert(plans.create(invalid_assumption, error));
+    selection_config.task_plan_id = "invalid-assumption-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"repository-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
     const auto selected_instance = plans.get(selection_config.task_plan_id, error);
     assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
     assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,

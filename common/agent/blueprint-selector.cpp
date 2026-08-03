@@ -97,7 +97,12 @@ bool common_agent_select_and_instantiate_blueprint(
     for (const auto & candidate : candidates) {
         const auto blueprint = plan_store.get(candidate.persisted_id, error);
         if (!error.empty()) return false;
+        const bool has_known_false_assumption = blueprint && std::any_of(
+            blueprint->assumptions.begin(), blueprint->assumptions.end(), [](const auto & assumption) {
+                return !assumption.valid;
+            });
         if (!blueprint || blueprint->kind != common_plan_kind::blueprint ||
+                has_known_false_assumption ||
                 !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
                     request.session_id, request.project_id, request.turn_id)) {
             continue;

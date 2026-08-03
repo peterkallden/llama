@@ -1898,6 +1898,11 @@ persisted plan kind and the current namespace/scope identity before invoking
 the model selector. This keeps model ranking bounded to executable candidates
 and reuses the same scope contract used by task-plan resumption.
 
+An assumption marked `valid: false` is treated as a known-false precondition
+and makes that candidate ineligible. An assumption that remains valid is not
+treated as proven; unknown-but-not-false assumptions remain available for a
+future bounded verification step or normal plan handling.
+
 Events and traces describe this flow; they are not a second decision path.
 Learning reads the completed, stable plan result and uses the shared memory
 policy with stronger evidence requirements for procedure promotion. Decisions
