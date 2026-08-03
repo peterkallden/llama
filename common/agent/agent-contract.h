@@ -48,6 +48,7 @@ enum class common_agent_event_type {
     thinking_escalation_allowed,
     thinking_escalation_denied,
     thinking_escalation_requested,
+    blueprint_selection_evaluated,
     research_gap_opened,
     research_task_scheduled,
     research_task_started,
@@ -89,6 +90,7 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::thinking_escalation_allowed: return "thinking_escalation_allowed";
         case common_agent_event_type::thinking_escalation_denied: return "thinking_escalation_denied";
         case common_agent_event_type::thinking_escalation_requested: return "thinking_escalation_requested";
+        case common_agent_event_type::blueprint_selection_evaluated: return "blueprint_selection_evaluated";
         case common_agent_event_type::research_gap_opened: return "research_gap_opened";
         case common_agent_event_type::research_task_scheduled: return "research_task_scheduled";
         case common_agent_event_type::research_task_started: return "research_task_started";
@@ -242,6 +244,9 @@ struct common_agent_request {
     std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
     std::optional<common_agent_user_correction> user_correction;
+    // A host may deliberately submit one bounded memory candidate through
+    // the same native memory policy used by post-turn learning.
+    std::optional<common_memory_candidate> explicit_memory_candidate;
     std::optional<common_agent_tool_call> tool_call;
     // Optional live delivery for host-owned event streams. The runtime still
     // records every event in common_agent_result::events for compatibility.

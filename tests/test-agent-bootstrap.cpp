@@ -127,6 +127,7 @@ int main() {
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
         {{"repository-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
+    assert(selection_result.candidate_count == 1 && selection_result.eligible_count == 0 && selection_result.rejections.size() == 1);
     common_plan_state capability_blueprint = *blueprint;
     capability_blueprint.id = "capability-blueprint";
     capability_blueprint.required_capabilities = {"development.build"};
@@ -138,6 +139,20 @@ int main() {
         {{"capability", capability_blueprint.id, "build work", "Build", "Build", "Build succeeds.", {}, {}, {}, {"development.build"}}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
+    assert(selection_result.rejections.size() == 1 && selection_result.rejections.front().reason == "required host capability is unavailable");
+    common_plan_state blocked_blueprint = *blueprint;
+    blocked_blueprint.id = "blocked-blueprint";
+    blocked_blueprint.constraints = {{"host-write", "requires host-approved writes", true}};
+    assert(plans.create(blocked_blueprint, error));
+    selection_config.capabilities_resolved = false;
+    selection_config.available_capabilities.clear();
+    selection_config.blocked_constraint_ids = {"host-write"};
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"blocked", blocked_blueprint.id, "blocked work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined &&
+        selection_result.rejections.size() == 1 &&
+        selection_result.rejections.front().reason == "hard constraint conflicts with host policy");
+    selection_config.blocked_constraint_ids.clear();
     selection_config.capabilities_resolved = false;
     selection_config.available_capabilities.clear();
     selection_config.task_plan_id = "selected-instance";

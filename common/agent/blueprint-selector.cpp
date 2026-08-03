@@ -74,6 +74,7 @@ bool common_agent_select_and_instantiate_blueprint(
         std::string & error) {
     result = {};
     error.clear();
+    result.candidate_count = candidates.size();
     if (config.task_plan_id.empty() || config.session_id.empty()) {
         error = "blueprint selection requires task plan and session ids";
         return false;
@@ -111,15 +112,26 @@ bool common_agent_select_and_instantiate_blueprint(
             });
         const bool missing_required_capability = blueprint && config.capabilities_resolved &&
             !has_all_capabilities(blueprint->required_capabilities, config.available_capabilities);
-        if (!blueprint || blueprint->kind != common_plan_kind::blueprint ||
-                has_known_false_assumption ||
-                missing_required_capability ||
-                !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
-                    request.session_id, request.project_id, request.turn_id)) {
+        const bool blocked_hard_constraint = blueprint && std::any_of(
+            blueprint->constraints.begin(), blueprint->constraints.end(), [&](const common_plan_constraint & constraint) {
+                return constraint.hard && std::find(config.blocked_constraint_ids.begin(),
+                    config.blocked_constraint_ids.end(), constraint.id) != config.blocked_constraint_ids.end();
+            });
+        std::string rejection;
+        if (!blueprint) rejection = "persisted blueprint is unavailable";
+        else if (blueprint->kind != common_plan_kind::blueprint) rejection = "persisted plan is not a blueprint";
+        else if (has_known_false_assumption) rejection = "blueprint has a known-false assumption";
+        else if (missing_required_capability) rejection = "required host capability is unavailable";
+        else if (blocked_hard_constraint) rejection = "hard constraint conflicts with host policy";
+        else if (!common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id)) rejection = "blueprint is outside the current scope";
+        if (!rejection.empty()) {
+            result.rejections.push_back({candidate.logical_id, std::move(rejection)});
             continue;
         }
         eligible.push_back(candidate);
     }
+    result.eligible_count = eligible.size();
     if (eligible.empty()) {
         result.outcome = common_blueprint_selection_outcome::declined;
         result.reason = "no eligible blueprint candidates in the current scope";

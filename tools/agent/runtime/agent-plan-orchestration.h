@@ -66,6 +66,8 @@ struct common_agent_orchestration_runtime_context {
     common_plan_store & plan_store;
     const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
     const common_agent_runtime_tooling * tooling = nullptr;
+    std::vector<common_agent_event> & pre_turn_events;
+    std::vector<common_runtime_trace_entry> & pre_turn_trace;
 };
 
 bool maybe_auto_select_plan(

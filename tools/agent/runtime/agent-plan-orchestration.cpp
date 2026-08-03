@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <sstream>
 
 namespace {
 
@@ -224,6 +225,7 @@ bool maybe_auto_select_blueprint(
         for (const auto & tool : context.tooling->capabilities) {
             selection_config.available_capabilities.push_back(tool);
         }
+        selection_config.blocked_constraint_ids = context.tooling->blocked_constraint_ids;
     }
     common_blueprint_selection_result selection;
     const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
@@ -238,6 +240,28 @@ bool maybe_auto_select_blueprint(
         error = "agent blueprint selection failed: " + error;
         return false;
     }
+
+    std::ostringstream diagnostic;
+    diagnostic << "blueprint selection candidates=" << selection.candidate_count
+               << " eligible=" << selection.eligible_count
+               << " rejected=" << selection.rejections.size()
+               << " outcome=" << static_cast<int>(selection.outcome);
+    if (!selection.reason.empty()) diagnostic << " reason=" << selection.reason;
+    context.pre_turn_events.push_back({
+        common_agent_event_type::blueprint_selection_evaluated,
+        diagnostic.str(),
+        {},
+        context.current_plan_id.empty()
+            ? std::nullopt
+            : std::optional<std::string>(context.current_plan_id),
+    });
+    context.pre_turn_trace.push_back({
+        common_runtime_trace_stage::plan,
+        common_runtime_trace_kind::decided,
+        diagnostic.str(),
+        context.current_plan_id,
+        {}, {}, {}, selection.logical_id.value_or(std::string{}),
+    });
 
     if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
         fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), context.current_plan_id.c_str());

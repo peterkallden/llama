@@ -75,15 +75,27 @@ struct common_blueprint_selection_config {
     // Unknown capabilities remain unknown during earlier bootstrap setup.
     std::vector<std::string> available_capabilities;
     bool capabilities_resolved = false;
+    // Host-resolved hard constraint identifiers that cannot be honored in
+    // this turn. Textual constraints without a host decision remain subject
+    // to normal plan validation rather than heuristic native filtering.
+    std::vector<std::string> blocked_constraint_ids;
 };
 
 enum class common_blueprint_selection_outcome { resumed, declined, failed_safely, instantiated };
+
+struct common_blueprint_selection_rejection {
+    std::string logical_id;
+    std::string reason;
+};
 
 struct common_blueprint_selection_result {
     common_blueprint_selection_outcome outcome = common_blueprint_selection_outcome::declined;
     std::optional<std::string> logical_id;
     float confidence = 0.0f;
     std::string reason;
+    size_t candidate_count = 0;
+    size_t eligible_count = 0;
+    std::vector<common_blueprint_selection_rejection> rejections;
 };
 
 // This owns the trust boundary around automatic blueprint choice. Failures in

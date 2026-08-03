@@ -93,22 +93,30 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         const common_agent_result & result) {
     common_memory_learning_result outcome;
     std::string error;
-    const auto extracted = extractor.extract_result(request, plan, result, error);
-    outcome.generation = extracted.generation;
-    if (!error.empty()) {
-        outcome.decision = common_memory_learning_decision::failed;
-        outcome.reason = "candidate extraction failed safely: " + error;
-        return outcome;
+    const bool explicit_capture = request.explicit_memory_candidate.has_value();
+    common_memory_candidate candidate;
+    if (explicit_capture) {
+        candidate = *request.explicit_memory_candidate;
+        // The explicit input is accepted as a user-owned acquisition signal,
+        // but still passes through the same native memory policy and storage.
+        candidate.explicit_user_provenance = true;
+    } else {
+        const auto extracted = extractor.extract_result(request, plan, result, error);
+        outcome.generation = extracted.generation;
+        if (!error.empty()) {
+            outcome.decision = common_memory_learning_decision::failed;
+            outcome.reason = "candidate extraction failed safely: " + error;
+            return outcome;
+        }
+        if (!extracted.candidate) {
+            outcome.decision = common_memory_learning_decision::no_candidate;
+            outcome.reason = extracted.reason.empty() ? "no durable candidate proposed" : extracted.reason;
+            return outcome;
+        }
+        candidate = *extracted.candidate;
+        // Model output is only a claim. It cannot self-attest user provenance.
+        candidate.explicit_user_provenance = false;
     }
-    if (!extracted.candidate) {
-        outcome.decision = common_memory_learning_decision::no_candidate;
-        outcome.reason = extracted.reason.empty() ? "no durable candidate proposed" : extracted.reason;
-        return outcome;
-    }
-
-    auto candidate = *extracted.candidate;
-    // Model output is only a claim. It cannot self-attest user provenance.
-    candidate.explicit_user_provenance = false;
     candidate.source_plan_step_ids.erase(std::remove_if(candidate.source_plan_step_ids.begin(), candidate.source_plan_step_ids.end(),
         [&](const std::string & id) { return !has_verified_step(plan, id); }), candidate.source_plan_step_ids.end());
     candidate.evidence_ids.erase(std::remove_if(candidate.evidence_ids.begin(), candidate.evidence_ids.end(),
@@ -120,7 +128,10 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
             return std::none_of(plan.observations.begin(), plan.observations.end(), [&](const common_plan_observation & observation) { return observation.id == id; });
         }), candidate.evidence_ids.end());
     outcome.candidate = candidate;
-    if ((candidate.kind != common_memory_kind::procedure && candidate.kind != common_memory_kind::preference && candidate.kind != common_memory_kind::fact) ||
+    const bool allowed_kind = candidate.kind == common_memory_kind::procedure ||
+        candidate.kind == common_memory_kind::preference || candidate.kind == common_memory_kind::fact ||
+        (explicit_capture && (candidate.kind == common_memory_kind::decision || candidate.kind == common_memory_kind::constraint));
+    if (!allowed_kind ||
             candidate.content.empty() || candidate.content.size() > 512 || candidate.rationale.size() > 240 ||
             !valid_score(candidate.importance) || !valid_score(candidate.confidence) || !valid_score(candidate.expected_reuse)) {
         outcome.decision = common_memory_learning_decision::rejected;
@@ -132,12 +143,12 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
         outcome.reason = "candidate confidence is below threshold";
         return outcome;
     }
-    if (candidate.expected_reuse < config.min_expected_reuse) {
+    if (!explicit_capture && candidate.expected_reuse < config.min_expected_reuse) {
         outcome.decision = common_memory_learning_decision::rejected;
         outcome.reason = "candidate expected reuse is below threshold";
         return outcome;
     }
-    if (candidate.kind == common_memory_kind::procedure && candidate.evidence_ids.empty() && candidate.source_plan_step_ids.empty()) {
+    if (!explicit_capture && candidate.kind == common_memory_kind::procedure && candidate.evidence_ids.empty() && candidate.source_plan_step_ids.empty()) {
         outcome.decision = common_memory_learning_decision::rejected;
         outcome.reason = "procedure candidate lacks user provenance or evidence";
         return outcome;
@@ -157,7 +168,7 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     remember.rationale = candidate.rationale;
     remember.importance = candidate.importance;
     remember.confidence = candidate.confidence;
-    remember.source_role = "assistant";
+    remember.source_role = explicit_capture ? "user" : "assistant";
     remember.source_turn_id = request.turn_id;
     remember.namespace_id = request.namespace_id;
     remember.session_id = request.session_id;
@@ -195,12 +206,24 @@ common_memory_learning_result common_memory_post_turn_learner::learn(
     }
 
     auto record = *policy.record;
-    record.metadata["learning_stage"] = "post_turn";
+    record.metadata["learning_stage"] = explicit_capture ? "explicit_capture" : "post_turn";
+    std::string acquisition_source = "successful_execution_or_reflection";
+    if (std::any_of(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
+            return signal.type == common_learning_signal_type::user_correction;
+        })) {
+        acquisition_source = "explicit_user_correction";
+    } else if (std::any_of(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
+            return signal.type == common_learning_signal_type::successful_recovery;
+        })) {
+        acquisition_source = "successful_recovery";
+    }
+    record.metadata["acquisition_source"] = explicit_capture ? "explicit_user_statement" : acquisition_source;
     record.metadata["expected_reuse"] = std::to_string(candidate.expected_reuse);
     record.metadata["source_plan_id"] = plan.id;
+    record.metadata["explicit_user_provenance"] = candidate.explicit_user_provenance ? "true" : "false";
     record.metadata["source_plan_step_ids"] = join_ids(candidate.source_plan_step_ids);
     record.metadata["evidence_ids"] = join_ids(candidate.evidence_ids);
-    if (candidate.kind == common_memory_kind::procedure) record.metadata["procedure_lifecycle"] = "candidate";
+    if (candidate.kind == common_memory_kind::procedure && !explicit_capture) record.metadata["procedure_lifecycle"] = "candidate";
     if (!result.learning_signals.empty()) {
         record.metadata["learning_signal_types"] = join_learning_signal_types(result.learning_signals);
         const auto tools = join_learning_tools(result.learning_signals);

@@ -33,8 +33,10 @@ int main() {
     assert(store.open("", error));
     extractor candidate_extractor;
     common_memory_post_turn_learner learner(store, candidate_extractor,
-        [](const std::string &, std::vector<float> & embedding, std::string & embedding_error) {
-            embedding = {1.0f, 0.0f};
+        [](const std::string & content, std::vector<float> & embedding, std::string & embedding_error) {
+            embedding = content.find("tool authority") != std::string::npos
+                ? std::vector<float>{0.0f, 1.0f}
+                : std::vector<float>{1.0f, 0.0f};
             embedding_error.clear();
             return true;
         });
@@ -78,6 +80,26 @@ int main() {
     assert(stored->metadata.at("source_plan_step_ids") == "verify");
     assert(stored->metadata.at("learning_signal_types") == "tool_failure");
     assert(stored->metadata.at("learning_tools") == "repository.read");
+
+    common_memory_candidate explicit_decision;
+    explicit_decision.kind = common_memory_kind::decision;
+    explicit_decision.content = "The runtime keeps tool authority host-owned.";
+    explicit_decision.rationale = "Explicit project decision.";
+    explicit_decision.confidence = 0.9f;
+    request.explicit_memory_candidate = explicit_decision;
+    const auto explicit_result = learner.learn(request, plan, result);
+    assert(explicit_result.decision == common_memory_learning_decision::accepted && explicit_result.stored_memory_id);
+    const auto explicit_stored = store.get(*explicit_result.stored_memory_id, error);
+    assert(explicit_stored && explicit_stored->kind == common_memory_kind::decision);
+    assert(explicit_stored->metadata.at("learning_stage") == "explicit_capture");
+    assert(explicit_stored->metadata.at("acquisition_source") == "explicit_user_statement");
+    assert(explicit_stored->metadata.at("explicit_user_provenance") == "true");
+    request.explicit_memory_candidate.reset();
+
+    candidate_extractor.next.candidate = explicit_decision;
+    assert(learner.learn(request, plan, result).decision == common_memory_learning_decision::rejected);
+    candidate_extractor.next.candidate.reset();
+    candidate_extractor.next.candidate = procedure("Verify persistence by reopening the database and reading the record back.");
 
     common_memory_hit generic_procedure;
     generic_procedure.memory.id = "generic";

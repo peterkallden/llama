@@ -85,6 +85,8 @@ struct common_agent_runtime_driver_execution {
     std::vector<common_agent_input_resource> input_resources;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
+    std::vector<common_agent_event> pre_turn_events;
+    std::vector<common_runtime_trace_entry> pre_turn_trace;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

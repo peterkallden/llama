@@ -1919,6 +1919,27 @@ policy with stronger evidence requirements for procedure promotion. Decisions
 and constraints remain explicit-first knowledge, while a promoted blueprint is
 created only after repeated verified procedural use.
 
+Blueprint selection also returns bounded native diagnostics: candidate count,
+eligible count, and one rejection reason per filtered candidate. Automatic
+selection projects those diagnostics into the existing agent event and plan
+trace vectors, so asynchronous hosts can observe why a candidate was removed
+without asking the model to explain native policy decisions.
+
+Explicit capture and inferred post-turn learning use the same memory policy and
+store, but are different acquisition paths. An explicit host-supplied
+candidate is marked with `explicit_user_statement` provenance and may capture a
+decision or constraint after normal validation. Inferred post-turn learning
+continues to allow only fact, preference, or evidence-backed procedure
+candidates; it cannot promote a model claim into a decision or constraint.
+Explicit capture does not create a blueprint directly and does not bypass
+scope, conflict, duplicate, or persistence policy.
+
+Hard constraint filtering is similarly host-owned. The active tooling context
+may provide exact blocked constraint identifiers; native selection rejects a
+blueprint with a matching hard constraint before model ranking. Unresolved
+free-form constraint text is not interpreted with keyword heuristics and stays
+within normal plan and policy validation.
+
   The current stage-aware selector is still only the first cut. It uses bounded kind-based weighting on the already retrieved hit set rather than a new retrieval pass. A later refinement can add project/session affinity, tool/step metadata boosts, evidence reuse hints, and more explicit cross-links, but that should stay above the same host-owned memory authority and below prompt rendering.
 
   The same principle applies to session policy. Blueprints are still the right inspiration for the declarative shape, but not the right runtime type to reuse directly. A later host/session layer can own stable policy packs per project or per resident lane, while retrieval overlays stay ephemeral and evidence-driven. That keeps executable plan structure, durable symbolic memory, and host/session policy related but distinct.

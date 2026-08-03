@@ -137,9 +137,11 @@ bool run_agent_runtime_driver_session(
 }
 
 bool run_agent_runtime_driver(
-    common_agent_runtime_driver_execution & execution,
-    common_agent_result & result,
-    std::string & error) {
+        common_agent_runtime_driver_execution & execution,
+        common_agent_result & result,
+        std::string & error) {
+    execution.pre_turn_events.clear();
+    execution.pre_turn_trace.clear();
     if (execution.tooling.profile_tools_active && execution.tooling.tool_view == nullptr) {
         error = "profile tool execution requires a resolved tool view";
         return false;
@@ -154,6 +156,8 @@ bool run_agent_runtime_driver(
         execution.plan_store,
         execution.installed_blueprint_candidates,
         &execution.tooling,
+        execution.pre_turn_events,
+        execution.pre_turn_trace,
     };
 
     if (!maybe_auto_select_plan(orchestration_context, error)) {
@@ -174,6 +178,8 @@ bool run_agent_runtime_driver(
 
     const common_agent_request request = make_agent_runtime_driver_request(execution);
     result = assembly.runtime->run(request);
+    result.events.insert(result.events.begin(), execution.pre_turn_events.begin(), execution.pre_turn_events.end());
+    result.trace.insert(result.trace.begin(), execution.pre_turn_trace.begin(), execution.pre_turn_trace.end());
     if (!result.error.empty()) {
         error = "agent runtime failed: " + result.error;
         return false;
