@@ -114,6 +114,10 @@ int main() {
     selection_config.task_plan_id = "selected-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector, {}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
+    const auto selected_instance = plans.get(selection_config.task_plan_id, error);
+    assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
+    assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,
+        config.namespace_id, config.session_id, config.project_id, {}));
 
     common_plan_state invalid_assumption = *blueprint;
     invalid_assumption.id = "invalid-assumption-blueprint";
@@ -123,10 +127,20 @@ int main() {
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
         {{"repository-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
-    const auto selected_instance = plans.get(selection_config.task_plan_id, error);
-    assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
-    assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,
-        config.namespace_id, config.session_id, config.project_id, {}));
+    common_plan_state capability_blueprint = *blueprint;
+    capability_blueprint.id = "capability-blueprint";
+    capability_blueprint.required_capabilities = {"development.build"};
+    assert(plans.create(capability_blueprint, error));
+    selection_config.task_plan_id = "missing-capability-instance";
+    selection_config.capabilities_resolved = true;
+    selection_config.available_capabilities = {"workspace.read"};
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"capability", capability_blueprint.id, "build work", "Build", "Build", "Build succeeds.", {}, {}, {}, {"development.build"}}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
+    selection_config.capabilities_resolved = false;
+    selection_config.available_capabilities.clear();
+    selection_config.task_plan_id = "selected-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
         {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
@@ -150,6 +164,7 @@ int main() {
     custom_blueprint.id = "review";
     custom_blueprint.goal = "Review a change";
     custom_blueprint.success_criteria = "Review findings are evidence-backed.";
+    custom_blueprint.required_capabilities = {"workspace.read"};
     custom_blueprint.steps.push_back({"inspect", "Inspect", "Inspect the change."});
     custom_blueprint.constraints.push_back({"evidence", "Use inspection evidence.", true});
     custom_blueprint.assumptions.push_back({"repository", "The requested change is in the current repository.", 0.8f, true, {}});
@@ -160,6 +175,7 @@ int main() {
     assert(parsed_package.blueprints.front().constraints.size() == 1);
     assert(parsed_package.blueprints.front().assumptions.size() == 1);
     assert(parsed_package.blueprints.front().assumptions.front().valid);
+    assert(parsed_package.blueprints.front().required_capabilities.size() == 1);
     common_agent_bootstrap_result custom_result;
     assert(common_agent_install_bootstrap_package(memory, plans, config, custom, embed, custom_result, error));
     assert(custom_result.installed_memory_ids.size() == 1 && custom_result.installed_blueprint_ids.size() == 1);

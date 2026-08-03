@@ -25,6 +25,7 @@ bool common_plan_instantiate_blueprint(
     out.purpose = blueprint.purpose.empty() ? blueprint.goal : blueprint.purpose;
     out.goal = blueprint.goal;
     out.success_criteria = blueprint.success_criteria;
+    out.required_capabilities = blueprint.required_capabilities;
     out.constraints = blueprint.constraints;
     out.assumptions = blueprint.assumptions;
     out.next_action = blueprint.next_action;

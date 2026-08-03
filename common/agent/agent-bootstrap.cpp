@@ -169,6 +169,7 @@ bool common_agent_install_bootstrap_package(
             blueprint.goal = definition.goal;
             blueprint.success_criteria = definition.success_criteria;
             blueprint.steps = definition.steps;
+            blueprint.required_capabilities = definition.required_capabilities;
             blueprint.constraints = definition.constraints;
             blueprint.assumptions = definition.assumptions;
             blueprint.next_action = definition.next_action;

@@ -46,6 +46,7 @@ struct common_agent_bootstrap_blueprint {
     std::string goal;
     std::string success_criteria;
     std::vector<common_plan_step> steps;
+    std::vector<std::string> required_capabilities;
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;
     std::optional<std::string> next_action;

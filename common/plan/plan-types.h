@@ -56,6 +56,9 @@ struct common_plan_state {
     // criteria describe the mutable execution target for this particular plan.
     std::string purpose, goal, success_criteria;
     std::vector<common_plan_step> steps;
+    // Semantic host capabilities required to execute this plan. These are
+    // requirements, not tool bindings; the host resolves them per turn.
+    std::vector<std::string> required_capabilities;
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;
     std::vector<common_plan_observation> observations;

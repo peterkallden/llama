@@ -352,6 +352,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-tool-catalog.cpp
         test-agent-clangd-protocol.cpp
         test-agent-config-bootstrap.cpp
+        test-agent-bootstrap.cpp
     )
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})

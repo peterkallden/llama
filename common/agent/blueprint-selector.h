@@ -23,6 +23,7 @@ struct common_blueprint_candidate {
     std::vector<common_plan_constraint> constraints;
     std::vector<common_plan_assumption> assumptions;
     std::vector<std::string> contributions;
+    std::vector<std::string> required_capabilities;
 };
 
 enum class common_blueprint_selection_decision { none, instantiate, failed };
@@ -70,6 +71,10 @@ struct common_blueprint_selection_config {
     int64_t now = 0;
     float minimum_confidence = 0.75f;
     size_t maximum_candidates = 16;
+    // Populated only after the host has resolved the active tool profile.
+    // Unknown capabilities remain unknown during earlier bootstrap setup.
+    std::vector<std::string> available_capabilities;
+    bool capabilities_resolved = false;
 };
 
 enum class common_blueprint_selection_outcome { resumed, declined, failed_safely, instantiated };

@@ -307,6 +307,7 @@ common_procedure_blueprint_promotion_result common_memory_post_turn_learner::pro
             blueprint.purpose = plan.purpose.empty() ? procedure.summary : plan.purpose;
             blueprint.goal = plan.goal.empty() ? procedure.summary : plan.goal;
             blueprint.success_criteria = plan.success_criteria.empty() ? "Complete the reusable procedure safely." : plan.success_criteria;
+            blueprint.required_capabilities = plan.required_capabilities;
             blueprint.constraints = plan.constraints;
             blueprint.assumptions = plan.assumptions;
             blueprint.created_at = plan.updated_at;

@@ -1903,6 +1903,16 @@ and makes that candidate ineligible. An assumption that remains valid is not
 treated as proven; unknown-but-not-false assumptions remain available for a
 future bounded verification step or normal plan handling.
 
+Blueprints may also declare `required_capabilities` on the existing persisted
+plan contract. These are semantic host requirements such as
+`development.build`, not selected tools or executable bindings. After the
+active tool profile has been resolved, native selection removes candidates
+whose required capabilities are absent before model ranking. A capability set
+is therefore a host-owned snapshot for one turn; it is never expanded by a
+blueprint, selector, or model. During earlier bootstrap installation an
+unresolved capability remains unknown and is preserved for the later resolved
+selection stage.
+
 Events and traces describe this flow; they are not a second decision path.
 Learning reads the completed, stable plan result and uses the shared memory
 policy with stronger evidence requirements for procedure promotion. Decisions

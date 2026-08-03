@@ -33,6 +33,13 @@ std::string blueprint_selector_view(const common_blueprint_candidate & candidate
     append_blueprint_field(text, "purpose", candidate.purpose);
     append_blueprint_field(text, "goal", candidate.goal);
     append_blueprint_field(text, "success criteria", candidate.success_criteria);
+    if (!candidate.required_capabilities.empty()) {
+        text += "\n  required capabilities: ";
+        for (size_t i = 0; i < candidate.required_capabilities.size(); ++i) {
+            if (i != 0) text += ", ";
+            text += candidate.required_capabilities[i];
+        }
+    }
     for (const auto & constraint : candidate.constraints) {
         text += "\n  constraint: " + constraint.description;
     }
@@ -121,6 +128,7 @@ bool export_agent_package(
         blueprint.purpose = plan.purpose;
         blueprint.goal = plan.goal;
         blueprint.success_criteria = plan.success_criteria;
+        blueprint.required_capabilities = plan.required_capabilities;
         blueprint.steps = plan.steps;
         blueprint.constraints = plan.constraints;
         blueprint.assumptions = plan.assumptions;

@@ -6,6 +6,14 @@
 
 namespace {
 
+bool has_all_capabilities(
+        const std::vector<std::string> & required,
+        const std::vector<std::string> & available) {
+    return std::all_of(required.begin(), required.end(), [&](const auto & value) {
+        return std::find(available.begin(), available.end(), value) != available.end();
+    });
+}
+
 std::set<std::string> keyword_set(const std::string & text) {
     static const std::set<std::string> ignored = {
         "about", "after", "agent", "and", "answer", "before", "code", "for", "from", "into", "issue", "that", "the", "this", "with"
@@ -101,8 +109,11 @@ bool common_agent_select_and_instantiate_blueprint(
             blueprint->assumptions.begin(), blueprint->assumptions.end(), [](const auto & assumption) {
                 return !assumption.valid;
             });
+        const bool missing_required_capability = blueprint && config.capabilities_resolved &&
+            !has_all_capabilities(blueprint->required_capabilities, config.available_capabilities);
         if (!blueprint || blueprint->kind != common_plan_kind::blueprint ||
                 has_known_false_assumption ||
+                missing_required_capability ||
                 !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
                     request.session_id, request.project_id, request.turn_id)) {
             continue;
@@ -128,7 +139,7 @@ bool common_agent_select_and_instantiate_blueprint(
         const auto found = std::find_if(eligible.begin(), eligible.end(), [&](const auto & value) {
             return value.logical_id == *choice.logical_id;
         });
-        if (found == candidates.end()) {
+        if (found == eligible.end()) {
             result.outcome = common_blueprint_selection_outcome::failed_safely;
             result.reason = "selector returned an unavailable blueprint";
             return true;

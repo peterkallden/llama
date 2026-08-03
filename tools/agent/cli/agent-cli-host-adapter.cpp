@@ -260,6 +260,12 @@ bool resolve_agent_host_tool_selection(
             }
             profile_snapshot->tools = std::move(available_tools);
         }
+        for (const auto & definition : profile_snapshot->tools) {
+            selection.tooling.capabilities.insert(selection.tooling.capabilities.end(),
+                definition.capabilities.begin(), definition.capabilities.end());
+        }
+        std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
+        selection.tooling.capabilities.erase(std::unique(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()), selection.tooling.capabilities.end());
         const auto * resolved_profile = tool_catalog.find_profile(tool_profile);
         resolved_tool_context.profile_snapshot = profile_snapshot;
         if (resolved_profile != nullptr) {

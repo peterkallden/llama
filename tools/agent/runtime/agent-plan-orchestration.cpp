@@ -84,6 +84,7 @@ bool maybe_install_agent_bootstrap(
             candidate.purpose = blueprint.purpose;
             candidate.goal = blueprint.goal;
             candidate.success_criteria = blueprint.success_criteria;
+            candidate.required_capabilities = blueprint.required_capabilities;
             candidate.constraints = blueprint.constraints;
             candidate.assumptions = blueprint.assumptions;
             for (const auto & step : blueprint.steps) {
@@ -218,6 +219,12 @@ bool maybe_auto_select_blueprint(
     selection_config.session_id = context.scope.session_id;
     selection_config.scope = context.scope.plan_scope;
     selection_config.now = std::time(nullptr);
+    if (context.tooling != nullptr && context.tooling->profile_tools_active) {
+        selection_config.capabilities_resolved = true;
+        for (const auto & tool : context.tooling->capabilities) {
+            selection_config.available_capabilities.push_back(tool);
+        }
+    }
     common_blueprint_selection_result selection;
     const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
     if (!common_agent_select_and_instantiate_blueprint(

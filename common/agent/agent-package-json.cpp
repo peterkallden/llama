@@ -63,6 +63,7 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
         }
         for (const auto & step : blueprint.steps) for (const auto & dependency : step.depends_on) if (!steps.count(dependency) || dependency == step.id) { error = "blueprint dependency references an unknown step"; return false; }
         std::set<std::string> constraints, assumptions;
+        for (const auto & capability : blueprint.required_capabilities) if (capability.empty() || capability.size() > 128) { error = "invalid blueprint required capability"; return false; }
         for (const auto & constraint : blueprint.constraints) if (!valid_id(constraint.id) || constraint.description.empty() || constraint.description.size() > 4096 || !constraints.insert(constraint.id).second) { error = "invalid or duplicate blueprint constraint"; return false; }
         for (const auto & assumption : blueprint.assumptions) if (!valid_id(assumption.id) || assumption.statement.empty() || assumption.statement.size() > 4096 || assumption.confidence < 0 || assumption.confidence > 1 || !assumptions.insert(assumption.id).second) { error = "invalid or duplicate blueprint assumption"; return false; }
         // Every dependency points to an earlier-free DAG; bounded DFS detects cycles.
@@ -106,6 +107,7 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 blueprint.id = item.value("id", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
                 blueprint.purpose = item.value("purpose", std::string{});
                 blueprint.goal = item.value("goal", std::string{}); blueprint.success_criteria = item.value("success_criteria", std::string{});
+                if (item.contains("required_capabilities") && !strings(item["required_capabilities"], blueprint.required_capabilities)) { error = "blueprint required_capabilities must be strings"; return false; }
                 if (item.contains("next_action")) { if (!item["next_action"].is_string()) { error = "next_action must be a string"; return false; } blueprint.next_action = item["next_action"].get<std::string>(); }
                 if (item.contains("constraints") && !constraints(item["constraints"], blueprint.constraints)) { error = "blueprint constraints are invalid"; return false; }
                 if (item.contains("assumptions") && !assumptions(item["assumptions"], blueprint.assumptions)) { error = "blueprint assumptions are invalid"; return false; }
@@ -131,6 +133,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
         if (!blueprint.selection_description.empty()) value["selection_description"] = blueprint.selection_description;
         if (!blueprint.purpose.empty()) value["purpose"] = blueprint.purpose;
+        if (!blueprint.required_capabilities.empty()) value["required_capabilities"] = blueprint.required_capabilities;
         if (blueprint.next_action) value["next_action"] = *blueprint.next_action;
         if (!blueprint.constraints.empty()) { value["constraints"] = json::array(); for (const auto & constraint : blueprint.constraints) value["constraints"].push_back({{"id", constraint.id}, {"description", constraint.description}, {"hard", constraint.hard}}); }
         if (!blueprint.assumptions.empty()) { value["assumptions"] = json::array(); for (const auto & assumption : blueprint.assumptions) value["assumptions"].push_back({{"id", assumption.id}, {"statement", assumption.statement}, {"confidence", assumption.confidence}}); }
