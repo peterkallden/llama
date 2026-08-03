@@ -32,7 +32,10 @@ const common_blueprint_candidate * keyword_fallback(
     size_t best_score = 0;
     bool tied = false;
     for (const auto & candidate : candidates) {
-        auto candidate_words = keyword_set(candidate.logical_id + " " + candidate.description);
+        std::string candidate_text = candidate.logical_id + " " + candidate.description + " " +
+            candidate.purpose + " " + candidate.goal + " " + candidate.success_criteria;
+        for (const auto & contribution : candidate.contributions) candidate_text += " " + contribution;
+        auto candidate_words = keyword_set(candidate_text);
         size_t score = 0;
         for (const auto & word : request_words) score += candidate_words.count(word);
         if (score > best_score) { best = &candidate; best_score = score; tied = false; }

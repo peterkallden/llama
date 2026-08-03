@@ -1870,6 +1870,13 @@ request: its purpose, goal, success criteria, constraints, assumptions, and
 step contributions describe the execution boundary that selection must
 respect.
 
+The model-facing selector projection is derived from that same persisted plan:
+it includes purpose, goal, success criteria, constraints, assumptions, and
+bounded step contributions in addition to the short description. This keeps
+semantic ranking informed without giving the selector storage identity or
+runtime authority. Native code remains responsible for scope, state, and
+later instantiation checks.
+
 Promotion therefore preserves the plan purpose, constraints, and assumptions
 alongside the reusable goal, success criteria, and steps. This keeps a learned
 blueprint usable by later asynchronous turns: the host can snapshot the

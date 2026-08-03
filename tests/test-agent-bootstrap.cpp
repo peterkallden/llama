@@ -13,8 +13,10 @@
 class fixed_selector final : public common_blueprint_selector {
 public:
     int calls = 0;
-    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+    std::vector<common_blueprint_candidate> seen;
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> & candidates, std::string & error) override {
         ++calls; error.clear();
+        seen = candidates;
         common_blueprint_selection selection;
         selection.decision = common_blueprint_selection_decision::instantiate;
         selection.logical_id = "repository-change";
@@ -100,8 +102,15 @@ int main() {
     selection_request.session_id = config.session_id;
     selection_request.project_id = config.project_id;
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work",
+          "Safely modify the repository.", "Implement the requested change.", "The change is verified.",
+          {{"scope", "Keep the change bounded.", true}},
+          {{"workspace", "A controlled workspace is available.", 0.9f, true, {}}},
+          {"inspect affected code", "run focused tests"}}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated && selector.calls == 1);
+    assert(selector.seen.size() == 1 && selector.seen.front().purpose == "Safely modify the repository.");
+    assert(selector.seen.front().constraints.size() == 1 && selector.seen.front().assumptions.size() == 1);
+    assert(selector.seen.front().contributions.size() == 2);
     const auto selected_instance = plans.get(selection_config.task_plan_id, error);
     assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
     assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,

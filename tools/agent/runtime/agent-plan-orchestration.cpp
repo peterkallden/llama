@@ -77,11 +77,20 @@ bool maybe_install_agent_bootstrap(
     if (bootstrap_config.install_blueprints) {
         const std::string prefix = make_bootstrap_prefix(scope) + "blueprint:";
         for (const auto & blueprint : package.blueprints) {
-            installed_blueprint_candidates.push_back({
-                blueprint.id,
-                prefix + blueprint.id,
-                blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description,
-            });
+            common_blueprint_candidate candidate;
+            candidate.logical_id = blueprint.id;
+            candidate.persisted_id = prefix + blueprint.id;
+            candidate.description = blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description;
+            candidate.purpose = blueprint.purpose;
+            candidate.goal = blueprint.goal;
+            candidate.success_criteria = blueprint.success_criteria;
+            candidate.constraints = blueprint.constraints;
+            candidate.assumptions = blueprint.assumptions;
+            for (const auto & step : blueprint.steps) {
+                const auto & contribution = step.intended_contribution.empty() ? step.objective : step.intended_contribution;
+                if (!contribution.empty()) candidate.contributions.push_back(contribution);
+            }
+            installed_blueprint_candidates.push_back(std::move(candidate));
         }
     }
 

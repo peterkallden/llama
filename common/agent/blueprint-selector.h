@@ -15,6 +15,14 @@ struct common_blueprint_candidate {
     std::string logical_id;
     std::string persisted_id;
     std::string description;
+    // Bounded projection of the persisted plan's applicability contract. The
+    // selector receives existing plan data, never a second blueprint model.
+    std::string purpose;
+    std::string goal;
+    std::string success_criteria;
+    std::vector<common_plan_constraint> constraints;
+    std::vector<common_plan_assumption> assumptions;
+    std::vector<std::string> contributions;
 };
 
 enum class common_blueprint_selection_decision { none, instantiate, failed };
