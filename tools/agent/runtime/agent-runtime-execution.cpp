@@ -6,8 +6,90 @@
 #include <algorithm>
 #include <cstdio>
 #include <sstream>
+#include <ctime>
 
 namespace {
+
+bool prepare_resource_chunk_observations(
+        common_agent_runtime_driver_execution & execution,
+        std::string & error) {
+    if (execution.resource_chunk_observations_prepared) {
+        return true;
+    }
+    execution.resource_chunk_observations_prepared = true;
+    if (execution.tooling.resource_runtime.store == nullptr ||
+            execution.input_resources.empty() || execution.current_plan_id.empty()) {
+        return true;
+    }
+
+    std::string plan_error;
+    auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
+    if (!plan) {
+        error = plan_error.empty() ? "resource chunk planning requires an active plan" : plan_error;
+        return false;
+    }
+    const common_runtime_resource_chunk_policy policy{4096, 256};
+    const auto authority = make_agent_resource_read_authority(
+        execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    const size_t input_count = execution.input_resources.size();
+    for (size_t input_index = 0; input_index < input_count; ++input_index) {
+        const auto & input = execution.input_resources[input_index];
+        if (input.resource.uri.empty() || !input.resource.lineage.parent_uri.empty() ||
+                input.resource.size_bytes <= policy.max_bytes) {
+            continue;
+        }
+        agent_resource_chunk_plan chunk_plan;
+        if (!plan_agent_resource_text_chunks(
+                    *execution.tooling.resource_runtime.store,
+                    input.resource.uri,
+                    authority,
+                    policy,
+                    chunk_plan,
+                    error)) {
+            return false;
+        }
+        if (chunk_plan.ranges.empty()) {
+            continue;
+        }
+        const auto first_ref = make_agent_resource_chunk_ref(
+            chunk_plan, chunk_plan.ranges.front());
+        execution.resource_chunk_plans.push_back(std::move(chunk_plan));
+        execution.input_resources.push_back({first_ref, "resource_chunk", true});
+
+        common_plan_operation observed;
+        observed.kind = common_plan_operation_kind::record_observation;
+        observed.plan_id = plan->id;
+        observed.expected_version = plan->version;
+        observed.reason_summary = "bounded resource chunk plan attached to the session lane";
+        observed.observation = common_plan_observation{
+            "resource_chunk_plan:" + input.resource.uri,
+            "resource_chunk_planned",
+            "Planned " + std::to_string(execution.resource_chunk_plans.back().ranges.size()) +
+                " bounded text chunks; the original resource remains authoritative.",
+            1.0f,
+            {input.resource.uri},
+            {first_ref},
+            static_cast<int64_t>(std::time(nullptr)),
+        };
+        common_plan_state updated;
+        if (!execution.plan_store.apply(observed, updated, error)) {
+            return false;
+        }
+        *plan = std::move(updated);
+        execution.pre_turn_events.push_back({
+            common_agent_event_type::observation_recorded,
+            "bounded resource chunk plan attached",
+            {},
+            plan->id,
+            {},
+            observed.observation->id,
+            {},
+            first_ref.uri,
+        });
+    }
+    error.clear();
+    return true;
+}
 
 void append_unique_strings(std::vector<std::string> & target, const std::vector<std::string> & values) {
     for (const auto & value : values) {
@@ -290,6 +372,10 @@ bool run_agent_runtime_driver(
     }
 
     if (!maybe_auto_select_blueprint(orchestration_context, error)) {
+        return false;
+    }
+
+    if (!prepare_resource_chunk_observations(execution, error)) {
         return false;
     }
 

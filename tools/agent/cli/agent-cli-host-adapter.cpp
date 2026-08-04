@@ -209,6 +209,11 @@ bool resolve_agent_host_tool_selection(
         common_agent_cli_tool_selection & selection,
         std::string & error) {
     selection = {};
+    selection.tooling.resource_runtime.store = resource_store;
+    selection.tooling.resource_runtime.namespace_id = request.tool_context.scope.namespace_id;
+    selection.tooling.resource_runtime.session_id = request.tool_context.scope.session_id;
+    selection.tooling.resource_runtime.project_id = request.tool_context.scope.project_id;
+    selection.tooling.resource_runtime.turn_id = request.tool_context.scope.turn_id;
 
     if (request.data_store == nullptr) {
         selection.owned_data_store = make_agent_data_store(request.data_store_config, error);
@@ -296,6 +301,7 @@ bool resolve_agent_host_tool_selection(
             resource_store = selection.owned_resource_store.get();
         }
         bindings.resource_runtime.store = resource_store;
+        selection.tooling.resource_runtime.store = resource_store;
         bindings.data_store = request.data_store != nullptr
             ? request.data_store
             : selection.owned_data_store.get();

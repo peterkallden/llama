@@ -67,6 +67,8 @@ when the corresponding verification record contains evidence for it.
 - [x] Continuation checkpoints carry bounded chunk progress through daemon transport
 - [x] Deterministic text chunk boundary policy is covered by an agent smoke
 - [x] Resource chunk ranges are planned and read through bounded store calls
+- [x] Runtime preflight attaches the first planned chunk through host-resolved tooling
+- [ ] Every planned chunk is processed and checkpointed by the session lane
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified

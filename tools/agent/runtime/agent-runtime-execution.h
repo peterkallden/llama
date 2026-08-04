@@ -10,6 +10,7 @@
 #include "../runtime/agent-runtime-session.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
+#include "tools/agent/resource/agent-resource-chunker.h"
 
 #include <string>
 #include <vector>
@@ -93,6 +94,8 @@ struct common_agent_runtime_driver_execution {
     std::vector<common_agent_event> pre_turn_events;
     std::vector<common_runtime_trace_entry> pre_turn_trace;
     common_agent_runtime_execution_control execution_control;
+    std::vector<agent_resource_chunk_plan> resource_chunk_plans;
+    bool resource_chunk_observations_prepared = false;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

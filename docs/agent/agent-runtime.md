@@ -909,6 +909,14 @@ creating persistent derived blobs or loading the complete source into the
 session lane. The current implementation rejects non-text-oriented resources
 and treats the original resource as the only source of truth.
 
+After plan and blueprint selection, the agent runtime may perform this
+preflight for oversized host-imported input resources. The resolved host
+tooling supplies the resource-store pointer and scope; the runtime records a
+bounded `resource_chunk_planned` observation in the existing plan and attaches
+the first chunk view to the same request. This is a session-lane preparation
+step, not a second scheduler. Subsequent slices will advance the planned
+ranges and record only chunks that were actually processed.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so

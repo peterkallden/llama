@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chat.h"
+#include "resource/resource-contract.h"
 
 #include <memory>
 #include <vector>
@@ -16,4 +17,7 @@ struct common_agent_runtime_tooling {
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
     std::vector<std::shared_ptr<void>> owned_resources;
+    // Host-owned resource store used by controller-side bounded chunk planning.
+    // Tool execution remains bound through the resolved tool view.
+    agent_resource_runtime resource_runtime;
 };
