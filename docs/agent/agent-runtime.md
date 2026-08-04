@@ -881,6 +881,17 @@ The design policies for later chunk analysis are:
 - Full payloads remain recoverable from the original resource; summaries must
   retain references to that source instead of becoming the only authority.
 
+Chunk observations and continuation state now share one small contract. A
+`resource_chunk` observation must reference exactly one parent-linked resource;
+native validation rejects malformed lineage, mixed parents, and duplicate
+chunk indexes. When a completion checkpoint is created, the existing runtime
+driver records the parent URI, total chunk count, and completed indexes in the
+same checkpoint that already carries plan and resource state. Daemon JSON and
+JSONL transport preserve those fields, so a resumed turn can continue the
+same session-lane work without inventing a second chunk queue. The checkpoint
+is progress state only: it does not promote chunk observations to memory and
+does not make derived chunks a second source of truth.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so

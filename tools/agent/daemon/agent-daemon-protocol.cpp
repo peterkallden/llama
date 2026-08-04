@@ -676,6 +676,9 @@ json make_agent_daemon_turn_response(
             {"sequence", checkpoint.sequence},
             {"reason", common_agent_continuation_reason_name(checkpoint.reason)},
             {"completed_step_ids", checkpoint.completed_step_ids},
+            {"chunk_parent_uri", checkpoint.chunk_parent_uri},
+            {"chunk_count", checkpoint.chunk_count},
+            {"completed_chunk_indexes", checkpoint.completed_chunk_indexes},
             {"resource_refs", std::move(resource_refs)},
         };
     }

@@ -1,4 +1,5 @@
 #include "tools/agent/resource/agent-resource-store.h"
+#include "plan/plan-types.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -122,6 +123,24 @@ int main() {
     }
     if (store.read_text_range(first.uri, turn_authority, first.size_bytes + 1, 9, content, error)) {
         std::fprintf(stderr, "out-of-bounds resource range unexpectedly succeeded\n");
+        return 1;
+    }
+
+    common_plan_observation chunk_one{
+        "chunk-1", "resource_chunk", "First bounded observation", 1.0f, {}, {first}, 0};
+    common_plan_observation chunk_two = chunk_one;
+    chunk_two.id = "chunk-2";
+    chunk_two.resource_refs.front().uri = "agent-resource://resource/chunk-2";
+    chunk_two.resource_refs.front().lineage.chunk_index = 2;
+    std::vector<common_plan_observation> chunk_observations{chunk_one, chunk_two};
+    if (!common_plan_chunk_observations_valid(chunk_observations, error)) {
+        std::fprintf(stderr, "valid chunk observations were rejected: %s\n", error.c_str());
+        return 1;
+    }
+    chunk_observations.push_back(chunk_two);
+    if (common_plan_chunk_observations_valid(chunk_observations, error) ||
+            error != "resource_chunk observations must not contain duplicate chunk indexes") {
+        std::fprintf(stderr, "duplicate chunk observation was not rejected\n");
         return 1;
     }
 

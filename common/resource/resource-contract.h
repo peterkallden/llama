@@ -125,6 +125,33 @@ struct common_runtime_resource_lineage {
     std::string derivation;
 };
 
+inline bool common_runtime_resource_lineage_is_valid(
+        const common_runtime_resource_lineage & lineage,
+        std::string & error) {
+    if (lineage.parent_uri.empty()) {
+        error.clear();
+        return true;
+    }
+    if (lineage.chunk_count == 0) {
+        error = "resource lineage requires a non-zero chunk_count";
+        return false;
+    }
+    if (lineage.chunk_index >= lineage.chunk_count) {
+        error = "resource lineage chunk_index is outside chunk_count";
+        return false;
+    }
+    if (lineage.byte_length == 0) {
+        error = "resource lineage requires a non-zero byte_length";
+        return false;
+    }
+    if (lineage.derivation.empty()) {
+        error = "resource lineage requires a derivation label";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 struct common_runtime_resource_ref {
     std::string uri;
     std::string name;

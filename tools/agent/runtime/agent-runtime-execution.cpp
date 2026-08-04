@@ -82,6 +82,9 @@ bool make_continuation_checkpoint(
         if (error.empty()) error = "continuation checkpoint requires an existing plan";
         return false;
     }
+    if (!common_plan_chunk_observations_valid(plan->observations, error)) {
+        return false;
+    }
     checkpoint = {};
     checkpoint.checkpoint_id = "checkpoint:" + execution.scope.turn_id + ":" +
         plan->id + ":" + std::to_string(plan->version);
@@ -99,6 +102,18 @@ bool make_continuation_checkpoint(
     for (const auto & observation : plan->observations) {
         checkpoint.resource_refs.insert(
             checkpoint.resource_refs.end(), observation.resource_refs.begin(), observation.resource_refs.end());
+        if (observation.source == "resource_chunk" && observation.resource_refs.size() == 1) {
+            const auto & lineage = observation.resource_refs.front().lineage;
+            if (checkpoint.chunk_parent_uri.empty()) {
+                checkpoint.chunk_parent_uri = lineage.parent_uri;
+                checkpoint.chunk_count = lineage.chunk_count;
+            }
+            if (checkpoint.chunk_parent_uri == lineage.parent_uri &&
+                    checkpoint.chunk_count == lineage.chunk_count &&
+                    std::find(checkpoint.completed_chunk_indexes.begin(), checkpoint.completed_chunk_indexes.end(), lineage.chunk_index) == checkpoint.completed_chunk_indexes.end()) {
+                checkpoint.completed_chunk_indexes.push_back(lineage.chunk_index);
+            }
+        }
     }
     if (!common_agent_continuation_checkpoint_valid(checkpoint, error)) return false;
     return true;

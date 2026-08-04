@@ -38,6 +38,9 @@ struct common_agent_continuation_checkpoint {
     common_agent_continuation_reason reason = common_agent_continuation_reason::context_pressure;
     std::vector<std::string> completed_step_ids;
     std::vector<common_runtime_resource_ref> resource_refs;
+    std::string chunk_parent_uri;
+    size_t chunk_count = 0;
+    std::vector<size_t> completed_chunk_indexes;
 };
 
 // Native validation keeps a malformed model-produced checkpoint from being
@@ -67,6 +70,21 @@ inline bool common_agent_continuation_checkpoint_valid(
     }
     if (checkpoint.sequence == 0) {
         error = "continuation checkpoint requires a non-zero sequence";
+        return false;
+    }
+    if (!checkpoint.chunk_parent_uri.empty()) {
+        if (checkpoint.chunk_count == 0) {
+            error = "continuation checkpoint chunk progress requires chunk_count";
+            return false;
+        }
+        for (size_t index : checkpoint.completed_chunk_indexes) {
+            if (index >= checkpoint.chunk_count) {
+                error = "continuation checkpoint chunk index is outside chunk_count";
+                return false;
+            }
+        }
+    } else if (!checkpoint.completed_chunk_indexes.empty() || checkpoint.chunk_count != 0) {
+        error = "continuation checkpoint chunk progress requires chunk_parent_uri";
         return false;
     }
     error.clear();

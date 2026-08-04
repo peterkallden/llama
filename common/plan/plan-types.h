@@ -3,6 +3,7 @@
 #include "runtime/runtime-state.h"
 
 #include <cstdint>
+#include <algorithm>
 #include <optional>
 #include "resource/resource-contract.h"
 #include <string>
@@ -27,6 +28,42 @@ struct common_plan_observation {
     std::vector<common_runtime_resource_ref> resource_refs;
     int64_t created_at = 0;
 };
+
+inline bool common_plan_chunk_observations_valid(
+        const std::vector<common_plan_observation> & observations,
+        std::string & error) {
+    std::string parent_uri;
+    size_t chunk_count = 0;
+    std::vector<size_t> indexes;
+    for (const auto & observation : observations) {
+        if (observation.source != "resource_chunk") {
+            continue;
+        }
+        if (observation.resource_refs.size() != 1 ||
+                observation.resource_refs.front().lineage.parent_uri.empty()) {
+            error = "resource_chunk observation requires exactly one parent-linked resource";
+            return false;
+        }
+        const auto & lineage = observation.resource_refs.front().lineage;
+        if (!common_runtime_resource_lineage_is_valid(lineage, error)) {
+            return false;
+        }
+        if (parent_uri.empty()) {
+            parent_uri = lineage.parent_uri;
+            chunk_count = lineage.chunk_count;
+        } else if (parent_uri != lineage.parent_uri || chunk_count != lineage.chunk_count) {
+            error = "resource_chunk observations must share one parent and chunk_count";
+            return false;
+        }
+        if (std::find(indexes.begin(), indexes.end(), lineage.chunk_index) != indexes.end()) {
+            error = "resource_chunk observations must not contain duplicate chunk indexes";
+            return false;
+        }
+        indexes.push_back(lineage.chunk_index);
+    }
+    error.clear();
+    return true;
+}
 // Data proposed by a plan; execution is owned by the agent tool registry.
 struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
 struct common_plan_step {

@@ -717,6 +717,7 @@ int main() {
             {"search", "results"},
             {"repository.search"},
         },
+        {},
         "r-1",
         "",
         "namespace-a",
@@ -843,6 +844,10 @@ int main() {
         {"step-1"},
         {{"workspace://checkpoint/log", "log", "checkpoint log", "text/plain", 12}},
     };
+    turn_result.turn_result.continuation_checkpoint->chunk_parent_uri =
+        "agent-resource://resource/original";
+    turn_result.turn_result.continuation_checkpoint->chunk_count = 3;
+    turn_result.turn_result.continuation_checkpoint->completed_chunk_indexes = {0, 1};
     turn_result.turn_summary = common_agent_turn_summary{
         "agent",
         "completed",
@@ -875,6 +880,11 @@ int main() {
             turn_response["continuation_checkpoint"].value("checkpoint_id", "") != "checkpoint-1" ||
             turn_response["continuation_checkpoint"].value("request_id", "") != "request-1" ||
             turn_response["continuation_checkpoint"].value("reason", "") != "completion_limit" ||
+            turn_response["continuation_checkpoint"].value("chunk_parent_uri", "") !=
+                "agent-resource://resource/original" ||
+            turn_response["continuation_checkpoint"].value("chunk_count", 0) != 3 ||
+            turn_response["continuation_checkpoint"].value("completed_chunk_indexes", json::array()) !=
+                json::array({0, 1}) ||
             !turn_response.contains("turn_summary") ||
             turn_response["turn_summary"].value("mode", "") != "agent" ||
             turn_response["turn_summary"].value("status", "") != "completed") {

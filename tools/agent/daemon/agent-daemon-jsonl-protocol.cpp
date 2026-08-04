@@ -450,6 +450,10 @@ bool parse_agent_daemon_jsonl_turn_response(
         }
         checkpoint.completed_step_ids = value.value(
             "completed_step_ids", std::vector<std::string>());
+        checkpoint.chunk_parent_uri = value.value("chunk_parent_uri", std::string());
+        checkpoint.chunk_count = value.value("chunk_count", size_t(0));
+        checkpoint.completed_chunk_indexes = value.value(
+            "completed_chunk_indexes", std::vector<size_t>());
         if (value.contains("resource_refs") && value["resource_refs"].is_array()) {
             for (const auto & item : value["resource_refs"]) {
                 if (!item.is_object()) {

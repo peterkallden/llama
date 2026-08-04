@@ -63,6 +63,8 @@ when the corresponding verification record contains evidence for it.
 - [x] Plan scope is enforced
 - [x] Resource authority and scope are enforced
 - [x] Resource lineage and bounded range-read contracts are modelled in the shared runtime/tool seams
+- [x] Chunk observations validate parent lineage and duplicate indexes
+- [x] Continuation checkpoints carry bounded chunk progress through daemon transport
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
