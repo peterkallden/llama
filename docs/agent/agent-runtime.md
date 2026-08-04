@@ -1617,6 +1617,11 @@ The session lane is the anti-forking boundary: a checkpoint can resume only the
 same accepted turn against the same plan revision. A changed plan must produce
 a new checkpoint rather than silently continuing from stale state.
 
+The checkpoint is transported by the existing agent result and active-turn
+state. This keeps the result observable to the controller and daemon layer
+without persisting execution state in memory or introducing a second session
+store.
+
 The intended execution flow is:
 
 ```text

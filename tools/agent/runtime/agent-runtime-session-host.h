@@ -52,6 +52,7 @@ struct common_agent_runtime_session_host_turn_result {
     bool cancelled = false;
     bool runtime_reused = false;
     bool limit_reached = false;
+    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
     bool reflected = false;
     bool revised = false;
     common_agent_failure_class failure_class = common_agent_failure_class::execution;

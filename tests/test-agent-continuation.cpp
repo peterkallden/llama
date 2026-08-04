@@ -1,4 +1,6 @@
 #include "agent/agent-continuation.h"
+#include "agent/agent-contract.h"
+#include "tools/agent/runtime/agent-runtime-turn-execution.h"
 
 #include <cassert>
 
@@ -40,5 +42,14 @@ int main() {
     checkpoint.next_action.clear();
     assert(!common_agent_continuation_checkpoint_valid(checkpoint, error));
     assert(error == "continuation checkpoint requires active_step_id or next_action");
+
+    checkpoint.active_step_id = "step-2";
+    common_agent_result agent_result;
+    agent_result.continuation_checkpoint = checkpoint;
+    common_agent_runtime_turn_execution execution;
+    execution.continuation_checkpoint = agent_result.continuation_checkpoint;
+    execution.continuation_count = 1;
+    assert(execution.continuation_checkpoint->checkpoint_id == "checkpoint-1");
+    assert(execution.continuation_count == 1);
     return 0;
 }

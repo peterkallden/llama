@@ -3,6 +3,7 @@
 #include "../../../common/runtime/runtime-operation.h"
 #include "../runtime/agent-runtime-control.h"
 #include "../runtime/agent-runtime-turn.h"
+#include "agent/agent-continuation.h"
 
 #include <chrono>
 #include <optional>
@@ -74,6 +75,8 @@ struct common_agent_runtime_turn_execution {
     bool cancellation_requested = false;
     std::shared_ptr<common_agent_runtime_cancellation_state> cancellation;
     std::optional<common_agent_runtime_pending_operation> pending_operation;
+    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
+    size_t continuation_count = 0;
     bool inference_capacity_acquired = false;
 };
 

@@ -325,6 +325,7 @@ bool common_agent_runtime_session_host::run_turn(
     result.ok = ok;
     result.runtime_reused = runtime_reused;
     result.limit_reached = agent_result.limit_reached;
+    result.continuation_checkpoint = agent_result.continuation_checkpoint;
     result.reflected = agent_result.reflected;
     result.revised = agent_result.revised;
     result.failure_class = classify_turn_failure(agent_result, request.execution_control);

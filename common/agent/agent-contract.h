@@ -14,6 +14,7 @@
 #include "agent/research/research-contract.h"
 #include "agent/research/research-verifier.h"
 #include "agent/turn-summary.h"
+#include "agent/agent-continuation.h"
 
 #include <cstdint>
 #include <functional>
@@ -311,6 +312,9 @@ struct common_agent_result {
     bool reflected = false;
     bool revised = false;
     bool limit_reached = false;
+    // Present when the controller has produced a bounded continuation state;
+    // it is not a durable-memory write and does not make the turn complete.
+    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
     std::vector<common_agent_generation_record> generation_records;
 
     std::optional<common_agent_research_result> research_result;
