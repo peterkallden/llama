@@ -28,7 +28,10 @@ bool prepare_resource_chunk_observations(
         error = plan_error.empty() ? "resource chunk planning requires an active plan" : plan_error;
         return false;
     }
-    const common_runtime_resource_chunk_policy policy{4096, 256};
+    const auto & context_budgets = execution.runtime_config.generation_config.context_budgets;
+    const common_runtime_resource_chunk_policy policy{
+        context_budgets.resource_chunk_max_bytes,
+        context_budgets.resource_chunk_overlap_bytes};
     const auto authority = make_agent_resource_read_authority(
         execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
     const size_t input_count = execution.input_resources.size();

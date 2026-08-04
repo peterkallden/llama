@@ -543,6 +543,8 @@ are character budgets unless stated otherwise:
       "tool_observation_chars": 8192,
       "input_resources_chars": 4096,
       "deliberate_input_resources_chars": 2400,
+      "resource_chunk_max_bytes": 4096,
+      "resource_chunk_overlap_bytes": 256,
       "memory_chars": 4096,
       "memory_per_item_chars": 1000,
       "overlay_chars": 1600,
@@ -566,6 +568,8 @@ The budgets are used as follows:
 | `tool_observation_chars` | Tool results retained in plan observations | Inline results are truncated; resource/artifact references are retained separately |
 | `input_resources_chars` | Host-approved input resources in the normal prompt | Truncation of the rendered resource catalog |
 | `deliberate_input_resources_chars` | Input resources in deliberate reasoning | Truncation of the rendered resource catalog |
+| `resource_chunk_max_bytes` | Maximum byte size of one controller-owned text chunk | Range planning uses bounded store reads and rejects zero values |
+| `resource_chunk_overlap_bytes` | Byte overlap between adjacent chunks | Preserves boundary context; must be smaller than `resource_chunk_max_bytes` |
 | `memory_chars`, `memory_per_item_chars` | Normal memory context | The memory renderer selects entries within total and per-entry budgets |
 | `overlay_chars`, `overlay_per_item_chars` | Symbolic memory overlay | Stage-aware selection and compaction before rendering |
 | `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | Reasoning context | The memory renderer selects entries within the configured budgets |

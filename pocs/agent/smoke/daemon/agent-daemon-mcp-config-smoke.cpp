@@ -63,6 +63,8 @@ int main(int argc, char ** argv) {
                 {"context_budgets", {
                     {"plan_chars", 4096},
                     {"tool_observation_chars", 8192},
+                    {"resource_chunk_max_bytes", 3072},
+                    {"resource_chunk_overlap_bytes", 192},
                 }},
             }},
             {"tools", {
@@ -169,7 +171,9 @@ int main(int argc, char ** argv) {
         return 1;
     }
     if (loaded_config.context_budgets.plan_chars != 4096 ||
-            loaded_config.context_budgets.tool_observation_chars != 8192) {
+            loaded_config.context_budgets.tool_observation_chars != 8192 ||
+            loaded_config.context_budgets.resource_chunk_max_bytes != 3072 ||
+            loaded_config.context_budgets.resource_chunk_overlap_bytes != 192) {
         std::fprintf(stderr, "host context budgets mismatch\n");
         return 1;
     }
@@ -219,7 +223,9 @@ int main(int argc, char ** argv) {
         return 1;
     }
     if (roundtrip["runtime"]["context_budgets"]["plan_chars"] != 4096 ||
-            roundtrip["runtime"]["context_budgets"]["tool_observation_chars"] != 8192) {
+            roundtrip["runtime"]["context_budgets"]["tool_observation_chars"] != 8192 ||
+            roundtrip["runtime"]["context_budgets"]["resource_chunk_max_bytes"] != 3072 ||
+            roundtrip["runtime"]["context_budgets"]["resource_chunk_overlap_bytes"] != 192) {
         std::fprintf(stderr, "host context budgets roundtrip mismatch\n");
         return 1;
     }

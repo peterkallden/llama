@@ -11,6 +11,10 @@ struct common_agent_context_budget_config {
     size_t tool_observation_chars = 4096;
     size_t input_resources_chars = 2048;
     size_t deliberate_input_resources_chars = 1200;
+    // Controller-owned bounded resource views. These are byte budgets, while
+    // the renderer budgets above remain character-oriented prompt budgets.
+    size_t resource_chunk_max_bytes = 4096;
+    size_t resource_chunk_overlap_bytes = 256;
 
     size_t memory_chars = 4096;
     size_t memory_per_item_chars = 1200;

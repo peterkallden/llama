@@ -9,6 +9,8 @@
       "tool_observation_chars": 8192,
       "input_resources_chars": 4096,
       "deliberate_input_resources_chars": 2400,
+      "resource_chunk_max_bytes": 4096,
+      "resource_chunk_overlap_bytes": 256,
       "memory_chars": 4096,
       "memory_per_item_chars": 1000,
       "overlay_chars": 1600,

@@ -258,6 +258,8 @@ bool parse_agent_host_config_json(
             read_optional(budgets, "tool_observation_chars", config.context_budgets.tool_observation_chars);
             read_optional(budgets, "input_resources_chars", config.context_budgets.input_resources_chars);
             read_optional(budgets, "deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars);
+            read_optional(budgets, "resource_chunk_max_bytes", config.context_budgets.resource_chunk_max_bytes);
+            read_optional(budgets, "resource_chunk_overlap_bytes", config.context_budgets.resource_chunk_overlap_bytes);
             read_optional(budgets, "memory_chars", config.context_budgets.memory_chars);
             read_optional(budgets, "memory_per_item_chars", config.context_budgets.memory_per_item_chars);
             read_optional(budgets, "overlay_chars", config.context_budgets.overlay_chars);
@@ -633,6 +635,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"tool_observation_chars", config.context_budgets.tool_observation_chars},
                 {"input_resources_chars", config.context_budgets.input_resources_chars},
                 {"deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars},
+                {"resource_chunk_max_bytes", config.context_budgets.resource_chunk_max_bytes},
+                {"resource_chunk_overlap_bytes", config.context_budgets.resource_chunk_overlap_bytes},
                 {"memory_chars", config.context_budgets.memory_chars},
                 {"memory_per_item_chars", config.context_budgets.memory_per_item_chars},
                 {"overlay_chars", config.context_budgets.overlay_chars},
@@ -824,7 +828,8 @@ bool validate_agent_host_config(
     const auto & budgets = config.context_budgets;
     if (budgets.plan_chars == 0 || budgets.step_chars == 0 ||
             budgets.tool_observation_chars == 0 || budgets.input_resources_chars == 0 ||
-            budgets.deliberate_input_resources_chars == 0 || budgets.memory_chars == 0 ||
+            budgets.deliberate_input_resources_chars == 0 || budgets.resource_chunk_max_bytes == 0 ||
+            budgets.resource_chunk_overlap_bytes >= budgets.resource_chunk_max_bytes || budgets.memory_chars == 0 ||
             budgets.memory_per_item_chars == 0 || budgets.overlay_chars == 0 ||
             budgets.overlay_per_item_chars == 0 || budgets.deliberate_memory_chars == 0 ||
             budgets.deliberate_memory_per_item_chars == 0 || budgets.deliberate_overlay_chars == 0 ||
