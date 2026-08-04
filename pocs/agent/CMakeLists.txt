@@ -717,6 +717,15 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-resource-chunker-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-resource-chunker-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
@@ -855,6 +864,7 @@ set(AGENT_RUNTIME_SMOKE_DAEMON_TARGETS
 
 set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-store-smoke
+    llama-agent-resource-chunker-smoke
 )
 
 if (BUILD_TESTING)
@@ -909,6 +919,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-resource-store-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-store-smoke>)
     set_property(TEST llama-agent-resource-store-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-resource-chunker-ctest
+        COMMAND $<TARGET_FILE:llama-agent-resource-chunker-smoke>)
+    set_property(TEST llama-agent-resource-chunker-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-sandbox-docker-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)

@@ -892,6 +892,15 @@ same session-lane work without inventing a second chunk queue. The checkpoint
 is progress state only: it does not promote chunk observations to memory and
 does not make derived chunks a second source of truth.
 
+The shared text chunker uses a deterministic boundary preference: paragraph,
+table row, sentence, line, and finally a UTF-8-safe hard byte limit. It keeps
+bounded byte offsets and optional overlap in each derived chunk. Table-aware
+boundaries are intentionally row-based; a later format-specific adapter can
+repeat table headers without changing the resource lineage contract. Fenced
+code and richer document extraction remain follow-up adapters, while the
+current text-only resource path never assumes that a newline alone is a
+semantic boundary.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so
