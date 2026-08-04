@@ -281,6 +281,9 @@ this file records the summarized result and the commit it belongs to.
   behavior are covered by the dedicated continuation CTest; full
   conversation/tool result compaction, structural output repair, and
   model-backed continuation remain outside the verified beta scope.
+- Runtime-driver and host inference coverage now lives under the agent smoke
+  tree and links the complete runtime-support closure; `tests/` remains the
+  home for pure contract and component tests.
 - Long-running stability and resource-retention testing remain separate from
   bounded functional smokes.
 - A test is not considered passing merely because its target builds; its

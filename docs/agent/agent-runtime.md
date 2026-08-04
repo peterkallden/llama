@@ -2192,7 +2192,8 @@ The verification layers are:
 The following are representative paths and focused regression cases, not a
 complete list of every CTest or smoke executable:
 
-- `test-agent-inference`
+- `llama-agent-inference-ctest`, the compatibility smoke for runtime-driver,
+  host, resident-session and generation-metadata coverage
 - `test-tool-adapters`
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`

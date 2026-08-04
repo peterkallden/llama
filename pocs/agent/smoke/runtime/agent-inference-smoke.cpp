@@ -173,6 +173,13 @@ public:
         error = "async tools are not supported in test_agent_tool_view";
         return false;
     }
+
+    bool cancel_call_async(
+            const agent_tool_pending_call &,
+            std::string & error) override {
+        error = "async tools are not supported in test_agent_tool_view";
+        return false;
+    }
 };
 
 static args make_test_args() {
@@ -207,12 +214,14 @@ static common_agent_runtime_policy make_agent_runtime_policy(const args & option
 }
 
 static common_agent_runtime_config make_agent_runtime_config(const args & options) {
-    return ::make_agent_runtime_config({
-        make_agent_generation_config(options),
-        options.memory_learn == "post-turn",
-        {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
-        {},
-    });
+    common_agent_runtime_build_config config;
+    config.generation_config = make_agent_generation_config(options);
+    config.enable_memory_learning = options.memory_learn == "post-turn";
+    config.memory_learning_config = {
+        options.memory_learn_min_confidence,
+        options.memory_learn_min_reuse,
+    };
+    return ::make_agent_runtime_config(std::move(config));
 }
 
 static common_agent_orchestration_config make_test_agent_orchestration_config(const args & options) {
