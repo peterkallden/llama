@@ -59,6 +59,7 @@ common_agent_runtime_session_manager::enqueue_lane_turn(
         std::string & error) {
     auto message = std::make_shared<common_agent_runtime_session_lane_message>();
     message->request = request;
+    message->request.turn.request_id = request.request_id;
     {
         std::lock_guard<std::mutex> lock(lane.mutex);
         if (lane.state == common_agent_runtime_session_lane_state::resetting) {

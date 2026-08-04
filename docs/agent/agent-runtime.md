@@ -1622,13 +1622,22 @@ state. This keeps the result observable to the controller and daemon layer
 without persisting execution state in memory or introducing a second session
 store.
 
-The intended execution flow is:
+The agent driver now performs a bounded automatic continuation for this first
+case. When a generation slice ends with `stop_reason=limit`, the driver keeps
+the same accepted turn and current plan, constructs a bounded continuation
+prompt from the existing plan and recent result, and runs at most
+`max_continuations` additional slices. The default is two additional slices;
+zero disables this behavior. The slices stay inside the existing driver
+operation, so the daemon queue does not receive a second external command and
+the session lane remains the anti-forking boundary.
+
+The execution flow is:
 
 ```text
 same session-lane turn
   -> bounded inference slice reaches a continuation boundary
-  -> checkpoint records plan revision and resource references
-  -> same lane resumes the next inference slice
+  -> driver resumes the same plan when the continuation budget allows
+  -> otherwise checkpoint records plan revision and resource references
   -> one terminal turn result
 ```
 
@@ -1640,10 +1649,11 @@ and the existing terminal-event contract.
 
 This contract does not yet claim full automatic context compaction. Rendered
 memory overlays and policy packs already have bounded compaction, but full
-conversation/tool-result compaction still needs controller integration,
-structural output handling, and model-backed continuation coverage. Until that
-work is complete, a `limit` stop remains a bounded/incomplete result rather
-than an implicit successful continuation.
+conversation/tool-result compaction still needs controller integration and
+resource-reference recovery. It also does not structurally repair arbitrary
+JSON or apply the continuation loop to chat-driver output. If the bounded
+slice budget is exhausted, the result remains incomplete and carries a
+validated checkpoint rather than being reported as a successful final answer.
 
 ## MCP Direction
 

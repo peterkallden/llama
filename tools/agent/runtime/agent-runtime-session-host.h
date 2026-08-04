@@ -45,6 +45,9 @@ struct common_agent_runtime_session_host_turn_request {
     std::optional<common_agent_deliberation_policy> deliberation_policy_override;
     std::vector<common_agent_input_resource> input_resources;
     common_agent_event_sink event_sink;
+    // Daemon request identity is kept separate from the model turn identity,
+    // but travels with the host-owned turn for checkpoint validation.
+    std::string request_id;
 };
 
 struct common_agent_runtime_session_host_turn_result {

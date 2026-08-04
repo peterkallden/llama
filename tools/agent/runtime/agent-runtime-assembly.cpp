@@ -12,6 +12,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.generation_config = std::move(build_config.generation_config);
     config.context_budgets = build_config.context_budgets;
     config.generation_config.context_budgets = config.context_budgets;
+    config.max_continuations = build_config.max_continuations;
     config.enable_memory_learning = build_config.enable_memory_learning;
     config.memory_learning_config = std::move(build_config.memory_learning_config);
     config.embed_memory = std::move(build_config.embed_memory);

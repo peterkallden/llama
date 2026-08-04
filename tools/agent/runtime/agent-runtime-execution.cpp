@@ -5,6 +5,106 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <sstream>
+
+namespace {
+
+void append_unique_strings(std::vector<std::string> & target, const std::vector<std::string> & values) {
+    for (const auto & value : values) {
+        if (std::find(target.begin(), target.end(), value) == target.end()) target.push_back(value);
+    }
+}
+
+void append_runtime_result(common_agent_result & aggregate, const common_agent_result & slice) {
+    if (!slice.response.empty()) {
+        if (!aggregate.response.empty()) aggregate.response += "\n";
+        aggregate.response += slice.response;
+    }
+    aggregate.total_decoded_tokens += slice.total_decoded_tokens;
+    aggregate.response_decoded_tokens += slice.response_decoded_tokens;
+    aggregate.reasoning_decoded_tokens += slice.reasoning_decoded_tokens;
+    aggregate.response_generation_status = slice.response_generation_status;
+    aggregate.response_stop_reason = slice.response_stop_reason;
+    aggregate.plan_id = slice.plan_id;
+    aggregate.plan_version = slice.plan_version;
+    aggregate.reflected = aggregate.reflected || slice.reflected;
+    aggregate.revised = aggregate.revised || slice.revised;
+    aggregate.limit_reached = slice.limit_reached;
+    aggregate.memory_learning_related_count = slice.memory_learning_related_count;
+    aggregate.memory_learning_summary = slice.memory_learning_summary;
+    aggregate.learned_memory_candidate = slice.learned_memory_candidate;
+    aggregate.learning_signals.insert(
+        aggregate.learning_signals.end(), slice.learning_signals.begin(), slice.learning_signals.end());
+    append_unique_strings(aggregate.memory_ids, slice.memory_ids);
+    aggregate.generation_records.insert(
+        aggregate.generation_records.end(), slice.generation_records.begin(), slice.generation_records.end());
+    aggregate.events.insert(aggregate.events.end(), slice.events.begin(), slice.events.end());
+    aggregate.trace.insert(aggregate.trace.end(), slice.trace.begin(), slice.trace.end());
+    aggregate.research_result = slice.research_result;
+    aggregate.research_verification = slice.research_verification;
+    aggregate.continuation_checkpoint = slice.continuation_checkpoint;
+}
+
+std::string make_continuation_prompt(
+        const common_agent_result & slice,
+        const common_plan_state & plan) {
+    std::ostringstream prompt;
+    prompt << "Continue the same bounded agent task from the existing plan.\n"
+           << "Do not create a new plan, repeat completed work, or treat this as a new user request.\n"
+           << "The previous generation reached its completion limit.\n"
+           << "plan_id=" << plan.id << "\n"
+           << "plan_version=" << plan.version << "\n";
+    if (plan.active_step_id) prompt << "active_step_id=" << *plan.active_step_id << "\n";
+    if (plan.next_action) prompt << "next_action=" << *plan.next_action << "\n";
+    if (!slice.response.empty()) {
+        constexpr size_t max_fragment_chars = 4096;
+        const size_t offset = slice.response.size() > max_fragment_chars
+            ? slice.response.size() - max_fragment_chars : 0;
+        prompt << "Continue after this bounded previous output fragment:\n"
+               << slice.response.substr(offset) << "\n";
+    }
+    prompt << "Produce only the next bounded result or the final answer.\n";
+    return prompt.str();
+}
+
+bool make_continuation_checkpoint(
+        const common_agent_runtime_driver_execution & execution,
+        const common_agent_result & result,
+        size_t sequence,
+        common_agent_continuation_checkpoint & checkpoint,
+        std::string & error) {
+    if (result.response_stop_reason != common_agent_generation_stop_reason::limit ||
+            !result.plan_id || execution.scope.turn_id.empty()) {
+        return false;
+    }
+    const auto plan = execution.plan_store.get(*result.plan_id, error);
+    if (!plan) {
+        if (error.empty()) error = "continuation checkpoint requires an existing plan";
+        return false;
+    }
+    checkpoint = {};
+    checkpoint.checkpoint_id = "checkpoint:" + execution.scope.turn_id + ":" +
+        plan->id + ":" + std::to_string(plan->version);
+    checkpoint.request_id = "turn:" + execution.scope.turn_id;
+    checkpoint.turn_id = execution.scope.turn_id;
+    checkpoint.plan_id = plan->id;
+    checkpoint.plan_version = plan->version;
+    checkpoint.active_step_id = plan->active_step_id.value_or(std::string{});
+    checkpoint.next_action = plan->next_action.value_or(std::string{});
+    checkpoint.sequence = sequence;
+    checkpoint.reason = common_agent_continuation_reason::completion_limit;
+    for (const auto & step : plan->steps) {
+        if (step.status == common_plan_step_status::completed) checkpoint.completed_step_ids.push_back(step.id);
+    }
+    for (const auto & observation : plan->observations) {
+        checkpoint.resource_refs.insert(
+            checkpoint.resource_refs.end(), observation.resource_refs.begin(), observation.resource_refs.end());
+    }
+    if (!common_agent_continuation_checkpoint_valid(checkpoint, error)) return false;
+    return true;
+}
+
+} // namespace
 
 static void apply_explicit_deliberation_policy(
         const common_agent_deliberation_policy & policy,
@@ -175,22 +275,64 @@ bool run_agent_runtime_driver(
         return false;
     }
 
-    auto assembly = make_agent_runtime_assembly(
-        execution.memory_store,
-        execution.plan_store,
-        execution.inference,
-        execution.runtime_config,
-        execution.tooling.tools,
-        execution.tooling.tool_view);
+    const std::string original_prompt = execution.orchestration_config.prompt;
+    common_agent_result aggregate;
+    size_t continuation_count = 0;
+    while (true) {
+        auto assembly = make_agent_runtime_assembly(
+            execution.memory_store,
+            execution.plan_store,
+            execution.inference,
+            execution.runtime_config,
+            execution.tooling.tools,
+            execution.tooling.tool_view);
 
-    const common_agent_request request = make_agent_runtime_driver_request(execution);
-    result = assembly.runtime->run(request);
+        const common_agent_request request = make_agent_runtime_driver_request(execution);
+        const auto slice = assembly.runtime->run(request);
+        if (!slice.error.empty()) {
+            error = "agent runtime failed: " + slice.error;
+            return false;
+        }
+        append_runtime_result(aggregate, slice);
+
+        if (slice.response_stop_reason != common_agent_generation_stop_reason::limit ||
+                !slice.plan_id ||
+                continuation_count >= execution.runtime_config.max_continuations) {
+            result = std::move(aggregate);
+            break;
+        }
+
+        std::string plan_error;
+        const auto plan = execution.plan_store.get(*slice.plan_id, plan_error);
+        if (!plan) {
+            result = std::move(aggregate);
+            result.error = plan_error.empty()
+                ? "continuation could not resolve the current plan"
+                : plan_error;
+            error = result.error;
+            return false;
+        }
+        execution.current_plan_id = plan->id;
+        execution.orchestration_config.prompt = make_continuation_prompt(slice, *plan);
+        ++continuation_count;
+    }
+
+    execution.orchestration_config.prompt = original_prompt;
+    if (result.response_stop_reason == common_agent_generation_stop_reason::limit &&
+            !result.continuation_checkpoint) {
+        common_agent_continuation_checkpoint checkpoint;
+        std::string checkpoint_error;
+        if (make_continuation_checkpoint(
+                execution, result, continuation_count + 1, checkpoint, checkpoint_error)) {
+            result.continuation_checkpoint = std::move(checkpoint);
+        } else if (!checkpoint_error.empty()) {
+            result.error = checkpoint_error;
+            error = result.error;
+            return false;
+        }
+    }
     result.events.insert(result.events.begin(), execution.pre_turn_events.begin(), execution.pre_turn_events.end());
     result.trace.insert(result.trace.begin(), execution.pre_turn_trace.begin(), execution.pre_turn_trace.end());
-    if (!result.error.empty()) {
-        error = "agent runtime failed: " + result.error;
-        return false;
-    }
 
     if (execution.policy.memory_learn == "post-turn") {
         const auto * candidate = result.learned_memory_candidate ? &*result.learned_memory_candidate : nullptr;

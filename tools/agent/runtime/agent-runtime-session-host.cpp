@@ -334,6 +334,20 @@ bool common_agent_runtime_session_host::run_turn(
     result.total_decoded_tokens = agent_result.total_decoded_tokens;
     result.response_generation_status = agent_result.response_generation_status;
     result.response_stop_reason = agent_result.response_stop_reason;
+    if (result.continuation_checkpoint) {
+        result.continuation_checkpoint->request_id = request.request_id.empty()
+            ? request.turn_id
+            : request.request_id;
+        result.continuation_checkpoint->turn_id = request.turn_id;
+        std::string checkpoint_error;
+        if (!common_agent_continuation_checkpoint_valid(
+                *result.continuation_checkpoint, checkpoint_error)) {
+            result.continuation_checkpoint.reset();
+            result.error = "invalid continuation checkpoint: " + checkpoint_error;
+            error = result.error;
+            return false;
+        }
+    }
     result.event_count = agent_result.events.size();
     result.trace_count = agent_result.trace.size();
     result.memory_learning_related_count = agent_result.memory_learning_related_count;

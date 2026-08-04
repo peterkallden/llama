@@ -41,6 +41,9 @@ struct common_agent_runtime_config {
     bool enable_memory_learning = false;
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
+    // Bounded internal inference slices after a generation limit. Zero
+    // disables automatic continuation for compatibility.
+    size_t max_continuations = 2;
 };
 
 struct common_agent_runtime_build_config {
@@ -49,6 +52,7 @@ struct common_agent_runtime_build_config {
     bool enable_memory_learning = false;
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
+    size_t max_continuations = 2;
 };
 
 common_agent_inference_options make_agent_inference_options(
