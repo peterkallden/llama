@@ -2318,6 +2318,27 @@ with the same model, Cozo and work-directory setup. These runs are optional
 model-backed checks; the deterministic CTest and model-free smoke baseline
 remains the authoritative regression gate.
 
+The helper accepts an absolute `-BuildDir`, so model-backed checks can use an
+external E: build tree without creating a second build convention. The daemon
+integration harness follows the same rule. Its JSONL reader consumes
+`message_type=event` deliveries, including `turn.accepted`, until the terminal
+command response arrives; an accepted event is not treated as the completed
+turn result. This is required by the asynchronous daemon mailbox/event-stream
+contract and keeps the test harness aligned with queue ownership.
+
+For a local Release Qwen/Nomic run, use for example:
+
+```powershell
+pwsh -File scripts/test-qwen-nomic-agent.ps1 `
+  -BuildDir E:\llama-builds\agent-selection-learning-msvc-release-e2e `
+  -WorkSubdir work\qwen-nomic-release-e2e -Threads 2
+```
+
+The run verifies Nomic embedding add/search plus static, agent and learning
+chat. Model-produced tool repair can still leave the learning plan incomplete;
+the process result and the per-step logs must be inspected separately from
+the deterministic pass/fail baseline.
+
 For example:
 
 ```powershell

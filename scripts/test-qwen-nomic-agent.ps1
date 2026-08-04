@@ -118,14 +118,19 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
 $cmake = Resolve-CMake
-$exePath = Join-Path $repoRoot "$BuildDir\bin\Release\llama-memory.exe"
+$resolvedBuildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    [System.IO.Path]::GetFullPath($BuildDir)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
+}
+$exePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
 $workDir = Join-Path $repoRoot $WorkSubdir
 $memoryDb = Join-Path $workDir "memory.cozo"
 $planDb = Join-Path $workDir "plan.cozo"
 
 Write-Section "Configuration"
 Write-Host "Repo root: $repoRoot"
-Write-Host "Build dir: $BuildDir"
+Write-Host "Build dir: $resolvedBuildDir"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
 Write-Host "Thinking mode: $ThinkingMode"
@@ -137,7 +142,7 @@ Assert-PathExists -Path $EmbeddingModel -Label "Embedding model"
 
 if ($Build) {
     Write-Section "Build"
-    & $cmake --build $BuildDir --config Release --target llama-memory-poc -j 1
+    & $cmake --build $resolvedBuildDir --config Release --target llama-memory-poc -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }

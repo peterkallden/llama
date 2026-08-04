@@ -214,9 +214,22 @@ function Start-AgentDaemon {
     $client = [AgentDaemonHarness]::new($ExePath, $arguments, (Split-Path -Parent $ExePath))
 
     $ready = Read-DaemonResponse -Client $client -TimeoutSeconds $script:ReadyTimeoutSeconds
-    if (-not $ready.ok -or $ready.event -ne "ready") {
+    $readyJson = $ready | ConvertTo-Json -Compress -Depth 10
+    $readyOkMember = $ready | Get-Member -Name "ok" -MemberType NoteProperty -ErrorAction SilentlyContinue
+    $readyOk = if ($null -ne $readyOkMember) {
+        [bool]$ready.ok
+    } else {
+        $false
+    }
+    $readyEventMember = $ready | Get-Member -Name "event" -MemberType NoteProperty -ErrorAction SilentlyContinue
+    $readyEvent = if ($null -ne $readyEventMember) {
+        [string]$ready.event
+    } else {
+        ""
+    }
+    if (-not $readyOk -or $readyEvent -ne "ready") {
         $diagnostics = Get-DaemonDiagnostics $client
-        throw "Unexpected daemon ready response: $($ready | ConvertTo-Json -Compress)`n$diagnostics"
+        throw "Unexpected daemon ready response: $readyJson`n$diagnostics"
     }
 
     return $client
@@ -231,7 +244,13 @@ function Send-DaemonCommand {
 
     $json = $Command | ConvertTo-Json -Compress -Depth 10
     $Client.SendLine($json)
-    return Read-DaemonResponse -Client $Client -TimeoutSeconds $TimeoutSeconds
+    while ($true) {
+        $response = Read-DaemonResponse -Client $Client -TimeoutSeconds $TimeoutSeconds
+        $messageTypeMember = $response | Get-Member -Name "message_type" -MemberType NoteProperty -ErrorAction SilentlyContinue
+        if ($null -eq $messageTypeMember -or [string]$response.message_type -ne "event") {
+            return $response
+        }
+    }
 }
 
 function Stop-AgentDaemon {
@@ -567,16 +586,21 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
 $cmake = Resolve-CMake
-$daemonPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-daemon.exe"
-$fakeServerPath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-mcp-stdio-fake-server.exe"
-$toolingProbePath = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-daemon-mcp-config-smoke.exe"
+$resolvedBuildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    [System.IO.Path]::GetFullPath($BuildDir)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
+}
+$daemonPath = Join-Path $resolvedBuildDir "bin\$Configuration\llama-agent-daemon.exe"
+$fakeServerPath = Join-Path $resolvedBuildDir "bin\$Configuration\llama-agent-mcp-stdio-fake-server.exe"
+$toolingProbePath = Join-Path $resolvedBuildDir "bin\$Configuration\llama-agent-daemon-mcp-config-smoke.exe"
 $isDebugConfiguration = $Configuration -ieq "Debug"
 $script:ReadyTimeoutSeconds = if ($isDebugConfiguration) { 120 } else { 60 }
 $chatTurnTimeoutSeconds = if ($isDebugConfiguration) { 300 } else { 180 }
 $agentTurnTimeoutSeconds = if ($isDebugConfiguration) { 480 } else { 240 }
 
 Write-Host "Repo root: $repoRoot"
-Write-Host "Build dir: $BuildDir"
+Write-Host "Build dir: $resolvedBuildDir"
 Write-Host "Configuration: $Configuration"
 Write-Host "Chat model: $ChatModel"
 Write-Host "Embedding model: $EmbeddingModel"
@@ -587,7 +611,7 @@ $haveEmbeddingModel = Test-Path -LiteralPath $EmbeddingModel
 
 if ($Build) {
     $targets = @("llama-agent-daemon", "llama-agent-mcp-stdio-fake-server", "llama-agent-daemon-mcp-config-smoke")
-    & $cmake --build $BuildDir --config $Configuration --target $targets -j 1
+    & $cmake --build $resolvedBuildDir --config $Configuration --target $targets -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }
