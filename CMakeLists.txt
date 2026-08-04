@@ -123,6 +123,15 @@ option(LLAMA_USE_PREBUILT_UI "llama: use prebuilt UI from HF Bucket when availab
 option(LLAMA_TOOLS_INSTALL "llama: install tools" ${LLAMA_TOOLS_INSTALL_DEFAULT})
 option(LLAMA_TESTS_INSTALL "llama: install tests" ON)
 option(LLAMA_AGENT_PACKAGE_INSTALL "llama-agent: install the agent runtime package" OFF)
+option(LLAMA_AGENT_PACKAGE_CPACK "llama-agent: generate CPack package metadata" OFF)
+
+if (LLAMA_AGENT_PACKAGE_CPACK)
+    set(CPACK_PACKAGE_NAME "llama-agent" CACHE STRING "Agent package name")
+    set(CPACK_PACKAGE_VENDOR "llama.cpp" CACHE STRING "Agent package vendor")
+    set(CPACK_PACKAGE_VERSION "0.0.0" CACHE STRING "Agent package version")
+    set(CPACK_PACKAGE_FILE_NAME "llama-agent" CACHE STRING "Agent package file name")
+    set(CPACK_GENERATOR "WIX;ZIP" CACHE STRING "Agent package generators")
+endif()
 
 # 3rd party libs
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
@@ -365,3 +374,7 @@ configure_file(cmake/llama.pc.in
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/llama.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+if (LLAMA_AGENT_PACKAGE_CPACK)
+    include(CPack)
+endif()
