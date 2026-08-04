@@ -73,6 +73,13 @@ int main() {
     assert(build->requires_confirmation && test->requires_confirmation);
     assert(build->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
     assert(test->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
+
+    const auto * resource_read = catalog.find_definition("resource_read");
+    assert(resource_read);
+    const auto resource_schema = nlohmann::json::parse(resource_read->input_schema_json);
+    assert(resource_schema["properties"]["offset"].value("minimum", 1) == 0);
+    assert(resource_schema["properties"]["offset"].value("maximum", 0) == 1073741824);
+    assert(resource_schema["properties"]["max_bytes"].value("maximum", 0) == 32768);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 

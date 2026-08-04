@@ -113,6 +113,18 @@ struct common_runtime_resource_metadata {
     std::vector<std::string> entities;
 };
 
+// Derived resources, such as bounded chunks, retain explicit lineage to the
+// original resource.  Lineage is metadata, not a second source of truth.
+struct common_runtime_resource_lineage {
+    std::string parent_uri;
+    size_t chunk_index = 0;
+    size_t chunk_count = 0;
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+    size_t overlap_bytes = 0;
+    std::string derivation;
+};
+
 struct common_runtime_resource_ref {
     std::string uri;
     std::string name;
@@ -121,6 +133,7 @@ struct common_runtime_resource_ref {
     size_t size_bytes = 0;
     common_runtime_resource_scope scope = common_runtime_resource_scope::turn;
     common_runtime_resource_metadata metadata;
+    common_runtime_resource_lineage lineage;
 };
 
 struct agent_blob_descriptor {
@@ -148,6 +161,7 @@ struct agent_resource_put_request {
     int64_t created_at = 0;
     int64_t expires_at = 0;
     common_runtime_resource_metadata metadata;
+    common_runtime_resource_lineage lineage;
 };
 
 struct agent_resource_descriptor : common_runtime_resource_ref {
@@ -242,6 +256,19 @@ public:
         std::string & out,
         std::string & error) const = 0;
 
+    virtual bool get_bytes_range(
+        const std::string & sha256,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+        if (offset != 0) {
+            error = "blob range reads are not supported by this backend";
+            return false;
+        }
+        return get_bytes(sha256, max_bytes, out, error);
+    }
+
     virtual bool exists_sha256(const std::string & sha256) const = 0;
 };
 
@@ -260,6 +287,20 @@ public:
         size_t max_bytes,
         std::string & out,
         std::string & error) const = 0;
+
+    virtual bool read_text_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+        if (offset != 0) {
+            error = "resource range reads are not supported by this store";
+            return false;
+        }
+        return read_text(uri, authority, max_bytes, out, error);
+    }
 
     virtual bool stat(
         const std::string & uri,

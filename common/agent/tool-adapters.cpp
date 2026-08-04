@@ -1175,8 +1175,15 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     return tool_validation_failure("tool.resource_read.invalid_uri", std::move(err), "Resource read requires a valid resource URI.");
                 }
                 const auto uri = trim_copy(arguments["uri"].get<std::string>());
+                int64_t offset = 0;
+                if (arguments.contains("offset")) {
+                    if (!arguments["offset"].is_number_integer()) {
+                        return tool_validation_failure("tool.resource_read.invalid_offset", "resource_read offset must be an integer", "Resource read offset must be a non-negative integer.");
+                    }
+                    offset = arguments["offset"].get<int64_t>();
+                }
                 const int max_bytes = arguments.value("max_bytes", 8192);
-                if (uri.empty() || uri.size() > 512 || max_bytes < 1 || max_bytes > 32768) {
+                if (uri.empty() || uri.size() > 512 || offset < 0 || offset > 1073741824LL || max_bytes < 1 || max_bytes > 32768) {
                     return tool_validation_failure("tool.resource_read.out_of_bounds", "resource_read arguments are out of bounds", "Resource read arguments are out of bounds.");
                 }
 
@@ -1187,7 +1194,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
 
                 std::string text;
-                if (!bindings.resource_runtime.store->read_text(uri, authority, static_cast<size_t>(max_bytes), text, err)) {
+                if (!bindings.resource_runtime.store->read_text_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), text, err)) {
                     return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
                 }
 

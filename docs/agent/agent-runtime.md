@@ -852,6 +852,40 @@ The CLI can now import multiple bounded text files with repeated `--resource PAT
 
 Daemon CLI imports use the same text-only policy through the JSONL `put_resource` command. The returned resource URIs are forwarded in `resource_refs` on `run_turn`; daemon-session keeps session-scoped references for later prompts. JSONL/admin clients can also call `put_resource`, list scoped descriptors, and read bounded text with `read_resource`. These operations expose resource metadata and content, not arbitrary workspace or sandbox files.
 
+### Resource lineage and bounded ranges
+
+Large working material remains owned by the resource store. The original
+resource is the source of truth; a derived chunk is only a bounded view with
+explicit lineage. The shared resource contract therefore allows a chunk to
+carry its parent URI, zero-based chunk index/count, byte offset/length,
+overlap, and a host-owned derivation label. Lineage is descriptive metadata,
+not a second content store and not a memory record.
+
+`resource_read` accepts an optional non-negative `offset` together with the
+existing bounded `max_bytes` limit. The host validates both values, enforces
+resource authority before reading, and never expands the caller's profile or
+scope. A range read may return fewer bytes at the end of a resource. An
+out-of-bounds offset is rejected. Backends that do not implement non-zero
+ranges fail explicitly rather than silently loading the whole payload.
+
+The design policies for later chunk analysis are:
+
+- Chunk creation is host/controller work in the existing session lane. It does
+  not create a second agent, queue, or cancellation mechanism.
+- Per-chunk observations retain resource references and bounded summaries.
+  They are working evidence, not automatic long-term memory.
+- Only reusable facts, decisions, constraints, or procedures may be proposed
+  to memory through the existing memory policy.
+- Chunk progress belongs in the existing plan/checkpoint state so cancellation,
+  deadlines, continuation sequence, and plan revision checks remain unified.
+- Full payloads remain recoverable from the original resource; summaries must
+  retain references to that source instead of becoming the only authority.
+
+The current range implementation covers the in-memory and filesystem blob
+backends. Persistent catalog lineage migration and controller-owned automatic
+chunk scheduling remain follow-up slices; the current contract is designed so
+those slices extend the same resource/store/session seams.
+
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 
 That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:

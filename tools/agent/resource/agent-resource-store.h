@@ -24,6 +24,13 @@ public:
         std::string & out,
         std::string & error) const override;
 
+    bool get_bytes_range(
+        const std::string & sha256,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const override;
+
     bool exists_sha256(const std::string & sha256) const override;
 
 private:
@@ -42,6 +49,13 @@ public:
 
     bool get_bytes(
         const std::string & sha256,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const override;
+
+    bool get_bytes_range(
+        const std::string & sha256,
+        size_t offset,
         size_t max_bytes,
         std::string & out,
         std::string & error) const override;
@@ -68,6 +82,14 @@ public:
     bool read_text(
         const std::string & uri,
         const agent_resource_read_authority & authority,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const override;
+
+    bool read_text_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
         size_t max_bytes,
         std::string & out,
         std::string & error) const override;

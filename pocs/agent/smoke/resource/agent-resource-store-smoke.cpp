@@ -36,6 +36,15 @@ int main() {
                 {"repository.search", "matches"},
                 {"tool-adapters.cpp"},
             },
+            {
+                "agent-resource://resource/original",
+                1,
+                3,
+                8,
+                24,
+                2,
+                "host.chunk.text.v1",
+            },
         }, first, error)) {
         std::fprintf(stderr, "put_text failed: %s\n", error.c_str());
         return 1;
@@ -98,6 +107,21 @@ int main() {
     }
     if (statted.metadata.content_summary != "Three repository search matches in JSON form.") {
         std::fprintf(stderr, "stat returned unexpected metadata content summary: %s\n", statted.metadata.content_summary.c_str());
+        return 1;
+    }
+    if (statted.lineage.parent_uri != "agent-resource://resource/original" ||
+            statted.lineage.chunk_index != 1 || statted.lineage.byte_offset != 8) {
+        std::fprintf(stderr, "stat returned unexpected resource lineage\n");
+        return 1;
+    }
+
+    if (!store.read_text_range(first.uri, turn_authority, 2, 9, content, error) ||
+            content != "matches\":") {
+        std::fprintf(stderr, "read_text_range returned unexpected payload: %s (%s)\n", content.c_str(), error.c_str());
+        return 1;
+    }
+    if (store.read_text_range(first.uri, turn_authority, first.size_bytes + 1, 9, content, error)) {
+        std::fprintf(stderr, "out-of-bounds resource range unexpectedly succeeded\n");
         return 1;
     }
 

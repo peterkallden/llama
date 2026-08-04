@@ -180,6 +180,17 @@ void append_resource_links(
         if (resource.size_bytes > 0) {
             entry["sizeBytes"] = resource.size_bytes;
         }
+        if (!resource.lineage.parent_uri.empty()) {
+            entry["lineage"] = {
+                {"parent_uri", resource.lineage.parent_uri},
+                {"chunk_index", resource.lineage.chunk_index},
+                {"chunk_count", resource.lineage.chunk_count},
+                {"byte_offset", resource.lineage.byte_offset},
+                {"byte_length", resource.lineage.byte_length},
+                {"overlap_bytes", resource.lineage.overlap_bytes},
+                {"derivation", resource.lineage.derivation},
+            };
+        }
 
         agent_mcp_json metadata = agent_mcp_json::object();
         if (!resource.metadata.purpose.empty()) {
@@ -219,6 +230,17 @@ agent_mcp_json render_mcp_resource(
     };
 
     agent_mcp_json metadata = agent_mcp_json::object();
+    if (!descriptor.lineage.parent_uri.empty()) {
+        entry["lineage"] = {
+            {"parent_uri", descriptor.lineage.parent_uri},
+            {"chunk_index", descriptor.lineage.chunk_index},
+            {"chunk_count", descriptor.lineage.chunk_count},
+            {"byte_offset", descriptor.lineage.byte_offset},
+            {"byte_length", descriptor.lineage.byte_length},
+            {"overlap_bytes", descriptor.lineage.overlap_bytes},
+            {"derivation", descriptor.lineage.derivation},
+        };
+    }
     if (!descriptor.metadata.purpose.empty()) {
         metadata["purpose"] = descriptor.metadata.purpose;
     }

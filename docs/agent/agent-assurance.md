@@ -62,9 +62,20 @@ when the corresponding verification record contains evidence for it.
 - [x] Memory scope is enforced
 - [x] Plan scope is enforced
 - [x] Resource authority and scope are enforced
+- [x] Resource lineage and bounded range-read contracts are modelled in the shared runtime/tool seams
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
+
+The lineage/range item is a contract milestone, not a claim that automatic
+large-resource chunk scheduling or full context compaction is complete. The
+original resource remains authoritative, derived chunks must retain parent
+lineage, and non-zero range reads must remain bounded by host policy. Chunk
+progress, cancellation, deadlines, and continuation belong to the existing
+session lane and plan/checkpoint state; chunk observations are not automatic
+long-term memories. Persistent catalog migration and controller-owned chunk
+scheduling require separate verification before the assurance scope can claim
+them.
 
 ### Protocols and events
 

@@ -255,6 +255,28 @@ bool agent_in_memory_blob_store::get_bytes(
     return true;
 }
 
+bool agent_in_memory_blob_store::get_bytes_range(
+        const std::string & sha256,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = blobs_.find(sha256);
+    if (it == blobs_.end()) {
+        error = "blob was not found";
+        return false;
+    }
+    if (offset > it->second.size()) {
+        error = "blob range offset is out of bounds";
+        return false;
+    }
+    const size_t length = std::min(max_bytes, it->second.size() - offset);
+    out.assign(it->second.data() + offset, length);
+    error.clear();
+    return true;
+}
+
 bool agent_in_memory_blob_store::exists_sha256(const std::string & sha256) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return blobs_.find(sha256) != blobs_.end();
@@ -334,6 +356,39 @@ bool agent_filesystem_blob_store::get_bytes(
     return true;
 }
 
+bool agent_filesystem_blob_store::get_bytes_range(
+        const std::string & sha256,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+    const auto path = blob_path_for_sha256(sha256);
+    if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
+        error = "blob was not found";
+        return false;
+    }
+    const auto file_size = std::filesystem::file_size(path);
+    if (offset > file_size) {
+        error = "blob range offset is out of bounds";
+        return false;
+    }
+    const size_t length = std::min(max_bytes, static_cast<size_t>(file_size - offset));
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        error = "failed to open blob file for read";
+        return false;
+    }
+    file.seekg(static_cast<std::streamoff>(offset));
+    out.assign(length, '\0');
+    file.read(out.data(), static_cast<std::streamsize>(length));
+    if (!file.good() && !file.eof()) {
+        error = "failed to read blob range";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool agent_filesystem_blob_store::exists_sha256(const std::string & sha256) const {
     const auto path = blob_path_for_sha256(sha256);
     return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
@@ -382,6 +437,7 @@ bool agent_catalogued_resource_store::put_text(
     descriptor.created_at = request.created_at > 0 ? request.created_at : current_time_seconds();
     descriptor.expires_at = request.expires_at;
     descriptor.metadata = request.metadata;
+    descriptor.lineage = request.lineage;
 
     if (!catalog_->put_descriptor(descriptor, error)) {
         return false;
@@ -405,6 +461,27 @@ bool agent_catalogued_resource_store::read_text(
         return false;
     }
     return blob_store_->get_bytes(descriptor.sha256, max_bytes, out, error);
+}
+
+bool agent_catalogued_resource_store::read_text_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+    agent_resource_descriptor descriptor;
+    if (!catalog_->find_descriptor(uri, descriptor, error)) {
+        return false;
+    }
+    if (!authority_allows(descriptor, authority, error)) {
+        return false;
+    }
+    if (offset > descriptor.size_bytes) {
+        error = "resource range offset is out of bounds";
+        return false;
+    }
+    return blob_store_->get_bytes_range(descriptor.sha256, offset, max_bytes, out, error);
 }
 
 bool agent_catalogued_resource_store::stat(

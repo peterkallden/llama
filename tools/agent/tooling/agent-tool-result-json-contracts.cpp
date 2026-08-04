@@ -19,6 +19,17 @@ json render_agent_tool_resource_ref_json(const common_runtime_resource_ref & res
     if (resource.size_bytes > 0) {
         result["size_bytes"] = resource.size_bytes;
     }
+    if (!resource.lineage.parent_uri.empty()) {
+        result["lineage"] = {
+            {"parent_uri", resource.lineage.parent_uri},
+            {"chunk_index", resource.lineage.chunk_index},
+            {"chunk_count", resource.lineage.chunk_count},
+            {"byte_offset", resource.lineage.byte_offset},
+            {"byte_length", resource.lineage.byte_length},
+            {"overlap_bytes", resource.lineage.overlap_bytes},
+            {"derivation", resource.lineage.derivation},
+        };
+    }
     json metadata = json::object();
     if (!resource.metadata.purpose.empty()) {
         metadata["purpose"] = resource.metadata.purpose;

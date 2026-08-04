@@ -37,6 +37,16 @@ bool parse_resource_ref_from_json(
     resource.mime_type = item.value("mimeType", item.value("mime_type", std::string()));
     resource.size_bytes = item.value("sizeBytes", item.value("size_bytes", size_t(0)));
     resource.scope = common_runtime_resource_scope::turn;
+    if (item.contains("lineage") && item["lineage"].is_object()) {
+        const auto & lineage = item["lineage"];
+        resource.lineage.parent_uri = lineage.value("parent_uri", "");
+        resource.lineage.chunk_index = lineage.value("chunk_index", size_t(0));
+        resource.lineage.chunk_count = lineage.value("chunk_count", size_t(0));
+        resource.lineage.byte_offset = lineage.value("byte_offset", size_t(0));
+        resource.lineage.byte_length = lineage.value("byte_length", size_t(0));
+        resource.lineage.overlap_bytes = lineage.value("overlap_bytes", size_t(0));
+        resource.lineage.derivation = lineage.value("derivation", "");
+    }
     if (item.contains("metadata") && item["metadata"].is_object()) {
         const auto & metadata = item["metadata"];
         resource.metadata.purpose = metadata.value("purpose", "");

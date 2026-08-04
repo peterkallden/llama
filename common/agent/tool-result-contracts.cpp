@@ -20,7 +20,7 @@ json common_tool_memory_hit_to_json(const common_memory_hit & hit) {
 
 json common_tool_resource_descriptor_to_json(
         const agent_resource_descriptor & descriptor) {
-    return {
+    json result = {
         {"uri", descriptor.uri},
         {"name", descriptor.name},
         {"description", descriptor.description},
@@ -36,6 +36,18 @@ json common_tool_resource_descriptor_to_json(
             {"entities", descriptor.metadata.entities},
         }},
     };
+    if (!descriptor.lineage.parent_uri.empty()) {
+        result["lineage"] = {
+            {"parent_uri", descriptor.lineage.parent_uri},
+            {"chunk_index", descriptor.lineage.chunk_index},
+            {"chunk_count", descriptor.lineage.chunk_count},
+            {"byte_offset", descriptor.lineage.byte_offset},
+            {"byte_length", descriptor.lineage.byte_length},
+            {"overlap_bytes", descriptor.lineage.overlap_bytes},
+            {"derivation", descriptor.lineage.derivation},
+        };
+    }
+    return result;
 }
 
 json common_tool_resource_read_result_to_json(
