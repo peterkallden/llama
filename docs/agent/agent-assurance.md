@@ -62,6 +62,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Resource authority and scope are enforced
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
+- [ ] Full inference continuation and context compaction are verified
 
 ### Protocols and events
 
@@ -276,6 +277,9 @@ this file records the summarized result and the commit it belongs to.
 - Kubernetes contract and CTest coverage passed, while the Docker backend smoke
   and CTest are skipped when the Docker daemon is unavailable.
 - Research workspace checkpointing is not part of the first version.
+- The initial continuation checkpoint contract is model-free and validates
+  same-turn identity plus plan revision; automatic multi-slice inference and
+  full context compaction remain outside the verified beta scope.
 - Long-running stability and resource-retention testing remain separate from
   bounded functional smokes.
 - A test is not considered passing merely because its target builds; its

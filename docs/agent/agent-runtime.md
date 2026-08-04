@@ -1601,6 +1601,45 @@ The cancellation/timeout seam now also reaches a little deeper into the runtime-
 
 The runtime now also starts mapping inference-step budgets into the existing generation request contract. CLI and resident/session-host assembly set `t_max_predict_ms` from `inference_step_timeout_ms` when configured, so the `server-context` path can begin enforcing bounded generation time through the same generation-options seam it already uses for `n_predict`. This is still only a first slice: active cancellation does not yet safely interrupt every in-flight inference or native tool body, and inference is not yet managed as a globally scheduled/batched operation.
 
+### Continuation checkpoints and context pressure
+
+Long-running work must remain resumable without creating a second plan or a
+second daemon queue entry. The first continuation contract therefore lives in
+the existing runtime/session architecture. A
+`common_agent_continuation_checkpoint` is execution state for the current turn,
+not a durable memory record. It carries the accepted request and turn IDs, the
+plan ID and version it observed, the active step or next action, a sequence
+number, the continuation reason, and references to large external resources.
+
+Native validation requires a non-empty checkpoint identity, the original turn
+identity, a plan identity and revision, and an actionable continuation point.
+The session lane is the anti-forking boundary: a checkpoint can resume only the
+same accepted turn against the same plan revision. A changed plan must produce
+a new checkpoint rather than silently continuing from stale state.
+
+The intended execution flow is:
+
+```text
+same session-lane turn
+  -> bounded inference slice reaches a continuation boundary
+  -> checkpoint records plan revision and resource references
+  -> same lane resumes the next inference slice
+  -> one terminal turn result
+```
+
+The daemon dispatcher must not receive the continuation as a new external
+command. Pending asynchronous tools remain owned by the operation manager,
+and an inference slice may reacquire the existing inference-capacity lease.
+This preserves queue capacity accounting, per-session ordering, cancellation,
+and the existing terminal-event contract.
+
+This contract does not yet claim full automatic context compaction. Rendered
+memory overlays and policy packs already have bounded compaction, but full
+conversation/tool-result compaction still needs controller integration,
+structural output handling, and model-backed continuation coverage. Until that
+work is complete, a `limit` stop remains a bounded/incomplete result rather
+than an implicit successful continuation.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.

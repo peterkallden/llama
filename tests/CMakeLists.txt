@@ -340,6 +340,7 @@ endif()
 if (LLAMA_AGENT_RUNTIME)
     foreach(TEST_SOURCE
         test-agent-contract.cpp
+        test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
         test-agent-tool-rounds.cpp
