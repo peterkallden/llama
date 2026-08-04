@@ -12,7 +12,7 @@ when the corresponding verification record contains evidence for it.
 ## Milestone
 
 - Milestone: Agent runtime beta
-- Integration branch: `pocs/agent-tool-profiles`
+- Integration branch: `feature/llama-agent`
 - Baseline: `origin/master`
 - Scope: reflective, deliberate, research, tools, sessions, scheduling,
   resources, memory, plans, daemon, JSONL, and MCP hosts
