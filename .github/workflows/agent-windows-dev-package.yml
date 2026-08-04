@@ -1,27 +1,17 @@
 name: Agent Windows development package
 
 on:
+  workflow_run:
+    workflows:
+      - Agent development package
+    types:
+      - completed
   workflow_dispatch:
-  push:
-    branches-ignore:
-      - master
-    paths:
-      - '.github/workflows/agent-windows-dev-package.yml'
-      - 'common/agent/**'
-      - 'common/memory/**'
-      - 'common/plan/**'
-      - 'common/runtime/**'
-      - 'tools/agent/**'
-      - 'tools/server/**'
-      - 'tools/mtmd/**'
-      - 'pocs/agent/**'
-      - 'pocs/memory/**'
-      - 'pocs/common/**'
-      - 'tests/**'
-      - 'scripts/agent-config-bootstrap.sh'
-      - 'scripts/agent-config-bootstrap.ps1'
-      - 'CMakeLists.txt'
-      - '**/CMakeLists.txt'
+    inputs:
+      source_ref:
+        description: Non-master branch or ref to package manually
+        required: true
+        default: feature/llama-agent
 
 concurrency:
   group: agent-windows-dev-${{ github.ref }}
@@ -37,12 +27,23 @@ env:
 jobs:
   package-cpu:
     name: Package Windows CPU dev build
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Agent development package' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_branch != 'master' &&
+       github.event.workflow_run.head_branch != '' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.source_ref != 'master')
     runs-on: windows-2022
     timeout-minutes: 75
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
 
       - name: Provision Cozo C API
         shell: pwsh

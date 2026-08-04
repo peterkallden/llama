@@ -21,7 +21,7 @@ distribution readiness:
 | [Agent CI](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
 | [Dynamic analysis](../../.github/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
 | [Development package](../../.github/workflows/agent-package.yml) | Verified development package from non-master branches |
-| [Windows development package](../../.github/workflows/agent-windows-dev-package.yml) | Windows CPU dev ZIP/MSI from a tested per-user-oriented staging tree |
+| [Windows development package](../../.github/workflows/agent-windows-dev-package.yml) | Windows CPU dev ZIP/MSI after the verified Linux development package, or manual non-master dispatch |
 | [Agent release](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
 | [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from a development package and backend images from releases |
 
