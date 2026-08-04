@@ -1,4 +1,5 @@
 #include "tools/agent/resource/agent-resource-chunker.h"
+#include "agent/input-resources.h"
 
 #include <cstdio>
 #include <memory>
@@ -47,6 +48,14 @@ int main() {
             chunk_ref.lineage.chunk_count != plan.ranges.size() ||
             chunk_ref.lineage.byte_length != plan.ranges[1].byte_length) {
         std::fprintf(stderr, "chunk reference lineage is incomplete\n");
+        return 1;
+    }
+    const std::string rendered = common_agent_render_input_resource_context(
+        {{chunk_ref, "resource_chunk", true}}, 2048);
+    if (rendered.find("chunk_index=1") == std::string::npos ||
+            rendered.find("parent_uri=" + descriptor.uri) == std::string::npos ||
+            rendered.find("resource_read") == std::string::npos) {
+        std::fprintf(stderr, "chunk input view did not expose bounded read metadata\n");
         return 1;
     }
     if (read_agent_resource_chunk(store, authority, plan, plan.ranges.size(), chunk_text, error) ||

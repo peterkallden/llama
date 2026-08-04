@@ -912,10 +912,20 @@ and treats the original resource as the only source of truth.
 After plan and blueprint selection, the agent runtime may perform this
 preflight for oversized host-imported input resources. The resolved host
 tooling supplies the resource-store pointer and scope; the runtime records a
-bounded `resource_chunk_planned` observation in the existing plan and attaches
-the first chunk view to the same request. This is a session-lane preparation
-step, not a second scheduler. Subsequent slices will advance the planned
-ranges and record only chunks that were actually processed.
+bounded `resource_chunk_planned` observation in the existing plan and replaces
+the model-facing input view with the first chunk. The original descriptor stays
+authoritative in the resource store and plan evidence; it is not rendered a
+second time beside the active chunk.
+
+The existing session-lane driver then advances one chunk at a time. After a
+slice returns, the driver records a `resource_chunk` observation containing a
+bounded result summary and the parent-linked chunk reference. If another range
+exists, it replaces the active input view and continues the same plan and lane.
+There is no chunk-specific queue, worker, or cancellation path. Cancellation,
+deadlines, continuation limits, and checkpoint creation therefore remain the
+responsibility of the normal turn driver. The input-resource renderer exposes
+the parent URI and byte range so the model can use the existing `resource_read`
+tool contract to retrieve the active slice.
 
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic

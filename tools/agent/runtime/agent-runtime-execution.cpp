@@ -54,7 +54,12 @@ bool prepare_resource_chunk_observations(
         const auto first_ref = make_agent_resource_chunk_ref(
             chunk_plan, chunk_plan.ranges.front());
         execution.resource_chunk_plans.push_back(std::move(chunk_plan));
-        execution.input_resources.push_back({first_ref, "resource_chunk", true});
+        const size_t plan_index = execution.resource_chunk_plans.size() - 1;
+        execution.input_resources[input_index] = {
+            first_ref, input.role.empty() ? "resource_chunk" : input.role, input.required};
+        execution.active_resource_chunk_plan = plan_index;
+        execution.active_resource_chunk_input = input_index;
+        execution.active_resource_chunk_index = 0;
 
         common_plan_operation observed;
         observed.kind = common_plan_operation_kind::record_observation;
@@ -86,8 +91,82 @@ bool prepare_resource_chunk_observations(
             {},
             first_ref.uri,
         });
+        // A turn has one active bounded input chain.  Additional oversized
+        // resources are planned on a later session-lane turn, never in
+        // parallel with this one.
+        break;
     }
     error.clear();
+    return true;
+}
+
+bool record_and_advance_resource_chunk(
+        common_agent_runtime_driver_execution & execution,
+        const common_agent_result & slice,
+        std::string & error) {
+    if (execution.active_resource_chunk_plan == static_cast<size_t>(-1)) return false;
+    if (execution.active_resource_chunk_plan >= execution.resource_chunk_plans.size() ||
+            execution.active_resource_chunk_input >= execution.input_resources.size()) {
+        error = "resource chunk session cursor is invalid";
+        return false;
+    }
+    const auto & chunk_plan = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
+    const size_t chunk_index = execution.active_resource_chunk_index;
+    if (chunk_index >= chunk_plan.ranges.size()) {
+        error = "resource chunk session cursor is exhausted";
+        return false;
+    }
+    std::string plan_error;
+    auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
+    if (!plan) {
+        error = plan_error.empty() ? "resource chunk completion requires an active plan" : plan_error;
+        return false;
+    }
+    const auto chunk_ref = make_agent_resource_chunk_ref(chunk_plan, chunk_plan.ranges[chunk_index]);
+    std::string summary = slice.response;
+    constexpr size_t max_summary_chars = 1024;
+    if (summary.size() > max_summary_chars) summary.resize(max_summary_chars);
+    if (summary.empty()) summary = "The bounded resource slice was presented to the runtime.";
+    common_plan_operation observed;
+    observed.kind = common_plan_operation_kind::record_observation;
+    observed.plan_id = plan->id;
+    observed.expected_version = plan->version;
+    observed.reason_summary = "bounded resource chunk processed on the session lane";
+    observed.observation = common_plan_observation{
+        "resource_chunk:" + chunk_plan.parent.uri + ":" + std::to_string(chunk_index),
+        "resource_chunk",
+        summary,
+        1.0f,
+        {chunk_plan.parent.uri},
+        {chunk_ref},
+        static_cast<int64_t>(std::time(nullptr)),
+    };
+    common_plan_state updated;
+    if (!execution.plan_store.apply(observed, updated, error)) return false;
+    *plan = std::move(updated);
+    execution.pre_turn_events.push_back({
+        common_agent_event_type::observation_recorded,
+        "bounded resource chunk processed",
+        {},
+        plan->id,
+        {},
+        observed.observation->id,
+        {},
+        chunk_ref.uri,
+    });
+    if (chunk_index + 1 >= chunk_plan.ranges.size()) {
+        execution.active_resource_chunk_plan = static_cast<size_t>(-1);
+        execution.active_resource_chunk_input = static_cast<size_t>(-1);
+        execution.active_resource_chunk_index = 0;
+        return false;
+    }
+    ++execution.active_resource_chunk_index;
+    const auto next_ref = make_agent_resource_chunk_ref(
+        chunk_plan, chunk_plan.ranges[execution.active_resource_chunk_index]);
+    auto & active_input = execution.input_resources[execution.active_resource_chunk_input];
+    active_input.resource = next_ref;
+    active_input.role = "resource_chunk";
+    active_input.required = true;
     return true;
 }
 
@@ -409,6 +488,23 @@ bool run_agent_runtime_driver(
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
+        const bool has_next_resource_chunk = record_and_advance_resource_chunk(execution, slice, error);
+        if (!error.empty()) return false;
+
+        if (has_next_resource_chunk) {
+            if (continuation_count >= execution.runtime_config.max_continuations) {
+                aggregate.limit_reached = true;
+                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                result = std::move(aggregate);
+                break;
+            }
+            execution.orchestration_config.prompt =
+                "Continue the same task using the next bounded resource slice.\n"
+                "Treat the previous slice observation as evidence; do not restart the plan.\n"
+                "Inspect and synthesize the currently attached resource_chunk, then produce the next bounded result.\n";
+            ++continuation_count;
+            continue;
+        }
 
         if (slice.response_stop_reason != common_agent_generation_stop_reason::limit ||
                 !slice.plan_id ||

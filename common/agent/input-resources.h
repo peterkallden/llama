@@ -29,6 +29,15 @@ inline std::string common_agent_render_input_resource_context(
         if (!resource.mime_type.empty()) out << " mime_type=" << common_agent_escape_input_resource_text(resource.mime_type);
         if (!resource.metadata.content_summary.empty()) out << " summary=" << common_agent_escape_input_resource_text(resource.metadata.content_summary);
         if (!resource.metadata.usage_hint.empty()) out << " usage=" << common_agent_escape_input_resource_text(resource.metadata.usage_hint);
+        if (!resource.lineage.parent_uri.empty()) {
+            out << " chunk_index=" << resource.lineage.chunk_index
+                << " chunk_count=" << resource.lineage.chunk_count
+                << " byte_offset=" << resource.lineage.byte_offset
+                << " byte_length=" << resource.lineage.byte_length
+                << " overlap_bytes=" << resource.lineage.overlap_bytes
+                << " parent_uri=" << common_agent_escape_input_resource_text(resource.lineage.parent_uri)
+                << " Read this bounded slice with resource_read using the parent URI, offset, and max_bytes.";
+        }
         out << "\n";
     }
     out << "</runtime_input_resources>\n";

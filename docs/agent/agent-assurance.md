@@ -68,7 +68,9 @@ when the corresponding verification record contains evidence for it.
 - [x] Deterministic text chunk boundary policy is covered by an agent smoke
 - [x] Resource chunk ranges are planned and read through bounded store calls
 - [x] Runtime preflight attaches the first planned chunk through host-resolved tooling
-- [ ] Every planned chunk is processed and checkpointed by the session lane
+- [x] One active chunk chain advances through the existing session lane
+- [x] Processed chunks are recorded as parent-linked plan observations
+- [ ] Context-budget accounting selects chunk size from resolved turn budgets
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
