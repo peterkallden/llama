@@ -927,6 +927,12 @@ responsibility of the normal turn driver. The input-resource renderer exposes
 the parent URI and byte range so the model can use the existing `resource_read`
 tool contract to retrieve the active slice.
 
+The runtime event stream distinguishes `resource_chunk_planned` from
+`resource_chunk_processed`. The daemon projects these into typed
+`resource.chunk_planned` and `resource.chunk_processed` events while the plan
+observation remains the durable progress record. This keeps live tracing useful
+without making the event stream a second progress store.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so

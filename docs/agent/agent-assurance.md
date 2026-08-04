@@ -70,6 +70,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Runtime preflight attaches the first planned chunk through host-resolved tooling
 - [x] One active chunk chain advances through the existing session lane
 - [x] Processed chunks are recorded as parent-linked plan observations
+- [x] Chunk planning and processing are projected as typed daemon events
 - [ ] Context-budget accounting selects chunk size from resolved turn budgets
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated

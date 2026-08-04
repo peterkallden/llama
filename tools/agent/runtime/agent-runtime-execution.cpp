@@ -82,7 +82,7 @@ bool prepare_resource_chunk_observations(
         }
         *plan = std::move(updated);
         execution.pre_turn_events.push_back({
-            common_agent_event_type::observation_recorded,
+            common_agent_event_type::resource_chunk_planned,
             "bounded resource chunk plan attached",
             {},
             plan->id,
@@ -145,7 +145,7 @@ bool record_and_advance_resource_chunk(
     if (!execution.plan_store.apply(observed, updated, error)) return false;
     *plan = std::move(updated);
     execution.pre_turn_events.push_back({
-        common_agent_event_type::observation_recorded,
+        common_agent_event_type::resource_chunk_processed,
         "bounded resource chunk processed",
         {},
         plan->id,

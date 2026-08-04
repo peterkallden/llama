@@ -41,6 +41,8 @@ enum class common_agent_daemon_event_type {
     plan_step_started,
     plan_step_completed,
     observation_recorded,
+    resource_chunk_planned,
+    resource_chunk_processed,
     resource_created,
     resource_create_failed,
     resource_attached,
@@ -163,6 +165,8 @@ inline common_agent_daemon_event_category common_agent_daemon_event_category_for
             return common_agent_daemon_event_category::plan;
         case common_agent_daemon_event_type::observation_recorded:
             return common_agent_daemon_event_category::observation;
+        case common_agent_daemon_event_type::resource_chunk_planned:
+        case common_agent_daemon_event_type::resource_chunk_processed:
         case common_agent_daemon_event_type::resource_created:
         case common_agent_daemon_event_type::resource_create_failed:
         case common_agent_daemon_event_type::resource_attached:
@@ -241,6 +245,8 @@ inline const char * common_agent_daemon_event_type_name(
         case common_agent_daemon_event_type::plan_step_started:      return "plan.step_started";
         case common_agent_daemon_event_type::plan_step_completed:    return "plan.step_completed";
         case common_agent_daemon_event_type::observation_recorded:   return "observation.recorded";
+        case common_agent_daemon_event_type::resource_chunk_planned: return "resource.chunk_planned";
+        case common_agent_daemon_event_type::resource_chunk_processed: return "resource.chunk_processed";
         case common_agent_daemon_event_type::resource_created:       return "resource.created";
         case common_agent_daemon_event_type::resource_create_failed: return "resource.create_failed";
         case common_agent_daemon_event_type::resource_attached:      return "resource.attached";

@@ -190,6 +190,16 @@ void emit_plan_and_resource_events_from_turn(
                     common_agent_daemon_event_type::observation_recorded,
                     !event.observation_id.empty() ? event.observation_id : event.detail);
                 break;
+            case common_agent_event_type::resource_chunk_planned:
+                emit_once(
+                    common_agent_daemon_event_type::resource_chunk_planned,
+                    !event.observation_id.empty() ? event.observation_id : event.detail);
+                break;
+            case common_agent_event_type::resource_chunk_processed:
+                emit_once(
+                    common_agent_daemon_event_type::resource_chunk_processed,
+                    !event.observation_id.empty() ? event.observation_id : event.detail);
+                break;
             case common_agent_event_type::resource_created:
                 emit_once(
                     common_agent_daemon_event_type::resource_created,

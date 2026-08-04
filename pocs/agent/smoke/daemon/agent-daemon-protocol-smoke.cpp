@@ -13,7 +13,13 @@ int main() {
             common_agent_daemon_event_category_for_type(
                 common_agent_daemon_event_type::plans_listed) != common_agent_daemon_event_category::plan ||
             common_agent_daemon_event_category_for_type(
-                common_agent_daemon_event_type::plans_list_failed) != common_agent_daemon_event_category::plan) {
+                common_agent_daemon_event_type::plans_list_failed) != common_agent_daemon_event_category::plan ||
+            common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::resource_chunk_planned) != common_agent_daemon_event_category::resource ||
+            common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::resource_chunk_processed) != common_agent_daemon_event_category::resource ||
+            std::string(common_agent_daemon_event_type_name(
+                common_agent_daemon_event_type::resource_chunk_processed)) != "resource.chunk_processed") {
         std::fprintf(stderr, "list event categories are incomplete\n");
         return 1;
     }

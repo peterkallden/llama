@@ -37,6 +37,8 @@ enum class common_agent_event_type {
     plan_created,
     plan_updated,
     observation_recorded,
+    resource_chunk_planned,
+    resource_chunk_processed,
     resource_created,
     resource_attached,
     reflection_completed,
@@ -81,6 +83,8 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::plan_created: return "plan_created";
         case common_agent_event_type::plan_updated: return "plan_updated";
         case common_agent_event_type::observation_recorded: return "observation_recorded";
+        case common_agent_event_type::resource_chunk_planned: return "resource_chunk_planned";
+        case common_agent_event_type::resource_chunk_processed: return "resource_chunk_processed";
         case common_agent_event_type::resource_created: return "resource_created";
         case common_agent_event_type::resource_attached: return "resource_attached";
         case common_agent_event_type::reflection_completed: return "reflection_completed";
