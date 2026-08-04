@@ -1,5 +1,6 @@
 #include "agent/tool-registry.h"
 #include "agent/schema-contract.h"
+#include "plan/plan-json.h"
 
 bool common_tool_registry::register_tool(common_registered_tool tool, std::string & error) {
     if (tool.name.empty() || !tool.handler) { error = "registered tool requires a name and handler"; return false; }
@@ -20,14 +21,20 @@ bool common_tool_registry::register_tool(common_registered_tool tool, std::strin
 bool common_tool_registry::validate(const common_registered_tool_call & call, std::string & error) const {
     const auto it = tools.find(call.name); if (it == tools.end()) { error = "tool is not registered"; return false; }
     std::string normalized;
-    return common_schema_normalize_and_validate_object(call.arguments_json, it->second.arguments_schema, normalized, error);
+    if (!common_plan_normalize_tool_arguments_json(call.name, call.arguments_json, normalized, error)) return false;
+    return common_schema_normalize_and_validate_object(normalized, it->second.arguments_schema, normalized, error);
 }
 
 common_tool_execution_result common_tool_registry::execute(const common_registered_tool_call & call) const {
     std::string error;
-    if (!validate(call, error)) return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
     const auto it = tools.find(call.name);
-    return it->second.handler(call.arguments_json);
+    if (it == tools.end()) return common_tool_execution_result::failure("tool.unknown", common_tool_failure_class::validation, false, "Tool is not registered.", "tool is not registered");
+    std::string normalized;
+    if (!common_plan_normalize_tool_arguments_json(call.name, call.arguments_json, normalized, error) ||
+            !common_schema_normalize_and_validate_object(normalized, it->second.arguments_schema, normalized, error)) {
+        return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
+    }
+    return it->second.handler(normalized);
 }
 
 bool common_tool_registry::contains(const std::string & name) const {

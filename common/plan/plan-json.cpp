@@ -29,6 +29,11 @@ bool parse_tool_arguments_contract(
         json arguments,
         common_plan_tool_arguments_contract & contract,
         std::string & error) {
+    const bool memory_id_tool = tool_name == "memory_get" ||
+        tool_name == "memory_propose_update" || tool_name == "memory_propose_forget";
+    if (memory_id_tool && arguments.is_string()) {
+        arguments = json{{"id", arguments.get<std::string>()}};
+    }
     if (!arguments.is_object()) {
         error = "tool arguments must be a JSON object";
         return false;
@@ -52,6 +57,13 @@ bool calculator_expression_from_value(const json & value, std::string & expressi
 
 json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     if (!arguments.is_object()) return arguments;
+    const bool memory_id_tool = tool_name == "memory_get" ||
+        tool_name == "memory_propose_update" || tool_name == "memory_propose_forget";
+    if (memory_id_tool && arguments.contains("memory_id") && !arguments.contains("id") &&
+            arguments["memory_id"].is_string()) {
+        arguments["id"] = arguments["memory_id"];
+        arguments.erase("memory_id");
+    }
     const auto unwrap_named_call = [&](const json & call, json & unwrapped) {
         if (!call.is_object() || !call.contains("name") || !call["name"].is_string() || call["name"].get<std::string>() != tool_name) return false;
         if (call.contains("arguments") && call["arguments"].is_object()) { unwrapped = call["arguments"]; return true; }
@@ -311,10 +323,6 @@ bool common_plan_parse_tool_arguments_contract_json(
         common_plan_tool_arguments_contract & contract,
         std::string & error) {
     const auto parsed = json::parse(arguments_json, nullptr, false);
-    if (!parsed.is_object()) {
-        error = "tool arguments must be a JSON object";
-        return false;
-    }
     return parse_tool_arguments_contract(tool_name, parsed, contract, error);
 }
 
@@ -323,10 +331,6 @@ bool common_plan_parse_tool_arguments_contract_value(
         const nlohmann::ordered_json & arguments,
         common_plan_tool_arguments_contract & contract,
         std::string & error) {
-    if (!arguments.is_object()) {
-        error = "tool arguments must be a JSON object";
-        return false;
-    }
     return parse_tool_arguments_contract(tool_name, arguments, contract, error);
 }
 

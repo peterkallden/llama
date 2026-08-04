@@ -61,6 +61,9 @@ int main() {
     assert(result.proposed_plan_operations.size() == 2);
     assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
     assert(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
+    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_get","args":"memory-1"}],"replace_steps":[]})", result, error));
+    assert(result.proposed_plan_operations.size() == 1);
+    assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"id":"memory-1"})"));
     assert(common_reflection_parse_json(R"({"decision":"accept","ready_to_answer":true,"confidence":0.9,"revision_guidance":[],"learning_hint":{"category":"tool_precondition","statement":"Verify a repository path before reading it.","expected_reuse":0.8},"operations":[]})", result, error));
     assert(result.learning_hint && result.learning_hint->category == "tool_precondition");
     const std::string explicit_tool_call_reflection =

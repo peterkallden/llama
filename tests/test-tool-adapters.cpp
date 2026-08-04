@@ -81,6 +81,10 @@ int main() {
     assert(result.ok && result.output.find("memory-1") != std::string::npos);
     result = registry.execute({"memory_get", R"({"id":"memory-1"})"});
     assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"memory_get", R"({"memory_id":"memory-1"})"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"memory_get", R"("memory-1")"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
     result = registry.execute({"plan_get", "{}"});
     assert(result.ok && result.output.find("plan-1") != std::string::npos);
     result = registry.execute({"memory_remember", "{}"});

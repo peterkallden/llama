@@ -97,7 +97,12 @@ bool parse_compact_tool(
         return false;
     }
     if (item.contains("args")) arguments = item["args"];
-    if (!arguments.is_object()) { error = "reflection add_steps tool arguments must be an object"; return false; }
+    const bool memory_id_tool = name == "memory_get" ||
+        name == "memory_propose_update" || name == "memory_propose_forget";
+    if (!arguments.is_object() && !(memory_id_tool && arguments.is_string())) {
+        error = "reflection add_steps tool arguments must be an object";
+        return false;
+    }
     std::string normalized_arguments;
     if (!normalize_tool_arguments_contract(name, arguments, normalized_arguments, error)) return false;
     step.tool_call = common_plan_tool_call{name, normalized_arguments};

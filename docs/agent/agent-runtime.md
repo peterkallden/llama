@@ -201,6 +201,16 @@ defaults or numeric minimums when available. Optional properties are omitted
 so that a repair suggestion cannot look like a complete call while silently
 inventing unrelated arguments.
 
+Memory reference arguments have one additional compatibility normalization
+before schema validation. `memory_get`, `memory_propose_update` and
+`memory_propose_forget` accept the canonical `{"id":"..."}` form, the
+equivalent `{"memory_id":"..."}` form, and (for ID-only calls) a JSON string
+such as `"memory-1"`. All three forms become `{"id":"..."}` internally.
+This normalization changes only the representation; the ID must still come
+from a prior `memory_search` result or an explicit recorded memory reference.
+It never selects a memory implicitly, which is important when asynchronous
+plan steps or multiple searches are in flight.
+
 Async native and MCP tool calls now carry an operation-owned cancellation state
 and an effective deadline. The host can cancel a pending call explicitly, while
 the operation manager can mark it timed out and invoke the cancellation callback
