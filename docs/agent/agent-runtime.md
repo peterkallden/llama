@@ -901,6 +901,14 @@ code and richer document extraction remain follow-up adapters, while the
 current text-only resource path never assumes that a newline alone is a
 semantic boundary.
 
+The resource-store integration plans chunk ranges with bounded
+`read_text_range` calls. It retains only the parent descriptor and the range
+metadata during planning; a later step reads one planned range at a time and
+can render it as a parent-linked resource view. This deliberately avoids
+creating persistent derived blobs or loading the complete source into the
+session lane. The current implementation rejects non-text-oriented resources
+and treats the original resource as the only source of truth.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so

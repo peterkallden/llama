@@ -66,6 +66,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Chunk observations validate parent lineage and duplicate indexes
 - [x] Continuation checkpoints carry bounded chunk progress through daemon transport
 - [x] Deterministic text chunk boundary policy is covered by an agent smoke
+- [x] Resource chunk ranges are planned and read through bounded store calls
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
