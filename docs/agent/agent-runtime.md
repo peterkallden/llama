@@ -2320,10 +2320,13 @@ the package and are supplied through environment variables.
 
 The development branch also has a separate
 `.github/workflows/agent-package.yml` workflow for integration packages. It is
-activated by completion of either agent verification workflow, but publishes
-only when both `Agent CI (Linux)` and `Agent dynamic analysis` have succeeded
-for the same commit on a non-`master` branch. Pull-request workflow runs are
-not packaged. It
+activated by completion of `Agent CI (Linux)`. The package job then waits for
+the matching `Agent dynamic analysis` run and publishes only when both
+verification workflows have succeeded for the same commit on a non-`master`
+branch. Pull-request workflow runs are not packaged. The package always
+downloads the already-tested Linux artifact from the Agent CI run; dynamic
+analysis is a required gate, not a second package source. This single trigger
+avoids duplicate package runs when both verification workflows complete. It
 downloads the already-tested Linux package rather than rebuilding it, adds a
 small manifest and SHA-256 checksum, and publishes an artifact named with the
 UTC date, workflow run id and commit provenance. The manifest records the

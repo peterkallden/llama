@@ -4,7 +4,6 @@ on:
   workflow_run:
     workflows:
       - Agent CI (Linux)
-      - Agent dynamic analysis
     types:
       - completed
   workflow_dispatch:
