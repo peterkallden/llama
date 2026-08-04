@@ -277,10 +277,9 @@ this file records the summarized result and the commit it belongs to.
 - Kubernetes contract and CTest coverage passed, while the Docker backend smoke
   and CTest are skipped when the Docker daemon is unavailable.
 - Research workspace checkpointing is not part of the first version.
-- The continuation checkpoint contract is covered by a focused test, and the
-  agent-driver multi-slice implementation builds in the runtime target; a
-  dedicated behavior regression for repeated slices remains outstanding.
-  Full conversation/tool result compaction, structural output repair, and
+- The continuation checkpoint contract and bounded agent-driver multi-slice
+  behavior are covered by the dedicated continuation CTest; full
+  conversation/tool result compaction, structural output repair, and
   model-backed continuation remain outside the verified beta scope.
 - Long-running stability and resource-retention testing remain separate from
   bounded functional smokes.

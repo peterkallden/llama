@@ -284,6 +284,17 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-continuation-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-continuation-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-mcp-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-tool-provider-smoke.cpp
@@ -753,6 +764,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
+    llama-agent-continuation-smoke
     llama-agent-sandbox-contract-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
@@ -787,6 +799,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
+    llama-agent-continuation-smoke
     llama-agent-sandbox-contract-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
@@ -836,6 +849,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)
     set_property(TEST llama-agent-tool-runtime-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-continuation-ctest
+        COMMAND $<TARGET_FILE:llama-agent-continuation-smoke>)
+    set_property(TEST llama-agent-continuation-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-sandbox-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
