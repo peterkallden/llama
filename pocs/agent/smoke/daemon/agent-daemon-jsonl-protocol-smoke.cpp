@@ -441,6 +441,23 @@ int main() {
             {"error", "turn deadline exceeded"},
             {"runtime_reused", true},
             {"event_count", 2},
+            {"continuation_checkpoint", {
+                {"checkpoint_id", "checkpoint-1"},
+                {"request_id", "request-1"},
+                {"turn_id", "turn-1"},
+                {"plan_id", "plan-1"},
+                {"active_step_id", "step-2"},
+                {"next_action", "resume"},
+                {"plan_version", 4},
+                {"sequence", 2},
+                {"reason", "completion_limit"},
+                {"completed_step_ids", json::array({"step-1"})},
+                {"resource_refs", json::array({
+                    {{"uri", "workspace://checkpoint/log"}, {"name", "log"},
+                     {"description", "checkpoint log"}, {"mime_type", "text/plain"},
+                     {"size_bytes", 12}}
+                })},
+            }},
         },
         turn_response,
         error);
@@ -449,7 +466,16 @@ int main() {
             !turn_response.cancelled ||
             turn_response.failure_class != "timeout" ||
             turn_response.response_generation_status != "cancelled" ||
-            turn_response.response_stop_reason != "cancelled") {
+            turn_response.response_stop_reason != "cancelled" ||
+            !turn_response.continuation_checkpoint ||
+            turn_response.continuation_checkpoint->checkpoint_id != "checkpoint-1" ||
+            turn_response.continuation_checkpoint->request_id != "request-1" ||
+            turn_response.continuation_checkpoint->turn_id != "turn-1" ||
+            turn_response.continuation_checkpoint->reason !=
+                common_agent_continuation_reason::completion_limit ||
+            turn_response.continuation_checkpoint->resource_refs.size() != 1 ||
+            turn_response.continuation_checkpoint->resource_refs[0].uri !=
+                "workspace://checkpoint/log") {
         std::fprintf(stderr, "turn response contract mismatch: %s\n", error.c_str());
         return 1;
     }

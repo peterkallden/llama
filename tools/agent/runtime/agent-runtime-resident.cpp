@@ -90,6 +90,11 @@ void common_agent_runtime_resident_runtime::set_tooling(common_agent_runtime_too
     tooling = std::move(next_tooling);
 }
 
+void common_agent_runtime_resident_runtime::set_execution_control(
+        common_agent_runtime_execution_control execution_control) {
+    base_turn_request.execution_control = std::move(execution_control);
+}
+
 void common_agent_runtime_resident_runtime::set_policy_pack(
         std::optional<common_memory_policy_pack> policy_pack) {
     base_turn_request.request.policy_pack = std::move(policy_pack);

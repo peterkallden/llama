@@ -23,6 +23,7 @@ struct common_agent_runtime_turn_request {
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
     std::string fallback_reason;
+    common_agent_runtime_execution_control execution_control;
 };
 
 struct common_agent_runtime_resident_request_config {

@@ -67,6 +67,7 @@ struct common_agent_runtime_driver_inputs {
     std::function<common_agent_research_stop_reason()> research_stop_reason;
     std::optional<common_memory_candidate> explicit_memory_candidate;
     bool explicit_memory_confirmed = false;
+    common_agent_runtime_execution_control execution_control;
 };
 
 struct common_agent_runtime_driver_execution {
@@ -91,6 +92,7 @@ struct common_agent_runtime_driver_execution {
     bool explicit_memory_confirmed = false;
     std::vector<common_agent_event> pre_turn_events;
     std::vector<common_runtime_trace_entry> pre_turn_trace;
+    common_agent_runtime_execution_control execution_control;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

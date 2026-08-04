@@ -179,6 +179,9 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.research_stop_reason,
         inputs.explicit_memory_candidate,
         inputs.explicit_memory_confirmed,
+        {},
+        {},
+        inputs.execution_control,
     };
 }
 
@@ -278,7 +281,17 @@ bool run_agent_runtime_driver(
     const std::string original_prompt = execution.orchestration_config.prompt;
     common_agent_result aggregate;
     size_t continuation_count = 0;
+    const auto stop_for_execution_control = [&]() {
+        execution.orchestration_config.prompt = original_prompt;
+        result = std::move(aggregate);
+        result.response_generation_status = common_agent_generation_status::cancelled;
+        result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
+        result.error = execution.execution_control.stop_reason();
+        error = result.error.empty() ? "agent runtime execution stopped" : result.error;
+        return false;
+    };
     while (true) {
+        if (execution.execution_control.should_stop()) return stop_for_execution_control();
         auto assembly = make_agent_runtime_assembly(
             execution.memory_store,
             execution.plan_store,
@@ -294,6 +307,7 @@ bool run_agent_runtime_driver(
             return false;
         }
         append_runtime_result(aggregate, slice);
+        if (execution.execution_control.should_stop()) return stop_for_execution_control();
 
         if (slice.response_stop_reason != common_agent_generation_stop_reason::limit ||
                 !slice.plan_id ||

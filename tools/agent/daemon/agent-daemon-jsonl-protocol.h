@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../common/runtime-resource.h"
+#include "../../../common/agent/agent-continuation.h"
 #include "../../../common/agent/turn-summary.h"
 
 #include "agent-daemon-events.h"
@@ -127,6 +128,7 @@ struct agent_daemon_jsonl_turn_response {
     std::string response_stop_reason;
     bool runtime_reused = false;
     int event_count = 0;
+    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
     std::optional<common_agent_turn_summary> turn_summary;
 };
 

@@ -694,6 +694,34 @@ the bounded limitation when no further revision budget remains. When allowed,
 the higher mode receives the remaining turn budget; it does not reset the
 turn's deadline, cancellation state or escalation count.
 
+### Continuation slices and checkpoint transport
+
+Completion limits are handled as bounded continuation slices inside one
+driver operation. After a slice reaches the model limit, the runtime resumes
+the existing plan only when the continuation budget allows it; otherwise it
+returns a host-owned checkpoint. The checkpoint is execution state for the
+current turn, not a memory candidate or a second plan. It carries the request
+and turn identity, plan revision, active step, next action, sequence and
+optional resource references so a later resume can validate that it is not
+forking stale work.
+
+The host-owned execution-control object is checked before and after every
+slice. Cancellation and deadline expiry therefore stop before the next
+continuation slice, preserve the already aggregated response, and return a
+cancelled result with the original stop reason. The continuation prompt is
+also restored on this early path. The same control object is propagated from
+the session-host request through the resident runtime and runtime host into
+the driver; no parallel cancellation mechanism is introduced.
+
+Session-host results attach the externally accepted request and turn identity
+to a checkpoint and validate it before returning it. The daemon response
+protocol now serializes the bounded checkpoint projection, including resource
+references, and the JSONL client parser preserves it as typed state. Daemon
+events remain a separate channel: the checkpoint belongs to the terminal turn
+result and is not emitted as an ordinary progress event. A future resume must
+match request/turn identity and the current plan revision before execution is
+allowed to continue.
+
 ## Current Shape
 
 The core runtime remains in-process, but it already has asynchronous internal

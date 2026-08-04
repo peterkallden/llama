@@ -830,6 +830,19 @@ int main() {
     turn_result.turn_result.trace_count = turn_result.turn_result.trace.size();
     turn_result.turn_result.event_count = 3;
     turn_result.turn_result.memory_learning_summary = "none";
+    turn_result.turn_result.continuation_checkpoint = common_agent_continuation_checkpoint{
+        "checkpoint-1",
+        "request-1",
+        "turn-1",
+        "plan-1",
+        "step-2",
+        "resume",
+        4,
+        2,
+        common_agent_continuation_reason::completion_limit,
+        {"step-1"},
+        {{"workspace://checkpoint/log", "log", "checkpoint log", "text/plain", 12}},
+    };
     turn_result.turn_summary = common_agent_turn_summary{
         "agent",
         "completed",
@@ -858,6 +871,10 @@ int main() {
             !turn_response["trace"].is_array() ||
             turn_response["trace"].size() != 1 ||
             turn_response["trace"][0].value("tool_name", "") != "calculator" ||
+            !turn_response.contains("continuation_checkpoint") ||
+            turn_response["continuation_checkpoint"].value("checkpoint_id", "") != "checkpoint-1" ||
+            turn_response["continuation_checkpoint"].value("request_id", "") != "request-1" ||
+            turn_response["continuation_checkpoint"].value("reason", "") != "completion_limit" ||
             !turn_response.contains("turn_summary") ||
             turn_response["turn_summary"].value("mode", "") != "agent" ||
             turn_response["turn_summary"].value("status", "") != "completed") {

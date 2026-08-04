@@ -653,6 +653,32 @@ json make_agent_daemon_turn_response(
     response["trace_count"] = turn.trace_count;
     response["memory_learning_related_count"] = turn.memory_learning_related_count;
     response["memory_learning_summary"] = turn.memory_learning_summary;
+    if (turn.continuation_checkpoint) {
+        const auto & checkpoint = *turn.continuation_checkpoint;
+        json resource_refs = json::array();
+        for (const auto & resource : checkpoint.resource_refs) {
+            resource_refs.push_back({
+                {"uri", resource.uri},
+                {"name", resource.name},
+                {"description", resource.description},
+                {"mime_type", resource.mime_type},
+                {"size_bytes", resource.size_bytes},
+            });
+        }
+        response["continuation_checkpoint"] = {
+            {"checkpoint_id", checkpoint.checkpoint_id},
+            {"request_id", checkpoint.request_id},
+            {"turn_id", checkpoint.turn_id},
+            {"plan_id", checkpoint.plan_id},
+            {"active_step_id", checkpoint.active_step_id},
+            {"next_action", checkpoint.next_action},
+            {"plan_version", checkpoint.plan_version},
+            {"sequence", checkpoint.sequence},
+            {"reason", common_agent_continuation_reason_name(checkpoint.reason)},
+            {"completed_step_ids", checkpoint.completed_step_ids},
+            {"resource_refs", std::move(resource_refs)},
+        };
+    }
     json trace_entries = json::array();
     for (const auto & entry : turn.trace) {
         trace_entries.push_back(serialize_agent_daemon_trace_entry(entry));

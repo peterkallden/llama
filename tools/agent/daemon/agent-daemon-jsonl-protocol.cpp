@@ -428,6 +428,44 @@ bool parse_agent_daemon_jsonl_turn_response(
     response.response_stop_reason = message.value("response_stop_reason", std::string());
     response.runtime_reused = message.value("runtime_reused", false);
     response.event_count = message.value("event_count", 0);
+    if (message.contains("continuation_checkpoint") &&
+            message["continuation_checkpoint"].is_object()) {
+        const auto & value = message["continuation_checkpoint"];
+        common_agent_continuation_checkpoint checkpoint;
+        checkpoint.checkpoint_id = value.value("checkpoint_id", std::string());
+        checkpoint.request_id = value.value("request_id", std::string());
+        checkpoint.turn_id = value.value("turn_id", std::string());
+        checkpoint.plan_id = value.value("plan_id", std::string());
+        checkpoint.active_step_id = value.value("active_step_id", std::string());
+        checkpoint.next_action = value.value("next_action", std::string());
+        checkpoint.plan_version = value.value("plan_version", uint64_t(0));
+        checkpoint.sequence = value.value("sequence", size_t(0));
+        const auto reason = value.value("reason", std::string());
+        if (reason == "completion_limit") {
+            checkpoint.reason = common_agent_continuation_reason::completion_limit;
+        } else if (reason == "phase_boundary") {
+            checkpoint.reason = common_agent_continuation_reason::phase_boundary;
+        } else {
+            checkpoint.reason = common_agent_continuation_reason::context_pressure;
+        }
+        checkpoint.completed_step_ids = value.value(
+            "completed_step_ids", std::vector<std::string>());
+        if (value.contains("resource_refs") && value["resource_refs"].is_array()) {
+            for (const auto & item : value["resource_refs"]) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                common_runtime_resource_ref resource;
+                resource.uri = item.value("uri", std::string());
+                resource.name = item.value("name", std::string());
+                resource.description = item.value("description", std::string());
+                resource.mime_type = item.value("mime_type", std::string());
+                resource.size_bytes = item.value("size_bytes", size_t(0));
+                checkpoint.resource_refs.push_back(std::move(resource));
+            }
+        }
+        response.continuation_checkpoint = std::move(checkpoint);
+    }
     if (message.contains("turn_summary") && message["turn_summary"].is_object()) {
         const auto & value = message["turn_summary"];
         common_agent_turn_summary summary;

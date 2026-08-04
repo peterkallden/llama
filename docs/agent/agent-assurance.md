@@ -33,6 +33,8 @@ when the corresponding verification record contains evidence for it.
 - [x] Late escalation is bounded to one escalation per turn
 - [x] Research verification can perform its bounded reopen
 - [x] Cancellation reaches a terminal state
+- [x] Cancellation and deadlines stop automatic continuation before the next slice
+- [x] Continuation checkpoints remain host-owned and are transported through the daemon turn result
 
 ### Tools and authority
 
@@ -162,6 +164,19 @@ the CTest timeout. A direct bounded Docker command reproduced the same host
 behavior. This distinction must remain visible until the Docker subprocess or
 daemon issue is resolved.
 
+### Continuation sweep verification - 2026-08-04
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, serial MSVC build, artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-cont1` |
+| Full agent CTest before continuation changes | `26/26 passed`, `0 failed`, `0 not-run` |
+| Continuation CTest | `1/1 passed` |
+| Daemon protocol CTests | `2/2 passed` |
+| Scope | Slice cancellation/deadline control and daemon checkpoint transport |
+| Not claimed | Full context compaction or arbitrary context-window overflow handling |
+
 ### Previous current run
 
 | Field | Value |
@@ -219,6 +234,18 @@ propagation for host-owned asynchronous native and MCP tool calls:
 The native provider smoke now covers explicit cancellation of an in-flight async
 fetch. Focused tool provider/runtime CTests passed 2/2 after the implementation;
 the full agent label remains the final assurance gate for this checkpoint.
+
+### Continuation control and checkpoint transport
+
+The bounded continuation slice checkpoint (`kallden/agent-selection-learning`)
+was verified on Windows/MSVC Debug using the E: build tree. The continuation
+smoke passed cancellation and deadline cases that stop after the completed
+slice and before the next inference request. The daemon protocol and JSONL
+protocol smokes also passed checkpoint serialization/parsing, including
+request/turn identity, plan revision, reason, sequence and resource
+references. Full context compaction remains a separate, unimplemented gate;
+this checkpoint does not claim that arbitrary model context can exceed a
+model window.
 
 ### CTest evidence
 

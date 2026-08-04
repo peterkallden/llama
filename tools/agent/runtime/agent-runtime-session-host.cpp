@@ -145,6 +145,7 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
     }
     turn_request.request.input_resources = request.input_resources;
     turn_request.request.event_sink = request.event_sink;
+    turn_request.execution_control = request.execution_control;
     turn_request.request.research_should_stop = [control = request.execution_control]() {
         return control.should_stop();
     };
@@ -306,6 +307,7 @@ bool common_agent_runtime_session_host::run_turn(
         return false;
     }
     runtime->set_tooling(std::move(resolved_tooling));
+    runtime->set_execution_control(request.execution_control);
 
     const std::string turn_id = request.turn_id.empty()
         ? "daemon-turn-" + std::to_string(++generated_turn_counter)
