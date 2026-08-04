@@ -6,6 +6,18 @@
 using json = nlohmann::ordered_json;
 
 int main() {
+    if (common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::memories_listed) != common_agent_daemon_event_category::memory ||
+            common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::memories_list_failed) != common_agent_daemon_event_category::memory ||
+            common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::plans_listed) != common_agent_daemon_event_category::plan ||
+            common_agent_daemon_event_category_for_type(
+                common_agent_daemon_event_type::plans_list_failed) != common_agent_daemon_event_category::plan) {
+        std::fprintf(stderr, "list event categories are incomplete\n");
+        return 1;
+    }
+
     daemon_options options;
     options.default_mode = "chat";
     options.turn_timeout_ms = 7000;

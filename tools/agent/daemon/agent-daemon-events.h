@@ -151,11 +151,15 @@ inline common_agent_daemon_event_category common_agent_daemon_event_category_for
         case common_agent_daemon_event_type::tool_timed_out:
             return common_agent_daemon_event_category::tool;
         case common_agent_daemon_event_type::memory_learned:
+        case common_agent_daemon_event_type::memories_listed:
+        case common_agent_daemon_event_type::memories_list_failed:
             return common_agent_daemon_event_category::memory;
         case common_agent_daemon_event_type::plan_created:
         case common_agent_daemon_event_type::plan_updated:
         case common_agent_daemon_event_type::plan_step_started:
         case common_agent_daemon_event_type::plan_step_completed:
+        case common_agent_daemon_event_type::plans_listed:
+        case common_agent_daemon_event_type::plans_list_failed:
             return common_agent_daemon_event_category::plan;
         case common_agent_daemon_event_type::observation_recorded:
             return common_agent_daemon_event_category::observation;
