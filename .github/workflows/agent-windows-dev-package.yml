@@ -154,7 +154,26 @@ jobs:
             llama-agent-cpu-windows-x64-dev.msi
             SHA256SUMS
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Retain only the five newest Windows development packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $artifacts = @(
+            gh api --paginate "/repos/$env:GITHUB_REPOSITORY/actions/artifacts?per_page=100" `
+              --jq '.artifacts[] | select(.name == "llama-agent-dev-windows-cpu-package") | {id: .id, created_at: .created_at}' |
+              ConvertFrom-Json
+          )
+
+          $artifacts |
+            Sort-Object created_at -Descending |
+            Select-Object -Skip 5 |
+            ForEach-Object {
+              Write-Host "Deleting older Windows development package artifact $($_.id)"
+              gh api --method DELETE "/repos/$env:GITHUB_REPOSITORY/actions/artifacts/$($_.id)"
+            }
 
       - name: Upload Windows diagnostics
         if: failure()
