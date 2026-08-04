@@ -171,7 +171,7 @@ daemon issue is resolved.
 | Branch | `kallden/agent-selection-learning` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, serial MSVC build, artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-cont1` |
-| Full agent CTest before continuation changes | `26/26 passed`, `0 failed`, `0 not-run` |
+| Full agent CTest after continuation and checkpoint changes | `26/26 passed`, `0 failed`, `0 not-run` |
 | Continuation CTest | `1/1 passed` |
 | Daemon protocol CTests | `2/2 passed` |
 | Scope | Slice cancellation/deadline control and daemon checkpoint transport |
