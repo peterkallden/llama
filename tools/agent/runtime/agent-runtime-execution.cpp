@@ -51,46 +51,68 @@ bool prepare_resource_chunk_observations(
         if (chunk_plan.ranges.empty()) {
             continue;
         }
+        size_t next_chunk_index = 0;
+        for (const auto & observation : plan->observations) {
+            if (observation.source != "resource_chunk" ||
+                    observation.resource_refs.size() != 1 ||
+                    observation.resource_refs.front().lineage.parent_uri != input.resource.uri) {
+                continue;
+            }
+            const auto & lineage = observation.resource_refs.front().lineage;
+            if (lineage.chunk_index == next_chunk_index) ++next_chunk_index;
+        }
+        if (next_chunk_index >= chunk_plan.ranges.size()) {
+            continue;
+        }
         const auto first_ref = make_agent_resource_chunk_ref(
-            chunk_plan, chunk_plan.ranges.front());
+            chunk_plan, chunk_plan.ranges[next_chunk_index]);
         execution.resource_chunk_plans.push_back(std::move(chunk_plan));
         const size_t plan_index = execution.resource_chunk_plans.size() - 1;
         execution.input_resources[input_index] = {
             first_ref, input.role.empty() ? "resource_chunk" : input.role, input.required};
         execution.active_resource_chunk_plan = plan_index;
         execution.active_resource_chunk_input = input_index;
-        execution.active_resource_chunk_index = 0;
+        execution.active_resource_chunk_index = next_chunk_index;
 
-        common_plan_operation observed;
-        observed.kind = common_plan_operation_kind::record_observation;
-        observed.plan_id = plan->id;
-        observed.expected_version = plan->version;
-        observed.reason_summary = "bounded resource chunk plan attached to the session lane";
-        observed.observation = common_plan_observation{
-            "resource_chunk_plan:" + input.resource.uri,
-            "resource_chunk_planned",
-            "Planned " + std::to_string(execution.resource_chunk_plans.back().ranges.size()) +
-                " bounded text chunks; the original resource remains authoritative.",
-            1.0f,
-            {input.resource.uri},
-            {first_ref},
-            static_cast<int64_t>(std::time(nullptr)),
-        };
-        common_plan_state updated;
-        if (!execution.plan_store.apply(observed, updated, error)) {
-            return false;
+        const std::string plan_observation_id = "resource_chunk_plan:" + input.resource.uri;
+        const bool plan_observation_exists = std::any_of(
+            plan->observations.begin(), plan->observations.end(),
+            [&](const common_plan_observation & observation) {
+                return observation.id == plan_observation_id;
+            });
+        if (!plan_observation_exists) {
+            common_plan_operation observed;
+            observed.kind = common_plan_operation_kind::record_observation;
+            observed.plan_id = plan->id;
+            observed.expected_version = plan->version;
+            observed.reason_summary = "bounded resource chunk plan attached to the session lane";
+            observed.observation = common_plan_observation{
+                plan_observation_id,
+                "resource_chunk_planned",
+                "Planned " + std::to_string(execution.resource_chunk_plans.back().ranges.size()) +
+                    " bounded text chunks; starting at chunk " + std::to_string(next_chunk_index) +
+                    "; the original resource remains authoritative.",
+                1.0f,
+                {input.resource.uri},
+                {first_ref},
+                static_cast<int64_t>(std::time(nullptr)),
+            };
+            common_plan_state updated;
+            if (!execution.plan_store.apply(observed, updated, error)) {
+                return false;
+            }
+            *plan = std::move(updated);
+            execution.pre_turn_events.push_back({
+                common_agent_event_type::resource_chunk_planned,
+                "bounded resource chunk plan attached",
+                {},
+                plan->id,
+                {},
+                observed.observation->id,
+                {},
+                first_ref.uri,
+            });
         }
-        *plan = std::move(updated);
-        execution.pre_turn_events.push_back({
-            common_agent_event_type::resource_chunk_planned,
-            "bounded resource chunk plan attached",
-            {},
-            plan->id,
-            {},
-            observed.observation->id,
-            {},
-            first_ref.uri,
-        });
         // A turn has one active bounded input chain.  Additional oversized
         // resources are planned on a later session-lane turn, never in
         // parallel with this one.
