@@ -1,8 +1,8 @@
 # Agent Beta Assurance
 
 Status: Conditional for the executed Windows/Debug beta scope; the complete
-model-free agent CTest and smoke matrix passed with backend skips recorded,
-while model-backed coverage remains outstanding
+agent CTest label and live Kubernetes sandbox smoke passed, while the live
+Docker sandbox smoke timed out and model-backed coverage remains qualified.
 
 This document is the assurance record for the `llama-agent` beta milestone.
 It separates milestone criteria from the test evidence collected for a
@@ -96,7 +96,7 @@ builds.
 | Boundary enforcement | [x] | Workspace, repository, sandbox, store and artifact boundaries reject out-of-scope access |
 | Native tool behavior | [x] | Bounded workspace/repository/data/diagnostic adapters have direct tests |
 | Mutation safety | [x] | Workspace mutation uses confirmation, scope checks and expected-content tokens |
-| Sandbox execution | [x] | Direct Docker and Kubernetes sandbox smokes passed; build/test end-to-end execution remains a separate gate |
+| Sandbox execution | [ ] | Kubernetes live smoke passed; Docker live smoke timed out after 300 seconds, so Docker execution is not assured |
 | Backend availability | [x] | Tools depending on unavailable backends are removed from the effective tool view |
 | Result normalization | [x] | Tool results expose bounded status, summaries, diagnostics and resource references where applicable |
 | Semantic diagnostics | [ ] | Symbol/reference keep a bounded text fallback and call hierarchy requires a semantic provider; clangd/LSP or a project index is not yet bound |
@@ -134,7 +134,34 @@ Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
 passes.
 
-### Current run
+### Latest verification - 2026-08-04
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `18d8e5bb8` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-13` |
+| Memory contract change | Memory ID references use bounded strings: `minLength: 1`, `maxLength: 256`; catalog tests cover get/update/forget/link/compact schemas |
+| Agent CTest | `24/24 passed`, `0 failed`, `0 not-run` |
+| Kubernetes sandbox CTest | `1/1 passed` |
+| Docker sandbox CTest | `0/1 passed`, `1 failed` (`Timeout` after 300 seconds) |
+| Docker direct check | `docker info`/bounded `alpine:3.20` run also timed out; no Docker pass is claimed |
+| Decision | Conditional assurance; Kubernetes is verified, Docker remains an open failed gate, and long-running/model-backed gates remain qualified |
+
+The latest agent label includes the schema and adapter regressions for bounded
+memory references. The native and reflection paths also accept compatibility
+forms and canonicalize them before validation, while the catalog continues to
+communicate the strict canonical object contract to the model.
+
+The Docker result is recorded as failed rather than skipped because the smoke
+executable was available and the backend was invoked. The smoke did not reach
+its declared unavailable-backend return path (`77`); it remained alive until
+the CTest timeout. A direct bounded Docker command reproduced the same host
+behavior. This distinction must remain visible until the Docker subprocess or
+daemon issue is resolved.
+
+### Previous current run
 
 | Field | Value |
 |---|---|
