@@ -3,6 +3,7 @@
 [![Agent CI](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml)
 [![Dynamic analysis](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml)
 [![Development package](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
+[![Windows development package](https://github.com/peterkallden/llama/actions/workflows/agent-windows-dev-package.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-windows-dev-package.yml)
 [![Docker images](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml)
 [![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
 
