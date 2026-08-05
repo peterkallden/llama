@@ -145,7 +145,7 @@ jobs:
         run: |
           $packageName = 'llama-agent-cpu-windows-x64-dev'
           7z a -tzip "$packageName.zip" .\package-root\*
-          cpack --config build-agent-windows-dev\CPackConfig.cmake -G WIX
+          cpack --config build-agent-windows-dev\CPackConfig.cmake -G WIX -C RelWithDebInfo
           $msi = Get-ChildItem build-agent-windows-dev -Filter '*.msi' -File | Select-Object -First 1
           if (-not $msi) { throw 'CPack did not produce an MSI' }
           Copy-Item $msi.FullName "$packageName.msi"
