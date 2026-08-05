@@ -10,8 +10,13 @@
 
 #if defined(CPPHTTPLIB_OPENSSL_SUPPORT)
 #include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#include <openssl/param_build.h>
+#endif
 #endif
 
 namespace {
@@ -92,6 +97,66 @@ bool valid_time_claim(
     return future ? value <= now + static_cast<int64_t>(skew)
                   : value + static_cast<int64_t>(skew) >= now;
 }
+
+#if defined(CPPHTTPLIB_OPENSSL_SUPPORT)
+EVP_PKEY * make_rsa_public_key(
+        const std::string & modulus,
+        const std::string & exponent) {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    BIGNUM * n = BN_bin2bn(
+        reinterpret_cast<const unsigned char *>(modulus.data()),
+        static_cast<int>(modulus.size()), nullptr);
+    BIGNUM * e = BN_bin2bn(
+        reinterpret_cast<const unsigned char *>(exponent.data()),
+        static_cast<int>(exponent.size()), nullptr);
+    OSSL_PARAM_BLD * builder = OSSL_PARAM_BLD_new();
+    EVP_PKEY_CTX * context = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr);
+    OSSL_PARAM * parameters = nullptr;
+    EVP_PKEY * key = nullptr;
+
+    if (n != nullptr && e != nullptr && builder != nullptr &&
+            OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_N, n) == 1 &&
+            OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_E, e) == 1) {
+        parameters = OSSL_PARAM_BLD_to_param(builder);
+        if (parameters != nullptr && context != nullptr &&
+                EVP_PKEY_fromdata_init(context) == 1 &&
+                EVP_PKEY_fromdata(context, &key, EVP_PKEY_PUBLIC_KEY, parameters) != 1) {
+            EVP_PKEY_free(key);
+            key = nullptr;
+        }
+    }
+
+    OSSL_PARAM_free(parameters);
+    EVP_PKEY_CTX_free(context);
+    OSSL_PARAM_BLD_free(builder);
+    BN_free(n);
+    BN_free(e);
+    return key;
+#else
+    RSA * rsa = RSA_new();
+    BIGNUM * n = BN_bin2bn(
+        reinterpret_cast<const unsigned char *>(modulus.data()),
+        static_cast<int>(modulus.size()), nullptr);
+    BIGNUM * e = BN_bin2bn(
+        reinterpret_cast<const unsigned char *>(exponent.data()),
+        static_cast<int>(exponent.size()), nullptr);
+    if (rsa == nullptr || n == nullptr || e == nullptr ||
+            RSA_set0_key(rsa, n, e, nullptr) != 1) {
+        BN_free(n);
+        BN_free(e);
+        RSA_free(rsa);
+        return nullptr;
+    }
+    EVP_PKEY * key = EVP_PKEY_new();
+    if (key == nullptr || EVP_PKEY_assign_RSA(key, rsa) != 1) {
+        EVP_PKEY_free(key);
+        RSA_free(rsa);
+        return nullptr;
+    }
+    return key;
+#endif
+}
+#endif
 
 } // namespace
 
@@ -241,21 +306,8 @@ bool agent_mcp_jwt_authenticator::verify_signature(
         error = "JWT signature encoding is invalid";
         return false;
     }
-    RSA * rsa = RSA_new();
-    BIGNUM * n = BN_bin2bn(reinterpret_cast<const unsigned char *>(modulus.data()), static_cast<int>(modulus.size()), nullptr);
-    BIGNUM * e = BN_bin2bn(reinterpret_cast<const unsigned char *>(exponent.data()), static_cast<int>(exponent.size()), nullptr);
-    if (rsa == nullptr || n == nullptr || e == nullptr || RSA_set0_key(rsa, n, e, nullptr) != 1) {
-        if (n != nullptr) BN_free(n);
-        if (e != nullptr) BN_free(e);
-        if (rsa != nullptr) RSA_free(rsa);
-        error = "JWT RSA key construction failed";
-        return false;
-    }
-    EVP_PKEY * key = EVP_PKEY_new();
-    const bool key_ok = key != nullptr && EVP_PKEY_assign_RSA(key, rsa) == 1;
-    if (!key_ok) {
-        if (key != nullptr) EVP_PKEY_free(key);
-        else RSA_free(rsa);
+    EVP_PKEY * key = make_rsa_public_key(modulus, exponent);
+    if (key == nullptr) {
         error = "JWT EVP key construction failed";
         return false;
     }
