@@ -826,6 +826,8 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-runtime-session-manager-smoke
     llama-agent-runtime-operation-manager-smoke
     llama-agent-resource-store-smoke
+    llama-agent-resource-chunker-smoke
+    llama-agent-resource-range-chunker-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-daemon
