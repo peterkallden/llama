@@ -51,15 +51,23 @@ jobs:
           $cozoRoot = Join-Path $env:RUNNER_TEMP "cozo-$env:COZO_VERSION"
           git clone --depth 1 --branch "v$env:COZO_VERSION" `
             https://github.com/cozodb/cozo.git $cozoRoot
+          $cozoArchive = Join-Path $cozoRoot "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip"
           gh release download "v$env:COZO_VERSION" `
             --repo cozodb/cozo `
-            --pattern "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib" `
+            --pattern "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip" `
             --dir $cozoRoot
-          $cozoLibrary = Join-Path $cozoRoot "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib"
+          if (-not (Test-Path $cozoArchive)) {
+            throw "Cozo library archive was not downloaded: $cozoArchive"
+          }
+          Expand-Archive -LiteralPath $cozoArchive -DestinationPath $cozoRoot -Force
+          $cozoLibrary = Get-ChildItem -Path $cozoRoot `
+            -Filter "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib" `
+            -File -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
           if (-not (Test-Path (Join-Path $cozoRoot 'cozo-lib-c\cozo_c.h'))) {
             throw 'Cozo header was not provisioned'
           }
-          if (-not (Test-Path $cozoLibrary)) {
+          if ([string]::IsNullOrWhiteSpace($cozoLibrary) -or -not (Test-Path -LiteralPath $cozoLibrary)) {
             throw "Cozo library was not provisioned: $cozoLibrary"
           }
           "COZO_INCLUDE_DIR=$cozoRoot\cozo-lib-c" | Out-File $env:GITHUB_ENV -Append
