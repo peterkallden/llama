@@ -64,6 +64,61 @@ inline bool common_plan_chunk_observations_valid(
     error.clear();
     return true;
 }
+
+enum class common_plan_chunk_synthesis_status { complete, incomplete, conflict };
+
+struct common_plan_chunk_synthesis_input {
+    common_plan_chunk_synthesis_status status = common_plan_chunk_synthesis_status::incomplete;
+    std::string parent_uri;
+    size_t chunk_count = 0;
+    std::vector<size_t> completed_chunk_indexes;
+    std::vector<size_t> missing_chunk_indexes;
+    std::vector<std::string> summaries;
+};
+
+// Build a deterministic, ordered synthesis view from existing plan evidence.
+// The original resource remains authoritative; summaries are bounded working
+// evidence and must not be treated as a replacement resource.
+inline bool common_plan_chunk_synthesis_from_observations(
+        const std::vector<common_plan_observation> & observations,
+        const std::string & parent_uri,
+        common_plan_chunk_synthesis_input & out,
+        std::string & error) {
+    out = {};
+    out.parent_uri = parent_uri;
+    if (!common_plan_chunk_observations_valid(observations, error)) {
+        out.status = common_plan_chunk_synthesis_status::conflict;
+        return false;
+    }
+    struct item { size_t index; std::string summary; };
+    std::vector<item> items;
+    for (const auto & observation : observations) {
+        if (observation.source != "resource_chunk" || observation.resource_refs.size() != 1) continue;
+        const auto & lineage = observation.resource_refs.front().lineage;
+        if (!parent_uri.empty() && lineage.parent_uri != parent_uri) continue;
+        if (out.parent_uri.empty()) out.parent_uri = lineage.parent_uri;
+        if (out.chunk_count == 0) out.chunk_count = lineage.chunk_count;
+        items.push_back({lineage.chunk_index, observation.summary});
+    }
+    std::sort(items.begin(), items.end(), [](const item & left, const item & right) {
+        return left.index < right.index;
+    });
+    for (const auto & item : items) {
+        out.completed_chunk_indexes.push_back(item.index);
+        out.summaries.push_back(item.summary);
+    }
+    for (size_t index = 0; index < out.chunk_count; ++index) {
+        if (std::find(out.completed_chunk_indexes.begin(), out.completed_chunk_indexes.end(), index) ==
+                out.completed_chunk_indexes.end()) {
+            out.missing_chunk_indexes.push_back(index);
+        }
+    }
+    out.status = out.missing_chunk_indexes.empty()
+        ? common_plan_chunk_synthesis_status::complete
+        : common_plan_chunk_synthesis_status::incomplete;
+    error.clear();
+    return true;
+}
 // Data proposed by a plan; execution is owned by the agent tool registry.
 struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
 struct common_plan_step {

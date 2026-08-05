@@ -128,13 +128,32 @@ int main() {
 
     common_plan_observation chunk_one{
         "chunk-1", "resource_chunk", "First bounded observation", 1.0f, {}, {first}, 0};
+    chunk_one.resource_refs.front().lineage.chunk_index = 0;
+    chunk_one.resource_refs.front().lineage.chunk_count = 2;
     common_plan_observation chunk_two = chunk_one;
     chunk_two.id = "chunk-2";
     chunk_two.resource_refs.front().uri = "agent-resource://resource/chunk-2";
-    chunk_two.resource_refs.front().lineage.chunk_index = 2;
+    chunk_two.resource_refs.front().lineage.chunk_index = 1;
     std::vector<common_plan_observation> chunk_observations{chunk_one, chunk_two};
     if (!common_plan_chunk_observations_valid(chunk_observations, error)) {
         std::fprintf(stderr, "valid chunk observations were rejected: %s\n", error.c_str());
+        return 1;
+    }
+    common_plan_chunk_synthesis_input synthesis;
+    if (!common_plan_chunk_synthesis_from_observations(
+                chunk_observations, first.lineage.parent_uri, synthesis, error) ||
+            synthesis.status != common_plan_chunk_synthesis_status::complete ||
+            synthesis.summaries.size() != 2 || synthesis.completed_chunk_indexes[0] != 0) {
+        std::fprintf(stderr, "complete chunk synthesis projection failed: %s\n", error.c_str());
+        return 1;
+    }
+    auto incomplete_observations = chunk_observations;
+    incomplete_observations.pop_back();
+    if (!common_plan_chunk_synthesis_from_observations(
+                incomplete_observations, first.lineage.parent_uri, synthesis, error) ||
+            synthesis.status != common_plan_chunk_synthesis_status::incomplete ||
+            synthesis.missing_chunk_indexes.empty()) {
+        std::fprintf(stderr, "incomplete chunk synthesis projection failed: %s\n", error.c_str());
         return 1;
     }
     chunk_observations.push_back(chunk_two);
