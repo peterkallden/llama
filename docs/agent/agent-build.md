@@ -176,6 +176,45 @@ cmake --build build-agent-linux --parallel 4 \
   --target llama-agent-build-pack
 ```
 
+## Debian and Ubuntu package build
+
+The repository also contains a native Debian source package under
+[`debian`](../../debian). Build it through `dpkg-buildpackage`; Debian's
+`debian/rules` invokes `dh_auto_configure`, which creates the CMake build tree
+with the package flags before `dh_auto_build` builds the agent pack.
+
+The package uses Cozo-backed stores by default, so provide the Cozo C API
+header and shared library explicitly:
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes \
+  build-essential clang clangd cmake debhelper-compat dpkg-dev ninja-build \
+  libssl-dev pkg-config zlib1g-dev
+
+export COZO_INCLUDE_DIR=/path/to/cozo/cozo-lib-c
+export COZO_LIBRARY=/path/to/libcozo_c.so
+dpkg-buildpackage -us -uc -b
+```
+
+CPU is always enabled. CUDA and Vulkan are detected independently from the
+available development toolchains. Use explicit overrides when a downstream
+build needs a fixed configuration:
+
+```bash
+LLAMA_AGENT_CUDA=off \
+LLAMA_AGENT_VULKAN=on \
+LLAMA_AGENT_NATIVE=off \
+dpkg-buildpackage -us -uc -b
+```
+
+`LLAMA_AGENT_NATIVE` defaults to `off` to keep Debian binaries portable. A
+downstream maintainer building for a controlled host can set it to `on`. The
+resulting package installs the daemon and bootstrap helper under `/usr/sbin`,
+client binaries under `/usr/bin`, and examples under
+`/usr/share/doc/llama-agent/examples`. The systemd unit is installed but not
+enabled or started until `/etc/llama-agent/config.json` has been created.
+
 ## CTest labels
 
 CTest labels select test categories independently from CMake build targets.

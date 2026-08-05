@@ -1,0 +1,5 @@
+llama-agent (0.0.0~dev1-1) UNRELEASED; urgency=medium
+
+  * Add the Debian and Ubuntu source package layout for llama-agent.
+
+ -- Peter Kallden <kallden.peter@gmail.com>  Wed, 05 Aug 2026 21:30:00 +0200

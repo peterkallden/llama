@@ -1,0 +1,25 @@
+[Unit]
+Description=Llama agent daemon
+After=network.target
+
+[Service]
+Type=simple
+User=llama-agent
+Group=llama-agent
+SupplementaryGroups=llama-clients
+WorkingDirectory=/var/lib/llama-agent
+RuntimeDirectory=llama-agent
+RuntimeDirectoryMode=0770
+EnvironmentFile=-/etc/llama-agent/agent.env
+ExecStart=/usr/sbin/llama-agent-daemon --config /etc/llama-agent/config.json
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/llama-agent /run/llama-agent
+
+[Install]
+WantedBy=multi-user.target

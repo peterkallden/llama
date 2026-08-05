@@ -3,6 +3,7 @@
 [![Agent CI](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml)
 [![Dynamic analysis](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-dynamic-analysis.yml)
 [![Development package](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
+[![Debian development package](https://github.com/peterkallden/llama/actions/workflows/agent-debian-package.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-debian-package.yml)
 [![Windows development package](https://github.com/peterkallden/llama/actions/workflows/agent-windows-dev-package.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-windows-dev-package.yml)
 [![Docker images](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-docker-image.yml)
 [![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
@@ -22,6 +23,7 @@ distribution readiness:
 | [Agent CI](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
 | [Dynamic analysis](../../.github/workflows/agent-dynamic-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
 | [Development package](../../.github/workflows/agent-package.yml) | Verified development package from non-master branches |
+| [Debian development package](../../.github/workflows/agent-debian-package.yml) | Native Ubuntu/Debian package after the verified development package |
 | [Windows development package](../../.github/workflows/agent-windows-dev-package.yml) | Windows CPU dev ZIP/MSI after the verified Linux development package, or manual non-master dispatch |
 | [Agent release](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
 | [Docker images](../../.github/workflows/agent-docker-image.yml) | Dev image from a development package and backend images from releases |
@@ -35,6 +37,7 @@ evidence-based milestone record is maintained in
 - [Agent releases](https://github.com/peterkallden/llama/releases) contain
   versioned CPU, CUDA, and Vulkan packages published from `agent-v*` tags.
 - [Development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package.yml)
+- [Debian development packages](https://github.com/peterkallden/llama/actions/workflows/agent-debian-package.yml)
 - [Windows development package](https://github.com/peterkallden/llama/actions/workflows/agent-windows-dev-package.yml)
   are dated workflow artifacts for testing non-master development branches.
 
