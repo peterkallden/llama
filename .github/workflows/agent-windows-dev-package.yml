@@ -97,8 +97,8 @@ jobs:
             '-DCPACK_PACKAGE_NAME=llama-agent-cpu-windows-x64-dev',
             "-DCPACK_PACKAGE_VERSION=0.0.0-dev.$env:GITHUB_RUN_NUMBER",
             "-DCPACK_PACKAGE_FILE_NAME=$packageName",
-            "-DCOZO_INCLUDE_DIR=\"$env:COZO_INCLUDE_DIR\"",
-            "-DCOZO_LIBRARY=\"$env:COZO_LIBRARY\"",
+            "-DCOZO_INCLUDE_DIR=`"$env:COZO_INCLUDE_DIR`"",
+            "-DCOZO_LIBRARY=`"$env:COZO_LIBRARY`"",
             '-DLLAMA_AGENT_CLANG_EXECUTABLE=clang.exe -DLLAMA_AGENT_CLANGD_EXECUTABLE=clangd.exe'
           ) -join ' '
           $command = "call `"$vsDevCmd`" x64 && $configure"
