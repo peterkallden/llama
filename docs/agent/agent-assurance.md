@@ -71,7 +71,8 @@ when the corresponding verification record contains evidence for it.
 - [x] One active chunk chain advances through the existing session lane
 - [x] Processed chunks are recorded as parent-linked plan observations
 - [x] Chunk planning and processing are projected as typed daemon events
-- [ ] Context-budget accounting selects chunk size from resolved turn budgets
+- [x] Context-budget accounting selects chunk size from resolved turn budgets
+- [x] Chunk synthesis distinguishes complete, incomplete, and structural conflict states
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
@@ -196,6 +197,21 @@ daemon issue is resolved.
 | Daemon protocol CTests | `2/2 passed` |
 | Scope | Slice cancellation/deadline control and daemon checkpoint transport |
 | Not claimed | Full context compaction or arbitrary context-window overflow handling |
+
+### Resource chunk completion verification - 2026-08-05
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `47459a8d0` |
+| Platform | Windows / MSVC |
+| Build configuration | Release, Visual Studio 17 2022, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Focused CTest | `4/4 passed`, `0 failed`, `0 not-run` |
+| Tests | continuation, daemon protocol, resource store, resource range chunker |
+| Qwen resource synthesis | `passed`, four fixed resource chunks, two inference threads |
+| Qwen log | `work/qwen-resource-synthesis-next/resource-synthesis.log` |
+| Scope | Session-lane chunk advancement, resume selection, typed daemon events, synthesis completeness projection, configured byte budgets |
+| Not claimed | Full arbitrary context compaction or Linux/Docker backend assurance |
 
 ### Previous current run
 
