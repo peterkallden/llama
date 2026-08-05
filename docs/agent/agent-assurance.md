@@ -213,6 +213,20 @@ daemon issue is resolved.
 | Scope | Session-lane chunk advancement, resume selection, typed daemon events, synthesis completeness projection, configured byte budgets |
 | Not claimed | Full arbitrary context compaction or Linux/Docker backend assurance |
 
+### Full agent assurance verification - 2026-08-05
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `b43f61e14` |
+| Platform | Windows / MSVC |
+| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Agent CTest | `30/30 passed`, `0 failed`, `0 not-run` |
+| Test selection | `ctest -C Release -L agent --output-on-failure --parallel 2` |
+| Sandbox Docker | Not-run by request; Docker backend was not running |
+| Sandbox Kubernetes | Not-run by request; Kubernetes backend was not running |
+| Decision | Windows model-free agent assurance passed; sandbox and broader Linux gates remain outside this run |
+
 ### Previous current run
 
 | Field | Value |
