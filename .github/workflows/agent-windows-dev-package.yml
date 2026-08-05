@@ -143,9 +143,8 @@ jobs:
           7z a -tzip "$packageName.zip" .\package-root\*
           cpack --config build-agent-windows-dev\CPackConfig.cmake -G WIX -C RelWithDebInfo
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $msi = Get-ChildItem build-agent-windows-dev -Filter '*.msi' -File | Select-Object -First 1
+          $msi = Get-Item -LiteralPath "$packageName.msi" -ErrorAction SilentlyContinue
           if (-not $msi) { throw 'CPack did not produce an MSI' }
-          Copy-Item $msi.FullName "$packageName.msi"
           Get-FileHash "$packageName.zip","$packageName.msi" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
             Set-Content SHA256SUMS
