@@ -136,22 +136,35 @@ jobs:
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Install WiX Toolset
-        shell: pwsh
-        run: choco install wixtoolset --yes --no-progress
-
       - name: Create ZIP and MSI
         shell: pwsh
         run: |
           $packageName = 'llama-agent-cpu-windows-x64-dev'
           7z a -tzip "$packageName.zip" .\package-root\*
           cpack --config build-agent-windows-dev\CPackConfig.cmake -G WIX -C RelWithDebInfo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $msi = Get-ChildItem build-agent-windows-dev -Filter '*.msi' -File | Select-Object -First 1
           if (-not $msi) { throw 'CPack did not produce an MSI' }
           Copy-Item $msi.FullName "$packageName.msi"
           Get-FileHash "$packageName.zip","$packageName.msi" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
             Set-Content SHA256SUMS
+
+      - name: Dump WiX log on packaging failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $wixLogs = @(
+            Get-ChildItem -Path . -Filter 'wix.log' -File -Recurse -ErrorAction SilentlyContinue
+          )
+          if ($wixLogs.Count -eq 0) {
+            Write-Warning 'No wix.log was found under the workspace'
+            exit 0
+          }
+          foreach ($wixLog in $wixLogs) {
+            Write-Host "===== $($wixLog.FullName) ====="
+            Get-Content -LiteralPath $wixLog.FullName
+          }
 
       - name: Upload Windows dev package
         uses: actions/upload-artifact@v6
