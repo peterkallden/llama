@@ -203,7 +203,7 @@ daemon issue is resolved.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-selection-learning` |
-| Commit | `47459a8d0` |
+| Commit | `2b14b5bbb` |
 | Platform | Windows / MSVC |
 | Build configuration | Release, Visual Studio 17 2022, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
 | Focused CTest | `4/4 passed`, `0 failed`, `0 not-run` |
