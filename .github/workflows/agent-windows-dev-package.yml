@@ -1,4 +1,4 @@
-name: Agent Windows development package
+name: Agent development package (Windows)
 
 on:
   workflow_run:
