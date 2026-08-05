@@ -103,15 +103,24 @@ bool execute_agent_daemon_foreground_request(
 
 bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
     options = {};
-    if (const char * config_path = find_daemon_config_path(argc, argv)) {
+    const char * explicit_config_path = find_daemon_config_path(argc, argv);
+    std::string resolved_config_path;
+    std::string config_resolution_error;
+    if (resolve_agent_host_config_path(
+            explicit_config_path != nullptr ? explicit_config_path : "",
+            resolved_config_path,
+            config_resolution_error)) {
         agent_host_config config;
         std::string config_error;
-        if (!load_agent_host_config(config_path, config, config_error)) {
+        if (!load_agent_host_config(resolved_config_path, config, config_error)) {
             std::fprintf(stderr, "%s\n", config_error.c_str());
             return false;
         }
         apply_agent_host_config_to_daemon_options(config, options);
-        options.config_path = config_path;
+        options.config_path = resolved_config_path;
+    } else if (!config_resolution_error.empty()) {
+        std::fprintf(stderr, "%s\n", config_resolution_error.c_str());
+        return false;
     }
 
     for (int i = 1; i < argc; ++i) {

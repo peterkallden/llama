@@ -315,13 +315,22 @@ bool parse_server_args(
     options.max_tool_rounds = 8;
     options.memory_token_budget = 768;
 
-    if (const char * config_path = find_server_config_path(argc, argv)) {
+    const char * explicit_config_path = find_server_config_path(argc, argv);
+    std::string resolved_config_path;
+    std::string config_resolution_error;
+    if (resolve_agent_host_config_path(
+            explicit_config_path != nullptr ? explicit_config_path : "",
+            resolved_config_path,
+            config_resolution_error)) {
         agent_host_config config;
-        if (!load_agent_host_config(config_path, config, error)) {
+        if (!load_agent_host_config(resolved_config_path, config, error)) {
             return false;
         }
         apply_agent_host_config_to_args(config, options);
         configured_mcp_providers = config.mcp_providers;
+    } else if (!config_resolution_error.empty()) {
+        error = config_resolution_error;
+        return false;
     }
 
     auto need_value = [&](const char * flag, int & index) -> const char * {

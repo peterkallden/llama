@@ -11,7 +11,7 @@
 void print_agent_usage(const char * argv0, const char * command_name) {
     fprintf(stderr,
         "usage:\n"
-        "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
+        "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--config PATH] [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--agent-inference-backend cli|server-context]\n"
@@ -72,7 +72,9 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             return argv[++i];
         };
 
-        if (strcmp(argv[i], "--backend") == 0) {
+        if (strcmp(argv[i], "--config") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false;
+        } else if (strcmp(argv[i], "--backend") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.backend = v;
         } else if (strcmp(argv[i], "--memory-db") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_db = v;

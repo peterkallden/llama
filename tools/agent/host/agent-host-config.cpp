@@ -5,11 +5,43 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
+#include <filesystem>
 #include <unordered_set>
 
 using json = nlohmann::ordered_json;
 
 namespace {
+
+std::string environment_value(const char * name) {
+    const char * value = std::getenv(name);
+    return value != nullptr ? value : std::string();
+}
+
+bool existing_config_path(
+        const std::filesystem::path & candidate,
+        std::string & path) {
+    std::error_code error;
+    if (!candidate.empty() && std::filesystem::is_regular_file(candidate, error)) {
+        path = candidate.lexically_normal().string();
+        return true;
+    }
+    return false;
+}
+
+void append_config_candidate(
+        std::vector<std::filesystem::path> & candidates,
+        const std::filesystem::path & candidate) {
+    if (candidate.empty()) {
+        return;
+    }
+    for (const auto & existing : candidates) {
+        if (existing == candidate) {
+            return;
+        }
+    }
+    candidates.push_back(candidate);
+}
 
 template<typename T>
 void read_optional(
@@ -574,6 +606,67 @@ bool load_agent_host_config(
         return false;
     }
     return parse_agent_host_config_json(parsed, config, error);
+}
+
+bool resolve_agent_host_config_path(
+        const std::string & explicit_path,
+        std::string & path,
+        std::string & error) {
+    path.clear();
+    error.clear();
+
+    if (!explicit_path.empty()) {
+        if (existing_config_path(explicit_path, path)) {
+            return true;
+        }
+        error = "host config was not found: " + explicit_path;
+        return false;
+    }
+
+    const std::string environment_path = environment_value("LLAMA_AGENT_CONFIG");
+    if (!environment_path.empty()) {
+        if (existing_config_path(environment_path, path)) {
+            return true;
+        }
+        error = "LLAMA_AGENT_CONFIG was not found: " + environment_path;
+        return false;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+#ifndef _WIN32
+    append_config_candidate(
+        candidates,
+        std::filesystem::path(LLAMA_AGENT_SYSCONFDIR) / "config.json");
+#endif
+
+    const std::string xdg_config_home = environment_value("XDG_CONFIG_HOME");
+    if (!xdg_config_home.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(xdg_config_home) / "llama-agent" / "config.json");
+    }
+
+    const std::string home = environment_value("HOME");
+#ifdef _WIN32
+    const std::string appdata = environment_value("APPDATA");
+    if (!appdata.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(appdata) / "llama-agent" / "config.json");
+    }
+#endif
+    if (!home.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(home) / ".config" / "llama-agent" / "config.json");
+    }
+
+    for (const auto & candidate : candidates) {
+        if (existing_config_path(candidate, path)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 nlohmann::ordered_json agent_host_config_to_json(

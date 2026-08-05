@@ -22,6 +22,24 @@ The socket file is created with the configured Unix mode, so its owner/group
 provides an additional local access boundary. Authentication policy still
 applies after the OS accepts the connection.
 
+## Configuration discovery
+
+The daemon, CLI and MCP host accept an explicit `--config PATH`. When no
+explicit path is supplied, the shared host resolver checks these locations in
+order:
+
+1. `LLAMA_AGENT_CONFIG`
+2. `/etc/llama-agent/config.json` on POSIX installations
+3. `$XDG_CONFIG_HOME/llama-agent/config.json`
+4. `%APPDATA%/llama-agent/config.json` on Windows
+5. `~/.config/llama-agent/config.json`
+
+An explicit path or `LLAMA_AGENT_CONFIG` value that does not exist is an error;
+missing optional system and user configuration simply leaves the existing
+command-line defaults in place. Systemd units and Docker entrypoints should
+continue to pass their configuration path explicitly so service startup is
+deterministic.
+
 ## Bootstrap a first configuration
 
 The repository includes

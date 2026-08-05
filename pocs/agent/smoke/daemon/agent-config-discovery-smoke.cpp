@@ -1,0 +1,111 @@
+#include "tools/agent/host/agent-host-config.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+namespace {
+
+std::string environment_value(const char * name) {
+    const char * value = std::getenv(name);
+    return value != nullptr ? value : std::string();
+}
+
+void set_environment(const char * name, const std::string & value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+void unset_environment(const char * name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+struct environment_guard {
+    std::string llama_agent_config = environment_value("LLAMA_AGENT_CONFIG");
+    std::string xdg_config_home = environment_value("XDG_CONFIG_HOME");
+    std::string home = environment_value("HOME");
+
+    ~environment_guard() {
+        if (llama_agent_config.empty()) unset_environment("LLAMA_AGENT_CONFIG");
+        else set_environment("LLAMA_AGENT_CONFIG", llama_agent_config);
+        if (xdg_config_home.empty()) unset_environment("XDG_CONFIG_HOME");
+        else set_environment("XDG_CONFIG_HOME", xdg_config_home);
+        if (home.empty()) unset_environment("HOME");
+        else set_environment("HOME", home);
+    }
+};
+
+bool write_config(const std::filesystem::path & path) {
+    std::ofstream output(path);
+    output << R"({"model":{"path":"fake.gguf"}})";
+    return output.good();
+}
+
+bool expect_path(
+        const std::string & explicit_path,
+        const std::filesystem::path & expected,
+        const char * label) {
+    std::string path;
+    std::string error;
+    if (!resolve_agent_host_config_path(explicit_path, path, error) ||
+            std::filesystem::path(path) != expected) {
+        std::fprintf(stderr, "%s resolution failed: %s\n", label, error.c_str());
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+int main() {
+    environment_guard guard;
+    const auto root = std::filesystem::temp_directory_path() / "llama-agent-config-discovery-smoke";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    std::filesystem::create_directories(root / "xdg" / "llama-agent");
+    std::filesystem::create_directories(root / "home" / ".config" / "llama-agent");
+
+    const auto explicit_path = root / "explicit.json";
+    const auto environment_path = root / "environment.json";
+    const auto xdg_path = root / "xdg" / "llama-agent" / "config.json";
+    const auto home_path = root / "home" / ".config" / "llama-agent" / "config.json";
+    if (!write_config(explicit_path) || !write_config(environment_path) ||
+            !write_config(xdg_path) || !write_config(home_path)) {
+        std::fprintf(stderr, "failed to create config discovery fixtures\n");
+        return 1;
+    }
+
+    set_environment("LLAMA_AGENT_CONFIG", environment_path.string());
+    if (!expect_path(explicit_path.string(), explicit_path, "explicit")) return 1;
+    if (!expect_path("", environment_path, "environment")) return 1;
+
+    unset_environment("LLAMA_AGENT_CONFIG");
+    set_environment("XDG_CONFIG_HOME", (root / "xdg").string());
+    set_environment("HOME", (root / "missing-home").string());
+    if (!expect_path("", xdg_path, "XDG")) return 1;
+
+    unset_environment("XDG_CONFIG_HOME");
+    set_environment("HOME", (root / "home").string());
+    if (!expect_path("", home_path, "HOME")) return 1;
+
+    std::string path;
+    std::string error;
+    set_environment("LLAMA_AGENT_CONFIG", (root / "missing.json").string());
+    if (resolve_agent_host_config_path("", path, error) ||
+            error.find("LLAMA_AGENT_CONFIG") == std::string::npos) {
+        std::fprintf(stderr, "missing explicit environment config was accepted\n");
+        return 1;
+    }
+
+    std::printf("config_discovery=passed\n");
+    return 0;
+}

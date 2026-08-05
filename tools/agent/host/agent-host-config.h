@@ -116,6 +116,13 @@ bool load_agent_host_config(
     agent_host_config & config,
     std::string & error);
 
+// Resolve an implicit host configuration path. An explicit path has highest
+// priority; an empty result means that no implicit configuration exists.
+bool resolve_agent_host_config_path(
+    const std::string & explicit_path,
+    std::string & path,
+    std::string & error);
+
 nlohmann::ordered_json agent_host_config_to_json(
     const agent_host_config & config);
 

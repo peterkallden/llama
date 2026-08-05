@@ -83,6 +83,7 @@ target_include_directories(llama-agent-runtime-support
 target_compile_features(llama-agent-runtime-support PUBLIC cxx_std_17)
 target_compile_definitions(llama-agent-runtime-support
     PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+        LLAMA_AGENT_SYSCONFDIR="${LLAMA_AGENT_SYSCONFDIR}"
 )
 target_link_libraries(llama-agent-runtime-support
     PUBLIC
@@ -643,6 +644,17 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-config-discovery-smoke)
+add_executable(${TARGET}
+    smoke/daemon/agent-config-discovery-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/host
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-runtime-session-host-tooling-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-runtime-session-host-tooling-smoke.cpp
@@ -822,6 +834,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-daemon-client-smoke
     llama-agent-daemon-wait-events-smoke
     llama-agent-daemon-mcp-config-smoke
+    llama-agent-config-discovery-smoke
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke
     llama-agent-runtime-operation-manager-smoke
@@ -874,6 +887,7 @@ set(AGENT_RUNTIME_SMOKE_DAEMON_TARGETS
     llama-agent-daemon-client-smoke
     llama-agent-daemon-wait-events-smoke
     llama-agent-daemon-mcp-config-smoke
+    llama-agent-config-discovery-smoke
 )
 
 set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
@@ -930,6 +944,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-daemon-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)
     set_property(TEST llama-agent-daemon-client-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-config-discovery-ctest
+        COMMAND $<TARGET_FILE:llama-agent-config-discovery-smoke>)
+    set_property(TEST llama-agent-config-discovery-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-resource-store-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-store-smoke>)

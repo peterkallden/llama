@@ -124,6 +124,8 @@ option(LLAMA_TOOLS_INSTALL "llama: install tools" ${LLAMA_TOOLS_INSTALL_DEFAULT}
 option(LLAMA_TESTS_INSTALL "llama: install tests" ON)
 option(LLAMA_AGENT_PACKAGE_INSTALL "llama-agent: install the agent runtime package" OFF)
 option(LLAMA_AGENT_PACKAGE_CPACK "llama-agent: generate CPack package metadata" OFF)
+set(LLAMA_AGENT_SYSCONFDIR "/etc/llama-agent" CACHE PATH
+    "llama-agent: default system configuration directory")
 
 if (LLAMA_AGENT_PACKAGE_CPACK)
     set(CPACK_PACKAGE_NAME "llama-agent" CACHE STRING "Agent package name")
