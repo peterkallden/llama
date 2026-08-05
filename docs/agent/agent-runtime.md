@@ -945,6 +945,12 @@ by the ordered plan observations and retains the original resource as the
 authoritative source. This is an internal continuation of the existing turn,
 not a second daemon command or chunk queue.
 
+If native validation finds conflicting parent-linked chunk observations, the
+active synthesis step is blocked through the existing plan `block_step`
+operation and the conflicting evidence remains in the plan for diagnosis. An
+incomplete set is not presented as complete synthesis; it remains unfinished
+until the required observations are available.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so

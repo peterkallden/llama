@@ -607,6 +607,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         std::string chunk_error;
         if (!common_plan_chunk_synthesis_from_observations(
                     plan.observations, {}, chunk_synthesis, chunk_error)) {
+            common_plan_operation block;
+            block.kind = common_plan_operation_kind::block_step;
+            block.plan_id = plan.id;
+            block.expected_version = plan.version;
+            block.step_id = active->id;
+            block.reason_summary = "resource synthesis blocked by conflicting chunk observations";
+            if (!store.apply(block, plan, error)) return false;
+            append_event(result, request, common_agent_event_type::plan_updated,
+                "resource synthesis step blocked by conflicting chunk observations", {}, plan.id, active->id);
             result.error = "resource synthesis is blocked by conflicting chunk observations: " + chunk_error;
             error = result.error;
             return false;

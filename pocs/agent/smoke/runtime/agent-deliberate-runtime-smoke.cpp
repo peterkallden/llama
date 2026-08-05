@@ -36,6 +36,20 @@ public:
                 {"agent-resource://parent"},
                 {chunk},
                 0});
+        } else if (request.prompt.find("conflicting chunk") != std::string::npos) {
+            for (size_t duplicate = 0; duplicate < 2; ++duplicate) {
+                common_runtime_resource_ref chunk;
+                chunk.uri = "agent-resource://chunk/" + std::to_string(duplicate);
+                chunk.lineage = {"agent-resource://parent", 0, 2, duplicate * 16, 16, 0, "text-chunk"};
+                proposal.plan.observations.push_back({
+                    "resource_chunk:agent-resource://parent:duplicate:" + std::to_string(duplicate),
+                    "resource_chunk",
+                    "Conflicting duplicate chunk evidence.",
+                    1.0f,
+                    {"agent-resource://parent"},
+                    {chunk},
+                    0});
+            }
         }
         return proposal;
     }
@@ -216,5 +230,23 @@ int main() {
         return 1;
     }
     std::printf("incomplete_chunk_synthesis_gated=ok\n");
+
+    common_plan_in_memory_store conflict_store;
+    if (!conflict_store.open("", error)) return 1;
+    accepting_deliberate_reflector conflict_reflector;
+    common_agent_runtime conflict_runtime(conflict_store, planner, executor, conflict_reflector);
+    auto conflict_request = incomplete_request;
+    conflict_request.prompt = "Verify a conflicting chunk synthesis";
+    conflict_request.turn_id = "conflicting-chunk-turn";
+    const auto conflict_result = conflict_runtime.run(conflict_request);
+    const auto conflict_plan = conflict_store.get("deliberate-runtime-plan", error);
+    if (conflict_result.error.find("conflicting chunk observations") == std::string::npos ||
+            !conflict_plan || conflict_plan->steps.size() < 2 ||
+            conflict_plan->steps.back().status != common_plan_step_status::blocked) {
+        std::fprintf(stderr, "conflicting chunk synthesis was not blocked: %s\n",
+            conflict_result.error.c_str());
+        return 1;
+    }
+    std::printf("conflicting_chunk_synthesis_blocked=ok\n");
     return 0;
 }
