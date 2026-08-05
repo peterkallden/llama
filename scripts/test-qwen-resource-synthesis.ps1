@@ -24,14 +24,14 @@ $fixturePath = if ([System.IO.Path]::IsPathRooted($Fixture)) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Fixture))
 }
-$exePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
+$exePath = Join-Path $resolvedBuildDir "bin\Release\llama-agent.exe"
 $workDir = Join-Path $repoRoot $WorkSubdir
 $logPath = Join-Path $workDir "resource-synthesis.log"
 
 foreach ($required in @(
         @{ Path = $ChatModel; Label = "Chat model" },
         @{ Path = $fixturePath; Label = "Fixture" },
-        @{ Path = $exePath; Label = "llama-memory executable" })) {
+        @{ Path = $exePath; Label = "llama-agent executable" })) {
     if (-not (Test-Path -LiteralPath $required.Path)) {
         throw "$($required.Label) not found: $($required.Path)"
     }

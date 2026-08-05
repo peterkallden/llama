@@ -2396,7 +2396,7 @@ the process result and the per-step logs must be inspected separately from
 the deterministic pass/fail baseline.
 
 The small `scripts/test-qwen-resource-synthesis.ps1` smoke adds a bounded
-model check for chunk synthesis. It uses the fixed
+model check for chunk synthesis through the `llama-agent` CLI. It uses the fixed
 `tests/data/agent-resource-synthesis.txt` fixture, projects its four paragraphs
 as bounded parent-linked observations, and asks Qwen to preserve all required
 facts in one concise answer. This verifies synthesis over chunk-shaped
