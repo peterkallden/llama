@@ -937,6 +937,14 @@ The runtime event stream distinguishes `resource_chunk_planned` from
 observation remains the durable progress record. This keeps live tracing useful
 without making the event stream a second progress store.
 
+When the final bounded chunk has been processed, the controller restores the
+original resource input and schedules one bounded synthesis slice in the same
+session lane. An active parent-linked chunk is therefore never allowed to
+complete the final-response plan step by itself. The synthesis slice is gated
+by the ordered plan observations and retains the original resource as the
+authoritative source. This is an internal continuation of the existing turn,
+not a second daemon command or chunk queue.
+
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so
@@ -966,6 +974,14 @@ history, arbitrary tool output, plans, working state, and model responses
 remains a separate future activity. The current resource path only ensures
 that large text resources can be processed in bounded, resumable slices without
 creating a second scheduler or source of truth.
+
+The first context-pressure contract is also deliberately separate from the
+resource chunker. A host-owned budget evaluator can classify a measured input
+as `normal`, `compact_recommended`, `compact_required`, or
+`continuation_required` after reserving output, tool, and safety space. It is a
+deterministic measurement helper, not a new context store; runtime integration
+must continue to use the existing plan, session lane, resource references, and
+continuation checkpoint.
 
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 

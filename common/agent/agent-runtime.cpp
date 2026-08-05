@@ -10,9 +10,17 @@
 #include "plan/plan-scheduler.h"
 
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <set>
 
 using json = nlohmann::ordered_json;
+
+static bool request_has_active_resource_chunk(const common_agent_request & request) {
+    return std::any_of(request.input_resources.begin(), request.input_resources.end(),
+        [](const common_agent_input_resource & input) {
+            return !input.resource.lineage.parent_uri.empty();
+        });
+}
 
 static void append_trace(
         common_agent_result & result,
@@ -587,6 +595,28 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         common_plan_step * active = nullptr;
         for (auto & step : plan.steps) if (step.id == *plan.active_step_id) { active = &step; break; }
         if (!active || active->status != common_plan_step_status::active || common_plan_step_effective_mode(*active) != common_plan_step_mode::final_response) return true;
+
+        // A bounded resource slice is an intermediate inference result.  The
+        // resource driver records that slice after this runtime returns and
+        // then runs one synthesis slice over the complete plan evidence.  Do
+        // not complete the final-response step while a parent-linked chunk is
+        // still the active model input.
+        if (request_has_active_resource_chunk(request)) return true;
+
+        common_plan_chunk_synthesis_input chunk_synthesis;
+        std::string chunk_error;
+        if (!common_plan_chunk_synthesis_from_observations(
+                    plan.observations, {}, chunk_synthesis, chunk_error)) {
+            result.error = "resource synthesis is blocked by conflicting chunk observations: " + chunk_error;
+            error = result.error;
+            return false;
+        }
+        if (chunk_synthesis.chunk_count > 0 &&
+                chunk_synthesis.status != common_plan_chunk_synthesis_status::complete) {
+            result.error = "resource synthesis is incomplete; missing chunk observations remain";
+            error = result.error;
+            return false;
+        }
 
         common_plan_operation complete;
         complete.kind = common_plan_operation_kind::complete_step;

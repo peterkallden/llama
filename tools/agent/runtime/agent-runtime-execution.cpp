@@ -17,6 +17,7 @@ bool prepare_resource_chunk_observations(
         return true;
     }
     execution.resource_chunk_observations_prepared = true;
+    execution.resource_chunk_original_inputs = execution.input_resources;
     if (execution.tooling.resource_runtime.store == nullptr ||
             execution.input_resources.empty() || execution.current_plan_id.empty()) {
         return true;
@@ -128,7 +129,9 @@ bool prepare_resource_chunk_observations(
 bool record_and_advance_resource_chunk(
         common_agent_runtime_driver_execution & execution,
         const common_agent_result & slice,
+        bool & chunk_chain_completed,
         std::string & error) {
+    chunk_chain_completed = false;
     if (execution.active_resource_chunk_plan == static_cast<size_t>(-1)) return false;
     if (execution.active_resource_chunk_plan >= execution.resource_chunk_plans.size() ||
             execution.active_resource_chunk_input >= execution.input_resources.size()) {
@@ -180,9 +183,11 @@ bool record_and_advance_resource_chunk(
         chunk_ref.uri,
     });
     if (chunk_index + 1 >= chunk_plan.ranges.size()) {
+        chunk_chain_completed = true;
         execution.active_resource_chunk_plan = static_cast<size_t>(-1);
         execution.active_resource_chunk_input = static_cast<size_t>(-1);
         execution.active_resource_chunk_index = 0;
+        execution.input_resources = execution.resource_chunk_original_inputs;
         return false;
     }
     ++execution.active_resource_chunk_index;
@@ -513,7 +518,9 @@ bool run_agent_runtime_driver(
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
-        const bool has_next_resource_chunk = record_and_advance_resource_chunk(execution, slice, error);
+        bool resource_chunk_chain_completed = false;
+        const bool has_next_resource_chunk = record_and_advance_resource_chunk(
+            execution, slice, resource_chunk_chain_completed, error);
         if (!error.empty()) return false;
 
         if (has_next_resource_chunk) {
@@ -527,6 +534,21 @@ bool run_agent_runtime_driver(
                 "Continue the same task using the next bounded resource slice.\n"
                 "Treat the previous slice observation as evidence; do not restart the plan.\n"
                 "Inspect and synthesize the currently attached resource_chunk, then produce the next bounded result.\n";
+            ++continuation_count;
+            continue;
+        }
+
+        if (resource_chunk_chain_completed) {
+            if (continuation_count >= execution.runtime_config.max_continuations) {
+                aggregate.limit_reached = true;
+                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                result = std::move(aggregate);
+                break;
+            }
+            execution.orchestration_config.prompt =
+                "Synthesize the completed bounded resource observations in deterministic chunk order.\n"
+                "Use the plan observations as working evidence and retain references to the authoritative resource.\n"
+                "Do not treat an individual chunk response as the final answer; produce the bounded synthesis result.\n";
             ++continuation_count;
             continue;
         }

@@ -95,6 +95,9 @@ struct common_agent_runtime_driver_execution {
     std::vector<common_runtime_trace_entry> pre_turn_trace;
     common_agent_runtime_execution_control execution_control;
     std::vector<agent_resource_chunk_plan> resource_chunk_plans;
+    // Keep the authoritative input view so the lane can restore it for the
+    // synthesis slice after the last bounded chunk has been processed.
+    std::vector<common_agent_input_resource> resource_chunk_original_inputs;
     bool resource_chunk_observations_prepared = false;
     // Only one resource chunk chain is active at a time.  The original
     // resource remains authoritative in the store; this is the transient

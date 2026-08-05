@@ -1,4 +1,5 @@
 #include "tools/agent/runtime/agent-runtime-execution.h"
+#include "agent/context-pressure.h"
 
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
@@ -253,6 +254,32 @@ void test_deadline_stops_before_next_continuation_slice() {
     assert(inference.seen.size() == 2);
 }
 
+void test_context_pressure_reserves_completion_and_tool_space() {
+    common_agent_context_budget budget;
+    budget.context_limit_tokens = 1000;
+    budget.estimated_input_tokens = 300;
+    budget.reserved_output_tokens = 200;
+    budget.reserved_tool_tokens = 100;
+    budget.safety_margin_tokens = 100;
+    auto evaluation = evaluate_common_agent_context_pressure(budget);
+    assert(evaluation.valid);
+    assert(evaluation.pressure == common_agent_context_pressure::normal);
+    assert(evaluation.available_input_tokens == 600);
+
+    budget.estimated_input_tokens = 500;
+    evaluation = evaluate_common_agent_context_pressure(budget);
+    assert(evaluation.pressure == common_agent_context_pressure::compact_required);
+
+    budget.estimated_input_tokens = 600;
+    evaluation = evaluate_common_agent_context_pressure(budget);
+    assert(evaluation.pressure == common_agent_context_pressure::continuation_required);
+
+    budget.context_limit_tokens = 0;
+    evaluation = evaluate_common_agent_context_pressure(budget);
+    assert(!evaluation.valid);
+    assert(evaluation.pressure == common_agent_context_pressure::continuation_required);
+}
+
 } // namespace
 
 int main() {
@@ -260,5 +287,6 @@ int main() {
     test_continuation_budget_emits_checkpoint();
     test_cancellation_stops_before_next_continuation_slice();
     test_deadline_stops_before_next_continuation_slice();
+    test_context_pressure_reserves_completion_and_tool_space();
     return 0;
 }

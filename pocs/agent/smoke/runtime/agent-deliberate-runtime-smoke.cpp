@@ -6,7 +6,7 @@
 
 class scripted_deliberate_planner final : public common_planner {
 public:
-    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
         error.clear();
         common_plan_proposal proposal;
         proposal.plan.id = "deliberate-runtime-plan";
@@ -24,6 +24,19 @@ public:
 
         proposal.plan.steps = {reasoning, answer};
         proposal.plan.active_step_id = reasoning.id;
+        if (request.prompt.find("incomplete chunk") != std::string::npos) {
+            common_runtime_resource_ref chunk;
+            chunk.uri = "agent-resource://chunk/0";
+            chunk.lineage = {"agent-resource://parent", 0, 2, 0, 16, 0, "text-chunk"};
+            proposal.plan.observations.push_back({
+                "resource_chunk:agent-resource://parent:0",
+                "resource_chunk",
+                "Only the first bounded chunk was observed.",
+                1.0f,
+                {"agent-resource://parent"},
+                {chunk},
+                0});
+        }
         return proposal;
     }
 };
@@ -184,5 +197,24 @@ int main() {
         return 1;
     }
     std::printf("late_reflective_escalation_denied=ok\n");
+
+    common_plan_in_memory_store incomplete_store;
+    if (!incomplete_store.open("", error)) return 1;
+    accepting_deliberate_reflector incomplete_reflector;
+    common_agent_runtime incomplete_runtime(
+        incomplete_store, planner, executor, incomplete_reflector);
+    auto incomplete_request = request;
+    incomplete_request.prompt = "Verify an incomplete chunk synthesis";
+    incomplete_request.turn_id = "incomplete-chunk-turn";
+    incomplete_request.enable_reflection = false;
+    incomplete_request.deliberation_policy = make_common_agent_deliberation_policy(
+        common_agent_thinking_mode::reflective);
+    const auto incomplete_result = incomplete_runtime.run(incomplete_request);
+    if (incomplete_result.error.find("resource synthesis is incomplete") == std::string::npos) {
+        std::fprintf(stderr, "incomplete chunk synthesis was not gated: %s\n",
+            incomplete_result.error.c_str());
+        return 1;
+    }
+    std::printf("incomplete_chunk_synthesis_gated=ok\n");
     return 0;
 }

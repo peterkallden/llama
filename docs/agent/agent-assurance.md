@@ -73,6 +73,8 @@ when the corresponding verification record contains evidence for it.
 - [x] Chunk planning and processing are projected as typed daemon events
 - [x] Context-budget accounting selects chunk size from resolved turn budgets
 - [x] Chunk synthesis distinguishes complete, incomplete, and structural conflict states
+- [ ] Final synthesis is gated on complete chunk observations in the runtime driver
+- [ ] Context-pressure evaluation is integrated before inference
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
