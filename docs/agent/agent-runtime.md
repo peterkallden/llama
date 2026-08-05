@@ -942,6 +942,31 @@ backends. Persistent catalog lineage migration and controller-owned automatic
 chunk scheduling remain follow-up slices; the current contract is designed so
 those slices extend the same resource/store/session seams.
 
+### Current resource chunking boundary
+
+The current chunking path is deliberately bounded and text-oriented:
+
+1. After plan or blueprint selection, the host-owned resource store reads
+   bounded text windows using the configured `resource_chunk_max_bytes` and
+   `resource_chunk_overlap_bytes` budgets.
+2. The deterministic chunker prefers paragraph, table-row, sentence, and line
+   boundaries before using a UTF-8-safe hard byte limit.
+3. The original resource descriptor remains the source of truth. Each chunk is
+   only a parent-linked range view carrying its byte offset, length, overlap,
+   and chunk index.
+4. The existing session lane exposes one active chunk at a time to the model.
+   After the slice returns, the runtime records a bounded `resource_chunk`
+   observation and advances the same plan to the next range.
+5. Resume uses the plan's completed chunk observations and starts at the first
+   missing index. Typed daemon events expose planning and processing progress,
+   while the plan remains the durable progress record.
+
+This is not full context management. General compaction of conversation
+history, arbitrary tool output, plans, working state, and model responses
+remains a separate future activity. The current resource path only ensures
+that large text resources can be processed in bounded, resumable slices without
+creating a second scheduler or source of truth.
+
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 
 That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:
