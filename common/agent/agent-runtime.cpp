@@ -27,6 +27,13 @@ static size_t estimate_common_agent_context_tokens(
         const common_agent_request & request,
         const common_plan_state & plan) {
     size_t characters = request.prompt.size();
+    if (request.working_state) {
+        characters += render_common_agent_working_state(*request.working_state).size();
+        for (const auto & input : request.input_resources) {
+            characters += input.resource.uri.size() + input.resource.name.size();
+        }
+        return (characters + 3) / 4;
+    }
     characters += plan.purpose.size() + plan.goal.size() + plan.success_criteria.size();
     for (const auto & step : plan.steps) {
         characters += step.title.size() + step.objective.size() + step.result_summary.value_or(std::string{}).size();

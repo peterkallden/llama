@@ -334,7 +334,10 @@ void test_context_pressure_reserves_completion_and_tool_space() {
 
 void test_context_pressure_stops_before_draft_and_checkpoints() {
     fake_inference inference;
-    inference.queued = {{"not-json", common_agent_generation_stop_reason::none, 1}};
+    inference.queued = {
+        {"not-json", common_agent_generation_stop_reason::none, 1},
+        {"compacted result", common_agent_generation_stop_reason::none, 2},
+    };
 
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -353,20 +356,23 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
-    runtime_config.generation_config.context_size_tokens = 256;
+    runtime_config.generation_config.context_size_tokens = 1024;
     runtime_config.max_continuations = 1;
     auto execution = make_execution(
         memories, plans, inference, current_plan_id, std::move(runtime_config),
         scope, blueprints, hits, tooling);
+    execution.orchestration_config.prompt = std::string(3000, 'x');
 
     common_agent_result result;
     assert(run_agent_runtime_driver(execution, result, error));
     assert(error.empty());
     assert(result.error.empty());
-    assert(result.response.empty());
-    assert(result.limit_reached);
-    assert(result.continuation_checkpoint);
-    assert(inference.seen.size() == 1);
+    assert(result.response == "compacted result");
+    assert(!result.limit_reached);
+    assert(!result.continuation_checkpoint);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages.size() >= 2);
+    assert(inference.seen[1].messages[1].content.find("<compact_working_state>") != std::string::npos);
     bool saw_pressure = false;
     for (const auto & trace : result.trace) {
         saw_pressure = saw_pressure ||

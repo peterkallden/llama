@@ -1822,6 +1822,15 @@ same session-lane turn
   -> one terminal turn result
 ```
 
+When the boundary is caused by deterministic context pressure rather than a
+model completion limit, the next slice uses the bounded working-state
+projection carried by the execution request. It does not re-render the full
+verbose plan context. The projection keeps the goal, phase, completed and
+pending steps, constraints, open questions, resource references, and chunk
+status needed to continue safely; the plan and resource stores remain
+authoritative. This is still an internal continuation of the same session-lane
+operation, not a new queue item or a second plan.
+
 The daemon dispatcher must not receive the continuation as a new external
 command. Pending asynchronous tools remain owned by the operation manager,
 and an inference slice may reacquire the existing inference-capacity lease.

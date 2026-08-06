@@ -258,6 +258,12 @@ std::string make_continuation_prompt(
     return prompt.str();
 }
 
+bool slice_requires_context_continuation(const common_agent_result & slice) {
+    return std::any_of(slice.trace.begin(), slice.trace.end(), [](const auto & entry) {
+        return entry.detail.find("context pressure requires") != std::string::npos;
+    });
+}
+
 bool make_continuation_checkpoint(
         const common_agent_runtime_driver_execution & execution,
         const common_agent_result & result,
@@ -389,6 +395,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memory_enabled,
         inputs.tooling,
         inputs.input_resources,
+        std::nullopt,
         inputs.research_should_stop,
         inputs.research_stop_reason,
         inputs.explicit_memory_candidate,
@@ -410,6 +417,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.plan_scope = execution.scope.plan_scope;
     request.prompt = execution.orchestration_config.prompt;
     request.input_resources = execution.input_resources;
+    request.working_state = execution.compact_working_state;
     if (!execution.current_plan_id.empty()) {
         request.plan_id = execution.current_plan_id;
     }
@@ -579,7 +587,16 @@ bool run_agent_runtime_driver(
             return false;
         }
         execution.current_plan_id = plan->id;
-        execution.orchestration_config.prompt = make_continuation_prompt(slice, *plan);
+        if (slice_requires_context_continuation(slice)) {
+            execution.compact_working_state = make_common_agent_working_state(*plan);
+            execution.orchestration_config.prompt =
+                "Continue the same task from the bounded working state.\n"
+                "The plan and resource stores remain authoritative; do not recreate completed work.\n" +
+                render_common_agent_working_state(*execution.compact_working_state) +
+                "Produce only the next bounded result or the final answer.\n";
+        } else {
+            execution.orchestration_config.prompt = make_continuation_prompt(slice, *plan);
+        }
         ++continuation_count;
     }
 

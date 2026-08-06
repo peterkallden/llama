@@ -76,6 +76,7 @@ when the corresponding verification record contains evidence for it.
 - [ ] Final synthesis is gated on complete chunk observations in the runtime driver
 - [x] Context-pressure evaluation can stop before draft inference and create a continuation checkpoint
 - [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
+- [x] Context-pressure continuation re-enters the same driver operation with bounded working state
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified

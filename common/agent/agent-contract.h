@@ -249,6 +249,9 @@ struct common_agent_request {
     // the caller-supplied registry.
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;
+    // Host-owned compact state used only when an internal continuation has
+    // deliberately replaced verbose working context with a bounded view.
+    std::optional<common_agent_working_state> working_state;
     std::optional<common_agent_objective> objective;
     std::optional<common_memory_policy_pack> policy_pack;
     std::vector<common_memory_hit> memories;
