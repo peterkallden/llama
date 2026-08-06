@@ -295,6 +295,7 @@ public:
             "--memory-learn", a.memory_learn,
             "--agent-plan", a.agent_plan,
             "--n-predict", std::to_string(a.n_predict),
+            "--context-size", std::to_string(a.context_size),
             "--n-gpu-layers", std::to_string(a.n_gpu_layers),
         };
         if (!a.memory_db.empty()) {

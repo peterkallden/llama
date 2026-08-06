@@ -28,14 +28,14 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
-        "         [--n-predict N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
+        "         [--n-predict N] [--context-size N] [--threads N] [-ngl N] [--agent-inference-backend server-context]\n"
         "  %s daemon-session --model MODEL [--prompt TEXT] [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--agent-plan off|auto] [--agent-trace] [--plan-show-summary] [--include-summary] [--memory-scope turn|session|project|global]\n"
         "         [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID] [--plan-scope turn|session|project|global]\n"
-        "         [--n-predict N] [-ngl N] [--agent-inference-backend server-context]\n",
+        "         [--n-predict N] [--context-size N] [-ngl N] [--agent-inference-backend server-context]\n",
         argv0, command_name, argv0, argv0);
 }
 
