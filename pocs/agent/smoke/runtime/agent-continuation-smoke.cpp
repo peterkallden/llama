@@ -218,6 +218,17 @@ void test_working_state_projection_is_bounded_and_preserves_refs() {
     assert(state.resource_refs.size() == 1);
     assert(!state.chunk_status.empty());
     assert(rendered.size() <= 160);
+
+    common_agent_working_state_limits tight_limits;
+    tight_limits.max_total_chars = 64;
+    tight_limits.max_resource_refs = 0;
+    tight_limits.max_chunk_status = 0;
+    tight_limits.max_tool_results = 0;
+    const auto tight_state = make_common_agent_working_state(plan, tight_limits);
+    assert(tight_state.resource_refs.empty());
+    assert(tight_state.chunk_status.empty());
+    assert(tight_state.tool_results.empty());
+    assert(tight_state.goal.size() <= tight_limits.max_value_chars);
 }
 
 void test_cancellation_stops_before_next_continuation_slice() {
@@ -376,7 +387,10 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     assert(!result.continuation_checkpoint);
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].messages.size() >= 2);
-    assert(inference.seen[1].messages[1].content.find("<compact_working_state>") != std::string::npos);
+    const auto & continuation_context = inference.seen[1].messages[1].content;
+    const auto first_state = continuation_context.find("<compact_working_state>");
+    assert(first_state != std::string::npos);
+    assert(continuation_context.find("<compact_working_state>", first_state + 1) == std::string::npos);
     bool saw_pressure = false;
     for (const auto & trace : result.trace) {
         saw_pressure = saw_pressure ||

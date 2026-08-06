@@ -1004,6 +1004,18 @@ pending step identifiers, constraints, unresolved assumptions, tool-result
 summaries, chunk status, and opaque resource references. This projection is
 working evidence for a later compaction/continuation turn; the plan and
 resource stores remain authoritative, and no long-term memory write is made.
+The projection has independent count and value-size limits for steps,
+constraints, unresolved questions, resource references, chunk entries, and
+tool-result summaries in addition to its total character budget. Identifiers
+and references are therefore bounded by omission/count limits rather than by
+allowing an unbounded list to escape the compact-state budget.
+
+During context-pressure continuation, the driver stores this projection on
+the request and the normal plan-context renderer emits the
+`<compact_working_state>` block exactly once. The continuation instruction
+does not inline a second copy. This keeps prompt ownership in the existing
+CLI/runtime rendering seam and avoids spending context budget on duplicate
+working state.
 
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 

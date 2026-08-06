@@ -592,7 +592,6 @@ bool run_agent_runtime_driver(
             execution.orchestration_config.prompt =
                 "Continue the same task from the bounded working state.\n"
                 "The plan and resource stores remain authoritative; do not recreate completed work.\n" +
-                render_common_agent_working_state(*execution.compact_working_state) +
                 "Produce only the next bounded result or the final answer.\n";
         } else {
             execution.orchestration_config.prompt = make_continuation_prompt(slice, *plan);

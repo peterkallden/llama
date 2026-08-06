@@ -25,6 +25,18 @@ struct common_agent_working_state {
     std::string continuation_action;
 };
 
+struct common_agent_working_state_limits {
+    size_t max_total_chars = 8192;
+    size_t max_value_chars = 1024;
+    size_t max_completed_steps = 64;
+    size_t max_remaining_steps = 64;
+    size_t max_constraints = 32;
+    size_t max_open_questions = 32;
+    size_t max_resource_refs = 32;
+    size_t max_chunk_status = 64;
+    size_t max_tool_results = 32;
+};
+
 inline std::string common_agent_working_state_bounded(
         const std::string & value,
         size_t max_chars) {
@@ -34,21 +46,23 @@ inline std::string common_agent_working_state_bounded(
 inline void common_agent_working_state_add(
         std::vector<std::string> & values,
         const std::string & value,
-        size_t & remaining_chars) {
+        size_t & remaining_chars,
+        size_t max_value_chars = 1024) {
     if (value.empty() || remaining_chars == 0) {
         return;
     }
-    const size_t take = std::min(remaining_chars, value.size());
+    const size_t take = std::min({remaining_chars, max_value_chars, value.size()});
     values.push_back(value.substr(0, take));
     remaining_chars -= take;
 }
 
 inline common_agent_working_state make_common_agent_working_state(
         const common_plan_state & plan,
-        size_t max_chars = 8192) {
+        const common_agent_working_state_limits & limits) {
     common_agent_working_state state;
-    size_t remaining_chars = max_chars;
-    state.goal = common_agent_working_state_bounded(plan.goal, std::min<size_t>(1024, remaining_chars));
+    size_t remaining_chars = limits.max_total_chars;
+    state.goal = common_agent_working_state_bounded(
+        plan.goal, std::min(limits.max_value_chars, remaining_chars));
     remaining_chars = remaining_chars > state.goal.size() ? remaining_chars - state.goal.size() : 0;
 
     const common_plan_step * active_step = nullptr;
@@ -59,7 +73,11 @@ inline common_agent_working_state make_common_agent_working_state(
         }
     }
     if (active_step != nullptr) {
-        state.active_step = active_step->id + ": " + active_step->title;
+        state.active_step = common_agent_working_state_bounded(
+            active_step->id + ": " + active_step->title,
+            std::min(limits.max_value_chars, remaining_chars));
+        remaining_chars = remaining_chars > state.active_step.size()
+            ? remaining_chars - state.active_step.size() : 0;
         state.current_phase = common_plan_step_effective_mode(*active_step) == common_plan_step_mode::tool
             ? "tool"
             : common_plan_step_effective_mode(*active_step) == common_plan_step_mode::reasoning
@@ -72,37 +90,44 @@ inline common_agent_working_state make_common_agent_working_state(
     for (const auto & step : plan.steps) {
         const std::string label = step.id + ": " + step.title;
         if (step.status == common_plan_step_status::completed) {
-            common_agent_working_state_add(state.completed_steps, label, remaining_chars);
+            if (state.completed_steps.size() < limits.max_completed_steps) {
+                common_agent_working_state_add(
+                    state.completed_steps, label, remaining_chars, limits.max_value_chars);
+            }
         } else if (step.status == common_plan_step_status::pending ||
                 step.status == common_plan_step_status::active) {
-            if (!active_step || step.id != active_step->id) {
-                common_agent_working_state_add(state.remaining_steps, label, remaining_chars);
+            if ((!active_step || step.id != active_step->id) &&
+                    state.remaining_steps.size() < limits.max_remaining_steps) {
+                common_agent_working_state_add(
+                    state.remaining_steps, label, remaining_chars, limits.max_value_chars);
             }
         }
-        if (step.result_summary) {
+        if (step.result_summary && state.tool_results.size() < limits.max_tool_results) {
             common_agent_working_state_add(
                 state.tool_results,
                 step.id + ": " + *step.result_summary,
-                remaining_chars);
+                remaining_chars,
+                limits.max_value_chars);
         }
     }
     for (const auto & constraint : plan.constraints) {
+        if (state.constraints.size() >= limits.max_constraints) break;
         common_agent_working_state_add(
-            state.constraints,
-            constraint.id + ": " + constraint.description,
-            remaining_chars);
+            state.constraints, constraint.id + ": " + constraint.description,
+            remaining_chars, limits.max_value_chars);
     }
     for (const auto & assumption : plan.assumptions) {
-        if (!assumption.valid) {
+        if (!assumption.valid && state.open_questions.size() < limits.max_open_questions) {
             common_agent_working_state_add(
                 state.open_questions,
                 assumption.id + ": " + assumption.statement,
-                remaining_chars);
+                remaining_chars,
+                limits.max_value_chars);
         }
     }
     for (const auto & observation : plan.observations) {
         for (const auto & resource : observation.resource_refs) {
-            if (resource.uri.empty() || std::any_of(
+            if (state.resource_refs.size() >= limits.max_resource_refs || resource.uri.empty() || std::any_of(
                     state.resource_refs.begin(), state.resource_refs.end(),
                     [&](const auto & existing) { return existing.uri == resource.uri; })) {
                 continue;
@@ -110,16 +135,28 @@ inline common_agent_working_state make_common_agent_working_state(
             state.resource_refs.push_back(resource);
         }
         if (observation.source == "resource_chunk" && observation.resource_refs.size() == 1) {
+            if (state.chunk_status.size() >= limits.max_chunk_status) continue;
             const auto & lineage = observation.resource_refs.front().lineage;
             common_agent_working_state_add(
                 state.chunk_status,
                 lineage.parent_uri + "[" + std::to_string(lineage.chunk_index) + "/" +
                     std::to_string(lineage.chunk_count) + "]",
-                remaining_chars);
+                remaining_chars,
+                limits.max_value_chars);
         }
     }
-    state.continuation_action = plan.next_action.value_or("resume active plan step");
+    state.continuation_action = common_agent_working_state_bounded(
+        plan.next_action.value_or("resume active plan step"),
+        std::min(limits.max_value_chars, remaining_chars));
     return state;
+}
+
+inline common_agent_working_state make_common_agent_working_state(
+        const common_plan_state & plan,
+        size_t max_chars = 8192) {
+    common_agent_working_state_limits limits;
+    limits.max_total_chars = max_chars;
+    return make_common_agent_working_state(plan, limits);
 }
 
 inline std::string render_common_agent_working_state(

@@ -95,6 +95,13 @@ checkpoint now contains a bounded working-state projection, but arbitrary
 conversation-history/tool-result compaction and model-output compaction remain
 separate future assurance activities.
 
+The working-state projection also has explicit per-field count and value-size
+limits. Context-pressure continuation carries the projection through the
+existing request field; the normal prompt renderer emits the compact-state
+block once, so the continuation instruction does not duplicate it. These are
+projection-boundary guarantees, not a claim that exact tokenizer accounting or
+general context-window compaction is complete.
+
 The lineage/range item is a contract milestone, not a claim that automatic
 large-resource chunk scheduling or full context compaction is complete. The
 original resource remains authoritative, derived chunks must retain parent
