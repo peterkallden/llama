@@ -5,6 +5,7 @@
 #include "agent/reflection-json.h"
 #include "agent/input-resources.h"
 #include "agent/schema-contract.h"
+#include "agent/structured-regeneration.h"
 #include "memory/memory-context.h"
 #include "plan/plan-context.h"
 #include "plan/plan-json.h"
@@ -227,21 +228,17 @@ public:
                 make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
                 common_plan_proposal_json_schema()));
         };
-        auto generation_result = generate_plan(false);
-        proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         std::string parse_error;
-        bool parsed = common_agent_generation_succeeded(generation_result) &&
-            common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6);
-        if (!parsed) {
-            // One bounded structural retry is enough for a partial/invalid
-            // planner object. The original payload is never concatenated with
-            // the retry and is retained only through the generation record.
-            generation_result = generate_plan(true);
-            proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        bool parsed = false;
+        auto generation_result = common_agent_bounded_structured_regeneration(
+            generate_plan,
+            [&](const auto & candidate) {
             parse_error.clear();
-            parsed = common_agent_generation_succeeded(generation_result) &&
-                common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6);
-        }
+                parsed = common_plan_parse_proposal_json(
+                    candidate.content, proposal.plan, proposal.operations, parse_error, 6);
+                return parsed;
+            });
+        proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (parsed) {
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
@@ -433,23 +430,18 @@ public:
                 make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
                 reflection_schema));
         };
-        auto generation_result = generate_reflection(false);
+        bool parsed = false;
+        auto generation_result = common_agent_bounded_structured_regeneration(
+            generate_reflection,
+            [&](const auto & candidate) {
+            error.clear();
+                parsed = common_reflection_parse_json(candidate.content, result, error, 8);
+                return parsed;
+            });
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            generation_result = generate_reflection(true);
-            result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
-            if (!common_agent_generation_succeeded(generation_result)) {
-                error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
-                return result;
-            }
-        }
-        bool parsed = common_reflection_parse_json(generation_result.content, result, error, 8);
-        if (!parsed) {
-            generation_result = generate_reflection(true);
-            result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
-            error.clear();
-            parsed = common_agent_generation_succeeded(generation_result) &&
-                common_reflection_parse_json(generation_result.content, result, error, 8);
+            error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
+            return result;
         }
         if (!parsed) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
@@ -559,25 +551,21 @@ public:
                 make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
                 schema));
         };
-        auto generation_result = generate_memory_candidate(false);
-        if (!common_agent_generation_succeeded(generation_result)) {
-            generation_result = generate_memory_candidate(true);
-            if (!common_agent_generation_succeeded(generation_result)) {
-                error = describe_agent_cli_generation_failure("model candidate generation", generation_result);
-                return {{}, {}, common_agent_generated_text_result_from_generation_result(generation_result)};
-            }
-        }
-        auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
         common_memory_candidate_result parsed;
-        if (!parse_memory_candidate_json(generation_result.content, parsed, error)) {
-            generation_result = generate_memory_candidate(true);
-            generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        bool parsed_ok = false;
+        auto generation_result = common_agent_bounded_structured_regeneration(
+            generate_memory_candidate,
+            [&](const auto & candidate) {
             error.clear();
-            if (!common_agent_generation_succeeded(generation_result) ||
-                    !parse_memory_candidate_json(generation_result.content, parsed, error)) {
-                return {{}, {}, generation};
-            }
+                parsed_ok = parse_memory_candidate_json(candidate.content, parsed, error);
+                return parsed_ok;
+            });
+        auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        if (!common_agent_generation_succeeded(generation_result)) {
+            error = describe_agent_cli_generation_failure("model candidate generation", generation_result);
+            return {{}, {}, generation};
         }
+        if (!parsed_ok) return {{}, {}, generation};
         parsed.generation = generation;
         return parsed;
     }

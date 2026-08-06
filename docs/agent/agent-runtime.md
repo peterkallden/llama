@@ -1885,6 +1885,12 @@ existing evidence, provenance, scope, and memory-learning policy. The first
 payload is never treated as a candidate and is not concatenated with the retry;
 if validation still fails, no candidate is proposed.
 
+The retry mechanics are shared through a small `common/agent` helper. The
+planner, reflection engine, and memory candidate extractor still own their
+separate prompts, schemas, and parsers; the helper only enforces the common
+bounded generate/accept contract. This keeps structured regeneration in the
+existing host/runtime assembly rather than creating a second repair subsystem.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.
