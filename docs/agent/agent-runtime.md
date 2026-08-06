@@ -1849,7 +1849,7 @@ The chat-driver boundary is now explicit as well. If a conversation generation
 ends with the backend's length/limit stop reason, the partial text remains in
 the native result for diagnostics, but the result is marked `limit_reached` and
 the driver returns an incomplete/error outcome. It is never silently treated as
-a complete user answer or concatenated with an arbitrary retry. A future chat
+a complete user answer or concatenated with an arbitrary retry. Structured chat
 continuation must use a validated checkpoint and a structural regeneration
 boundary, especially for JSON or tool-call output.
 
@@ -1857,6 +1857,14 @@ The guard also runs before chat parsing and tool dispatch. A truncated message
 therefore cannot turn a partial tool-call envelope into an executable call; the
 native result is rejected at the same boundary and the host retains the
 partial payload only for diagnosis.
+
+For tool-free plain text, the chat driver now has a bounded continuation slice
+using the same turn/session lane and `runtime_config.max_continuations` budget
+as the agent driver. It appends the completed text fragment as an assistant
+message, asks for only the next segment, and clears the transient limit state
+when a later slice completes. This does not apply to tool-enabled or
+structured output; those paths still require structural regeneration rather
+than text concatenation.
 
 ## MCP Direction
 

@@ -1010,7 +1010,7 @@ static void test_chat_runtime_rejects_truncated_output() {
         inference,
         request,
         options,
-        {1},
+        {1, 0},
         tooling,
     };
 
@@ -1023,6 +1023,39 @@ static void test_chat_runtime_rejects_truncated_output() {
     assert(error.find("truncated") != std::string::npos);
     assert(!result.trace.empty());
     assert(result.trace.back().detail.find("output was truncated") != std::string::npos);
+}
+
+static void test_chat_runtime_continues_text_at_message_boundary() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success("first segment ", 64, common_agent_generation_stop_reason::limit),
+        make_success("second segment", 32),
+    };
+
+    common_agent_request request = make_request();
+    request.messages = {{"user", "Write a bounded answer"}};
+    common_agent_generation_options options;
+    options.n_predict = 64;
+    const auto tooling = make_runtime_tooling({}, nullptr, false);
+    common_agent_chat_runtime_execution execution{
+        inference,
+        request,
+        options,
+        {1, 1},
+        tooling,
+    };
+
+    common_agent_result result;
+    std::string error;
+    assert(run_agent_chat_runtime(execution, result, error));
+    assert(error.empty());
+    assert(result.response == "first segment second segment");
+    assert(!result.limit_reached);
+    assert(result.response_stop_reason == common_agent_generation_stop_reason::none);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages.size() == 3);
+    assert(inference.seen[1].messages[1].role == "assistant");
+    assert(inference.seen[1].messages[2].role == "user");
 }
 
 static void test_truncated_tool_call_is_not_dispatched() {
@@ -1771,6 +1804,7 @@ static bool run_named_test(const std::string & name) {
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
         test_chat_runtime_rejects_truncated_output();
+        test_chat_runtime_continues_text_at_message_boundary();
         test_truncated_tool_call_is_not_dispatched();
     } else if (name == "runtime-host-chat-smoke") {
         test_runtime_host_chat_smoke();

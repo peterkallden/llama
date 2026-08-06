@@ -79,6 +79,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Context-pressure continuation re-enters the same driver operation with bounded working state
 - [x] Chat output stopped by the generation limit is marked incomplete rather than accepted as final
 - [x] Truncated chat tool-call output is rejected before parsing or dispatch
+- [x] Tool-free plain-text chat can continue within the existing bounded turn lane
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified

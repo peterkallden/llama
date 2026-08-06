@@ -140,10 +140,41 @@ bool run_agent_chat_runtime(
     result.response_decoded_tokens = generation_result.decoded_tokens;
     result.response_generation_status = generation_result.status;
     result.response_stop_reason = generation_result.stop_reason;
-    if (reject_truncated_chat_generation(result, generation_result, error)) {
-        return false;
+    std::string response_prefix;
+    size_t continuation_count = 0;
+    while (generation_result.stop_reason == common_agent_generation_stop_reason::limit) {
+        // Text-only chat can resume at a message boundary. Tool-enabled chat
+        // remains conservative: a truncated envelope must be regenerated
+        // structurally instead of being parsed or dispatched.
+        if (!available_tools.empty() ||
+                continuation_count >= execution.policy.max_continuations) {
+            result.response = response_prefix + generation_result.content;
+            if (reject_truncated_chat_generation(result, generation_result, error)) {
+                return false;
+            }
+        }
+        record_truncated_chat_generation(result, generation_result);
+        response_prefix += generation_result.content;
+        messages.push_back({"assistant", generation_result.content});
+        messages.push_back({
+            "user",
+            "Continue the same response from the preceding text. Do not repeat it; produce only the next bounded text segment.",
+        });
+        ++continuation_count;
+        generation_result = execution.inference.generate_result(make_generation_request(
+            execution.request,
+            common_agent_generation_purpose::conversation,
+            messages,
+            execution.generation_options,
+            available_tools,
+            initial_tool_choice));
+        result.total_decoded_tokens += generation_result.decoded_tokens;
+        result.response_decoded_tokens = generation_result.decoded_tokens;
+        result.response_generation_status = generation_result.status;
+        result.response_stop_reason = generation_result.stop_reason;
     }
     if (!common_agent_generation_succeeded(generation_result)) {
+        result.response = response_prefix + generation_result.content;
         error = describe_generation_failure("chat generation", generation_result);
         return false;
     }
@@ -190,7 +221,9 @@ bool run_agent_chat_runtime(
         }
     }
 
-    result.response = assistant_message.content.empty() ? generation_result.content : assistant_message.content;
+    result.response = response_prefix +
+        (assistant_message.content.empty() ? generation_result.content : assistant_message.content);
+    result.limit_reached = false;
     if (result.limit_reached) {
         error = "chat output was truncated; a continuation checkpoint is required before completion";
         return false;
