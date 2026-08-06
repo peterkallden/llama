@@ -75,16 +75,17 @@ when the corresponding verification record contains evidence for it.
 - [x] Chunk synthesis distinguishes complete, incomplete, and structural conflict states
 - [ ] Final synthesis is gated on complete chunk observations in the runtime driver
 - [x] Context-pressure evaluation can stop before draft inference and create a continuation checkpoint
+- [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
 
 The resource chunking implementation is intentionally narrower than general
 context management. It bounds and resumes large text resources through the
-existing resource store, plan observations, checkpoints, and session lane. It
-does not compact arbitrary conversation history, tool results, plan state, or
-model output. Full general context compaction remains a separate future
-assurance activity.
+existing resource store, plan observations, checkpoints, and session lane. A
+checkpoint now contains a bounded working-state projection, but arbitrary
+conversation-history/tool-result compaction and model-output compaction remain
+separate future assurance activities.
 
 The lineage/range item is a contract milestone, not a claim that automatic
 large-resource chunk scheduling or full context compaction is complete. The

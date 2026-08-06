@@ -985,10 +985,10 @@ The current chunking path is deliberately bounded and text-oriented:
    while the plan remains the durable progress record.
 
 This is not full context management. General compaction of conversation
-history, arbitrary tool output, plans, working state, and model responses
-remains a separate future activity. The current resource path only ensures
-that large text resources can be processed in bounded, resumable slices without
-creating a second scheduler or source of truth.
+history, arbitrary tool output, and model responses remains a separate future
+activity. The current resource path only ensures that large text resources can
+be processed in bounded, resumable slices without creating a second scheduler
+or source of truth.
 
 The first context-pressure contract is also deliberately separate from the
 resource chunker. A host-owned budget evaluator can classify a measured input
@@ -997,6 +997,13 @@ as `normal`, `compact_recommended`, `compact_required`, or
 deterministic measurement helper, not a new context store; runtime integration
 must continue to use the existing plan, session lane, resource references, and
 continuation checkpoint.
+
+The checkpoint now also carries a bounded working-state projection derived
+from the existing plan. It preserves the goal, current phase, completed and
+pending step identifiers, constraints, unresolved assumptions, tool-result
+summaries, chunk status, and opaque resource references. This projection is
+working evidence for a later compaction/continuation turn; the plan and
+resource stores remain authoritative, and no long-term memory write is made.
 
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 

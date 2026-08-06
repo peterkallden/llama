@@ -681,6 +681,32 @@ json make_agent_daemon_turn_response(
             {"completed_chunk_indexes", checkpoint.completed_chunk_indexes},
             {"resource_refs", std::move(resource_refs)},
         };
+        if (checkpoint.working_state) {
+            const auto & state = *checkpoint.working_state;
+            json state_resource_refs = json::array();
+            for (const auto & resource : state.resource_refs) {
+                state_resource_refs.push_back({
+                    {"uri", resource.uri},
+                    {"name", resource.name},
+                    {"mime_type", resource.mime_type},
+                    {"size_bytes", resource.size_bytes},
+                });
+            }
+            response["continuation_checkpoint"]["working_state"] = {
+                {"goal", state.goal},
+                {"current_phase", state.current_phase},
+                {"completed_steps", state.completed_steps},
+                {"active_step", state.active_step},
+                {"remaining_steps", state.remaining_steps},
+                {"decisions", state.decisions},
+                {"constraints", state.constraints},
+                {"open_questions", state.open_questions},
+                {"resource_refs", std::move(state_resource_refs)},
+                {"chunk_status", state.chunk_status},
+                {"tool_results", state.tool_results},
+                {"continuation_action", state.continuation_action},
+            };
+        }
     }
     json trace_entries = json::array();
     for (const auto & entry : turn.trace) {

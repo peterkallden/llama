@@ -468,6 +468,33 @@ bool parse_agent_daemon_jsonl_turn_response(
                 checkpoint.resource_refs.push_back(std::move(resource));
             }
         }
+        if (value.contains("working_state") && value["working_state"].is_object()) {
+            common_agent_working_state state;
+            const auto & state_value = value["working_state"];
+            state.goal = state_value.value("goal", std::string());
+            state.current_phase = state_value.value("current_phase", std::string());
+            state.completed_steps = state_value.value("completed_steps", std::vector<std::string>());
+            state.active_step = state_value.value("active_step", std::string());
+            state.remaining_steps = state_value.value("remaining_steps", std::vector<std::string>());
+            state.decisions = state_value.value("decisions", std::vector<std::string>());
+            state.constraints = state_value.value("constraints", std::vector<std::string>());
+            state.open_questions = state_value.value("open_questions", std::vector<std::string>());
+            if (state_value.contains("resource_refs") && state_value["resource_refs"].is_array()) {
+                for (const auto & item : state_value["resource_refs"]) {
+                    if (!item.is_object()) continue;
+                    common_runtime_resource_ref resource;
+                    resource.uri = item.value("uri", std::string());
+                    resource.name = item.value("name", std::string());
+                    resource.mime_type = item.value("mime_type", std::string());
+                    resource.size_bytes = item.value("size_bytes", size_t(0));
+                    state.resource_refs.push_back(std::move(resource));
+                }
+            }
+            state.chunk_status = state_value.value("chunk_status", std::vector<std::string>());
+            state.tool_results = state_value.value("tool_results", std::vector<std::string>());
+            state.continuation_action = state_value.value("continuation_action", std::string());
+            checkpoint.working_state = std::move(state);
+        }
         response.continuation_checkpoint = std::move(checkpoint);
     }
     if (message.contains("turn_summary") && message["turn_summary"].is_object()) {

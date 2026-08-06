@@ -1,5 +1,6 @@
 #include "tools/agent/runtime/agent-runtime-execution.h"
 #include "agent/context-pressure.h"
+#include "agent/agent-working-state.h"
 
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
@@ -161,7 +162,58 @@ void test_continuation_budget_emits_checkpoint() {
     assert(result.continuation_checkpoint);
     assert(result.continuation_checkpoint->turn_id == "checkpoint-turn");
     assert(result.continuation_checkpoint->plan_id == *result.plan_id);
+    assert(result.continuation_checkpoint->working_state);
+    assert(!result.continuation_checkpoint->working_state->goal.empty());
+    assert(!result.continuation_checkpoint->working_state->current_phase.empty());
     assert(inference.seen.size() == 2);
+}
+
+void test_working_state_projection_is_bounded_and_preserves_refs() {
+    common_plan_state plan;
+    plan.goal = "Preserve exact repository identifiers while compacting active context.";
+    plan.next_action = "resume verification";
+    plan.constraints.push_back({"no-unrelated-changes", "Do not modify unrelated workspace files.", true});
+    plan.assumptions.push_back({"build-available", "A reproducible build is available.", 0.2f, false, {}});
+    common_plan_step completed;
+    completed.id = "inspect";
+    completed.title = "Inspect current state";
+    completed.status = common_plan_step_status::completed;
+    completed.result_summary = "Found exact target and preserved commit identifier.";
+    plan.steps.push_back(completed);
+    common_plan_step active;
+    active.id = "verify";
+    active.title = "Verify bounded change";
+    active.status = common_plan_step_status::active;
+    active.mode = common_plan_step_mode::reasoning;
+    plan.steps.push_back(active);
+    plan.active_step_id = active.id;
+    common_plan_observation observation;
+    observation.id = "obs-1";
+    observation.source = "resource_chunk";
+    observation.summary = "Chunk observation";
+    common_runtime_resource_ref resource;
+    resource.uri = "agent-resource://authoritative";
+    resource.name = "source.txt";
+    resource.mime_type = "text/plain";
+    resource.size_bytes = 1024;
+    resource.lineage.parent_uri = "agent-resource://parent";
+    resource.lineage.chunk_index = 0;
+    resource.lineage.chunk_count = 2;
+    resource.lineage.byte_length = 512;
+    resource.lineage.derivation = "smoke";
+    observation.resource_refs.push_back(resource);
+    plan.observations.push_back(observation);
+
+    const auto state = make_common_agent_working_state(plan, 160);
+    const auto rendered = render_common_agent_working_state(state, 160);
+    assert(state.goal.find("repository") != std::string::npos);
+    assert(state.current_phase == "reasoning");
+    assert(!state.completed_steps.empty());
+    assert(!state.constraints.empty());
+    assert(!state.open_questions.empty());
+    assert(state.resource_refs.size() == 1);
+    assert(!state.chunk_status.empty());
+    assert(rendered.size() <= 160);
 }
 
 void test_cancellation_stops_before_next_continuation_slice() {
@@ -328,6 +380,7 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
 int main() {
     test_continuation_is_consumed_in_same_driver_operation();
     test_continuation_budget_emits_checkpoint();
+    test_working_state_projection_is_bounded_and_preserves_refs();
     test_cancellation_stops_before_next_continuation_slice();
     test_deadline_stops_before_next_continuation_slice();
     test_context_pressure_reserves_completion_and_tool_space();

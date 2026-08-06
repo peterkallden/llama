@@ -287,6 +287,14 @@ bool make_continuation_checkpoint(
     checkpoint.next_action = plan->next_action.value_or(std::string{});
     checkpoint.sequence = sequence;
     checkpoint.reason = common_agent_continuation_reason::completion_limit;
+    const auto & context_budgets = execution.runtime_config.generation_config.context_budgets;
+    checkpoint.working_state = make_common_agent_working_state(
+        *plan,
+        std::max<size_t>(2048,
+            context_budgets.plan_chars +
+            context_budgets.step_chars +
+            context_budgets.tool_observation_chars +
+            context_budgets.input_resources_chars));
     for (const auto & step : plan->steps) {
         if (step.status == common_plan_step_status::completed) checkpoint.completed_step_ids.push_back(step.id);
     }
