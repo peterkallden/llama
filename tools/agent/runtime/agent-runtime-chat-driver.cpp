@@ -106,6 +106,19 @@ void record_truncated_chat_generation(
     });
 }
 
+bool reject_truncated_chat_generation(
+        common_agent_result & result,
+        const common_agent_generation_result & generation_result,
+        std::string & error) {
+    if (generation_result.stop_reason != common_agent_generation_stop_reason::limit) {
+        return false;
+    }
+    record_truncated_chat_generation(result, generation_result);
+    result.response = generation_result.content;
+    error = "chat output was truncated; a continuation checkpoint is required before parsing or dispatch";
+    return true;
+}
+
 } // namespace
 
 bool run_agent_chat_runtime(
@@ -127,7 +140,9 @@ bool run_agent_chat_runtime(
     result.response_decoded_tokens = generation_result.decoded_tokens;
     result.response_generation_status = generation_result.status;
     result.response_stop_reason = generation_result.stop_reason;
-    record_truncated_chat_generation(result, generation_result);
+    if (reject_truncated_chat_generation(result, generation_result, error)) {
+        return false;
+    }
     if (!common_agent_generation_succeeded(generation_result)) {
         error = describe_generation_failure("chat generation", generation_result);
         return false;
@@ -163,7 +178,9 @@ bool run_agent_chat_runtime(
         result.response_decoded_tokens = generation_result.decoded_tokens;
         result.response_generation_status = generation_result.status;
         result.response_stop_reason = generation_result.stop_reason;
-        record_truncated_chat_generation(result, generation_result);
+        if (reject_truncated_chat_generation(result, generation_result, error)) {
+            return false;
+        }
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("chat generation", generation_result);
             return false;

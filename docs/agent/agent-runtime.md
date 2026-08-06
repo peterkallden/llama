@@ -1853,6 +1853,11 @@ a complete user answer or concatenated with an arbitrary retry. A future chat
 continuation must use a validated checkpoint and a structural regeneration
 boundary, especially for JSON or tool-call output.
 
+The guard also runs before chat parsing and tool dispatch. A truncated message
+therefore cannot turn a partial tool-call envelope into an executable call; the
+native result is rejected at the same boundary and the host retains the
+partial payload only for diagnosis.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.

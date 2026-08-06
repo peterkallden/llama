@@ -1025,6 +1025,49 @@ static void test_chat_runtime_rejects_truncated_output() {
     assert(result.trace.back().detail.find("output was truncated") != std::string::npos);
 }
 
+static void test_truncated_tool_call_is_not_dispatched() {
+    fake_agent_inference inference;
+    const std::vector<common_chat_tool> tools = {
+        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+    };
+    inference.queued = {
+        make_success(
+            R"(<tool_calls>[{"name":"memory_search","arguments":{"query":"partial"}}]</tool_calls>)",
+            64,
+            common_agent_generation_stop_reason::limit,
+            make_tool_call_chat_params(tools)),
+    };
+
+    common_agent_request request = make_request();
+    request.messages = {{"user", "Use memory"}};
+    common_agent_generation_options options;
+    options.n_predict = 64;
+    size_t dispatch_count = 0;
+    test_agent_tool_view tool_view;
+    tool_view.tools = tools;
+    tool_view.handler = [&dispatch_count](const agent_tool_call &, std::string & error) {
+        ++dispatch_count;
+        error.clear();
+        return agent_tool_result{};
+    };
+    const auto tooling = make_runtime_tooling(tools, &tool_view, false);
+    common_agent_chat_runtime_execution execution{
+        inference,
+        request,
+        options,
+        {1},
+        tooling,
+    };
+
+    common_agent_result result;
+    std::string error;
+    assert(!run_agent_chat_runtime(execution, result, error));
+    assert(result.limit_reached);
+    assert(result.response.find("tool_calls") != std::string::npos);
+    assert(dispatch_count == 0);
+    assert(error.find("before parsing or dispatch") != std::string::npos);
+}
+
 static void test_runtime_host_chat_smoke() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
@@ -1728,6 +1771,7 @@ static bool run_named_test(const std::string & name) {
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
         test_chat_runtime_rejects_truncated_output();
+        test_truncated_tool_call_is_not_dispatched();
     } else if (name == "runtime-host-chat-smoke") {
         test_runtime_host_chat_smoke();
     } else if (name == "runtime-host-agent-smoke") {

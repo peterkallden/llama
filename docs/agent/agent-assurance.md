@@ -78,6 +78,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
 - [x] Context-pressure continuation re-enters the same driver operation with bounded working state
 - [x] Chat output stopped by the generation limit is marked incomplete rather than accepted as final
+- [x] Truncated chat tool-call output is rejected before parsing or dispatch
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
