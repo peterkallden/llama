@@ -964,6 +964,10 @@ the standard MCP initialize and tool-discovery path. There is no portable MCP
 health method, so this probe is deliberately bounded to handshake and
 `tools/list`.
 
+The provider probe is configured by the shared daemon environment initializer,
+so foreground startup and daemon lifecycle smokes exercise the same readiness
+path rather than maintaining separate probe implementations.
+
 An optional provider that fails its probe produces `health: "degraded"`, keeps
 `ready: true`, and includes a warning. A required provider that fails produces
 `health: "failed"` and keeps `ready: false`. `required` is host policy, not a

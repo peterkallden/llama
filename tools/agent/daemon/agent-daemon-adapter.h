@@ -141,6 +141,10 @@ bool initialize_agent_daemon_environment(
     common_agent_daemon_runtime & runtime,
     std::string & error);
 
+void configure_agent_daemon_provider_probe(
+    const daemon_options & options,
+    common_agent_daemon_runtime & runtime);
+
 bool resolve_agent_daemon_tooling(
     const daemon_options & options,
     const common_agent_runtime_resident_runtime * runtime,
