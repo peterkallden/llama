@@ -123,7 +123,8 @@ $resolvedBuildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 }
-$exePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
+$memoryExePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
+$agentExePath = Join-Path $resolvedBuildDir "bin\Release\llama-agent.exe"
 $workDir = if ([System.IO.Path]::IsPathRooted($WorkSubdir)) {
     [System.IO.Path]::GetFullPath($WorkSubdir)
 } else {
@@ -146,13 +147,14 @@ Assert-PathExists -Path $EmbeddingModel -Label "Embedding model"
 
 if ($Build) {
     Write-Section "Build"
-    & $cmake --build $resolvedBuildDir --config Release --target llama-memory-poc -j 1
+    & $cmake --build $resolvedBuildDir --config Release --target llama-memory-poc llama-agent-cli -j 1
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }
 }
 
-Assert-PathExists -Path $exePath -Label "llama-memory executable"
+Assert-PathExists -Path $memoryExePath -Label "llama-memory executable"
+Assert-PathExists -Path $agentExePath -Label "llama-agent executable"
 
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
@@ -161,7 +163,7 @@ if (-not $SkipAddSearch) {
     $addLog = Join-Path $workDir "01-add.log"
     $searchLog = Join-Path $workDir "02-search.log"
 
-    Invoke-LoggedCommand -Name "memory add" -LogPath $addLog -FilePath $exePath -ArgumentList @(
+    Invoke-LoggedCommand -Name "memory add" -LogPath $addLog -FilePath $memoryExePath -ArgumentList @(
         "add",
         "--memory-db", $memoryDb,
         "--embedding-model", $EmbeddingModel,
@@ -170,7 +172,7 @@ if (-not $SkipAddSearch) {
         "--content", "Agent regressions should use the regression diagnosis procedure."
     )
 
-    Invoke-LoggedCommand -Name "memory search" -LogPath $searchLog -FilePath $exePath -ArgumentList @(
+    Invoke-LoggedCommand -Name "memory search" -LogPath $searchLog -FilePath $memoryExePath -ArgumentList @(
         "search",
         "--memory-db", $memoryDb,
         "--embedding-model", $EmbeddingModel,
@@ -182,7 +184,7 @@ if (-not $SkipStaticChat) {
     Write-Section "Static Chat"
     $staticLog = Join-Path $workDir "03-static-chat.log"
 
-    Invoke-LoggedCommand -Name "static chat" -LogPath $staticLog -FilePath $exePath -ArgumentList @(
+    Invoke-LoggedCommand -Name "static chat" -LogPath $staticLog -FilePath $agentExePath -ArgumentList @(
         "chat",
         "--memory-db", $memoryDb,
         "--model", $ChatModel,
@@ -198,7 +200,7 @@ if (-not $SkipAgentChat) {
     Write-Section "Agent Chat"
     $agentLog = Join-Path $workDir "04-agent-chat.log"
 
-    Invoke-LoggedCommand -Name "agent chat" -LogPath $agentLog -FilePath $exePath -ArgumentList @(
+    Invoke-LoggedCommand -Name "agent chat" -LogPath $agentLog -FilePath $agentExePath -ArgumentList @(
         "chat",
         "--memory-db", $memoryDb,
         "--plan-db", $planDb,
@@ -219,7 +221,7 @@ if (-not $SkipLearningChat) {
     Write-Section "Reflection And Learning Chat"
     $learningLog = Join-Path $workDir "05-learning-chat.log"
 
-    Invoke-LoggedCommand -Name "learning chat" -LogPath $learningLog -FilePath $exePath -ArgumentList @(
+    Invoke-LoggedCommand -Name "learning chat" -LogPath $learningLog -FilePath $agentExePath -ArgumentList @(
         "chat",
         "--memory-db", $memoryDb,
         "--plan-db", $planDb,
