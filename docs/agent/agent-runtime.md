@@ -2492,9 +2492,9 @@ with the same model, Cozo and work-directory setup. These runs are optional
 model-backed checks; the deterministic CTest and model-free smoke baseline
 remains the authoritative regression gate.
 
-The helper accepts an absolute `-BuildDir`, so model-backed checks can use an
-external E: build tree without creating a second build convention. The daemon
-integration harness follows the same rule. Its JSONL reader consumes
+The helper accepts absolute `-BuildDir` and `-WorkSubdir` values, so model-backed
+checks can use external E: build and work trees without creating a second build
+convention. The daemon integration harness follows the same rule. Its JSONL reader consumes
 `message_type=event` deliveries, including `turn.accepted`, until the terminal
 command response arrives; an accepted event is not treated as the completed
 turn result. This is required by the asynchronous daemon mailbox/event-stream

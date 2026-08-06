@@ -260,6 +260,17 @@ daemon issue is resolved.
 | Sandbox Kubernetes | Not-run; Kubernetes was unavailable |
 | Decision | Windows model-free agent assurance passed; model-backed Qwen/Nomic and sandbox/Linux gates remain separate |
 
+The Qwen/Nomic helper was also exercised against the same Release artifact.
+The Nomic-backed memory add/search phase passed and returned the expected
+`note-1` result. The first static Qwen chat phase did not produce output or
+progress on this Windows run and was stopped after the process remained alive
+without CPU activity; the retry used an external E: work directory and an
+explicit `NUL` stdin, but showed the same behavior. Consequently, the
+model-backed chat phases are recorded as not-run/blocked rather than as a
+passing end-to-end result. This does not change the deterministic 31/31 CTest
+result. The helper now accepts absolute `-BuildDir` and `-WorkSubdir` values
+for external build and result trees.
+
 ### Previous current run
 
 | Field | Value |

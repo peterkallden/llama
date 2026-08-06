@@ -53,7 +53,7 @@ function Invoke-LoggedCommand {
         if (Test-Path -LiteralPath $stdoutPath) { Remove-Item -LiteralPath $stdoutPath -Force }
         if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
         $argumentString = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
-        $command = ('"{0}" {1} 1> "{2}" 2> "{3}"' -f $FilePath, $argumentString, $stdoutPath, $stderrPath)
+        $command = ('"{0}" {1} 1> "{2}" 2> "{3}" < NUL' -f $FilePath, $argumentString, $stdoutPath, $stderrPath)
 
         Push-Location -LiteralPath $repoRoot
         try {
@@ -124,7 +124,11 @@ $resolvedBuildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $BuildDir))
 }
 $exePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
-$workDir = Join-Path $repoRoot $WorkSubdir
+$workDir = if ([System.IO.Path]::IsPathRooted($WorkSubdir)) {
+    [System.IO.Path]::GetFullPath($WorkSubdir)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $WorkSubdir))
+}
 $memoryDb = Join-Path $workDir "memory.cozo"
 $planDb = Join-Path $workDir "plan.cozo"
 
