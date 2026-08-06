@@ -110,6 +110,9 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.max_research_iterations = (size_t) std::stoul(v);
         } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--n-predict") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_predict = std::stoi(v);
+        } else if (strcmp(argv[i], "--context-size") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.context_size = std::stoi(v);
+            if (out.context_size < 0) { fprintf(stderr, "--context-size must not be negative\n"); return false; }
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_threads = std::stoi(v);
             if (out.n_threads < 1) {

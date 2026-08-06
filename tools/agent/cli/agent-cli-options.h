@@ -43,6 +43,7 @@ struct args {
     size_t max_tool_rounds = 1;
     int n_predict = 128;
     int n_threads = 2;
+    int context_size = 0;
     common_agent_context_budget_config context_budgets;
     int n_gpu_layers = 99;
     bool record_episode = false;

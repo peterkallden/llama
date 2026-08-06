@@ -534,8 +534,8 @@ are character budgets unless stated otherwise:
 
 ```json
 {
-  "runtime": {
-    "context_size": 8192,
+    "runtime": {
+      "context_size": 8192,
     "n_predict": 256,
     "context_budgets": {
       "plan_chars": 4096,
@@ -579,6 +579,15 @@ The budgets are used as follows:
 from the character budgets. The runtime still applies hard host-owned limits
 for transport, resources, sandbox requests and result sizes; these budgets do
 not allow a client to exceed those limits.
+
+When `runtime.context_size` is available, the runtime also performs a
+conservative pre-inference estimate over the active request, plan, observations,
+and resource descriptors. Output, tool, and safety reserves are applied before
+the model call. `compact_recommended` is recorded as bounded runtime guidance;
+`compact_required` and `continuation_required` stop before draft inference and
+use the existing continuation/checkpoint path. The estimate is intentionally
+not tokenizer-precise and does not claim that full conversation compaction is
+implemented.
 
 ## Thinking-mode escalation
 

@@ -57,6 +57,7 @@ int main(int argc, char ** argv) {
             }},
             {"runtime", {
                 {"thinking_mode", "deliberate"},
+                {"context_size", 4096},
                 {"n_threads", 4},
                 {"max_reflection_rounds", 3},
                 {"max_plan_revisions", 2},
@@ -160,13 +161,13 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "host config MCP required policy mismatch\n");
         return 1;
     }
-    if (loaded_config.n_threads != 4) {
+    if (loaded_config.runtime_context_size != 4096 || loaded_config.n_threads != 4) {
         std::fprintf(stderr, "host config n_threads mismatch\n");
         return 1;
     }
     daemon_options applied_daemon_options;
     apply_agent_host_config_to_daemon_options(loaded_config, applied_daemon_options);
-    if (applied_daemon_options.n_threads != 4) {
+    if (applied_daemon_options.context_size != 4096 || applied_daemon_options.n_threads != 4) {
         std::fprintf(stderr, "host config n_threads was not applied to daemon options\n");
         return 1;
     }

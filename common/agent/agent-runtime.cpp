@@ -1,5 +1,6 @@
 #include "agent/agent-runtime.h"
 #include "agent/agent-runtime-context.h"
+#include "agent/context-pressure.h"
 #include "agent/memory-learning.h"
 #include "agent/research/research-runner.h"
 #include "agent/runtime-json-contracts.h"
@@ -20,6 +21,23 @@ static bool request_has_active_resource_chunk(const common_agent_request & reque
         [](const common_agent_input_resource & input) {
             return !input.resource.lineage.parent_uri.empty();
         });
+}
+
+static size_t estimate_common_agent_context_tokens(
+        const common_agent_request & request,
+        const common_plan_state & plan) {
+    size_t characters = request.prompt.size();
+    characters += plan.purpose.size() + plan.goal.size() + plan.success_criteria.size();
+    for (const auto & step : plan.steps) {
+        characters += step.title.size() + step.objective.size() + step.result_summary.value_or(std::string{}).size();
+    }
+    for (const auto & observation : plan.observations) characters += observation.summary.size();
+    for (const auto & input : request.input_resources) {
+        characters += input.resource.name.size() + input.resource.description.size() + input.resource.uri.size();
+    }
+    // This is deliberately a conservative host-side estimate. The model
+    // adapter remains responsible for exact tokenizer accounting.
+    return (characters + 3) / 4;
 }
 
 static void append_trace(
@@ -293,7 +311,7 @@ static bool is_incomplete_tool_call(
     return false;
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & input_request) {
     common_agent_request request = input_request;
@@ -888,6 +906,36 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
         }
 
+        if (context_size_tokens > 0) {
+            const auto context_evaluation = evaluate_common_agent_context_pressure({
+                context_size_tokens,
+                estimate_common_agent_context_tokens(request, plan),
+                reserved_output_tokens,
+                request.max_tool_batches * 128,
+                256,
+            });
+            if (!context_evaluation.valid ||
+                    context_evaluation.pressure == common_agent_context_pressure::compact_required ||
+                    context_evaluation.pressure == common_agent_context_pressure::continuation_required) {
+                result.plan_id = plan.id;
+                result.plan_version = plan.version;
+                result.limit_reached = true;
+                result.response_generation_status = common_agent_generation_status::completed;
+                result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                append_trace(result, common_runtime_trace_stage::turn,
+                    common_runtime_trace_kind::decided,
+                    "context pressure requires a bounded continuation before draft inference",
+                    plan.id);
+                break;
+            }
+            if (context_evaluation.pressure == common_agent_context_pressure::compact_recommended) {
+                append_trace(result, common_runtime_trace_stage::turn,
+                    common_runtime_trace_kind::decided,
+                    "context pressure recommends bounded prompt compaction",
+                    plan.id);
+            }
+        }
+
         const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
         auto draft = draft_result.content;
         if (!error.empty()) { result.error = error; return result; }
@@ -1228,7 +1276,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,
             "reflection requested response revision", plan.id);
     }
-    if (result.response.empty() && result.error.empty()) {
+    if (result.response.empty() && result.error.empty() && !result.limit_reached) {
         result.error = "agent loop reached its iteration limit";
         append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::failed,
             result.error, plan.id);

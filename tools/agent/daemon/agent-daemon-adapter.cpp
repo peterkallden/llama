@@ -162,6 +162,9 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.max_research_iterations = static_cast<size_t>(std::stoul(value));
         } else if (std::strcmp(argv[i], "-n") == 0 || std::strcmp(argv[i], "--n-predict") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_predict = std::stoi(value);
+        } else if (std::strcmp(argv[i], "--context-size") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.context_size = std::stoi(value);
+            if (options.context_size < 0) { std::fprintf(stderr, "--context-size must not be negative\n"); return false; }
         } else if (std::strcmp(argv[i], "-ngl") == 0 || std::strcmp(argv[i], "--n-gpu-layers") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_gpu_layers = std::stoi(value);
         } else if (std::strcmp(argv[i], "--memory-learn") == 0) {

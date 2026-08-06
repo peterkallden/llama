@@ -3,6 +3,8 @@
 #include "../cli/agent-cli-runtime.h"
 #include "../tooling/agent-tool-runtime-adapter.h"
 
+#include <algorithm>
+
 common_agent_inference_options make_agent_inference_options(common_agent_inference_options config) {
     return config;
 }
@@ -64,6 +66,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         assembly.tool_runtime.get(),
         assembly.memory_learner.get(),
         nullptr,
-        runtime_config.context_budgets);
+        runtime_config.context_budgets,
+        runtime_config.generation_config.context_size_tokens,
+        static_cast<size_t>(std::max(0, runtime_config.generation_config.n_predict)));
     return assembly;
 }

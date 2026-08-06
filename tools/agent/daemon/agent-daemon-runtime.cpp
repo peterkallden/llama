@@ -143,6 +143,7 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
     common_agent_runtime_config config;
     config.generation_config.n_predict = options.n_predict;
     config.generation_config.n_threads = options.n_threads;
+    config.generation_config.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
     config.generation_config.context_budgets = options.context_budgets;
     config.context_budgets = options.context_budgets;
     config.enable_memory_learning = options.memory_learn == "post-turn";

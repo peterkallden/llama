@@ -1176,6 +1176,7 @@ void apply_agent_host_config_to_daemon_options(
     options.max_plan_revisions = config.max_plan_revisions;
     options.max_research_iterations = config.max_research_iterations;
     options.n_predict = config.n_predict;
+    options.context_size = config.runtime_context_size;
     options.n_threads = config.n_threads;
     options.context_budgets = config.context_budgets;
     options.n_gpu_layers = config.n_gpu_layers;
@@ -1262,6 +1263,7 @@ void apply_agent_host_config_to_args(
     options.backend = config.memory_backend;
     options.memory_db = config.memory_db;
     options.n_predict = config.n_predict;
+    options.context_size = config.runtime_context_size;
     options.context_budgets = config.context_budgets;
     options.n_gpu_layers = config.n_gpu_layers;
     options.tool_profile = config.tool_profile;
