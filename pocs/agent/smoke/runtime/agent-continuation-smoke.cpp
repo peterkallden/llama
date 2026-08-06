@@ -82,6 +82,7 @@ void test_continuation_is_consumed_in_same_driver_operation() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
+        {"still-not-json", common_agent_generation_stop_reason::none, 1},
         {"first slice", common_agent_generation_stop_reason::limit, 5},
         {"second slice", common_agent_generation_stop_reason::none, 6},
     };
@@ -118,10 +119,13 @@ void test_continuation_is_consumed_in_same_driver_operation() {
     assert(result.response_stop_reason == common_agent_generation_stop_reason::none);
     assert(!result.continuation_checkpoint);
     assert(result.plan_id);
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[1].messages.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("[Regeneration]") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[3].purpose == common_agent_generation_purpose::draft);
 }
 
 void test_continuation_budget_emits_checkpoint() {

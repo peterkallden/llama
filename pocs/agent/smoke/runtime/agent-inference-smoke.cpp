@@ -412,6 +412,7 @@ static void test_runtime_generation_metadata() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"(not-json)"),
+        make_success(R"({"goal":"Check status","steps":[{"id":"answer","mode":"reasoning","objective":"Answer the user"}]})"),
         make_success("draft-content", 11),
         make_success(R"({"summary":"facts"})"),
         make_success(R"({"decision":"accept","ready_to_answer":true})", 0, common_agent_generation_stop_reason::json_schema),
@@ -460,27 +461,32 @@ static void test_runtime_generation_metadata() {
     assert(memory_candidate.generation);
     assert(memory_candidate.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
-    assert(inference.seen.size() == 5);
+    assert(inference.seen.size() == 6);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].purpose == common_agent_generation_purpose::draft);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::reasoning);
-    assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
-    assert(inference.seen[4].purpose == common_agent_generation_purpose::memory_learning);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[1].messages.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("[Regeneration]") != std::string::npos);
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[3].purpose == common_agent_generation_purpose::reasoning);
+    assert(inference.seen[4].purpose == common_agent_generation_purpose::reflection);
+    assert(inference.seen[5].purpose == common_agent_generation_purpose::memory_learning);
     assert(inference.seen[0].trace_id && *inference.seen[0].trace_id == "turn-7:planner");
-    assert(inference.seen[1].trace_id && *inference.seen[1].trace_id == "turn-7:draft");
-    assert(inference.seen[2].trace_id && *inference.seen[2].trace_id == "turn-7:reasoning");
-    assert(inference.seen[3].trace_id && *inference.seen[3].trace_id == "turn-7:reflection");
-    assert(inference.seen[4].trace_id && *inference.seen[4].trace_id == "turn-7:memory_learning");
+    assert(inference.seen[1].trace_id && *inference.seen[1].trace_id == "turn-7:planner");
+    assert(inference.seen[2].trace_id && *inference.seen[2].trace_id == "turn-7:draft");
+    assert(inference.seen[3].trace_id && *inference.seen[3].trace_id == "turn-7:reasoning");
+    assert(inference.seen[4].trace_id && *inference.seen[4].trace_id == "turn-7:reflection");
+    assert(inference.seen[5].trace_id && *inference.seen[5].trace_id == "turn-7:memory_learning");
     assert(inference.seen[0].scope && inference.seen[0].scope->namespace_id == "tenant-a");
     assert(inference.seen[0].scope && inference.seen[0].scope->session_id == "session-42");
     assert(inference.seen[0].scope && inference.seen[0].scope->turn_id == "turn-7");
     assert(inference.seen[0].scope && inference.seen[0].scope->plan_scope == common_plan_scope::turn);
     assert(inference.seen[0].scope && inference.seen[0].scope->memory_scope == common_memory_scope::session);
     assert(inference.seen[0].options.n_predict == 512);
-    assert(inference.seen[1].options.n_predict == 64);
+    assert(inference.seen[1].options.n_predict == 512);
     assert(inference.seen[2].options.n_predict == 64);
-    assert(inference.seen[3].options.n_predict == 256);
+    assert(inference.seen[3].options.n_predict == 64);
     assert(inference.seen[4].options.n_predict == 256);
+    assert(inference.seen[5].options.n_predict == 256);
     assert(inference.queued.empty());
 }
 
