@@ -1866,6 +1866,13 @@ when a later slice completes. This does not apply to tool-enabled or
 structured output; those paths still require structural regeneration rather
 than text concatenation.
 
+The model planner now applies that rule to its compact plan JSON: a partial or
+schema-invalid planner object receives one bounded regeneration request from
+the beginning. The first payload is never concatenated with the retry. If the
+regeneration is also invalid, the existing bounded fallback/error behavior
+applies. This is intentionally one local repair attempt, not an unbounded
+model loop.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.

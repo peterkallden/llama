@@ -80,6 +80,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Chat output stopped by the generation limit is marked incomplete rather than accepted as final
 - [x] Truncated chat tool-call output is rejected before parsing or dispatch
 - [x] Tool-free plain-text chat can continue within the existing bounded turn lane
+- [x] Planner JSON gets one bounded structural regeneration without partial-object concatenation
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified

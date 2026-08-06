@@ -484,6 +484,26 @@ static void test_runtime_generation_metadata() {
     assert(inference.queued.empty());
 }
 
+static void test_planner_regenerates_truncated_json() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"incomplete")", 512, common_agent_generation_stop_reason::limit),
+        make_success(R"({"goal":"Inspect the request","steps":[{"id":"inspect","mode":"reasoning","objective":"Inspect the request"}]})"),
+    };
+
+    const auto options = make_test_args();
+    const common_agent_request request = make_request();
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), {});
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.plan.goal == "Inspect the request");
+    assert(proposal.plan.steps.size() == 1);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+}
+
 static void test_selection_generation_metadata() {
     fake_agent_inference inference;
     inference.queued = {
@@ -1789,6 +1809,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_assembly_helpers();
     } else if (name == "runtime-metadata") {
         test_runtime_generation_metadata();
+    } else if (name == "planner-regeneration") {
+        test_planner_regenerates_truncated_json();
     } else if (name == "selection-metadata") {
         test_selection_generation_metadata();
     } else if (name == "runtime-failure") {
@@ -1847,6 +1869,7 @@ int main(int argc, char ** argv) {
         "cli-scope",
         "runtime-assembly",
         "runtime-metadata",
+        "planner-regeneration",
         "selection-metadata",
         "runtime-failure",
         "selection-failure",

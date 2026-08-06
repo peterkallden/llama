@@ -212,19 +212,37 @@ public:
                 common_memory_overlay_stage::planning,
                 make_memory_context_config(generation_config.context_budgets),
                 make_overlay_config(generation_config.context_budgets));
-        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
-            request,
-            common_agent_generation_purpose::planner,
-            {system, user},
-            make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
-            common_plan_proposal_json_schema()));
+        auto generate_plan = [&](bool regeneration) {
+            common_chat_msg attempt = user;
+            if (regeneration) {
+                attempt.content +=
+                    "\n[Regeneration]\nThe previous response was incomplete or structurally invalid. "
+                    "Regenerate the complete JSON object from the beginning. Do not continue partial JSON, "
+                    "add commentary, or emit tool calls outside the requested plan object.";
+            }
+            return inference.generate_result(make_agent_cli_generation_request(
+                request,
+                common_agent_generation_purpose::planner,
+                {system, attempt},
+                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
+                common_plan_proposal_json_schema()));
+        };
+        auto generation_result = generate_plan(false);
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
-        if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model planner generation", generation_result);
-            return proposal;
-        }
         std::string parse_error;
-        if (common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6)) {
+        bool parsed = common_agent_generation_succeeded(generation_result) &&
+            common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6);
+        if (!parsed) {
+            // One bounded structural retry is enough for a partial/invalid
+            // planner object. The original payload is never concatenated with
+            // the retry and is retained only through the generation record.
+            generation_result = generate_plan(true);
+            proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+            parse_error.clear();
+            parsed = common_agent_generation_succeeded(generation_result) &&
+                common_plan_parse_proposal_json(generation_result.content, proposal.plan, proposal.operations, parse_error, 6);
+        }
+        if (parsed) {
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
@@ -236,6 +254,10 @@ public:
                 }
             }
             error.clear();
+            return proposal;
+        }
+        if (!common_agent_generation_succeeded(generation_result)) {
+            error = describe_agent_cli_generation_failure("model planner generation", generation_result);
             return proposal;
         }
 
