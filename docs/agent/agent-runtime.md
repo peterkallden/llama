@@ -1017,6 +1017,19 @@ does not inline a second copy. This keeps prompt ownership in the existing
 CLI/runtime rendering seam and avoids spending context budget on duplicate
 working state.
 
+Context pressure uses the existing host/runtime boundary for token accounting.
+The runtime keeps its conservative character-based estimate as a fallback, but
+an assembled host may provide a `common_agent_context_token_estimator` through
+the runtime configuration. When present, that estimator supplies the
+template-aware or tokenizer-aware input count for the current request and
+plan; an empty result falls back to the bounded estimate. This keeps exact
+tokenizer ownership with the inference adapter without adding a second context
+store or moving model-specific accounting into planning code.
+
+Chunk entries in the compact projection retain the parent URI, position,
+`status=completed`, and source observation ID. They are still bounded working
+evidence; the original resource and plan observations remain authoritative.
+
 One Windows-specific detail is now explicit in the build path as well. The local Cozo artifact used by this branch is currently a release-built MSVC library under `work/cozo-release`. When a Debug build enables Cozo-backed memory, plan, and resource support, the build now detects that release Cozo input and switches the current MSVC build tree to release-compatible CRT / iterator settings for that configuration. The scope is intentionally narrow: keep the resident agent, daemon, and MCP-host-facing targets buildable on this machine without requiring a separate locally-built debug Cozo package first.
 
 That compatibility slice was re-verified on July 16, 2026 with a narrow serial build in `build-plan-resident-cozo-debug-3`. Instead of treating the whole workspace tree as the verification unit, the current practical bar on this laptop is the agent chain that actually exercises the resident/daemon/MCP path. The following targets built successfully after the Cozo/MSVC compatibility fix:

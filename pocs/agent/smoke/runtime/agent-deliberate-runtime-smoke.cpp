@@ -36,6 +36,20 @@ public:
                 {"agent-resource://parent"},
                 {chunk},
                 0});
+        } else if (request.prompt.find("complete chunk") != std::string::npos) {
+            for (size_t index = 0; index < 2; ++index) {
+                common_runtime_resource_ref chunk;
+                chunk.uri = "agent-resource://chunk/" + std::to_string(index);
+                chunk.lineage = {"agent-resource://parent", index, 2, index * 16, 16, 0, "text-chunk"};
+                proposal.plan.observations.push_back({
+                    "resource_chunk:agent-resource://parent:complete:" + std::to_string(index),
+                    "resource_chunk",
+                    "Complete bounded chunk observation " + std::to_string(index) + ".",
+                    1.0f,
+                    {"agent-resource://parent"},
+                    {chunk},
+                    0});
+            }
         } else if (request.prompt.find("conflicting chunk") != std::string::npos) {
             for (size_t duplicate = 0; duplicate < 2; ++duplicate) {
                 common_runtime_resource_ref chunk;
@@ -230,6 +244,24 @@ int main() {
         return 1;
     }
     std::printf("incomplete_chunk_synthesis_gated=ok\n");
+
+    common_plan_in_memory_store complete_store;
+    if (!complete_store.open("", error)) return 1;
+    accepting_deliberate_reflector complete_reflector;
+    common_agent_runtime complete_runtime(
+        complete_store, planner, executor, complete_reflector);
+    auto complete_request = incomplete_request;
+    complete_request.prompt = "Verify a complete chunk synthesis";
+    complete_request.turn_id = "complete-chunk-turn";
+    const auto complete_result = complete_runtime.run(complete_request);
+    const auto complete_plan = complete_store.get("deliberate-runtime-plan", error);
+    if (!complete_result.error.empty() || complete_result.response != "deliberate-answer" ||
+            !complete_plan || complete_plan->status != common_plan_status::completed) {
+        std::fprintf(stderr, "complete chunk synthesis was not accepted: %s\n",
+            complete_result.error.c_str());
+        return 1;
+    }
+    std::printf("complete_chunk_synthesis_allowed=ok\n");
 
     common_plan_in_memory_store conflict_store;
     if (!conflict_store.open("", error)) return 1;

@@ -102,6 +102,12 @@ block once, so the continuation instruction does not duplicate it. These are
 projection-boundary guarantees, not a claim that exact tokenizer accounting or
 general context-window compaction is complete.
 
+The runtime also exposes an optional host-owned context token estimator. It can
+replace the conservative fallback estimate for an assembled inference path;
+when it is absent or returns no value, the existing bounded estimate remains in
+force. The estimator seam is covered by the continuation smoke contract, while
+backend-specific tokenizer accuracy remains a separate assurance activity.
+
 The lineage/range item is a contract milestone, not a claim that automatic
 large-resource chunk scheduling or full context compaction is complete. The
 original resource remains authoritative, derived chunks must retain parent

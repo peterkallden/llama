@@ -318,7 +318,7 @@ static bool is_incomplete_tool_call(
     return false;
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens, common_agent_context_token_estimator context_token_estimator) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens), context_token_estimator(std::move(context_token_estimator)) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & input_request) {
     common_agent_request request = input_request;
@@ -914,9 +914,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
 
         if (context_size_tokens > 0) {
+            const size_t estimated_context_tokens = context_token_estimator
+                ? context_token_estimator(request, plan).value_or(estimate_common_agent_context_tokens(request, plan))
+                : estimate_common_agent_context_tokens(request, plan);
             const auto context_evaluation = evaluate_common_agent_context_pressure({
                 context_size_tokens,
-                estimate_common_agent_context_tokens(request, plan),
+                estimated_context_tokens,
                 reserved_output_tokens,
                 request.max_tool_batches * 128,
                 256,

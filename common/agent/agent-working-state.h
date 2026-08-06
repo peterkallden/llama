@@ -140,7 +140,8 @@ inline common_agent_working_state make_common_agent_working_state(
             common_agent_working_state_add(
                 state.chunk_status,
                 lineage.parent_uri + "[" + std::to_string(lineage.chunk_index) + "/" +
-                    std::to_string(lineage.chunk_count) + "]",
+                    std::to_string(lineage.chunk_count) + "];status=completed;observation=" +
+                    observation.id,
                 remaining_chars,
                 limits.max_value_chars);
         }

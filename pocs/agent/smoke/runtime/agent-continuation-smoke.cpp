@@ -373,16 +373,23 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     runtime_config.generation_config.n_predict = 64;
     runtime_config.generation_config.context_size_tokens = 1024;
     runtime_config.max_continuations = 1;
+    size_t estimator_calls = 0;
+    runtime_config.context_token_estimator = [&estimator_calls](
+            const common_agent_request &, const common_plan_state &) -> std::optional<size_t> {
+        ++estimator_calls;
+        return 1000;
+    };
     auto execution = make_execution(
         memories, plans, inference, current_plan_id, std::move(runtime_config),
         scope, blueprints, hits, tooling);
-    execution.orchestration_config.prompt = std::string(3000, 'x');
+    execution.orchestration_config.prompt = "short context-pressure request";
 
     common_agent_result result;
     assert(run_agent_runtime_driver(execution, result, error));
     assert(error.empty());
     assert(result.error.empty());
     assert(result.response == "compacted result");
+    assert(estimator_calls > 0);
     assert(!result.limit_reached);
     assert(!result.continuation_checkpoint);
     assert(inference.seen.size() == 2);

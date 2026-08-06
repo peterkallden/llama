@@ -45,6 +45,7 @@ struct common_agent_runtime_config {
     // Bounded internal inference slices after a generation limit. Zero
     // disables automatic continuation for compatibility.
     size_t max_continuations = 2;
+    common_agent_context_token_estimator context_token_estimator;
 };
 
 struct common_agent_runtime_build_config {
@@ -54,6 +55,7 @@ struct common_agent_runtime_build_config {
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
     size_t max_continuations = 2;
+    common_agent_context_token_estimator context_token_estimator;
 };
 
 common_agent_inference_options make_agent_inference_options(
