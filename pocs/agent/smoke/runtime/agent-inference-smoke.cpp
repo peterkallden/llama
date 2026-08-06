@@ -527,6 +527,31 @@ static void test_reflection_regenerates_invalid_json() {
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
 }
 
+static void test_memory_learning_regenerates_invalid_json() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"candidate":)", 256, common_agent_generation_stop_reason::limit),
+        make_success(R"({"candidate":{"kind":"procedure","content":"Verify the build before replying.","rationale":"Completed verification showed this is reusable.","importance":0.8,"confidence":0.9,"expected_reuse":0.7,"evidence_ids":["obs-1"],"source_plan_step_ids":["inspect"]},"reason":"Reusable verification procedure"})"),
+    };
+
+    const auto options = make_test_args();
+    const common_agent_request request = make_request();
+    common_plan_state plan;
+    plan.id = "plan-memory-regeneration";
+    plan.goal = request.prompt;
+    plan.success_criteria = "Reply clearly";
+    common_agent_result agent_result;
+    agent_result.response = "Final answer";
+    auto extractor = make_llama_cli_memory_candidate_extractor(inference, make_agent_generation_config(options));
+    std::string error;
+    const auto candidate = extractor->extract_result(request, plan, agent_result, error);
+    assert(error.empty());
+    assert(candidate.candidate);
+    assert(candidate.candidate->kind == common_memory_kind::procedure);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+}
+
 static void test_selection_generation_metadata() {
     fake_agent_inference inference;
     inference.queued = {
@@ -1836,6 +1861,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_regenerates_truncated_json();
     } else if (name == "reflection-regeneration") {
         test_reflection_regenerates_invalid_json();
+    } else if (name == "memory-regeneration") {
+        test_memory_learning_regenerates_invalid_json();
     } else if (name == "selection-metadata") {
         test_selection_generation_metadata();
     } else if (name == "runtime-failure") {
@@ -1896,6 +1923,7 @@ int main(int argc, char ** argv) {
         "runtime-metadata",
         "planner-regeneration",
         "reflection-regeneration",
+        "memory-regeneration",
         "selection-metadata",
         "runtime-failure",
         "selection-failure",

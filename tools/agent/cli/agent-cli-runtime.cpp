@@ -544,20 +544,39 @@ public:
             }
         }
         const std::string schema = R"({"type":"object","additionalProperties":false,"required":["candidate","reason"],"properties":{"candidate":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["kind","content","rationale","importance","confidence","expected_reuse","evidence_ids","source_plan_step_ids"],"properties":{"kind":{"enum":["procedure","preference","fact"]},"content":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":240},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"expected_reuse":{"type":"number","minimum":0,"maximum":1},"evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}},"source_plan_step_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":256}}}}]},"reason":{"type":"string","maxLength":240}}})";
-        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
-            request,
-            common_agent_generation_purpose::memory_learning,
-            {system, user},
-            make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
-            schema));
+        auto generate_memory_candidate = [&](bool regeneration) {
+            common_chat_msg attempt = user;
+            if (regeneration) {
+                attempt.content +=
+                    "\n[Regeneration]\nThe previous memory proposal was incomplete or structurally invalid. "
+                    "Regenerate one complete JSON object from the beginning, or emit a complete null candidate. "
+                    "Do not continue partial JSON or include commentary.";
+            }
+            return inference.generate_result(make_agent_cli_generation_request(
+                request,
+                common_agent_generation_purpose::memory_learning,
+                {system, attempt},
+                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
+                schema));
+        };
+        auto generation_result = generate_memory_candidate(false);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model candidate generation", generation_result);
-            return {{}, {}, common_agent_generated_text_result_from_generation_result(generation_result)};
+            generation_result = generate_memory_candidate(true);
+            if (!common_agent_generation_succeeded(generation_result)) {
+                error = describe_agent_cli_generation_failure("model candidate generation", generation_result);
+                return {{}, {}, common_agent_generated_text_result_from_generation_result(generation_result)};
+            }
         }
-        const auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
+        auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
         common_memory_candidate_result parsed;
         if (!parse_memory_candidate_json(generation_result.content, parsed, error)) {
-            return {{}, {}, generation};
+            generation_result = generate_memory_candidate(true);
+            generation = common_agent_generated_text_result_from_generation_result(generation_result);
+            error.clear();
+            if (!common_agent_generation_succeeded(generation_result) ||
+                    !parse_memory_candidate_json(generation_result.content, parsed, error)) {
+                return {{}, {}, generation};
+            }
         }
         parsed.generation = generation;
         return parsed;

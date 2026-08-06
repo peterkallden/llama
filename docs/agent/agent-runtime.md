@@ -1879,6 +1879,12 @@ decision, learning hint, or proposed plan operation is accepted. If the retry
 does not validate, the existing safe behavior accepts the current draft without
 applying untrusted reflection operations.
 
+The post-turn memory candidate extractor uses the same one-retry boundary. A
+partial or invalid candidate object is regenerated before it reaches the
+existing evidence, provenance, scope, and memory-learning policy. The first
+payload is never treated as a candidate and is not concatenated with the retry;
+if validation still fails, no candidate is proposed.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.
