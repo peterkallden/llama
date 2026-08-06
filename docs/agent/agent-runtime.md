@@ -1845,6 +1845,14 @@ JSON or apply the continuation loop to chat-driver output. If the bounded
 slice budget is exhausted, the result remains incomplete and carries a
 validated checkpoint rather than being reported as a successful final answer.
 
+The chat-driver boundary is now explicit as well. If a conversation generation
+ends with the backend's length/limit stop reason, the partial text remains in
+the native result for diagnostics, but the result is marked `limit_reached` and
+the driver returns an incomplete/error outcome. It is never silently treated as
+a complete user answer or concatenated with an arbitrary retry. A future chat
+continuation must use a validated checkpoint and a structural regeneration
+boundary, especially for JSON or tool-call output.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.

@@ -995,6 +995,36 @@ static void test_chat_runtime_driver_smoke() {
     assert(inference.seen[1].messages[2].tool_name == "memory_search");
 }
 
+static void test_chat_runtime_rejects_truncated_output() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success("partial answer", 64, common_agent_generation_stop_reason::limit),
+    };
+
+    common_agent_request request = make_request();
+    request.messages = {{"user", "Explain the result"}};
+    common_agent_generation_options options;
+    options.n_predict = 64;
+    const auto tooling = make_runtime_tooling({}, nullptr, false);
+    common_agent_chat_runtime_execution execution{
+        inference,
+        request,
+        options,
+        {1},
+        tooling,
+    };
+
+    common_agent_result result;
+    std::string error;
+    assert(!run_agent_chat_runtime(execution, result, error));
+    assert(result.response == "partial answer");
+    assert(result.limit_reached);
+    assert(result.response_stop_reason == common_agent_generation_stop_reason::limit);
+    assert(error.find("truncated") != std::string::npos);
+    assert(!result.trace.empty());
+    assert(result.trace.back().detail.find("output was truncated") != std::string::npos);
+}
+
 static void test_runtime_host_chat_smoke() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
@@ -1697,6 +1727,7 @@ static bool run_named_test(const std::string & name) {
         test_runtime_execution_builder();
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
+        test_chat_runtime_rejects_truncated_output();
     } else if (name == "runtime-host-chat-smoke") {
         test_runtime_host_chat_smoke();
     } else if (name == "runtime-host-agent-smoke") {

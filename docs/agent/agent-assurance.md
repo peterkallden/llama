@@ -77,6 +77,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Context-pressure evaluation can stop before draft inference and create a continuation checkpoint
 - [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
 - [x] Context-pressure continuation re-enters the same driver operation with bounded working state
+- [x] Chat output stopped by the generation limit is marked incomplete rather than accepted as final
 - [x] Research workspace remains turn-scoped and ephemeral by default
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
@@ -207,7 +208,7 @@ daemon issue is resolved.
 | Continuation CTest | `1/1 passed` |
 | Daemon protocol CTests | `2/2 passed` |
 | Scope | Slice cancellation/deadline control and daemon checkpoint transport |
-| Not claimed | Full context compaction or arbitrary context-window overflow handling |
+| Not claimed | Full context compaction, structural chat-output regeneration, or arbitrary context-window overflow handling |
 
 ### Resource chunk completion verification - 2026-08-05
 

@@ -92,6 +92,20 @@ bool append_dispatched_tool_messages(
     return true;
 }
 
+void record_truncated_chat_generation(
+        common_agent_result & result,
+        const common_agent_generation_result & generation_result) {
+    if (generation_result.stop_reason != common_agent_generation_stop_reason::limit) {
+        return;
+    }
+    result.limit_reached = true;
+    result.trace.push_back({
+        common_runtime_trace_stage::turn,
+        common_runtime_trace_kind::decided,
+        "chat output was truncated at the generation limit; continuation is required",
+    });
+}
+
 } // namespace
 
 bool run_agent_chat_runtime(
@@ -113,6 +127,7 @@ bool run_agent_chat_runtime(
     result.response_decoded_tokens = generation_result.decoded_tokens;
     result.response_generation_status = generation_result.status;
     result.response_stop_reason = generation_result.stop_reason;
+    record_truncated_chat_generation(result, generation_result);
     if (!common_agent_generation_succeeded(generation_result)) {
         error = describe_generation_failure("chat generation", generation_result);
         return false;
@@ -148,6 +163,7 @@ bool run_agent_chat_runtime(
         result.response_decoded_tokens = generation_result.decoded_tokens;
         result.response_generation_status = generation_result.status;
         result.response_stop_reason = generation_result.stop_reason;
+        record_truncated_chat_generation(result, generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_generation_failure("chat generation", generation_result);
             return false;
@@ -158,6 +174,10 @@ bool run_agent_chat_runtime(
     }
 
     result.response = assistant_message.content.empty() ? generation_result.content : assistant_message.content;
+    if (result.limit_reached) {
+        error = "chat output was truncated; a continuation checkpoint is required before completion";
+        return false;
+    }
     error.clear();
     return true;
 }
