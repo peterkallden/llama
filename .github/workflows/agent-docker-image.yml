@@ -22,9 +22,9 @@ on:
         required: true
         type: string
       source_ref:
-        description: Source ref containing the Docker files
+        description: Source branch containing the Docker files; must be feature/llama-agent for dev images
         required: true
-        default: kallden/agent-packaging
+        default: feature/llama-agent
         type: string
 
 permissions:
@@ -43,12 +43,11 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package' &&
        github.event.workflow_run.event != 'pull_request' &&
-       github.event.workflow_run.head_branch != 'master' &&
-       github.event.workflow_run.head_branch != '' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
        inputs.image_channel == 'dev' &&
-       inputs.source_ref != 'master')
+       inputs.source_ref == 'feature/llama-agent')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

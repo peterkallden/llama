@@ -3,8 +3,8 @@ name: Agent dynamic analysis
 on:
   workflow_dispatch:
   push:
-    branches-ignore:
-      - master
+    branches:
+      - feature/llama-agent
     paths:
       - '.github/workflows/agent-dynamic-analysis.yml'
       - 'common/agent/**'
@@ -22,9 +22,7 @@ on:
       - '**/CMakeLists.txt'
   pull_request:
     branches:
-      - master
       - feature/llama-agent
-      - kallden/agent-packaging
     paths:
       - '.github/workflows/agent-dynamic-analysis.yml'
       - 'common/agent/**'

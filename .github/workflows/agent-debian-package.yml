@@ -6,12 +6,14 @@ on:
       - Agent development package
     types:
       - completed
+    branches:
+      - feature/llama-agent
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Branch containing the verified package source
+        description: Verified package source branch; must be feature/llama-agent
         required: true
-        default: kallden/agent-packaging
+        default: feature/llama-agent
         type: string
 
 permissions:
@@ -31,10 +33,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event != 'pull_request' &&
-       github.event.workflow_run.head_branch != 'master' &&
-       github.event.workflow_run.head_branch != '' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && inputs.source_ref != 'master')
+      (github.event_name == 'workflow_dispatch' && inputs.source_ref == 'feature/llama-agent')
     runs-on: ubuntu-24.04
     timeout-minutes: 75
 

@@ -6,10 +6,12 @@ on:
       - Agent development package
     types:
       - completed
+    branches:
+      - feature/llama-agent
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Non-master branch or ref to package manually
+        description: Source branch to package manually; must be feature/llama-agent
         required: true
         default: feature/llama-agent
 
@@ -31,11 +33,10 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package' &&
        github.event.workflow_run.event != 'pull_request' &&
-       github.event.workflow_run.head_branch != 'master' &&
-       github.event.workflow_run.head_branch != '' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
-       inputs.source_ref != 'master')
+       inputs.source_ref == 'feature/llama-agent')
     runs-on: windows-2022
     timeout-minutes: 75
 
