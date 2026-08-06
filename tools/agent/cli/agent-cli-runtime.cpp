@@ -418,18 +418,40 @@ public:
             "\n" + render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars) + "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n[Draft]\n" + draft;
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
-        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
-            request,
-            common_agent_generation_purpose::reflection,
-            {system, user},
-            make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
-            reflection_schema));
+        auto generate_reflection = [&](bool regeneration) {
+            common_chat_msg attempt = user;
+            if (regeneration) {
+                attempt.content +=
+                    "\n[Regeneration]\nThe previous reflection was incomplete or structurally invalid. "
+                    "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
+                    "or include commentary.";
+            }
+            return inference.generate_result(make_agent_cli_generation_request(
+                request,
+                common_agent_generation_purpose::reflection,
+                {system, attempt},
+                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
+                reflection_schema));
+        };
+        auto generation_result = generate_reflection(false);
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
-            return result;
+            generation_result = generate_reflection(true);
+            result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+            if (!common_agent_generation_succeeded(generation_result)) {
+                error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
+                return result;
+            }
         }
-        if (!common_reflection_parse_json(generation_result.content, result, error, 8)) {
+        bool parsed = common_reflection_parse_json(generation_result.content, result, error, 8);
+        if (!parsed) {
+            generation_result = generate_reflection(true);
+            result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
+            error.clear();
+            parsed = common_agent_generation_succeeded(generation_result) &&
+                common_reflection_parse_json(generation_result.content, result, error, 8);
+        }
+        if (!parsed) {
             fprintf(stderr, "warning: reflection JSON rejected; accepting draft safely (%s)\n", error.c_str());
             error.clear();
             result.decision = common_reflection_decision::accept;

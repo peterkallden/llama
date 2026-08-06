@@ -504,6 +504,29 @@ static void test_planner_regenerates_truncated_json() {
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
 }
 
+static void test_reflection_regenerates_invalid_json() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"decision":"accept")", 256, common_agent_generation_stop_reason::limit),
+        make_success(R"({"decision":"accept","ready_to_answer":true})"),
+    };
+
+    const auto options = make_test_args();
+    const common_agent_request request = make_request();
+    common_plan_state plan;
+    plan.id = "plan-reflection-regeneration";
+    plan.goal = request.prompt;
+    plan.success_criteria = "Reply clearly";
+    auto reflector = make_llama_cli_reflection_engine(inference, make_agent_generation_config(options));
+    std::string error;
+    const auto reflection = reflector->evaluate_result(request, plan, "partial draft", error);
+    assert(error.empty());
+    assert(reflection.decision == common_reflection_decision::accept);
+    assert(reflection.ready_to_answer);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+}
+
 static void test_selection_generation_metadata() {
     fake_agent_inference inference;
     inference.queued = {
@@ -1811,6 +1834,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_generation_metadata();
     } else if (name == "planner-regeneration") {
         test_planner_regenerates_truncated_json();
+    } else if (name == "reflection-regeneration") {
+        test_reflection_regenerates_invalid_json();
     } else if (name == "selection-metadata") {
         test_selection_generation_metadata();
     } else if (name == "runtime-failure") {
@@ -1870,6 +1895,7 @@ int main(int argc, char ** argv) {
         "runtime-assembly",
         "runtime-metadata",
         "planner-regeneration",
+        "reflection-regeneration",
         "selection-metadata",
         "runtime-failure",
         "selection-failure",

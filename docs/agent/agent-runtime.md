@@ -1873,6 +1873,12 @@ regeneration is also invalid, the existing bounded fallback/error behavior
 applies. This is intentionally one local repair attempt, not an unbounded
 model loop.
 
+Reflection JSON follows the same boundary. A length-stopped or parse-invalid
+reflection is regenerated once from the beginning before any reflection
+decision, learning hint, or proposed plan operation is accepted. If the retry
+does not validate, the existing safe behavior accepts the current draft without
+applying untrusted reflection operations.
+
 ## MCP Direction
 
 An MCP integration should be built on top of the runtime host, not inside the core agent loop.
