@@ -245,6 +245,21 @@ daemon issue is resolved.
 | Sandbox Kubernetes | Not-run by request; Kubernetes backend was not running |
 | Decision | Windows model-free agent assurance passed; sandbox and broader Linux gates remain outside this run |
 
+### Full agent assurance verification - 2026-08-06
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `8b1cb0747` |
+| Platform | Windows / MSVC |
+| Build configuration | Release, Visual Studio 17 2022, `llama-agent-build-pack`, two build threads, artifacts on `E:\llama-builds\agent-selection-learning-msvc-release-e2e` |
+| Agent CTest | `31/31 passed`, `0 failed`, `0 not-run` |
+| Test selection | `ctest -C Release -L agent --output-on-failure --timeout 900` |
+| Covered additions | Context-pressure continuation, bounded text continuation, truncation guards, planner/reflection/memory JSON regeneration |
+| Sandbox Docker | Not-run; Docker daemon was unavailable |
+| Sandbox Kubernetes | Not-run; Kubernetes was unavailable |
+| Decision | Windows model-free agent assurance passed; model-backed Qwen/Nomic and sandbox/Linux gates remain separate |
+
 ### Previous current run
 
 | Field | Value |
@@ -374,8 +389,10 @@ this file records the summarized result and the commit it belongs to.
 - Research workspace checkpointing is not part of the first version.
 - The continuation checkpoint contract and bounded agent-driver multi-slice
   behavior are covered by the dedicated continuation CTest; full
-  conversation/tool result compaction, structural output repair, and
-  model-backed continuation remain outside the verified beta scope.
+  conversation/tool result compaction, arbitrary structural regeneration, and
+  model-backed continuation remain outside the verified beta scope. Bounded
+  planner, reflection, memory-learning, and plain-text chat regeneration or
+  continuation are covered by the current agent assurance run.
 - Runtime-driver and host inference coverage now lives under the agent smoke
   tree and links the complete runtime-support closure; `tests/` remains the
   home for pure contract and component tests.
