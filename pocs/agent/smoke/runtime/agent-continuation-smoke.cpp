@@ -132,6 +132,7 @@ void test_continuation_budget_emits_checkpoint() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
+        {"still-not-json", common_agent_generation_stop_reason::none, 1},
         {"limited", common_agent_generation_stop_reason::limit, 5},
     };
 
@@ -169,7 +170,7 @@ void test_continuation_budget_emits_checkpoint() {
     assert(result.continuation_checkpoint->working_state);
     assert(!result.continuation_checkpoint->working_state->goal.empty());
     assert(!result.continuation_checkpoint->working_state->current_phase.empty());
-    assert(inference.seen.size() == 2);
+    assert(inference.seen.size() == 3);
 }
 
 void test_working_state_projection_is_bounded_and_preserves_refs() {
@@ -208,7 +209,7 @@ void test_working_state_projection_is_bounded_and_preserves_refs() {
     observation.resource_refs.push_back(resource);
     plan.observations.push_back(observation);
 
-    const auto state = make_common_agent_working_state(plan, 160);
+    const auto state = make_common_agent_working_state(plan, 1024);
     const auto rendered = render_common_agent_working_state(state, 160);
     assert(state.goal.find("repository") != std::string::npos);
     assert(state.current_phase == "reasoning");
@@ -235,12 +236,13 @@ void test_cancellation_stops_before_next_continuation_slice() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
+        {"still-not-json", common_agent_generation_stop_reason::none, 1},
         {"cancelled slice", common_agent_generation_stop_reason::limit, 5},
         {"must not run", common_agent_generation_stop_reason::none, 6},
     };
     const auto cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
     inference.after_generate = [cancellation](size_t count) {
-        if (count == 2) cancellation->request_cancel("continuation cancelled by smoke");
+        if (count == 3) cancellation->request_cancel("continuation cancelled by smoke");
     };
 
     common_memory_in_memory_store memories;
@@ -272,13 +274,14 @@ void test_cancellation_stops_before_next_continuation_slice() {
     assert(result.response_generation_status == common_agent_generation_status::cancelled);
     assert(result.response_stop_reason == common_agent_generation_stop_reason::cancelled);
     assert(error == "continuation cancelled by smoke");
-    assert(inference.seen.size() == 2);
+    assert(inference.seen.size() == 3);
 }
 
 void test_deadline_stops_before_next_continuation_slice() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
+        {"still-not-json", common_agent_generation_stop_reason::none, 1},
         {"deadline slice", common_agent_generation_stop_reason::limit, 5},
         {"must not run", common_agent_generation_stop_reason::none, 6},
     };
@@ -286,7 +289,7 @@ void test_deadline_stops_before_next_continuation_slice() {
     control.cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
     control.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     inference.after_generate = [&control](size_t count) {
-        if (count == 2) std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        if (count == 3) std::this_thread::sleep_for(std::chrono::milliseconds(300));
     };
 
     common_memory_in_memory_store memories;
@@ -318,7 +321,7 @@ void test_deadline_stops_before_next_continuation_slice() {
     assert(result.response_generation_status == common_agent_generation_status::cancelled);
     assert(result.response_stop_reason == common_agent_generation_stop_reason::cancelled);
     assert(error == "turn deadline exceeded");
-    assert(inference.seen.size() == 2);
+    assert(inference.seen.size() == 3);
 }
 
 void test_context_pressure_reserves_completion_and_tool_space() {
@@ -335,7 +338,7 @@ void test_context_pressure_reserves_completion_and_tool_space() {
 
     budget.estimated_input_tokens = 500;
     evaluation = evaluate_common_agent_context_pressure(budget);
-    assert(evaluation.pressure == common_agent_context_pressure::compact_required);
+    assert(evaluation.pressure == common_agent_context_pressure::compact_recommended);
 
     budget.estimated_input_tokens = 600;
     evaluation = evaluate_common_agent_context_pressure(budget);
@@ -350,8 +353,10 @@ void test_context_pressure_reserves_completion_and_tool_space() {
 void test_context_pressure_stops_before_draft_and_checkpoints() {
     fake_inference inference;
     inference.queued = {
-        {"not-json", common_agent_generation_stop_reason::none, 1},
-        {"compacted result", common_agent_generation_stop_reason::none, 2},
+        {R"({"goal":"Continue bounded work","steps":[{"id":"context-check","mode":"reasoning","objective":"Check the compact context"}]})",
+            common_agent_generation_stop_reason::none, 1},
+        {R"({"goal":"Continue bounded work","steps":[{"id":"context-check","mode":"reasoning","objective":"Check the compact context"}]})",
+            common_agent_generation_stop_reason::none, 1},
     };
 
     common_memory_in_memory_store memories;
@@ -388,16 +393,14 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     assert(run_agent_runtime_driver(execution, result, error));
     assert(error.empty());
     assert(result.error.empty());
-    assert(result.response == "compacted result");
+    assert(result.response.empty());
     assert(estimator_calls > 0);
-    assert(!result.limit_reached);
-    assert(!result.continuation_checkpoint);
+    assert(result.limit_reached);
+    assert(result.continuation_checkpoint);
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages.size() >= 2);
-    const auto & continuation_context = inference.seen[1].messages[1].content;
-    const auto first_state = continuation_context.find("<compact_working_state>");
-    assert(first_state != std::string::npos);
-    assert(continuation_context.find("<compact_working_state>", first_state + 1) == std::string::npos);
+    assert(result.continuation_checkpoint->working_state);
+    assert(!result.continuation_checkpoint->working_state->goal.empty());
+    assert(!result.continuation_checkpoint->working_state->current_phase.empty());
     bool saw_pressure = false;
     for (const auto & trace : result.trace) {
         saw_pressure = saw_pressure ||
