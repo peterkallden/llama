@@ -73,7 +73,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Chunk planning and processing are projected as typed daemon events
 - [x] Context-budget accounting selects chunk size from resolved turn budgets
 - [x] Chunk synthesis distinguishes complete, incomplete, and structural conflict states
-- [ ] Final synthesis is gated on complete chunk observations in the runtime driver
+- [x] Final synthesis is gated on complete chunk observations in the runtime driver
 - [x] Context-pressure evaluation can stop before draft inference and create a continuation checkpoint
 - [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
 - [x] Context-pressure continuation re-enters the same driver operation with bounded working state
@@ -243,6 +243,16 @@ daemon issue is resolved.
 | Qwen log | `work/qwen-resource-synthesis-next/resource-synthesis.log` |
 | Scope | Session-lane chunk advancement, resume selection, typed daemon events, synthesis completeness projection, configured byte budgets |
 | Not claimed | Full arbitrary context compaction or Linux/Docker backend assurance |
+
+### Chunk synthesis gating verification - 2026-08-07
+
+The deliberate runtime smoke was verified on Windows/MSVC Debug using the
+fresh E: build tree. Complete chunk observations allow final synthesis;
+incomplete observations defer synthesis, and conflicting observations block
+the synthesis step while preserving the plan evidence. The corresponding
+`llama-agent-deliberate-runtime-ctest` entry is now registered in the agent
+CTest block; a post-registration CTest run remains pending because the
+existing Visual Studio build tree requires a clean regeneration.
 
 ### Full agent assurance verification - 2026-08-05
 

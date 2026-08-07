@@ -909,6 +909,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-continuation-smoke>)
     set_property(TEST llama-agent-continuation-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-deliberate-runtime-ctest
+        COMMAND $<TARGET_FILE:llama-agent-deliberate-runtime-smoke>)
+    set_property(TEST llama-agent-deliberate-runtime-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-inference-ctest
         COMMAND $<TARGET_FILE:llama-agent-inference-smoke>)
     set_property(TEST llama-agent-inference-ctest PROPERTY LABELS agent)
