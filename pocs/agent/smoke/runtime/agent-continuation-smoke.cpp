@@ -377,6 +377,15 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
     runtime_config.generation_config.context_size_tokens = 1024;
+    runtime_config.generation_config.context_budgets.working_state.max_total_chars = 96;
+    runtime_config.generation_config.context_budgets.working_state.max_value_chars = 24;
+    runtime_config.generation_config.context_budgets.working_state.max_completed_steps = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_remaining_steps = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_constraints = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_open_questions = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_resource_refs = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_chunk_status = 1;
+    runtime_config.generation_config.context_budgets.working_state.max_tool_results = 1;
     runtime_config.max_continuations = 1;
     size_t estimator_calls = 0;
     runtime_config.context_token_estimator = [&estimator_calls](
@@ -401,6 +410,9 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     assert(result.continuation_checkpoint->working_state);
     assert(!result.continuation_checkpoint->working_state->goal.empty());
     assert(!result.continuation_checkpoint->working_state->current_phase.empty());
+    assert(result.continuation_checkpoint->working_state->goal.size() <= 24);
+    assert(result.continuation_checkpoint->working_state->completed_steps.size() <= 1);
+    assert(result.continuation_checkpoint->working_state->remaining_steps.size() <= 1);
     bool saw_pressure = false;
     for (const auto & trace : result.trace) {
         saw_pressure = saw_pressure ||

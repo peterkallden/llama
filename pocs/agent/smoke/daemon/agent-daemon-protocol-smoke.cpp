@@ -866,6 +866,20 @@ int main() {
         "agent-resource://resource/original";
     turn_result.turn_result.continuation_checkpoint->chunk_count = 3;
     turn_result.turn_result.continuation_checkpoint->completed_chunk_indexes = {0, 1};
+    turn_result.turn_result.continuation_checkpoint->working_state = common_agent_working_state{
+        "continue the bounded operation",
+        "verification",
+        {"inspect", "implement"},
+        "verify",
+        {"synthesize"},
+        {"preserve host authority"},
+        {"use bounded resources"},
+        {"chunk 2 remains pending"},
+        {{"workspace://checkpoint/resource", "checkpoint resource", "text/plain", 24}},
+        {"agent-resource://resource/original[0/3];status=completed;observation=obs-0"},
+        {"build passed"},
+        "resume synthesis",
+    };
     turn_result.turn_summary = common_agent_turn_summary{
         "agent",
         "completed",
@@ -903,6 +917,20 @@ int main() {
             turn_response["continuation_checkpoint"].value("chunk_count", 0) != 3 ||
             turn_response["continuation_checkpoint"].value("completed_chunk_indexes", json::array()) !=
                 json::array({0, 1}) ||
+            !turn_response["continuation_checkpoint"].contains("working_state") ||
+            turn_response["continuation_checkpoint"]["working_state"].value("goal", "") !=
+                "continue the bounded operation" ||
+            turn_response["continuation_checkpoint"]["working_state"].value("current_phase", "") !=
+                "verification" ||
+            turn_response["continuation_checkpoint"]["working_state"].value("active_step", "") !=
+                "verify" ||
+            turn_response["continuation_checkpoint"]["working_state"].value("continuation_action", "") !=
+                "resume synthesis" ||
+            turn_response["continuation_checkpoint"]["working_state"]["completed_steps"] !=
+                json::array({"inspect", "implement"}) ||
+            turn_response["continuation_checkpoint"]["working_state"]["resource_refs"].size() != 1 ||
+            turn_response["continuation_checkpoint"]["working_state"]["resource_refs"][0].value("uri", "") !=
+                "workspace://checkpoint/resource" ||
             !turn_response.contains("turn_summary") ||
             turn_response["turn_summary"].value("mode", "") != "agent" ||
             turn_response["turn_summary"].value("status", "") != "completed") {
