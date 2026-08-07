@@ -35,6 +35,8 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.inference_options.n_predict = config.n_predict;
     turn_request.inference_options.n_gpu_layers = config.n_gpu_layers;
     turn_request.inference_options.fit_params = config.fit_params;
+    turn_request.inference_options.n_threads = config.n_threads;
+    turn_request.inference_options.context_size_tokens = config.context_size_tokens;
     turn_request.policy.agent_inference_backend = config.inference_backend;
     turn_request.orchestration_config.prompt = config.prompt;
     turn_request.generation_options.n_predict = config.n_predict;

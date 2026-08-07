@@ -177,6 +177,7 @@ common_agent_runtime_resident_request_config make_resident_request_config(
         common_memory_scope::session,
         common_plan_scope::turn,
         options.n_threads,
+        static_cast<size_t>(std::max(0, options.context_size)),
     };
 }
 

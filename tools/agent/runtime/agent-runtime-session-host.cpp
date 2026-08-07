@@ -5,8 +5,29 @@
 #include "memory/memory-context.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
+
+bool session_host_trace_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void session_host_trace(const char * event, const common_agent_runtime_session_host_turn_request & request) {
+    if (!session_host_trace_enabled()) {
+        return;
+    }
+    std::fprintf(stderr,
+        "agent session host trace: event=%s mode=%s session=%s turn=%s n_predict=%d\n",
+        event,
+        request.mode == common_agent_runtime_host_mode::chat ? "chat" : "agent",
+        request.session_id.c_str(),
+        request.turn_id.c_str(),
+        request.n_predict);
+    std::fflush(stderr);
+}
 
 common_agent_failure_class classify_execution_control_failure(
         const common_agent_runtime_execution_control & execution_control) {
@@ -274,6 +295,7 @@ bool common_agent_runtime_session_host::run_turn(
         common_agent_runtime_session_host_turn_result & result,
         std::string & error) {
     result = {};
+    session_host_trace("enter", request);
 
     if (!validate_session_host_turn_request(request, error)) {
         result.error = error;
@@ -294,6 +316,7 @@ bool common_agent_runtime_session_host::run_turn(
         result.error = error;
         return false;
     }
+    session_host_trace("runtime-ready", request);
     update_session_policy_pack(request);
     common_agent_runtime_tooling resolved_tooling;
     if (!resolve_tooling(runtime.get(), request, resolved_tooling, error)) {
@@ -315,6 +338,7 @@ bool common_agent_runtime_session_host::run_turn(
 
     common_agent_result agent_result;
     bool ok = false;
+    session_host_trace("before-runtime-run", request);
     switch (request.mode) {
         case common_agent_runtime_host_mode::chat:
             ok = runtime->run_chat_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
@@ -323,6 +347,7 @@ bool common_agent_runtime_session_host::run_turn(
             ok = runtime->run_agent_prompt(request.prompt, turn_id, request.n_predict, agent_result, error);
             break;
     }
+    session_host_trace("after-runtime-run", request);
 
     result.ok = ok;
     result.runtime_reused = runtime_reused;

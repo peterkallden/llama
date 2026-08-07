@@ -22,6 +22,7 @@ struct common_agent_server_context_context_key {
     int n_parallel = 1;
     int n_sequences = 1;
     int n_ctx = 0;
+    int n_threads = 2;
 };
 
 struct common_agent_server_context_host_config {

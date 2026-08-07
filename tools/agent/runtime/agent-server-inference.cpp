@@ -35,6 +35,7 @@ void resident_trace(const char * event, const common_agent_generation_request & 
         request.json_schema.empty() ? "no" : "yes",
         request.options.n_predict,
         detail);
+    std::fflush(stderr);
 }
 
 common_agent_generation_stop_reason map_server_stop_reason_string(const std::string & stop) {
@@ -187,6 +188,7 @@ public:
                     common_agent_generation_purpose_name(request.purpose),
                     prepared.stream ? "yes" : "no",
                     prepared.prompt.size());
+                std::fflush(stderr);
             }
 
             server_response_reader reader = server.get_response_reader();

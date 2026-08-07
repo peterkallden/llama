@@ -2,10 +2,25 @@
 
 #include "agent-inference-capacity-gate.h"
 
+#include <cstdio>
 #include <chrono>
+#include <cstdlib>
 #include <utility>
 
 namespace {
+
+bool agent_async_trace_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void agent_async_trace(const char * event, const char * detail = "") {
+    if (!agent_async_trace_enabled()) {
+        return;
+    }
+    std::fprintf(stderr, "agent async trace: event=%s %s\n", event, detail);
+    std::fflush(stderr);
+}
 
 class async_inference_task final : public common_agent_runtime_inference_task {
 public:
@@ -22,16 +37,20 @@ public:
         future = std::async(
             std::launch::async,
             [this, host]() {
+                agent_async_trace("worker-start");
                 const auto release = [&]() {
                     if (this->inference_gate) {
                         this->inference_gate->release(this->lease_id);
                     }
                 };
                 try {
+                    agent_async_trace("before-host-run-turn");
                     const bool ok = host->run_turn(this->request, *this->result, *this->error);
+                    agent_async_trace("after-host-run-turn", ok ? "ok" : "failed");
                     release();
                     return ok;
                 } catch (...) {
+                    agent_async_trace("host-run-turn-threw");
                     release();
                     throw;
                 }

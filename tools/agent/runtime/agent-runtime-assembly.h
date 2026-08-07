@@ -34,6 +34,8 @@ struct common_agent_inference_options {
     int n_predict = -1;
     int n_gpu_layers = 0;
     bool fit_params = true;
+    int n_threads = 2;
+    size_t context_size_tokens = 0;
 };
 
 struct common_agent_runtime_config {

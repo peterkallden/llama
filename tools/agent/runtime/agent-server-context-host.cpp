@@ -20,7 +20,8 @@ common_agent_server_context_context_key make_agent_server_context_context_key(
         make_agent_server_context_load_key(options),
         1,
         1,
-        0,
+        static_cast<int>(options.context_size_tokens),
+        options.n_threads,
     };
 }
 
@@ -42,6 +43,8 @@ common_params make_agent_server_context_params(
     params.n_parallel = config.context_key.n_parallel;
     params.n_sequences = config.context_key.n_sequences;
     params.n_ctx = config.context_key.n_ctx;
+    params.cpuparams.n_threads = config.context_key.n_threads;
+    params.cpuparams_batch.n_threads = config.context_key.n_threads;
     params.verbosity = config.verbosity;
     postprocess_cpu_params(params.cpuparams, nullptr);
     postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
