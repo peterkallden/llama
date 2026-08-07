@@ -11,6 +11,7 @@
 #include "tools/agent/runtime/agent-runtime-execution.h"
 #include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-runtime-resident.h"
+#include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/agent/runtime/agent-runtime-tooling.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "chat-peg-parser.h"
@@ -1610,6 +1611,27 @@ static void test_runtime_resident_request_builders() {
     assert(runtime_config.base_turn_request.request.session_id == "resident-session");
 }
 
+static void test_runtime_server_context_host_rejects_invalid_model_paths() {
+    common_agent_server_context_host host;
+    common_agent_server_context_host_config config;
+    config.context_key.load_key.model.clear();
+    config.context_key.load_key.n_gpu_layers = 0;
+    config.context_key.load_key.fit_params = false;
+    config.context_key.n_parallel = 1;
+    config.context_key.n_sequences = 1;
+    config.context_key.n_ctx = 128;
+    config.context_key.n_threads = 1;
+
+    std::string error;
+    assert(!host.start(config, error));
+    assert(error == "resident server_context model path is empty");
+
+    config.context_key.load_key.model = "__llama_agent_missing_model__.gguf";
+    error.clear();
+    assert(!host.start(config, error));
+    assert(error == "resident server_context model does not exist: __llama_agent_missing_model__.gguf");
+}
+
 static void test_runtime_resident_runtime_builder() {
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -1913,6 +1935,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_resident_chat_host_builder();
     } else if (name == "runtime-resident-request-builders") {
         test_runtime_resident_request_builders();
+    } else if (name == "runtime-server-context-host-invalid-model-paths") {
+        test_runtime_server_context_host_rejects_invalid_model_paths();
     } else if (name == "runtime-resident-runtime-builder") {
         test_runtime_resident_runtime_builder();
     } else if (name == "runtime-resident-agent-host-builder") {
@@ -1957,6 +1981,7 @@ int main(int argc, char ** argv) {
         "runtime-resident-host-multi-turn",
         "runtime-resident-chat-host-builder",
         "runtime-resident-request-builders",
+        "runtime-server-context-host-invalid-model-paths",
         "runtime-resident-runtime-builder",
         "runtime-resident-agent-host-builder",
         "cli-runtime-host-adapter-chat",

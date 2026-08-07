@@ -3,7 +3,51 @@
 #include "../cli/agent-cli-inference.h"
 
 #include "log.h"
+#include "common.h"
 #include "server-context.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <mutex>
+#include <system_error>
+
+namespace {
+
+bool server_context_host_trace_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void server_context_host_trace(const char * event, const common_agent_server_context_host_config * config = nullptr) {
+    if (!server_context_host_trace_enabled()) {
+        return;
+    }
+    std::fprintf(stderr, "agent server_context host trace: event=%s", event);
+    if (config != nullptr) {
+        std::fprintf(stderr,
+            " model=%s n_ctx=%d n_threads=%d n_parallel=%d n_sequences=%d fit_params=%s",
+            config->context_key.load_key.model.c_str(),
+            config->context_key.n_ctx,
+            config->context_key.n_threads,
+            config->context_key.n_parallel,
+            config->context_key.n_sequences,
+            config->context_key.load_key.fit_params ? "true" : "false");
+    }
+    std::fprintf(stderr, "\n");
+    std::fflush(stderr);
+}
+
+void initialize_server_context_host_once() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        common_init();
+        llama_backend_init();
+        llama_numa_init(GGML_NUMA_STRATEGY_DISABLED);
+    });
+}
+
+} // namespace
 
 common_agent_server_context_load_key make_agent_server_context_load_key(
         const common_agent_inference_options & options) {
@@ -66,7 +110,26 @@ common_agent_server_context_host::~common_agent_server_context_host() {
 bool common_agent_server_context_host::start(
         const common_agent_server_context_host_config & config,
         std::string & error) {
+    server_context_host_trace("start-enter", &config);
     stop();
+    initialize_server_context_host_once();
+
+    if (config.context_key.load_key.model.empty()) {
+        error = "resident server_context model path is empty";
+        return false;
+    }
+    {
+        std::error_code ec;
+        const std::filesystem::path model_path(config.context_key.load_key.model);
+        if (!std::filesystem::exists(model_path, ec)) {
+            error = "resident server_context model does not exist: " + config.context_key.load_key.model;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(model_path, ec)) {
+            error = "resident server_context model is not a regular file: " + config.context_key.load_key.model;
+            return false;
+        }
+    }
 
     current_config = config;
     current_context_key = config.context_key;
@@ -75,16 +138,27 @@ bool common_agent_server_context_host::start(
     instance->server = std::make_unique<server_context>();
     instance->params = make_agent_server_context_params(config);
 
+    server_context_host_trace("before-load-model", &config);
     if (!instance->server->load_model(instance->params)) {
         error = "failed to load resident server_context model: " + current_load_key.model;
         instance.reset();
         return false;
     }
+    server_context_host_trace("after-load-model", &config);
 
     instance->loop = std::make_unique<std::thread>([this]() {
+        if (server_context_host_trace_enabled()) {
+            std::fprintf(stderr, "agent server_context host trace: event=loop-enter\n");
+            std::fflush(stderr);
+        }
         instance->server->start_loop();
+        if (server_context_host_trace_enabled()) {
+            std::fprintf(stderr, "agent server_context host trace: event=loop-exit\n");
+            std::fflush(stderr);
+        }
     });
     instance->running = true;
+    server_context_host_trace("start-exit", &config);
     error.clear();
     return true;
 }
@@ -92,6 +166,10 @@ bool common_agent_server_context_host::start(
 bool common_agent_server_context_host::build_inference_session(
         common_agent_inference_session & session,
         std::string & error) const {
+    if (server_context_host_trace_enabled()) {
+        std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-enter\n");
+        std::fflush(stderr);
+    }
     if (!instance || !instance->running || !instance->server) {
         error = "server_context host is not running";
         return false;
@@ -106,6 +184,10 @@ bool common_agent_server_context_host::build_inference_session(
         instance->params,
         meta.logit_bias_eog,
         session.templates);
+    if (server_context_host_trace_enabled()) {
+        std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit\n");
+        std::fflush(stderr);
+    }
     error.clear();
     return true;
 }
