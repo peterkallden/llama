@@ -238,7 +238,10 @@ int main() {
     incomplete_request.deliberation_policy = make_common_agent_deliberation_policy(
         common_agent_thinking_mode::reflective);
     const auto incomplete_result = incomplete_runtime.run(incomplete_request);
-    if (incomplete_result.error.find("resource synthesis is incomplete") == std::string::npos) {
+    const auto incomplete_plan = incomplete_store.get("deliberate-runtime-plan", error);
+    if (incomplete_result.error.find("resource synthesis is incomplete") == std::string::npos ||
+            incomplete_result.response != "" || !incomplete_plan || incomplete_plan->steps.size() < 2 ||
+            incomplete_plan->steps.back().status == common_plan_step_status::completed) {
         std::fprintf(stderr, "incomplete chunk synthesis was not gated: %s\n",
             incomplete_result.error.c_str());
         return 1;

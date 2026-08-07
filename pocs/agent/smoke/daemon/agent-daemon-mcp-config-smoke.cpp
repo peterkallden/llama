@@ -264,6 +264,19 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    agent_host_config legacy_config;
+    const json legacy_config_json = {
+        {"schema_version", 1},
+        {"runtime", {{"context_size", 2048}}},
+    };
+    if (!parse_agent_host_config_json(legacy_config_json, legacy_config, error) ||
+            legacy_config.max_continuations != 2 ||
+            legacy_config.context_budgets.working_state.max_total_chars != 8192 ||
+            legacy_config.context_budgets.working_state.max_tool_results != 32) {
+        std::fprintf(stderr, "legacy host config defaults were not preserved\n");
+        return 1;
+    }
+
     agent_host_config capability_config;
     const json capability_config_json = {
         {"schema_version", 1},
