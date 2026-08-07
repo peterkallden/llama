@@ -190,6 +190,28 @@ Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
 passes.
 
+### Resident server-context initialization verification - 2026-08-07
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `4813c990a` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, Cozo enabled, Visual Studio Build Tools, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-17` |
+| Focused build | `llama-agent-inference-smoke` and `llama-agent-daemon` rebuilt successfully with two build workers |
+| Model-free CTest | `llama-agent-inference-ctest`: `1/1 passed`, `0 failed`, `0 not-run` |
+| Focused smoke | `llama-agent-inference-smoke runtime-server-context-host-invalid-model-paths`: passed |
+| Model-backed daemon smoke | Qwen2.5 1.5B instruct GGUF through `llama-agent-daemon --model ... --default-mode chat --agent-plan off --n-predict 8 --context-size 2048 --worker-count 1 --queue-capacity 2`: passed, response `OK.`, `turn.completed` |
+| Negative daemon smoke | Missing model path failed quickly with `turn.failed` and `resident server_context model does not exist` |
+| Not run | Full agent CTest label, Docker sandbox backend, Kubernetes backend, Nomic-backed embedding flow |
+
+The regression was isolated to the daemon-owned resident `server_context`
+path on Windows. The host called server-context model loading before
+initializing the llama/ggml backend and timer state used by the server loading
+progress path. The agent-side resident host now performs the same one-time
+common/backend/NUMA initialization before `server_context::load_model()` and
+rejects empty or missing model paths before entering model loading.
+
 ### Latest verification - 2026-08-07
 
 | Field | Value |
