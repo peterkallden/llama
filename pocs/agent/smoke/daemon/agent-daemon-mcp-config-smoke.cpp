@@ -138,11 +138,14 @@ int main(int argc, char ** argv) {
     char revision_limit_value[] = "2";
     char research_limit_flag[] = "--max-research-iterations";
     char research_limit_value[] = "1";
+    char threads_flag[] = "--threads";
+    char threads_value[] = "1";
     char * cli_parse_argv[] = {
         cli_program, model_flag, model_value, thinking_flag, thinking_value,
         reflection_limit_flag, reflection_limit_value,
         revision_limit_flag, revision_limit_value,
         research_limit_flag, research_limit_value,
+        threads_flag, threads_value,
     };
     if (!parse_agent_daemon_args(
             static_cast<int>(sizeof(cli_parse_argv) / sizeof(cli_parse_argv[0])),
@@ -150,7 +153,8 @@ int main(int argc, char ** argv) {
             cli_options.thinking_mode != "deliberate" ||
             cli_options.max_reflection_rounds != 3 ||
             cli_options.max_plan_revisions != 2 ||
-            cli_options.max_research_iterations != 1) {
+            cli_options.max_research_iterations != 1 ||
+            cli_options.n_threads != 1) {
         std::fprintf(stderr, "daemon thinking policy CLI parse failed\n");
         return 1;
     }

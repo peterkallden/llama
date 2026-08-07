@@ -949,6 +949,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)
     set_property(TEST llama-agent-daemon-client-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-daemon-mcp-config-ctest
+        COMMAND $<TARGET_FILE:llama-agent-daemon-mcp-config-smoke>)
+    set_property(TEST llama-agent-daemon-mcp-config-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-config-discovery-ctest
         COMMAND $<TARGET_FILE:llama-agent-config-discovery-smoke>)
     set_property(TEST llama-agent-config-discovery-ctest PROPERTY LABELS agent)

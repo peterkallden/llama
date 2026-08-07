@@ -165,6 +165,9 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         } else if (std::strcmp(argv[i], "--context-size") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.context_size = std::stoi(value);
             if (options.context_size < 0) { std::fprintf(stderr, "--context-size must not be negative\n"); return false; }
+        } else if (std::strcmp(argv[i], "-t") == 0 || std::strcmp(argv[i], "--threads") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.n_threads = std::stoi(value);
+            if (options.n_threads < 1) { std::fprintf(stderr, "--threads must be greater than zero\n"); return false; }
         } else if (std::strcmp(argv[i], "-ngl") == 0 || std::strcmp(argv[i], "--n-gpu-layers") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.n_gpu_layers = std::stoi(value);
         } else if (std::strcmp(argv[i], "--memory-learn") == 0) {
@@ -388,7 +391,7 @@ void print_agent_daemon_usage(const char * argv0) {
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
         "         [--memory-learn-show-candidate] [--agent-plan off|auto] [--agent-blueprint off|auto|ID] [--agent-trace] [--plan-show-summary] [--max-tool-rounds N]\n"
         "         [--tool-profile ID] [--repository-root PATH] [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...]\n"
-        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [--context-size N] [-ngl N]\n"
+        "         [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX] [--queue-capacity N] [--worker-count N] [--max-turn-seconds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--http-listen ADDRESS] [--http-port N] [--http-token-env ENV] [--http-allowed-origin ORIGIN] [--http-agent-tools]\n"
         "         [--tcp-listen ADDRESS] [--tcp-port N] [--tcp-max-line-bytes N]\n"
         "         [--unix-socket PATH] [--unix-socket-mode OCTAL]\n",
