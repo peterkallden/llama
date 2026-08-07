@@ -534,8 +534,8 @@ are character budgets unless stated otherwise:
 
 ```json
 {
-    "runtime": {
-      "context_size": 8192,
+  "runtime": {
+    "context_size": 8192,
     "n_predict": 256,
     "context_budgets": {
       "plan_chars": 4096,
@@ -552,8 +552,22 @@ are character budgets unless stated otherwise:
       "deliberate_memory_chars": 1800,
       "deliberate_memory_per_item_chars": 500,
       "deliberate_overlay_chars": 1200,
-      "deliberate_overlay_per_item_chars": 300
+      "deliberate_overlay_per_item_chars": 300,
+      "working_state": {
+        "max_total_chars": 8192,
+        "max_value_chars": 1024,
+        "max_completed_steps": 64,
+        "max_remaining_steps": 64,
+        "max_constraints": 32,
+        "max_open_questions": 32,
+        "max_resource_refs": 32,
+        "max_chunk_status": 64,
+        "max_tool_results": 32
+      }
     }
+  },
+  "limits": {
+    "max_continuations": 2
   }
 }
 ```
@@ -574,6 +588,12 @@ The budgets are used as follows:
 | `overlay_chars`, `overlay_per_item_chars` | Symbolic memory overlay | Stage-aware selection and compaction before rendering |
 | `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | Reasoning context | The memory renderer selects entries within the configured budgets |
 | `deliberate_overlay_chars`, `deliberate_overlay_per_item_chars` | Deliberate symbolic overlay | Stage-aware selection and compaction before rendering |
+| `context_budgets.working_state.*` | Bounded checkpoint projection used by internal continuation | Limits total/value characters and projected steps, constraints, questions, resources, chunks, and tool-result summaries |
+
+`limits.max_continuations` controls the number of additional inference slices
+the existing driver may run after a bounded generation limit. The default is
+two; zero disables automatic continuation. It is an operation limit, not a
+second queue or session, and the host rejects values above 16.
 
 `context_size` is the model token context and should be configured separately
 from the character budgets. The runtime still applies hard host-owned limits

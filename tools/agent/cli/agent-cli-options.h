@@ -45,6 +45,7 @@ struct args {
     int n_threads = 2;
     int context_size = 0;
     common_agent_context_budget_config context_budgets;
+    size_t max_continuations = 2;
     int n_gpu_layers = 99;
     bool record_episode = false;
     bool enable_memory_search_tool = false;

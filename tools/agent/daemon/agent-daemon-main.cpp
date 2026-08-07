@@ -350,6 +350,7 @@ int main(int argc, char ** argv) {
         require_restart(candidate.n_predict != options.n_predict, "runtime.n_predict");
         require_restart(candidate.n_threads != options.n_threads, "runtime.n_threads");
         require_restart(candidate.n_gpu_layers != options.n_gpu_layers, "runtime.n_gpu_layers");
+        require_restart(candidate.max_continuations != options.max_continuations, "limits.max_continuations");
         require_restart(candidate.thinking_mode != options.thinking_mode, "runtime.thinking_mode");
         require_restart(candidate.max_reflection_rounds != options.max_reflection_rounds, "runtime.max_reflection_rounds");
         require_restart(candidate.max_plan_revisions != options.max_plan_revisions, "runtime.max_plan_revisions");

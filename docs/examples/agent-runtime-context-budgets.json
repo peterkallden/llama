@@ -18,7 +18,21 @@
       "deliberate_memory_chars": 1800,
       "deliberate_memory_per_item_chars": 500,
       "deliberate_overlay_chars": 1200,
-      "deliberate_overlay_per_item_chars": 300
+      "deliberate_overlay_per_item_chars": 300,
+      "working_state": {
+        "max_total_chars": 8192,
+        "max_value_chars": 1024,
+        "max_completed_steps": 64,
+        "max_remaining_steps": 64,
+        "max_constraints": 32,
+        "max_open_questions": 32,
+        "max_resource_refs": 32,
+        "max_chunk_status": 64,
+        "max_tool_results": 32
+      }
     }
+  },
+  "limits": {
+    "max_continuations": 2
   }
 }

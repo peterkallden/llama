@@ -66,6 +66,17 @@ int main(int argc, char ** argv) {
                     {"tool_observation_chars", 8192},
                     {"resource_chunk_max_bytes", 3072},
                     {"resource_chunk_overlap_bytes", 192},
+                    {"working_state", {
+                        {"max_total_chars", 6000},
+                        {"max_value_chars", 768},
+                        {"max_completed_steps", 12},
+                        {"max_remaining_steps", 10},
+                        {"max_constraints", 8},
+                        {"max_open_questions", 6},
+                        {"max_resource_refs", 10},
+                        {"max_chunk_status", 12},
+                        {"max_tool_results", 8},
+                    }},
                 }},
             }},
             {"tools", {
@@ -97,6 +108,7 @@ int main(int argc, char ** argv) {
                 {"worker_count", 2},
                 {"inference_max_active", 1},
                 {"max_tool_rounds", 2},
+                {"max_continuations", 3},
             }},
         }.dump(2);
     }
@@ -174,7 +186,17 @@ int main(int argc, char ** argv) {
     if (loaded_config.context_budgets.plan_chars != 4096 ||
             loaded_config.context_budgets.tool_observation_chars != 8192 ||
             loaded_config.context_budgets.resource_chunk_max_bytes != 3072 ||
-            loaded_config.context_budgets.resource_chunk_overlap_bytes != 192) {
+            loaded_config.context_budgets.resource_chunk_overlap_bytes != 192 ||
+            loaded_config.context_budgets.working_state.max_total_chars != 6000 ||
+            loaded_config.context_budgets.working_state.max_value_chars != 768 ||
+            loaded_config.context_budgets.working_state.max_completed_steps != 12 ||
+            loaded_config.context_budgets.working_state.max_remaining_steps != 10 ||
+            loaded_config.context_budgets.working_state.max_constraints != 8 ||
+            loaded_config.context_budgets.working_state.max_open_questions != 6 ||
+            loaded_config.context_budgets.working_state.max_resource_refs != 10 ||
+            loaded_config.context_budgets.working_state.max_chunk_status != 12 ||
+            loaded_config.context_budgets.working_state.max_tool_results != 8 ||
+            loaded_config.max_continuations != 3) {
         std::fprintf(stderr, "host context budgets mismatch\n");
         return 1;
     }
@@ -197,7 +219,8 @@ int main(int argc, char ** argv) {
     if (stdio_options.thinking_mode != "deliberate" ||
             stdio_options.n_threads != 4 ||
             stdio_options.max_reflection_rounds != 3 ||
-            stdio_options.max_plan_revisions != 2) {
+            stdio_options.max_plan_revisions != 2 ||
+            stdio_options.max_continuations != 3) {
         std::fprintf(stderr, "deliberation config was not applied to stdio args\n");
         return 1;
     }
@@ -215,6 +238,13 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "negative deliberation limit was accepted\n");
         return 1;
     }
+    agent_host_config invalid_continuation_config = loaded_config;
+    invalid_continuation_config.max_continuations = 17;
+    if (validate_agent_host_config(invalid_continuation_config, error) ||
+            error.find("limits.max_continuations") == std::string::npos) {
+        std::fprintf(stderr, "unbounded continuation limit was accepted\n");
+        return 1;
+    }
     const json roundtrip = agent_host_config_to_json(loaded_config);
     if (!roundtrip.is_object() ||
             roundtrip.value("schema_version", 0) != 1 ||
@@ -226,7 +256,10 @@ int main(int argc, char ** argv) {
     if (roundtrip["runtime"]["context_budgets"]["plan_chars"] != 4096 ||
             roundtrip["runtime"]["context_budgets"]["tool_observation_chars"] != 8192 ||
             roundtrip["runtime"]["context_budgets"]["resource_chunk_max_bytes"] != 3072 ||
-            roundtrip["runtime"]["context_budgets"]["resource_chunk_overlap_bytes"] != 192) {
+            roundtrip["runtime"]["context_budgets"]["resource_chunk_overlap_bytes"] != 192 ||
+            roundtrip["runtime"]["context_budgets"]["working_state"]["max_total_chars"] != 6000 ||
+            roundtrip["runtime"]["context_budgets"]["working_state"]["max_tool_results"] != 8 ||
+            roundtrip["limits"]["max_continuations"] != 3) {
         std::fprintf(stderr, "host context budgets roundtrip mismatch\n");
         return 1;
     }

@@ -26,7 +26,18 @@
       "memory_chars": 16000,
       "memory_per_item_chars": 4000,
       "overlay_chars": 8000,
-      "overlay_per_item_chars": 2000
+      "overlay_per_item_chars": 2000,
+      "working_state": {
+        "max_total_chars": 8192,
+        "max_value_chars": 1024,
+        "max_completed_steps": 64,
+        "max_remaining_steps": 64,
+        "max_constraints": 32,
+        "max_open_questions": 32,
+        "max_resource_refs": 32,
+        "max_chunk_status": 64,
+        "max_tool_results": 32
+      }
     }
   },
   "stores": {
@@ -132,6 +143,7 @@
     "mcp_connect_timeout_ms": 5000,
     "mcp_request_timeout_ms": 30000,
     "mcp_shutdown_timeout_ms": 2000,
-    "max_tool_rounds": 0
+    "max_tool_rounds": 0,
+    "max_continuations": 2
   }
 }

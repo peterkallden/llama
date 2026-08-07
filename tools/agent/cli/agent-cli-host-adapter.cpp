@@ -573,6 +573,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
             return embedding_provider != nullptr &&
                 embedding_provider->embed("memory candidate", text, embedding, error);
         },
+        options.max_continuations,
     });
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;

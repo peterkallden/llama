@@ -42,6 +42,7 @@ struct daemon_options {
     int n_threads = 2;
     int context_size = 0;
     common_agent_context_budget_config context_budgets;
+    size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string memory_learn = "off";
     std::string agent_plan = "off";

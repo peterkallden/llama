@@ -300,6 +300,18 @@ bool parse_agent_host_config_json(
             read_optional(budgets, "deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars);
             read_optional(budgets, "deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars);
             read_optional(budgets, "deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars);
+            if (budgets.contains("working_state") && budgets["working_state"].is_object()) {
+                const auto & working_state = budgets["working_state"];
+                read_optional(working_state, "max_total_chars", config.context_budgets.working_state.max_total_chars);
+                read_optional(working_state, "max_value_chars", config.context_budgets.working_state.max_value_chars);
+                read_optional(working_state, "max_completed_steps", config.context_budgets.working_state.max_completed_steps);
+                read_optional(working_state, "max_remaining_steps", config.context_budgets.working_state.max_remaining_steps);
+                read_optional(working_state, "max_constraints", config.context_budgets.working_state.max_constraints);
+                read_optional(working_state, "max_open_questions", config.context_budgets.working_state.max_open_questions);
+                read_optional(working_state, "max_resource_refs", config.context_budgets.working_state.max_resource_refs);
+                read_optional(working_state, "max_chunk_status", config.context_budgets.working_state.max_chunk_status);
+                read_optional(working_state, "max_tool_results", config.context_budgets.working_state.max_tool_results);
+            }
         }
         read_optional(runtime, "n_gpu_layers", config.n_gpu_layers);
         read_optional(runtime, "default_mode", config.default_mode);
@@ -576,6 +588,7 @@ bool parse_agent_host_config_json(
         read_optional(limits, "mcp_request_timeout_ms", config.mcp_request_timeout_ms);
         read_optional(limits, "mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms);
         read_optional(limits, "max_tool_rounds", config.max_tool_rounds);
+        read_optional(limits, "max_continuations", config.max_continuations);
     }
 
     if (config.turn_timeout_ms == 0 && config.max_turn_seconds > 0) {
@@ -738,6 +751,17 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars},
                 {"deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars},
                 {"deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars},
+                {"working_state", {
+                    {"max_total_chars", config.context_budgets.working_state.max_total_chars},
+                    {"max_value_chars", config.context_budgets.working_state.max_value_chars},
+                    {"max_completed_steps", config.context_budgets.working_state.max_completed_steps},
+                    {"max_remaining_steps", config.context_budgets.working_state.max_remaining_steps},
+                    {"max_constraints", config.context_budgets.working_state.max_constraints},
+                    {"max_open_questions", config.context_budgets.working_state.max_open_questions},
+                    {"max_resource_refs", config.context_budgets.working_state.max_resource_refs},
+                    {"max_chunk_status", config.context_budgets.working_state.max_chunk_status},
+                    {"max_tool_results", config.context_budgets.working_state.max_tool_results},
+                }},
             }},
             {"n_threads", config.n_threads},
             {"n_gpu_layers", config.n_gpu_layers},
@@ -887,6 +911,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"mcp_request_timeout_ms", config.mcp_request_timeout_ms},
             {"mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms},
             {"max_tool_rounds", config.max_tool_rounds},
+            {"max_continuations", config.max_continuations},
         }},
     };
 }
@@ -926,8 +951,21 @@ bool validate_agent_host_config(
             budgets.memory_per_item_chars == 0 || budgets.overlay_chars == 0 ||
             budgets.overlay_per_item_chars == 0 || budgets.deliberate_memory_chars == 0 ||
             budgets.deliberate_memory_per_item_chars == 0 || budgets.deliberate_overlay_chars == 0 ||
-            budgets.deliberate_overlay_per_item_chars == 0) {
+            budgets.deliberate_overlay_per_item_chars == 0 ||
+            budgets.working_state.max_total_chars == 0 ||
+            budgets.working_state.max_value_chars == 0 ||
+            budgets.working_state.max_completed_steps == 0 ||
+            budgets.working_state.max_remaining_steps == 0 ||
+            budgets.working_state.max_constraints == 0 ||
+            budgets.working_state.max_open_questions == 0 ||
+            budgets.working_state.max_resource_refs == 0 ||
+            budgets.working_state.max_chunk_status == 0 ||
+            budgets.working_state.max_tool_results == 0) {
         error = "runtime.context_budgets values must be greater than zero";
+        return false;
+    }
+    if (config.max_continuations > 16) {
+        error = "limits.max_continuations must not exceed 16";
         return false;
     }
     common_agent_thinking_request thinking_request;
@@ -1179,6 +1217,7 @@ void apply_agent_host_config_to_daemon_options(
     options.context_size = config.runtime_context_size;
     options.n_threads = config.n_threads;
     options.context_budgets = config.context_budgets;
+    options.max_continuations = config.max_continuations;
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;
     options.agent_plan = config.agent_plan;
@@ -1265,6 +1304,7 @@ void apply_agent_host_config_to_args(
     options.n_predict = config.n_predict;
     options.context_size = config.runtime_context_size;
     options.context_budgets = config.context_budgets;
+    options.max_continuations = config.max_continuations;
     options.n_gpu_layers = config.n_gpu_layers;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;

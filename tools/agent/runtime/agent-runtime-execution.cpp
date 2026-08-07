@@ -295,12 +295,7 @@ bool make_continuation_checkpoint(
     checkpoint.reason = common_agent_continuation_reason::completion_limit;
     const auto & context_budgets = execution.runtime_config.generation_config.context_budgets;
     checkpoint.working_state = make_common_agent_working_state(
-        *plan,
-        std::max<size_t>(2048,
-            context_budgets.plan_chars +
-            context_budgets.step_chars +
-            context_budgets.tool_observation_chars +
-            context_budgets.input_resources_chars));
+        *plan, context_budgets.working_state);
     for (const auto & step : plan->steps) {
         if (step.status == common_plan_step_status::completed) checkpoint.completed_step_ids.push_back(step.id);
     }
@@ -588,7 +583,8 @@ bool run_agent_runtime_driver(
         }
         execution.current_plan_id = plan->id;
         if (slice_requires_context_continuation(slice)) {
-            execution.compact_working_state = make_common_agent_working_state(*plan);
+            execution.compact_working_state = make_common_agent_working_state(
+                *plan, execution.runtime_config.generation_config.context_budgets.working_state);
             execution.orchestration_config.prompt =
                 "Continue the same task from the bounded working state.\n"
                 "The plan and resource stores remain authoritative; do not recreate completed work.\n"
