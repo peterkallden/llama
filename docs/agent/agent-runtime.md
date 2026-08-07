@@ -1933,8 +1933,11 @@ if validation still fails, no candidate is proposed.
 The retry mechanics are shared through a small `common/agent` helper. The
 planner, reflection engine, and memory candidate extractor still own their
 separate prompts, schemas, and parsers; the helper only enforces the common
-bounded generate/accept contract. This keeps structured regeneration in the
-existing host/runtime assembly rather than creating a second repair subsystem.
+bounded generate/accept contract. A retry is allowed only after a completed
+generation whose structured payload was rejected. Host cancellation and
+backend failures are returned immediately and cannot consume another
+inference attempt. This keeps structured regeneration in the existing
+host/runtime assembly rather than creating a second repair subsystem.
 
 ## MCP Direction
 

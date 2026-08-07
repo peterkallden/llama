@@ -18,7 +18,12 @@ auto common_agent_bounded_structured_regeneration(
         if (common_agent_generation_succeeded(generation) && accept(generation)) {
             return generation;
         }
-        if (attempt >= max_regenerations) {
+        // Regeneration is only valid for a completed generation whose
+        // structured payload was rejected. Host cancellation and backend
+        // failures must propagate immediately and must not consume another
+        // inference attempt.
+        if (!common_agent_generation_succeeded(generation) ||
+                attempt >= max_regenerations) {
             return generation;
         }
     }

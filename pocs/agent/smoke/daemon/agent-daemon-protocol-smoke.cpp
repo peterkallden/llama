@@ -866,6 +866,12 @@ int main() {
         "agent-resource://resource/original";
     turn_result.turn_result.continuation_checkpoint->chunk_count = 3;
     turn_result.turn_result.continuation_checkpoint->completed_chunk_indexes = {0, 1};
+    common_runtime_resource_ref checkpoint_resource;
+    checkpoint_resource.uri = "workspace://checkpoint/resource";
+    checkpoint_resource.name = "checkpoint resource";
+    checkpoint_resource.description = "checkpoint resource";
+    checkpoint_resource.mime_type = "text/plain";
+    checkpoint_resource.size_bytes = 24;
     turn_result.turn_result.continuation_checkpoint->working_state = common_agent_working_state{
         "continue the bounded operation",
         "verification",
@@ -875,7 +881,7 @@ int main() {
         {"preserve host authority"},
         {"use bounded resources"},
         {"chunk 2 remains pending"},
-        {{"workspace://checkpoint/resource", "checkpoint resource", "text/plain", 24}},
+        {checkpoint_resource},
         {"agent-resource://resource/original[0/3];status=completed;observation=obs-0"},
         {"build passed"},
         "resume synthesis",

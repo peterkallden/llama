@@ -412,7 +412,7 @@ static void test_runtime_generation_metadata() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"(not-json)"),
-        make_success(R"({"goal":"Check status","steps":[{"id":"answer","mode":"reasoning","objective":"Answer the user"}]})"),
+        make_success(R"({"goal":"Check status","steps":[{"id":"inspect","mode":"reasoning","objective":"Inspect the current status"}]})"),
         make_success("draft-content", 11),
         make_success(R"({"summary":"facts"})"),
         make_success(R"({"decision":"accept","ready_to_answer":true})", 0, common_agent_generation_stop_reason::json_schema),
@@ -504,7 +504,10 @@ static void test_planner_regenerates_truncated_json() {
     const auto proposal = planner->create_plan_result(request, error);
     assert(error.empty());
     assert(proposal.plan.goal == "Inspect the request");
-    assert(proposal.plan.steps.size() == 1);
+    assert(proposal.plan.steps.empty());
+    assert(proposal.operations.size() == 2);
+    assert(proposal.operations[0].step && proposal.operations[0].step->id == "inspect");
+    assert(proposal.operations[1].step && proposal.operations[1].step->id == "answer");
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].messages.size() == 2);
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
@@ -726,6 +729,7 @@ static void test_agent_runtime_smoke() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"(not-json)"),
+        make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
         make_success(R"({"decision":"accept"})", 3),
     };
@@ -778,10 +782,12 @@ static void test_agent_runtime_smoke() {
     assert(result.response == "draft-content");
     assert(result.plan_id);
     assert(!result.plan_id->empty());
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].purpose == common_agent_generation_purpose::draft);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::reflection);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
 }
 
 static void test_runtime_request_builder() {
@@ -1242,6 +1248,7 @@ static void test_runtime_host_agent_smoke() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"(not-json)"),
+        make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
         make_success(R"({"decision":"accept"})", 3),
     };
@@ -1300,9 +1307,11 @@ static void test_runtime_host_agent_smoke() {
     assert(error.empty());
     assert(result.response == "draft-content");
     assert(result.plan_id);
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::reflection);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
 }
 
 static void test_runtime_host_input_builders() {
@@ -1644,6 +1653,7 @@ static void test_runtime_resident_runtime_builder() {
     inference.queued = {
         make_success("chat-response", 3),
         make_success(R"(not-json)"),
+        make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
         make_success(R"({"decision":"accept"})", 3),
     };
@@ -1678,11 +1688,12 @@ static void test_runtime_resident_runtime_builder() {
     assert(agent_result.response == "draft-content");
     assert(agent_result.plan_id);
     assert(runtime.current_plan_id() == *agent_result.plan_id);
-    assert(inference_ptr->seen.size() == 4);
+    assert(inference_ptr->seen.size() == 5);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-9:conversation");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:draft");
-    assert(inference_ptr->seen[3].trace_id && *inference_ptr->seen[3].trace_id == "turn-11:reflection");
+    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:planner");
+    assert(inference_ptr->seen[3].trace_id && *inference_ptr->seen[3].trace_id == "turn-11:draft");
+    assert(inference_ptr->seen[4].trace_id && *inference_ptr->seen[4].trace_id == "turn-11:reflection");
     runtime_session.loaded_model.model = nullptr;
     runtime_session.loaded_model.loaded = false;
 }
@@ -1691,6 +1702,7 @@ static void test_runtime_resident_agent_host_builder() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"(not-json)"),
+        make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
         make_success(R"({"decision":"accept"})", 3),
     };
@@ -1756,10 +1768,11 @@ static void test_runtime_resident_agent_host_builder() {
     assert(result.response == "draft-content");
     assert(result.plan_id);
     assert(host.current_plan_id() == *result.plan_id);
-    assert(inference_ptr->seen.size() == 3);
+    assert(inference_ptr->seen.size() == 4);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:draft");
-    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:reflection");
+    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
+    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:draft");
+    assert(inference_ptr->seen[3].trace_id && *inference_ptr->seen[3].trace_id == "turn-11:reflection");
     runtime_session.loaded_model.model = nullptr;
     runtime_session.loaded_model.loaded = false;
 }
