@@ -2455,6 +2455,8 @@ complete list of every CTest or smoke executable:
 
 - `llama-agent-inference-ctest`, the compatibility smoke for runtime-driver,
   host, resident-session and generation-metadata coverage
+- `llama-agent-deliberate-runtime-ctest`, verifying complete, incomplete, and
+  conflicting resource-chunk synthesis gating in the runtime driver
 - `test-tool-adapters`
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
@@ -2626,13 +2628,13 @@ and the sandbox backend tests under their own backend labels:
 
 | Label | Scope | Current Cozo build |
 |---|---|---:|
-| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 20 |
+| `agent` | Model-free agent contracts, memory/plan contracts, tooling, Cozo data-store and agent runtime CTest smokes | 21 |
 | `sandbox-docker` | Docker backend smoke; uses CTest skip code 77 when Docker is unavailable | 1 |
 | `sandbox-kubernetes` | Kubernetes backend smoke | 1 |
 
-The current build registers 64 CTest cases in total. The three labels above
-account for 22 label memberships; the two sandbox labels are separate from the
-authoritative `agent` test slice and are therefore not included in its 20-test
+The current build registers 65 CTest cases in total. The three labels above
+account for 23 label memberships; the two sandbox labels are separate from the
+authoritative `agent` test slice and are therefore not included in its 21-test
 count. Other repository tests are registered without an agent label in this
 build. Counts are configuration-dependent and should be refreshed with
 `ctest --test-dir BUILD_DIR -N` rather than treated as a permanent contract.
