@@ -1,8 +1,9 @@
 # Agent Beta Assurance
 
 Status: Conditional for the executed Windows/Debug beta scope; the complete
-agent CTest label and live Kubernetes sandbox smoke passed, while the live
-Docker sandbox smoke timed out and model-backed coverage remains qualified.
+agent CTest label and Kubernetes sandbox contract smoke passed. Live Docker
+and live Kubernetes backend execution were not available in the current host
+session, and model-backed coverage remains qualified.
 
 This document is the assurance record for the `llama-agent` beta milestone.
 It separates milestone criteria from the test evidence collected for a
@@ -188,6 +189,29 @@ they are not a replacement for those maturity labels.
 Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
 passes.
+
+### Latest verification - 2026-08-07
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-selection-learning` |
+| Commit | `334fd987a041` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-selection-learning-msvc-debug-13` |
+| Agent CTest | `32/32 passed`, `0 failed`, `0 not-run` |
+| Model-free agent smokes | `15/15 passed`, `0 failed`, `0 not-run` |
+| Kubernetes sandbox CTest | `1/1 passed` (contract smoke only; live backend path not enabled) |
+| Kubernetes client/cluster check | Not-run; `kubectl` is installed, but the local kubeconfig was inaccessible (`Access is denied`) |
+| Docker sandbox CTest | `0/1 passed`, `0 failed`, `1 skipped` because Docker API access was denied |
+| Model-backed Qwen/Nomic execution | Not-run in this checkpoint |
+| Decision | Windows model-free assurance passed; sandbox backend execution, Linux, and model-backed gates remain separate |
+
+The Kubernetes CTest entry validates the host/runtime contract, including
+required image and network-policy rejection. It does not claim that a pod was
+created. The live backend branch is opt-in through
+`LLAMA_AGENT_KUBERNETES_SMOKE=1` and requires an accessible kubeconfig and
+cluster. Docker is similarly kept separate from the passing contract and
+model-free counts; a skipped sandbox test is not reported as a backend pass.
 
 ### Latest verification - 2026-08-04
 
