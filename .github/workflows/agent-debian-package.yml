@@ -1,4 +1,4 @@
-name: Agent Debian development package
+name: Agent development package (Debian, Ubuntu)
 
 on:
   workflow_run:
@@ -29,7 +29,7 @@ env:
 
 jobs:
   package:
-    name: Build Debian development package
+    name: Package Debian/Ubuntu development build
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event != 'pull_request' &&
