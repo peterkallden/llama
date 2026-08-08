@@ -181,7 +181,9 @@ cmake --build build-agent-linux --parallel 4 \
 The repository also contains a native Debian source package under
 [`debian`](../../debian). Build it through `dpkg-buildpackage`; Debian's
 `debian/rules` invokes `dh_auto_configure`, which creates the CMake build tree
-with the package flags before `dh_auto_build` builds the agent pack.
+with the package flags, and then invokes CMake directly to build the
+`llama-agent-build-pack` target. The explicit CMake invocation is required
+because `--target` is a CMake build option, not a `dh_auto_build` option.
 
 The package uses Cozo-backed stores by default, so provide the Cozo C API
 header and shared library explicitly:
