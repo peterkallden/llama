@@ -710,6 +710,16 @@ int main(int argc, char ** argv) {
     tooling.tools.clear();
     tooling.profile_tools_active = false;
 
+    // The service takes ownership of the runtime below. Keep non-owning
+    // aliases for the store-backed diagnostic check that runs while the
+    // service is still alive; the moved-from runtime must not be dereferenced.
+    auto * daemon_memory_store = runtime.memory_store.get();
+    auto * daemon_plan_store = runtime.plan_store.get();
+    auto * daemon_resource_store = runtime.resource_store.get();
+    if (daemon_memory_store == nullptr || daemon_plan_store == nullptr || daemon_resource_store == nullptr) {
+        std::fprintf(stderr, "daemon MCP environment stores were unexpectedly unavailable before service move\n");
+        return 1;
+    }
     common_agent_daemon_service service(std::move(runtime));
     common_agent_daemon_command_result status;
     if (!service.populate_status(status, error) || !status.status.ready || !status.status.live) {
@@ -774,9 +784,9 @@ int main(int argc, char ** argv) {
                 common_plan_scope::turn,
                 0,
             },
-            *runtime.memory_store,
-            *runtime.plan_store,
-            runtime.resource_store.get(),
+            *daemon_memory_store,
+            *daemon_plan_store,
+            daemon_resource_store,
             bad_tooling,
             error)) {
         std::fprintf(stderr, "daemon MCP bad tooling unexpectedly succeeded\n");
