@@ -1166,6 +1166,29 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return bindings.sandbox_execute(std::move(request));
             }, error, false, true);
+        } else if (definition.executor_id == "builtin.resource_inspect" && bindings.resource_runtime.store != nullptr) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("uri") || !arguments["uri"].is_string()) {
+                    if (err.empty()) err = "resource_inspect requires a uri";
+                    return tool_validation_failure("tool.resource_inspect.invalid_uri", std::move(err), "Resource inspection requires a valid resource URI.");
+                }
+                const auto uri = trim_copy(arguments["uri"].get<std::string>());
+                if (uri.empty() || uri.size() > 512) {
+                    return tool_validation_failure("tool.resource_inspect.invalid_uri", "resource_inspect uri is out of bounds", "Resource inspection requires a bounded resource URI.");
+                }
+
+                agent_resource_descriptor descriptor;
+                const auto authority = make_resource_read_authority(bindings);
+                if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
+                    return tool_not_found_failure("tool.resource_inspect.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
+                }
+
+                return common_tool_execution_result::success(
+                    common_tool_resource_inspect_result_to_json({descriptor, {"text"}}).dump(),
+                    "Resource descriptor and available representations loaded from the host-owned resource store.");
+            }, error);
         } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;

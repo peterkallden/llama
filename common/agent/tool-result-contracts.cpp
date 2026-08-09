@@ -59,6 +59,14 @@ json common_tool_resource_read_result_to_json(
     };
 }
 
+json common_tool_resource_inspect_result_to_json(
+        const common_tool_resource_inspect_result & result) {
+    return {
+        {"resource", common_tool_resource_descriptor_to_json(result.resource)},
+        {"available_representations", result.available_representations},
+    };
+}
+
 json common_tool_web_search_result_to_json(
         const common_tool_web_search_result & result) {
     json payload = {

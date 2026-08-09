@@ -17,6 +17,11 @@ struct common_tool_resource_read_result {
     std::string content;
 };
 
+struct common_tool_resource_inspect_result {
+    agent_resource_descriptor resource;
+    std::vector<std::string> available_representations = {"text"};
+};
+
 struct common_tool_web_search_result {
     nlohmann::ordered_json results;
     std::string provider;
@@ -91,7 +96,10 @@ nlohmann::ordered_json common_tool_resource_descriptor_to_json(
     const agent_resource_descriptor & descriptor);
 
 nlohmann::ordered_json common_tool_resource_read_result_to_json(
-    const common_tool_resource_read_result & result);
+        const common_tool_resource_read_result & result);
+
+nlohmann::ordered_json common_tool_resource_inspect_result_to_json(
+        const common_tool_resource_inspect_result & result);
 
 nlohmann::ordered_json common_tool_web_search_result_to_json(
     const common_tool_web_search_result & result);

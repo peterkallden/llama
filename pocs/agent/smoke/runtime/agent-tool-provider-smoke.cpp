@@ -424,6 +424,18 @@ int main() {
         return 1;
     }
 
+    const auto resource_inspect_result = research_view->call({
+        "call-2f",
+        "resource_inspect",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(})",
+    }, error);
+    if (!resource_inspect_result.ok ||
+            resource_inspect_result.content_json.find("available_representations") == std::string::npos ||
+            resource_inspect_result.content_json.find("\"text\"") == std::string::npos) {
+        std::fprintf(stderr, "resource_inspect did not return the expected representation metadata: %s\n", resource_inspect_result.content_json.c_str());
+        return 1;
+    }
+
     common_memory_in_memory_store memory_store;
     if (!memory_store.open("", error)) {
         std::fprintf(stderr, "memory store open failed: %s\n", error.c_str());

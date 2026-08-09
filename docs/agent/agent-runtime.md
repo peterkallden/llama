@@ -901,6 +901,16 @@ scope. A range read may return fewer bytes at the end of a resource. An
 out-of-bounds offset is rejected. Backends that do not implement non-zero
 ranges fail explicitly rather than silently loading the whole payload.
 
+The read contract is representation-aware without exposing converters to the
+model. `resource_read` accepts an optional bounded `representation` field;
+the current host implementation supports `text` and fails closed for
+unavailable representations. `resource_inspect` provides the descriptor and
+the host-resolved `available_representations` list before a read is chosen.
+These are resource-domain operations in the existing tool catalog: processor
+selection, MIME conversion, and execution isolation remain host-owned
+infrastructure and are not model-selected tools. Binary and multimodal
+representations can be added later without changing the chunking contract.
+
 The design policies for later chunk analysis are:
 
 - Chunk creation is host/controller work in the existing session lane. It does
