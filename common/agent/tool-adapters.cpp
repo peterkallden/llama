@@ -1175,6 +1175,13 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     return tool_validation_failure("tool.resource_read.invalid_uri", std::move(err), "Resource read requires a valid resource URI.");
                 }
                 const auto uri = trim_copy(arguments["uri"].get<std::string>());
+                const auto representation = trim_copy(arguments.value("representation", std::string("text")));
+                if (representation.empty() || representation.size() > 64) {
+                    return tool_validation_failure("tool.resource_read.invalid_representation", "resource_read representation is out of bounds", "Resource representation must be a bounded non-empty identifier.");
+                }
+                if (representation != "text") {
+                    return tool_not_found_failure("tool.resource_read.representation_unavailable", "resource representation is not available in the current runtime", "The requested resource representation is not available.");
+                }
                 int64_t offset = 0;
                 if (arguments.contains("offset")) {
                     if (!arguments["offset"].is_number_integer()) {
@@ -1201,6 +1208,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 return common_tool_execution_result::success(
                     common_tool_resource_read_result_to_json({
                         descriptor,
+                        representation,
                         text,
                     }).dump(),
                     descriptor.metadata.content_summary.empty()

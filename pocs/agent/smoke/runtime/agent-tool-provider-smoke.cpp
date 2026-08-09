@@ -394,10 +394,23 @@ int main() {
     const auto resource_read_result = research_view->call({
         "call-2c",
         "resource_read",
-        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","max_bytes":4096})",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","representation":"text","max_bytes":4096})",
     }, error);
-    if (!resource_read_result.ok || resource_read_result.content_json.find("stub issue") == std::string::npos) {
+    if (!resource_read_result.ok ||
+            resource_read_result.content_json.find("stub issue") == std::string::npos ||
+            resource_read_result.content_json.find("\"representation\":\"text\"") == std::string::npos) {
         std::fprintf(stderr, "resource_read did not return the expected stored payload: %s\n", resource_read_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto unavailable_representation_result = research_view->call({
+        "call-2c-image",
+        "resource_read",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","representation":"image"})",
+    }, error);
+    if (unavailable_representation_result.ok ||
+            unavailable_representation_result.failure_code != "tool.resource_read.representation_unavailable") {
+        std::fprintf(stderr, "resource_read did not reject the unavailable representation: %s\n", unavailable_representation_result.content_json.c_str());
         return 1;
     }
 

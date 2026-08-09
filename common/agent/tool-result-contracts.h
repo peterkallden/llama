@@ -13,6 +13,7 @@
 
 struct common_tool_resource_read_result {
     agent_resource_descriptor resource;
+    std::string representation = "text";
     std::string content;
 };
 

@@ -54,6 +54,7 @@ json common_tool_resource_read_result_to_json(
         const common_tool_resource_read_result & result) {
     return {
         {"resource", common_tool_resource_descriptor_to_json(result.resource)},
+        {"representation", result.representation},
         {"content", result.content},
     };
 }
