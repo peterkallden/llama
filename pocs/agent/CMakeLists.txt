@@ -781,8 +781,19 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
             RENAME llama-agent-config-bootstrap)
     endif()
 
-    file(GLOB AGENT_HOST_CONFIG_EXAMPLES CONFIGURE_DEPENDS
-        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-*.json)
+    # Keep this install manifest explicit.  A CONFIGURE_DEPENDS glob here
+    # makes Ninja rerun the whole project configuration on CMake versions
+    # that do not materialize the unchanged glob-verification output.
+    set(AGENT_HOST_CONFIG_EXAMPLES
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-capabilities.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-inbound-mcp-agent.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-inbound-mcp-auth.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-inbound-mcp-home.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-inbound-mcp-jwt.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-jsonl-tcp.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-jsonl-unix.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-remote-http.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-stdio.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${AGENT_HOST_CONFIG_EXAMPLES}
