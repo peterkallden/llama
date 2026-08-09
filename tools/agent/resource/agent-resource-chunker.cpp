@@ -37,9 +37,7 @@ bool plan_agent_resource_text_chunks(
     if (!store.stat(uri, authority, out.parent, error)) {
         return false;
     }
-    if (out.parent.mime_type.rfind("text/", 0) != 0 &&
-            out.parent.mime_type != "application/json" &&
-            out.parent.mime_type != "application/xml") {
+    if (!common_resource_media_type_is_text_like(out.parent.mime_type)) {
         error = "resource chunking requires a text-oriented resource";
         return false;
     }

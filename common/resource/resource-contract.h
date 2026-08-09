@@ -2,6 +2,8 @@
 
 #include "runtime/runtime-state.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -279,6 +281,40 @@ struct common_runtime_resource_media_type {
     std::string resolved_type;
     bool content_verified = false;
 };
+
+inline std::string common_normalize_resource_media_type(std::string value) {
+    const auto semicolon = value.find(';');
+    if (semicolon != std::string::npos) value.resize(semicolon);
+    size_t begin = 0;
+    size_t end = value.size();
+    while (begin < end && std::isspace(static_cast<unsigned char>(value[begin]))) ++begin;
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1]))) --end;
+    value = value.substr(begin, end - begin);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+inline bool common_resource_media_type_is_text_like(const std::string & media_type) {
+    const auto normalized = common_normalize_resource_media_type(media_type);
+    if (normalized.empty()) return false;
+    if (normalized.rfind("text/", 0) == 0) return true;
+    if (normalized == "application/json" ||
+            normalized == "application/ld+json" ||
+            normalized == "application/xml" ||
+            normalized == "application/xhtml+xml" ||
+            normalized == "application/javascript" ||
+            normalized == "application/ecmascript" ||
+            normalized == "application/x-ndjson" ||
+            normalized == "application/yaml" ||
+            normalized == "application/x-yaml") {
+        return true;
+    }
+    return normalized.size() > 5 && (
+        normalized.compare(normalized.size() - 5, 5, "+json") == 0 ||
+        normalized.compare(normalized.size() - 4, 4, "+xml") == 0);
+}
 
 struct agent_resource_byte_range {
     size_t offset = 0;

@@ -21,6 +21,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
     ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-media-type.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
@@ -760,6 +761,16 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-resource-media-type-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-resource-media-type-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-processing-service-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-processing-service-smoke.cpp
@@ -875,6 +886,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
@@ -930,6 +942,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
 )
 
@@ -1009,6 +1022,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-resource-processing-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-processing-contract-smoke>)
     set_property(TEST llama-agent-resource-processing-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-resource-media-type-ctest
+        COMMAND $<TARGET_FILE:llama-agent-resource-media-type-smoke>)
+    set_property(TEST llama-agent-resource-media-type-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-resource-processing-service-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-processing-service-smoke>)

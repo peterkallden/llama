@@ -1,5 +1,7 @@
 #include "agent-resource-processing-service.h"
 
+#include "agent-resource-media-type.h"
+
 #include <utility>
 
 namespace {
@@ -16,12 +18,33 @@ agent_resource_processing_result processing_failure(
     return result;
 }
 
-std::string resolved_media_type(
-        const common_runtime_resource_media_type & media_type,
-        const agent_resource_descriptor & source) {
-    if (!media_type.resolved_type.empty()) return media_type.resolved_type;
-    if (!media_type.declared_type.empty()) return media_type.declared_type;
-    return source.mime_type;
+common_runtime_resource_media_type resolve_processing_media_type(
+        agent_resource_store & store,
+        const agent_resource_processing_service_request & request,
+        const agent_resource_descriptor & source,
+        std::string & error) {
+    common_runtime_resource_media_type media_type = request.media_type;
+    if (media_type.declared_type.empty()) {
+        media_type.declared_type = source.mime_type;
+    }
+    if (!media_type.resolved_type.empty() && media_type.content_verified) {
+        media_type.declared_type = common_normalize_resource_media_type(media_type.declared_type);
+        media_type.resolved_type = common_normalize_resource_media_type(media_type.resolved_type);
+        error.clear();
+        return media_type;
+    }
+
+    std::string sample;
+    if (!store.read_bytes_range(source.uri, request.authority, 0, 512, sample, error)) {
+        return media_type;
+    }
+    media_type = resolve_agent_resource_media_type({
+        media_type.declared_type,
+        std::move(sample),
+        true,
+    });
+    error.clear();
+    return media_type;
 }
 
 } // namespace
@@ -53,9 +76,15 @@ agent_resource_processing_result agent_resource_processing_service::process(
             error.empty() ? "Source resource is unavailable." : std::move(error));
     }
 
-    const std::string media_type = resolved_media_type(request.media_type, source);
+    common_runtime_resource_media_type media_type =
+        resolve_processing_media_type(store_, request, source, error);
+    if (!error.empty()) {
+        return processing_failure(
+            "resource.media_type_resolution_failed",
+            std::move(error));
+    }
     const agent_resource_processor * processor =
-        registry_.resolve(media_type, request.target_representation);
+        registry_.resolve(media_type.resolved_type, request.target_representation);
     if (processor == nullptr) {
         return processing_failure(
             "resource.unsupported_media_type",
@@ -65,11 +94,7 @@ agent_resource_processing_result agent_resource_processing_service::process(
     agent_resource_processing_request processing_request;
     processing_request.source = source;
     processing_request.authority = request.authority;
-    processing_request.media_type = request.media_type;
-    processing_request.media_type.resolved_type = media_type;
-    if (processing_request.media_type.declared_type.empty()) {
-        processing_request.media_type.declared_type = source.mime_type;
-    }
+    processing_request.media_type = media_type;
     processing_request.target_representation = request.target_representation;
     processing_request.page = request.page;
     processing_request.range = request.range;

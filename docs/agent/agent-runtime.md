@@ -931,6 +931,17 @@ as arbitrary model-selected tools. Derived outputs must retain lineage to the
 authoritative original resource and then enter the existing bounded read and
 chunking path.
 
+Before processor selection, the host may resolve the resource media type from
+declared metadata and a bounded content sample. The current deterministic
+resolver recognizes strong PDF, PNG, JPEG, GIF, and ZIP signatures. Declared
+text-like types are considered verified only when the sampled bytes contain no
+NUL; other declared types remain available as unverified metadata unless a
+signature resolves them more strongly. A pre-verified resolved type may be
+reused, otherwise the processing service performs this bounded resolution
+before consulting the processor registry. MIME detection is infrastructure,
+not inference, and the original declared type remains available for audit and
+provenance.
+
 The design policies for later chunk analysis are:
 
 - Chunk creation is host/controller work in the existing session lane. It does

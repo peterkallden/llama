@@ -461,30 +461,8 @@ std::string trim_copy(const std::string & value) {
     return value.substr(begin, end - begin);
 }
 
-std::string normalize_media_type(std::string value) {
-    const auto semicolon = value.find(';');
-    if (semicolon != std::string::npos) value.resize(semicolon);
-    return lower_copy(trim_copy(value));
-}
-
 bool agent_resource_has_text_representation(const agent_resource_descriptor & descriptor) {
-    const auto mime_type = normalize_media_type(descriptor.mime_type);
-    if (mime_type.empty()) return false;
-    if (mime_type.rfind("text/", 0) == 0) return true;
-    if (mime_type == "application/json" ||
-            mime_type == "application/ld+json" ||
-            mime_type == "application/xml" ||
-            mime_type == "application/xhtml+xml" ||
-            mime_type == "application/javascript" ||
-            mime_type == "application/ecmascript" ||
-            mime_type == "application/x-ndjson" ||
-            mime_type == "application/yaml" ||
-            mime_type == "application/x-yaml") {
-        return true;
-    }
-    return mime_type.size() > 5 && (
-        mime_type.compare(mime_type.size() - 5, 5, "+json") == 0 ||
-        mime_type.compare(mime_type.size() - 4, 4, "+xml") == 0);
+    return common_resource_media_type_is_text_like(descriptor.mime_type);
 }
 
 std::vector<std::string> agent_resource_available_representations(

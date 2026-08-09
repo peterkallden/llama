@@ -118,8 +118,6 @@ int main() {
     request.authority.session_id = "session-1";
     request.authority.project_id = "project-x";
     request.media_type.declared_type = "application/octet-stream";
-    request.media_type.resolved_type = "application/pdf";
-    request.media_type.content_verified = true;
     request.target_representation = "text";
     request.range = agent_resource_byte_range{0, source.size_bytes};
     request.limits.max_output_bytes = 1024;
@@ -151,6 +149,7 @@ int main() {
     }
 
     request.media_type.resolved_type = "image/png";
+    request.media_type.content_verified = true;
     auto unsupported = service.process(request);
     if (unsupported.success ||
             unsupported.failure_code != "resource.unsupported_media_type") {
@@ -159,6 +158,7 @@ int main() {
     }
 
     request.media_type.resolved_type = "application/pdf";
+    request.media_type.content_verified = true;
     request.target_representation = "oversized-text";
     request.limits.max_output_bytes = 8;
     auto limited = service.process(request);
