@@ -461,6 +461,41 @@ std::string trim_copy(const std::string & value) {
     return value.substr(begin, end - begin);
 }
 
+std::string normalize_media_type(std::string value) {
+    const auto semicolon = value.find(';');
+    if (semicolon != std::string::npos) value.resize(semicolon);
+    return lower_copy(trim_copy(value));
+}
+
+bool agent_resource_has_text_representation(const agent_resource_descriptor & descriptor) {
+    const auto mime_type = normalize_media_type(descriptor.mime_type);
+    if (mime_type.empty()) return false;
+    if (mime_type.rfind("text/", 0) == 0) return true;
+    if (mime_type == "application/json" ||
+            mime_type == "application/ld+json" ||
+            mime_type == "application/xml" ||
+            mime_type == "application/xhtml+xml" ||
+            mime_type == "application/javascript" ||
+            mime_type == "application/ecmascript" ||
+            mime_type == "application/x-ndjson" ||
+            mime_type == "application/yaml" ||
+            mime_type == "application/x-yaml") {
+        return true;
+    }
+    return mime_type.size() > 5 && (
+        mime_type.compare(mime_type.size() - 5, 5, "+json") == 0 ||
+        mime_type.compare(mime_type.size() - 4, 4, "+xml") == 0);
+}
+
+std::vector<std::string> agent_resource_available_representations(
+        const agent_resource_descriptor & descriptor) {
+    std::vector<std::string> representations;
+    if (agent_resource_has_text_representation(descriptor)) {
+        representations.push_back("text");
+    }
+    return representations;
+}
+
 std::string collapse_ws(const std::string & value) {
     std::string out;
     bool spaced = false;
@@ -1186,7 +1221,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
 
                 return common_tool_execution_result::success(
-                    common_tool_resource_inspect_result_to_json({descriptor, {"text"}}).dump(),
+                    common_tool_resource_inspect_result_to_json({
+                        descriptor,
+                        agent_resource_available_representations(descriptor),
+                    }).dump(),
                     "Resource descriptor and available representations loaded from the host-owned resource store.");
             }, error);
         } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
@@ -1221,6 +1259,12 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto authority = make_resource_read_authority(bindings);
                 if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
                     return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
+                }
+                if (!agent_resource_has_text_representation(descriptor)) {
+                    return tool_not_found_failure(
+                        "tool.resource_read.representation_unavailable",
+                        "text representation is not available for resource media type " + descriptor.mime_type,
+                        "The requested resource representation is not available.");
                 }
 
                 std::string text;

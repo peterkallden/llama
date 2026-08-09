@@ -220,7 +220,7 @@ int main() {
     research_context.turn_id = "turn-2";
     research_context.profile_id = "research";
     research_context.allow_network = true;
-    research_context.max_calls = 8;
+    research_context.max_calls = 12;
     research_context.async_exposed_tool_names = {"web_fetch"};
     research_context.scope.namespace_id = "provider-smoke";
     research_context.scope.session_id = "session-1";
@@ -433,6 +433,48 @@ int main() {
             resource_inspect_result.content_json.find("available_representations") == std::string::npos ||
             resource_inspect_result.content_json.find("\"text\"") == std::string::npos) {
         std::fprintf(stderr, "resource_inspect did not return the expected representation metadata: %s\n", resource_inspect_result.content_json.c_str());
+        return 1;
+    }
+
+    agent_resource_put_request binary_request;
+    binary_request.name = "opaque-image.bin";
+    binary_request.description = "Opaque binary resource for representation checks.";
+    binary_request.mime_type = "application/octet-stream";
+    binary_request.scope = common_runtime_resource_scope::turn;
+    binary_request.namespace_id = research_context.scope.namespace_id;
+    binary_request.session_id = research_context.scope.session_id;
+    binary_request.project_id = research_context.scope.project_id;
+    binary_request.turn_id = research_context.scope.turn_id;
+    binary_request.source_provider = "native";
+    binary_request.source_tool = "provider-smoke";
+    binary_request.bytes = "PNG";
+    binary_request.bytes.push_back('\0');
+    binary_request.bytes.push_back(static_cast<char>(0xff));
+    agent_resource_descriptor binary_descriptor;
+    if (!g_resource_store.put_bytes(binary_request, binary_descriptor, error)) {
+        std::fprintf(stderr, "binary resource setup failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    const auto binary_inspect_result = research_view->call({
+        "call-2g",
+        "resource_inspect",
+        std::string(R"({"uri":")") + binary_descriptor.uri + R"("})",
+    }, error);
+    if (!binary_inspect_result.ok ||
+            binary_inspect_result.content_json.find(R"("available_representations":[])") == std::string::npos) {
+        std::fprintf(stderr, "resource_inspect exposed an unexpected binary representation: %s\n", binary_inspect_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto binary_read_result = research_view->call({
+        "call-2h",
+        "resource_read",
+        std::string(R"({"uri":")") + binary_descriptor.uri + R"(","representation":"text"})",
+    }, error);
+    if (binary_read_result.ok ||
+            binary_read_result.failure_code != "tool.resource_read.representation_unavailable") {
+        std::fprintf(stderr, "resource_read did not reject binary text representation: %s\n", binary_read_result.content_json.c_str());
         return 1;
     }
 

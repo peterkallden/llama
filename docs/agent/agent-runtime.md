@@ -903,9 +903,13 @@ ranges fail explicitly rather than silently loading the whole payload.
 
 The read contract is representation-aware without exposing converters to the
 model. `resource_read` accepts an optional bounded `representation` field;
-the current host implementation supports `text` and fails closed for
-unavailable representations. `resource_inspect` provides the descriptor and
-the host-resolved `available_representations` list before a read is chosen.
+the current host implementation supports `text` only when the resource media
+type is text-like, such as `text/*`, JSON, XML, YAML, or structured `+json`
+and `+xml` types. Opaque binary resources can still be persisted by the store,
+but they do not automatically expose a text representation. `resource_inspect`
+provides the descriptor and the host-resolved `available_representations` list
+before a read is chosen, and `resource_read(representation="text")` fails
+closed when that representation is unavailable.
 These are resource-domain operations in the existing tool catalog: processor
 selection, MIME conversion, and execution isolation remain host-owned
 infrastructure and are not model-selected tools. Binary and multimodal
