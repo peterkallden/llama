@@ -86,6 +86,11 @@ when the corresponding verification record contains evidence for it.
 - [x] Memory-learning JSON gets one bounded structural regeneration before candidate policy
 - [x] Planner, reflection, and memory regeneration share one common bounded helper
 - [x] Research workspace remains turn-scoped and ephemeral by default
+- [x] Resource processing resolves MIME types before host-controlled processor selection
+- [x] Derived processor outputs persist through the existing resource store and retain lineage
+- [x] Normalized processor text enters the existing bounded resource chunking path
+- [x] The first bounded local PDF text-layer processor has a model-free smoke
+- [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
 
@@ -118,6 +123,12 @@ session lane and plan/checkpoint state; chunk observations are not automatic
 long-term memories. Persistent catalog migration and controller-owned chunk
 scheduling require separate verification before the assurance scope can claim
 them.
+
+Resource processors are organized below `tools/agent/resource/processors/`.
+The first local PDF processor handles bounded direct text-layer extraction only.
+It does not render pages, perform OCR, or expose a converter executable as a
+model-selected tool. Those representations require separate processors and
+execution-provider assurance.
 
 ### Protocols and events
 

@@ -942,6 +942,15 @@ before consulting the processor registry. MIME detection is infrastructure,
 not inference, and the original declared type remains available for audit and
 provenance.
 
+Concrete processor implementations belong under
+`tools/agent/resource/processors/`. The parent `resource/` area owns the
+format-independent resource store, MIME resolution, processing service,
+lineage, limits, and chunking seams. The PDF text processor is the first local
+implementation in that subdirectory. Future OCR, page-image, Office, HTML,
+archive, or audio processors should use the same processor contract there;
+they must not add format-specific branches to the planner, resource store, or
+generic chunker.
+
 The design policies for later chunk analysis are:
 
 - Chunk creation is host/controller work in the existing session lane. It does

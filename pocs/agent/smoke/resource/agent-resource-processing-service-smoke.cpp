@@ -1,4 +1,5 @@
 #include "tools/agent/resource/agent-resource-processing-service.h"
+#include "tools/agent/resource/agent-resource-chunker.h"
 #include "tools/agent/resource/agent-resource-store.h"
 
 #include <cstdio>
@@ -31,16 +32,22 @@ public:
         output.name = request.source.name + ".txt";
         output.description = "Derived text representation";
         output.mime_type = "text/plain";
-        output.bytes = "Extracted text from " + request.source.uri;
+        if (request.source_bytes != "%PDF-smoke") {
+            result.success = false;
+            result.failure_code = "resource.source_bytes_missing";
+            result.safe_summary = "The processor did not receive the bounded source bytes.";
+            return result;
+        }
+        output.bytes = "First extracted paragraph.\n\nSecond extracted paragraph.\n\n";
         output.metadata.purpose = "derived text representation";
-        output.metadata.content_summary = "Fake extracted text";
+        output.metadata.content_summary = "Bounded extracted text fixture";
         output.metadata.usage_hint = "Read this derived resource as text.";
         output.metadata.limitations = "Model-free smoke fixture.";
         output.lineage.parent_uri = request.source.uri;
         output.lineage.chunk_index = 0;
         output.lineage.chunk_count = 1;
         output.lineage.byte_offset = request.range ? request.range->offset : 0;
-        output.lineage.byte_length = request.range ? request.range->max_bytes : request.source.size_bytes;
+        output.lineage.byte_length = output.bytes.size();
         output.lineage.derivation = "resource.process:" + id();
         result.outputs.push_back(std::move(output));
         return result;
@@ -143,8 +150,30 @@ int main() {
 
     std::string derived_text;
     if (!store.read_text(result.resources[0].uri, request.authority, 1024, derived_text, error) ||
-            derived_text.find(source.uri) == std::string::npos) {
+            derived_text.find("First extracted paragraph.") == std::string::npos) {
         std::fprintf(stderr, "derived resource was not readable through the existing store: %s\n", error.c_str());
+        return 1;
+    }
+
+    common_runtime_resource_chunk_policy chunk_policy;
+    chunk_policy.max_bytes = 32;
+    chunk_policy.overlap_bytes = 0;
+    agent_resource_chunk_plan chunk_plan;
+    if (!plan_agent_resource_text_chunks(
+            store,
+            result.resources[0].uri,
+            request.authority,
+            chunk_policy,
+            chunk_plan,
+            error) || chunk_plan.ranges.size() < 2) {
+        std::fprintf(stderr, "derived text did not enter the existing chunk path: %s\n", error.c_str());
+        return 1;
+    }
+    std::string first_chunk;
+    if (!read_agent_resource_chunk(
+            store, request.authority, chunk_plan, 0, first_chunk, error) ||
+            first_chunk.empty()) {
+        std::fprintf(stderr, "derived text chunk could not be read: %s\n", error.c_str());
         return 1;
     }
 

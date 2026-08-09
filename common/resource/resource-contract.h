@@ -326,6 +326,8 @@ struct agent_resource_processing_limits {
     size_t max_output_bytes = 0;
     size_t max_generated_resources = 0;
     size_t max_duration_ms = 0;
+    size_t max_pages = 0;
+    size_t max_page_bytes = 0;
 };
 
 struct agent_resource_processing_request {
@@ -336,6 +338,11 @@ struct agent_resource_processing_request {
     std::optional<size_t> page;
     std::optional<agent_resource_byte_range> range;
     agent_resource_processing_limits limits;
+
+    // The host may provide a bounded source slice to a local processor. The
+    // authoritative source remains in the resource store; processors must
+    // not treat this field as a second source of truth.
+    std::string source_bytes;
 };
 
 struct agent_resource_processing_output {

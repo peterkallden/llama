@@ -91,6 +91,28 @@ agent_resource_processing_result agent_resource_processing_service::process(
             "No resource processor supports the requested representation.");
     }
 
+    const size_t max_source_bytes = request.limits.max_source_bytes > 0
+        ? request.limits.max_source_bytes
+        : 16 * 1024 * 1024;
+    if (!request.range && source.size_bytes > max_source_bytes) {
+        return processing_failure(
+            "resource.processing_limit",
+            "Resource processor source exceeded the configured byte limit.",
+            processor->id());
+    }
+    size_t source_offset = 0;
+    size_t source_limit = max_source_bytes;
+    if (request.range) {
+        source_offset = request.range->offset;
+        source_limit = request.range->max_bytes;
+        if (source_limit == 0 || source_limit > max_source_bytes) {
+            return processing_failure(
+                "resource.processing_limit",
+                "Resource processor range exceeded the configured byte limit.",
+                processor->id());
+        }
+    }
+
     agent_resource_processing_request processing_request;
     processing_request.source = source;
     processing_request.authority = request.authority;
@@ -99,6 +121,18 @@ agent_resource_processing_result agent_resource_processing_service::process(
     processing_request.page = request.page;
     processing_request.range = request.range;
     processing_request.limits = request.limits;
+    if (!store_.read_bytes_range(
+            source.uri,
+            request.authority,
+            source_offset,
+            source_limit,
+            processing_request.source_bytes,
+            error)) {
+        return processing_failure(
+            "resource.source_read_failed",
+            error.empty() ? "Resource processor could not read the source." : std::move(error),
+            processor->id());
+    }
 
     agent_resource_processing_result result = processor->process(processing_request);
     if (!result.processor_id.empty() && result.processor_id != processor->id()) {
