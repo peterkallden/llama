@@ -427,7 +427,7 @@ int main() {
     const auto resource_inspect_result = research_view->call({
         "call-2f",
         "resource_inspect",
-        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(})",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"("})",
     }, error);
     if (!resource_inspect_result.ok ||
             resource_inspect_result.content_json.find("available_representations") == std::string::npos ||
