@@ -951,6 +951,19 @@ archive, or audio processors should use the same processor contract there;
 they must not add format-specific branches to the planner, resource store, or
 generic chunker.
 
+The processing service loads only a host-bounded source slice for a local
+processor and enforces source, output-count, output-size, page-count, and
+optional duration limits before returning derived resource references. The
+generic resource tools expose `bytes` as a bounded base64 representation for
+opaque or multimodal-friendly transport; `text` remains fail-closed for
+binary media. Processing emits host-owned start, derived-resource, completed,
+and processor-failed events through the existing agent event sink. Processing
+is demand-driven at the representation boundary: the first PDF processor
+extracts only its requested text representation and does not eagerly render
+pages or invoke OCR. A persistent derived-result cache is intentionally not
+part of this milestone; lineage and processor provenance leave room for a
+content-identity/options cache later.
+
 The design policies for later chunk analysis are:
 
 - Chunk creation is host/controller work in the existing session lane. It does

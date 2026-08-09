@@ -2,6 +2,7 @@
 
 #include "agent-resource-media-type.h"
 
+#include <chrono>
 #include <utility>
 
 namespace {
@@ -75,7 +76,6 @@ agent_resource_processing_result agent_resource_processing_service::process(
             "resource.unavailable",
             error.empty() ? "Source resource is unavailable." : std::move(error));
     }
-
     common_runtime_resource_media_type media_type =
         resolve_processing_media_type(store_, request, source, error);
     if (!error.empty()) {
@@ -89,6 +89,17 @@ agent_resource_processing_result agent_resource_processing_service::process(
         return processing_failure(
             "resource.unsupported_media_type",
             "No resource processor supports the requested representation.");
+    }
+    if (request.event_sink) {
+        request.event_sink({
+            common_agent_event_type::resource_processing_started,
+            "resource processing started",
+            {},
+            std::nullopt,
+            {},
+            processor->id(),
+            source.uri,
+        });
     }
 
     const size_t max_source_bytes = request.limits.max_source_bytes > 0
@@ -134,7 +145,27 @@ agent_resource_processing_result agent_resource_processing_service::process(
             processor->id());
     }
 
+    const auto started_at = std::chrono::steady_clock::now();
     agent_resource_processing_result result = processor->process(processing_request);
+    const auto elapsed_ms = static_cast<size_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_at).count());
+    if (request.limits.max_duration_ms > 0 && elapsed_ms > request.limits.max_duration_ms) {
+        if (request.event_sink) {
+            request.event_sink({
+                common_agent_event_type::resource_processing_failed,
+                "resource processing duration limit reached",
+                {},
+                std::nullopt,
+                {},
+                processor->id(),
+                source.uri,
+            });
+        }
+        return processing_failure(
+            "resource.processing_timeout",
+            "Resource processor exceeded the configured duration limit.",
+            processor->id());
+    }
     if (!result.processor_id.empty() && result.processor_id != processor->id()) {
         return processing_failure(
             "resource.processor_failed",
@@ -143,6 +174,17 @@ agent_resource_processing_result agent_resource_processing_service::process(
     }
     result.processor_id = processor->id();
     if (!result.success) {
+        if (request.event_sink) {
+            request.event_sink({
+                common_agent_event_type::resource_processing_failed,
+                result.safe_summary,
+                {},
+                std::nullopt,
+                {},
+                processor->id(),
+                source.uri,
+            });
+        }
         if (result.failure_code.empty()) result.failure_code = "resource.processor_failed";
         if (result.safe_summary.empty()) result.safe_summary = "Resource processor failed.";
         return result;
@@ -207,11 +249,33 @@ agent_resource_processing_result agent_resource_processing_service::process(
                 processor->id());
         }
         result.resources.push_back(descriptor);
+        if (request.event_sink) {
+            request.event_sink({
+                common_agent_event_type::resource_created,
+                "derived resource created by processor",
+                {},
+                std::nullopt,
+                {},
+                processor->id(),
+                descriptor.uri,
+            });
+        }
     }
     result.outputs.clear();
 
     if (result.safe_summary.empty()) {
         result.safe_summary = "Resource processing completed.";
+    }
+    if (request.event_sink) {
+        request.event_sink({
+            common_agent_event_type::resource_processing_completed,
+            result.safe_summary,
+            {},
+            std::nullopt,
+            {},
+            processor->id(),
+            source.uri,
+        });
     }
     return result;
 }

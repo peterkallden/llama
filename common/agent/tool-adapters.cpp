@@ -1,6 +1,7 @@
 #include "agent/tool-adapters.h"
 
 #include "agent/tool-result-contracts.h"
+#include "base64.hpp"
 #include "http.h"
 #include "memory/memory-retrieval.h"
 #include "memory/memory-tool-service.h"
@@ -467,7 +468,7 @@ bool agent_resource_has_text_representation(const agent_resource_descriptor & de
 
 std::vector<std::string> agent_resource_available_representations(
         const agent_resource_descriptor & descriptor) {
-    std::vector<std::string> representations;
+    std::vector<std::string> representations{"bytes"};
     if (agent_resource_has_text_representation(descriptor)) {
         representations.push_back("text");
     }
@@ -1218,7 +1219,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (representation.empty() || representation.size() > 64) {
                     return tool_validation_failure("tool.resource_read.invalid_representation", "resource_read representation is out of bounds", "Resource representation must be a bounded non-empty identifier.");
                 }
-                if (representation != "text") {
+                if (representation != "text" && representation != "bytes") {
                     return tool_not_found_failure("tool.resource_read.representation_unavailable", "resource representation is not available in the current runtime", "The requested resource representation is not available.");
                 }
                 int64_t offset = 0;
@@ -1238,23 +1239,33 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
                     return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
                 }
-                if (!agent_resource_has_text_representation(descriptor)) {
+                if (representation == "text" && !agent_resource_has_text_representation(descriptor)) {
                     return tool_not_found_failure(
                         "tool.resource_read.representation_unavailable",
                         "text representation is not available for resource media type " + descriptor.mime_type,
                         "The requested resource representation is not available.");
                 }
 
-                std::string text;
-                if (!bindings.resource_runtime.store->read_text_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), text, err)) {
+                std::string content;
+                if (representation == "bytes" && !bindings.resource_runtime.store->read_bytes_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, err)) {
+                    return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource bytes could not be read.");
+                }
+                if (representation == "text" && !bindings.resource_runtime.store->read_text_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, err)) {
                     return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
+                }
+
+                std::string content_encoding;
+                if (representation == "bytes") {
+                    content = base64::encode(content);
+                    content_encoding = "base64";
                 }
 
                 return common_tool_execution_result::success(
                     common_tool_resource_read_result_to_json({
                         descriptor,
                         representation,
-                        text,
+                        content,
+                        content_encoding,
                     }).dump(),
                     descriptor.metadata.content_summary.empty()
                         ? "Resource content loaded from the host-owned resource store."

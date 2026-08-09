@@ -462,7 +462,7 @@ int main() {
         std::string(R"({"uri":")") + binary_descriptor.uri + R"("})",
     }, error);
     if (!binary_inspect_result.ok ||
-            binary_inspect_result.content_json.find(R"("available_representations":[])") == std::string::npos) {
+            binary_inspect_result.content_json.find(R"("available_representations":["bytes"])" ) == std::string::npos) {
         std::fprintf(stderr, "resource_inspect exposed an unexpected binary representation: %s\n", binary_inspect_result.content_json.c_str());
         return 1;
     }
@@ -475,6 +475,18 @@ int main() {
     if (binary_read_result.ok ||
             binary_read_result.failure_code != "tool.resource_read.representation_unavailable") {
         std::fprintf(stderr, "resource_read did not reject binary text representation: %s\n", binary_read_result.content_json.c_str());
+        return 1;
+    }
+
+    const auto binary_bytes_result = research_view->call({
+        "call-2i",
+        "resource_read",
+        std::string(R"({"uri":")") + binary_descriptor.uri + R"(","representation":"bytes","max_bytes":32})",
+    }, error);
+    if (!binary_bytes_result.ok ||
+            binary_bytes_result.content_json.find(R"("content_encoding":"base64")") == std::string::npos ||
+            binary_bytes_result.content_json.find(R"("content":"UE5HAP8=")") == std::string::npos) {
+        std::fprintf(stderr, "resource_read did not return bounded base64 bytes: %s\n", binary_bytes_result.content_json.c_str());
         return 1;
     }
 

@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -129,6 +130,10 @@ int main() {
     request.range = agent_resource_byte_range{0, source.size_bytes};
     request.limits.max_output_bytes = 1024;
     request.limits.max_generated_resources = 2;
+    std::vector<common_agent_event_type> processing_events;
+    request.event_sink = [&processing_events](const common_agent_event & event) {
+        processing_events.push_back(event.type);
+    };
 
     auto result = service.process(request);
     if (!result.success ||
@@ -137,6 +142,13 @@ int main() {
             result.resources[0].lineage.parent_uri != source.uri ||
             result.resources[0].lineage.derivation != "resource.process:fake-pdf-text-v1") {
         std::fprintf(stderr, "processing service did not persist a derived resource with lineage\n");
+        return 1;
+    }
+    if (processing_events.size() != 3 ||
+            processing_events[0] != common_agent_event_type::resource_processing_started ||
+            processing_events[1] != common_agent_event_type::resource_created ||
+            processing_events[2] != common_agent_event_type::resource_processing_completed) {
+        std::fprintf(stderr, "resource processing did not emit the expected host events\n");
         return 1;
     }
 

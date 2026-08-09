@@ -65,6 +65,9 @@ enum class common_agent_event_type {
     research_evidence_recorded,
     research_completed,
     research_incomplete,
+    resource_processing_started,
+    resource_processing_completed,
+    resource_processing_failed,
 };
 
 inline const char * common_agent_event_type_name(common_agent_event_type type) {
@@ -111,6 +114,9 @@ inline const char * common_agent_event_type_name(common_agent_event_type type) {
         case common_agent_event_type::research_evidence_recorded: return "research_evidence_recorded";
         case common_agent_event_type::research_completed: return "research_completed";
         case common_agent_event_type::research_incomplete: return "research_incomplete";
+        case common_agent_event_type::resource_processing_started: return "resource_processing_started";
+        case common_agent_event_type::resource_processing_completed: return "resource_processing_completed";
+        case common_agent_event_type::resource_processing_failed: return "resource_processing_failed";
     }
     return "unknown";
 }

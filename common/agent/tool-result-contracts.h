@@ -15,6 +15,7 @@ struct common_tool_resource_read_result {
     agent_resource_descriptor resource;
     std::string representation = "text";
     std::string content;
+    std::string content_encoding;
 };
 
 struct common_tool_resource_inspect_result {

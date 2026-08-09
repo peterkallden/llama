@@ -90,7 +90,9 @@ when the corresponding verification record contains evidence for it.
 - [x] Derived processor outputs persist through the existing resource store and retain lineage
 - [x] Normalized processor text enters the existing bounded resource chunking path
 - [x] The first bounded local PDF text-layer processor has a model-free smoke
+- [x] Resource processor source/output limits and processing lifecycle events are covered
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
+- [ ] Derived-resource cache reuse is verified
 - [ ] Research workspace checkpointing has been evaluated
 - [ ] Full inference continuation and context compaction are verified
 

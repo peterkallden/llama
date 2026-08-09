@@ -52,11 +52,15 @@ json common_tool_resource_descriptor_to_json(
 
 json common_tool_resource_read_result_to_json(
         const common_tool_resource_read_result & result) {
-    return {
+    json payload = {
         {"resource", common_tool_resource_descriptor_to_json(result.resource)},
         {"representation", result.representation},
         {"content", result.content},
     };
+    if (!result.content_encoding.empty()) {
+        payload["content_encoding"] = result.content_encoding;
+    }
+    return payload;
 }
 
 json common_tool_resource_inspect_result_to_json(
