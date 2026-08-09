@@ -182,6 +182,38 @@ int main() {
         return 1;
     }
 
+    agent_resource_put_request binary_request;
+    binary_request.name = "image.bin";
+    binary_request.description = "Opaque binary resource";
+    binary_request.mime_type = "application/octet-stream";
+    binary_request.scope = common_runtime_resource_scope::session;
+    binary_request.namespace_id = "tenant-a";
+    binary_request.session_id = "session-1";
+    binary_request.project_id = "project-x";
+    binary_request.turn_id = "turn-2";
+    binary_request.bytes = "A";
+    binary_request.bytes.push_back('\0');
+    binary_request.bytes.push_back('B');
+    binary_request.bytes.push_back(static_cast<char>(0x7f));
+    binary_request.bytes.push_back('C');
+    agent_resource_descriptor binary_descriptor;
+    if (!store.put_bytes(binary_request, binary_descriptor, error)) {
+        std::fprintf(stderr, "put_bytes failed: %s\n", error.c_str());
+        return 1;
+    }
+    std::string binary_content;
+    if (!store.read_bytes(binary_descriptor.uri, session_authority, 16, binary_content, error) ||
+            binary_content != binary_request.bytes ||
+            binary_descriptor.size_bytes != binary_request.bytes.size()) {
+        std::fprintf(stderr, "read_bytes returned unexpected binary payload: %s\n", error.c_str());
+        return 1;
+    }
+    if (!store.read_bytes_range(binary_descriptor.uri, session_authority, 1, 3, binary_content, error) ||
+            binary_content != std::string("\0B", 2) + static_cast<char>(0x7f)) {
+        std::fprintf(stderr, "read_bytes_range returned unexpected binary payload\n");
+        return 1;
+    }
+
     const std::filesystem::path fs_root =
         std::filesystem::temp_directory_path() / "llama-agent-resource-store-smoke";
     std::filesystem::create_directories(fs_root);
@@ -197,12 +229,22 @@ int main() {
     }
 
     agent_blob_descriptor fs_blob;
-    if (!fs_blob_store->put_bytes("filesystem blob payload", fs_blob, error)) {
+    std::string filesystem_bytes("filesystem", 10);
+    filesystem_bytes.push_back('\0');
+    filesystem_bytes.append("blob", 4);
+    filesystem_bytes.push_back(static_cast<char>(0xff));
+    if (!fs_blob_store->put_bytes(filesystem_bytes, fs_blob, error)) {
         std::fprintf(stderr, "filesystem blob write failed: %s\n", error.c_str());
         return 1;
     }
     if (!fs_blob_store->exists_sha256(fs_blob.sha256)) {
         std::fprintf(stderr, "filesystem blob store did not retain expected blob\n");
+        return 1;
+    }
+    std::string filesystem_read;
+    if (!fs_blob_store->get_bytes(fs_blob.sha256, 32, filesystem_read, error) ||
+            filesystem_read != filesystem_bytes) {
+        std::fprintf(stderr, "filesystem blob store did not preserve opaque bytes\n");
         return 1;
     }
 
@@ -224,28 +266,29 @@ int main() {
     }
 
     agent_resource_descriptor cozo_descriptor;
-    if (!cozo_store->put_text({
-            "cozo-results.json",
-            "Cozo-backed metadata entry",
-            "application/json",
-            R"({"ok":true})",
-            common_runtime_resource_scope::project,
-            "tenant-a",
-            "session-1",
-            "project-x",
-            "turn-3",
-            "tool-3",
-            "native",
-            "repository.search",
-        }, cozo_descriptor, error)) {
-        std::fprintf(stderr, "cozo put_text failed: %s\n", error.c_str());
+    agent_resource_put_request cozo_request;
+    cozo_request.name = "cozo-results.bin";
+    cozo_request.description = "Cozo-backed metadata entry";
+    cozo_request.mime_type = "application/octet-stream";
+    cozo_request.scope = common_runtime_resource_scope::project;
+    cozo_request.namespace_id = "tenant-a";
+    cozo_request.session_id = "session-1";
+    cozo_request.project_id = "project-x";
+    cozo_request.turn_id = "turn-3";
+    cozo_request.tool_call_id = "tool-3";
+    cozo_request.source_provider = "native";
+    cozo_request.source_tool = "repository.search";
+    cozo_request.bytes = std::string("cozo\0bytes", 10);
+    if (!cozo_store->put_bytes(cozo_request, cozo_descriptor, error)) {
+        std::fprintf(stderr, "cozo put_bytes failed: %s\n", error.c_str());
         return 1;
     }
 
     agent_resource_read_authority project_authority = turn_authority;
     project_authority.project_id = "project-x";
-    if (!cozo_store->read_text(cozo_descriptor.uri, project_authority, 1024, content, error)) {
-        std::fprintf(stderr, "cozo read_text failed: %s\n", error.c_str());
+    if (!cozo_store->read_bytes(cozo_descriptor.uri, project_authority, 1024, content, error) ||
+            content != cozo_request.bytes) {
+        std::fprintf(stderr, "cozo read_bytes failed: %s\n", error.c_str());
         return 1;
     }
 #else

@@ -74,6 +74,26 @@ public:
         std::shared_ptr<agent_blob_store> blob_store,
         std::unique_ptr<agent_resource_catalog> catalog);
 
+    bool put_bytes(
+        const agent_resource_put_request & request,
+        agent_resource_descriptor & out,
+        std::string & error) override;
+
+    bool read_bytes(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const override;
+
+    bool read_bytes_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const override;
+
     bool put_text(
         const agent_resource_put_request & request,
         agent_resource_descriptor & out,

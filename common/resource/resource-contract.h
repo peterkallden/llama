@@ -189,6 +189,11 @@ struct agent_resource_put_request {
     int64_t expires_at = 0;
     common_runtime_resource_metadata metadata;
     common_runtime_resource_lineage lineage;
+
+    // Payload bytes are opaque to the resource store. Text callers continue
+    // to use `text`; byte-oriented callers use `bytes`, including embedded NULs.
+    // Kept at the end so existing aggregate initializers remain valid.
+    std::string bytes;
 };
 
 struct agent_resource_descriptor : common_runtime_resource_ref {
@@ -302,6 +307,36 @@ public:
 class agent_resource_store {
 public:
     virtual ~agent_resource_store() = default;
+
+    // The generic resource boundary is byte-oriented.  The default adapter
+    // keeps older text-only test stores source-compatible until they migrate.
+    virtual bool put_bytes(
+        const agent_resource_put_request & request,
+        agent_resource_descriptor & out,
+        std::string & error) {
+        agent_resource_put_request text_request = request;
+        text_request.text = request.bytes;
+        return put_text(text_request, out, error);
+    }
+
+    virtual bool read_bytes(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+        return read_text(uri, authority, max_bytes, out, error);
+    }
+
+    virtual bool read_bytes_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+        return read_text_range(uri, authority, offset, max_bytes, out, error);
+    }
 
     virtual bool put_text(
         const agent_resource_put_request & request,

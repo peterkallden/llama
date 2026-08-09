@@ -408,11 +408,20 @@ agent_catalogued_resource_store::agent_catalogued_resource_store(
 }
 
 bool agent_catalogued_resource_store::put_text(
-    const agent_resource_put_request & request,
-    agent_resource_descriptor & out,
-    std::string & error) {
+        const agent_resource_put_request & request,
+        agent_resource_descriptor & out,
+        std::string & error) {
+    agent_resource_put_request bytes_request = request;
+    bytes_request.bytes = request.text;
+    return put_bytes(bytes_request, out, error);
+}
+
+bool agent_catalogued_resource_store::put_bytes(
+        const agent_resource_put_request & request,
+        agent_resource_descriptor & out,
+        std::string & error) {
     agent_blob_descriptor blob;
-    if (!blob_store_->put_bytes(request.text, blob, error)) {
+    if (!blob_store_->put_bytes(request.bytes, blob, error)) {
         return false;
     }
 
@@ -424,7 +433,7 @@ bool agent_catalogued_resource_store::put_text(
     descriptor.name = request.name;
     descriptor.description = request.description;
     descriptor.mime_type = request.mime_type;
-    descriptor.size_bytes = request.text.size();
+    descriptor.size_bytes = request.bytes.size();
     descriptor.scope = request.scope;
     descriptor.sha256 = blob.sha256;
     descriptor.namespace_id = request.namespace_id;
@@ -447,8 +456,8 @@ bool agent_catalogued_resource_store::put_text(
     return true;
 }
 
-bool agent_catalogued_resource_store::read_text(
-    const std::string & uri,
+bool agent_catalogued_resource_store::read_bytes(
+        const std::string & uri,
     const agent_resource_read_authority & authority,
     size_t max_bytes,
     std::string & out,
@@ -463,7 +472,7 @@ bool agent_catalogued_resource_store::read_text(
     return blob_store_->get_bytes(descriptor.sha256, max_bytes, out, error);
 }
 
-bool agent_catalogued_resource_store::read_text_range(
+bool agent_catalogued_resource_store::read_bytes_range(
         const std::string & uri,
         const agent_resource_read_authority & authority,
         size_t offset,
@@ -482,6 +491,25 @@ bool agent_catalogued_resource_store::read_text_range(
         return false;
     }
     return blob_store_->get_bytes_range(descriptor.sha256, offset, max_bytes, out, error);
+}
+
+bool agent_catalogued_resource_store::read_text(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+    return read_bytes(uri, authority, max_bytes, out, error);
+}
+
+bool agent_catalogued_resource_store::read_text_range(
+        const std::string & uri,
+        const agent_resource_read_authority & authority,
+        size_t offset,
+        size_t max_bytes,
+        std::string & out,
+        std::string & error) const {
+    return read_bytes_range(uri, authority, offset, max_bytes, out, error);
 }
 
 bool agent_catalogued_resource_store::stat(
