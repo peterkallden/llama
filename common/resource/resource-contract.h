@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -272,6 +273,94 @@ inline void apply_agent_resource_runtime(
     request.project_id = runtime.project_id;
     request.turn_id = runtime.turn_id;
 }
+
+struct common_runtime_resource_media_type {
+    std::string declared_type;
+    std::string resolved_type;
+    bool content_verified = false;
+};
+
+struct agent_resource_byte_range {
+    size_t offset = 0;
+    size_t max_bytes = 0;
+};
+
+struct agent_resource_processing_limits {
+    size_t max_source_bytes = 0;
+    size_t max_output_bytes = 0;
+    size_t max_generated_resources = 0;
+    size_t max_duration_ms = 0;
+};
+
+struct agent_resource_processing_request {
+    common_runtime_resource_ref source;
+    agent_resource_read_authority authority;
+    common_runtime_resource_media_type media_type;
+    std::string target_representation = "text";
+    std::optional<size_t> page;
+    std::optional<agent_resource_byte_range> range;
+    agent_resource_processing_limits limits;
+};
+
+struct agent_resource_processing_result {
+    bool success = false;
+    std::vector<common_runtime_resource_ref> resources;
+    std::string failure_code;
+    std::string safe_summary;
+    std::string processor_id;
+};
+
+class agent_resource_processor {
+public:
+    virtual ~agent_resource_processor() = default;
+
+    virtual std::string id() const = 0;
+
+    virtual bool supports(
+        const std::string & mime_type,
+        const std::string & target_representation) const = 0;
+
+    virtual agent_resource_processing_result process(
+        const agent_resource_processing_request & request) const = 0;
+};
+
+class agent_resource_processor_registry {
+public:
+    bool add(const agent_resource_processor & processor, std::string & error) {
+        const auto processor_id = processor.id();
+        if (processor_id.empty()) {
+            error = "resource processor id is required";
+            return false;
+        }
+        for (const auto * existing : processors_) {
+            if (existing != nullptr && existing->id() == processor_id) {
+                error = "duplicate resource processor id";
+                return false;
+            }
+        }
+        processors_.push_back(&processor);
+        error.clear();
+        return true;
+    }
+
+    const agent_resource_processor * resolve(
+            const std::string & mime_type,
+            const std::string & target_representation) const {
+        for (const auto * processor : processors_) {
+            if (processor != nullptr && processor->supports(mime_type, target_representation)) {
+                return processor;
+            }
+        }
+        return nullptr;
+    }
+
+    size_t size() const {
+        return processors_.size();
+    }
+
+private:
+    std::vector<const agent_resource_processor *> processors_;
+};
 
 class agent_blob_store {
 public:

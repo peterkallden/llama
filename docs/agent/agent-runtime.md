@@ -915,6 +915,19 @@ selection, MIME conversion, and execution isolation remain host-owned
 infrastructure and are not model-selected tools. Binary and multimodal
 representations can be added later without changing the chunking contract.
 
+The shared resource contract now also defines the first generic processing
+boundary for future non-native representations. A processor receives a source
+resource reference, the host-resolved media type, the requested representation,
+optional page/range selection, and host-owned limits; it returns derived
+resource references plus a bounded status or typed failure. The registry
+selects processors deterministically by MIME type and representation. This is
+deliberately infrastructure beneath the agent tools: a future PDF text
+extractor, page renderer, OCR provider, or Office converter can sit behind the
+same contract without exposing Ghostscript, MuPDF, OCR, Docker, or Kubernetes
+as arbitrary model-selected tools. Derived outputs must retain lineage to the
+authoritative original resource and then enter the existing bounded read and
+chunking path.
+
 The design policies for later chunk analysis are:
 
 - Chunk creation is host/controller work in the existing session lane. It does
