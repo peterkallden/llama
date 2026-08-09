@@ -36,11 +36,10 @@ public:
             return result;
         }
 
-        common_runtime_resource_ref derived;
-        derived.uri = request.source.uri + "/" + representation_;
+        agent_resource_processing_output derived;
         derived.name = request.source.name + " (" + representation_ + ")";
         derived.mime_type = representation_ == "text" ? "text/plain" : "application/octet-stream";
-        derived.scope = request.source.scope;
+        derived.bytes = "derived:" + representation_;
         derived.lineage.parent_uri = request.source.uri;
         derived.lineage.chunk_index = 0;
         derived.lineage.chunk_count = 1;
@@ -50,7 +49,7 @@ public:
 
         result.success = true;
         result.safe_summary = "Derived resource representation created.";
-        result.resources.push_back(std::move(derived));
+        result.outputs.push_back(std::move(derived));
         return result;
     }
 
@@ -113,26 +112,26 @@ int main() {
     auto result = resolved_pdf_text->process(request);
     if (!result.success ||
             result.processor_id != "pdf-text-v1" ||
-            result.resources.size() != 1 ||
-            result.resources[0].lineage.parent_uri != request.source.uri ||
-            result.resources[0].lineage.byte_offset != 128 ||
-            result.resources[0].lineage.byte_length != 512 ||
-            result.resources[0].lineage.derivation != "resource.process:pdf-text-v1") {
-        std::fprintf(stderr, "processor result did not preserve derived resource lineage\n");
+            result.outputs.size() != 1 ||
+            result.outputs[0].lineage.parent_uri != request.source.uri ||
+            result.outputs[0].lineage.byte_offset != 128 ||
+            result.outputs[0].lineage.byte_length != 512 ||
+            result.outputs[0].lineage.derivation != "resource.process:pdf-text-v1") {
+        std::fprintf(stderr, "processor result did not preserve staged output lineage\n");
         return 1;
     }
 
     request.target_representation = "page-image";
     auto page_result = resolved_pdf_page->process(request);
     if (!page_result.success ||
-            page_result.resources.empty() ||
-            page_result.resources[0].mime_type != "application/octet-stream") {
+            page_result.outputs.empty() ||
+            page_result.outputs[0].mime_type != "application/octet-stream") {
         std::fprintf(stderr, "page-image processor result was unexpected\n");
         return 1;
     }
 
     std::printf("processors=%zu\n", registry.size());
-    std::printf("derived_uri=%s\n", result.resources[0].uri.c_str());
-    std::printf("derived_lineage=%s\n", result.resources[0].lineage.derivation.c_str());
+    std::printf("derived_output=%s\n", result.outputs[0].name.c_str());
+    std::printf("derived_lineage=%s\n", result.outputs[0].lineage.derivation.c_str());
     return 0;
 }

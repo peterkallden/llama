@@ -302,9 +302,19 @@ struct agent_resource_processing_request {
     agent_resource_processing_limits limits;
 };
 
+struct agent_resource_processing_output {
+    std::string name;
+    std::string description;
+    std::string mime_type;
+    std::string bytes;
+    common_runtime_resource_metadata metadata;
+    common_runtime_resource_lineage lineage;
+};
+
 struct agent_resource_processing_result {
     bool success = false;
     std::vector<common_runtime_resource_ref> resources;
+    std::vector<agent_resource_processing_output> outputs;
     std::string failure_code;
     std::string safe_summary;
     std::string processor_id;

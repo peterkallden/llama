@@ -919,9 +919,12 @@ The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
 resource reference, the host-resolved media type, the requested representation,
 optional page/range selection, and host-owned limits; it returns derived
-resource references plus a bounded status or typed failure. The registry
-selects processors deterministically by MIME type and representation. This is
-deliberately infrastructure beneath the agent tools: a future PDF text
+staged outputs plus a bounded status or typed failure. The registry selects
+processors deterministically by MIME type and representation. The concrete
+host service then persists each staged output through the existing resource
+store, applies the source scope/authority, records `resource_processor`
+provenance, and returns ordinary resource references for later bounded reads.
+This is deliberately infrastructure beneath the agent tools: a future PDF text
 extractor, page renderer, OCR provider, or Office converter can sit behind the
 same contract without exposing Ghostscript, MuPDF, OCR, Docker, or Kubernetes
 as arbitrary model-selected tools. Derived outputs must retain lineage to the

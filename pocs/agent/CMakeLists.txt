@@ -21,6 +21,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
     ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
@@ -759,6 +760,18 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-resource-processing-service-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-resource-processing-service-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../memory
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
@@ -862,6 +875,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-processing-service-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-daemon
@@ -916,6 +930,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-processing-service-smoke
 )
 
 if (BUILD_TESTING)
@@ -994,6 +1009,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-resource-processing-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-processing-contract-smoke>)
     set_property(TEST llama-agent-resource-processing-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-resource-processing-service-ctest
+        COMMAND $<TARGET_FILE:llama-agent-resource-processing-service-smoke>)
+    set_property(TEST llama-agent-resource-processing-service-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-sandbox-docker-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)
