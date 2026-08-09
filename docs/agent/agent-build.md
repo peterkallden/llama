@@ -145,6 +145,18 @@ Both scripts accept repeated target values and a verbose mode. Defaults can
 also be supplied through `LLAMA_AGENT_BUILD_DIR`,
 `LLAMA_AGENT_CONFIGURATION`, and `LLAMA_AGENT_BUILD_PARALLEL_LEVEL`.
 
+### Agent CMake configuration manifests
+
+The agent CMake install manifest keeps its host-configuration example list
+explicit in `pocs/agent/CMakeLists.txt`. It intentionally does not use a
+`CONFIGURE_DEPENDS` glob for these files: with the CMake/Ninja combination
+used by the Windows agent build, an unchanged glob can leave the generated
+verification output absent and cause the whole project to be reconfigured on
+every build invocation. When a new `agent-host-config-*.json` example is
+added, add it to that explicit list as part of the same change. This is a
+local agent-build precaution and does not alter the repository-wide CMake
+policy.
+
 ## Linux configure and build
 
 The following configuration follows the working agent CI shape. Cozo paths
