@@ -958,6 +958,13 @@ independent of the host implementation and leaves operation-bound processors
 such as page rendering or OCR for the runtime assembly that can supply their
 execution context.
 
+The CLI host assembly now installs the first local processor set (PDF text)
+into the same selection lifetime as the resource store and native tool view.
+The selection retains the processor instances, registry, and processing service
+together, so `resource_read` receives a valid host provider for the whole
+operation. Adding operation-bound processors later should extend this
+host-owned assembly seam rather than create a second provider or queue.
+
 Before processor selection, the host may resolve the resource media type from
 declared metadata and a bounded content sample. The current deterministic
 resolver recognizes strong PDF, PNG, JPEG, GIF, and ZIP signatures. Declared
