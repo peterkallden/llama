@@ -986,6 +986,15 @@ approved Docker, and approved Kubernetes. If none is available, processing
 fails with a typed unavailable result; it is not silently converted into an
 unbounded local command.
 
+Local execution now reuses the existing `common_agent_sandbox_runtime` seam
+through `common_agent_sandbox_local_runtime`, which delegates process creation
+to the repository's `common_subproc` wrapper. The provider maps virtual
+`/workspace/source`, `/workspace/writable` and `/workspace/artifacts` paths to
+the already-created host workspace operation, applies bounded timeout and
+combined-output limits, and returns the normal sandbox result status. This is
+an execution foundation, not yet proof that a PDF renderer is installed or
+that processor artifacts have been registered as derived resources.
+
 ### Resource processor catalog and configuration
 
 Resource processors are host-owned infrastructure. They transform an

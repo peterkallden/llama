@@ -25,6 +25,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
     ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../common/agent/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
@@ -754,6 +755,14 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-sandbox-local-runtime-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-sandbox-local-runtime-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-processing-contract-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-processing-contract-smoke.cpp
@@ -892,6 +901,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-continuation-smoke
     llama-agent-inference-smoke
     llama-agent-sandbox-contract-smoke
+    llama-agent-sandbox-local-runtime-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
     llama-agent-workspace-operation-smoke
@@ -937,6 +947,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-continuation-smoke
     llama-agent-inference-smoke
     llama-agent-sandbox-contract-smoke
+    llama-agent-sandbox-local-runtime-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
     llama-agent-workspace-operation-smoke
@@ -1014,6 +1025,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-sandbox-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
     set_property(TEST llama-agent-sandbox-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-sandbox-local-runtime-ctest
+        COMMAND $<TARGET_FILE:llama-agent-sandbox-local-runtime-smoke>)
+    set_property(TEST llama-agent-sandbox-local-runtime-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-workspace-operation-ctest
         COMMAND $<TARGET_FILE:llama-agent-workspace-operation-smoke>)
