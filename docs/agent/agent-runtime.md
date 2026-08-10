@@ -999,7 +999,7 @@ The current processor catalog is intentionally small:
 | Processor | Input | Representation | Status | Configurable processor arguments |
 | --- | --- | --- | --- | --- |
 | `pdf-text-local-v1` | `application/pdf` with a direct text layer | `text` | Implemented | No external command arguments; existing host limits apply |
-| `pdf.page_image` | `application/pdf` | `page-image` | Planned | Page, DPI, image format, colorspace and pixel/output limits |
+| `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
 | `pdf.ocr` | PDF page image or `image/*` | `text`, `hocr` or `tsv` | Planned | Language, OCR engine mode, page segmentation mode, tessdata location and output limits |
 
 The first processor is a bounded local implementation used for the current
@@ -1011,9 +1011,14 @@ processing request is bounded by `max_source_bytes`, `max_output_bytes`,
 scope, reads and lineage.
 
 External processor arguments must be introduced as typed processor options,
-not as arbitrary command-line text. The planned `pdf.page_image` profile will
-map bounded values such as `page`, `dpi`, `format`, `colorspace`, `width`,
-`height` and `max_output_bytes` to a MuPDF or Ghostscript command. The planned
+not as arbitrary command-line text. The `pdf.page_image` command-contract
+foundation now validates bounded values such as `page`, `dpi`, `format`,
+`colorspace`, `width`, `height` and `max_output_bytes`, and builds a
+host-owned `common_agent_sandbox_request` for a selected local renderer. The
+command smoke verifies MuPDF and Ghostscript argument construction, safe source
+filenames, output limits and fail-closed validation without requiring either
+executable to be installed. This is not yet actual page rendering: execution,
+binary resource staging and sandbox-provider integration remain open. The
 `pdf.ocr` profile will map bounded values such as `language`, `oem`, `psm`,
 `tessdata_dir` and output format to an OCR provider. Until those processors are
 implemented, these are design fields and must not be added to a production

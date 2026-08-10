@@ -23,6 +23,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-chunker.cpp
     ../../tools/agent/resource/agent-resource-media-type.cpp
     ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
@@ -804,6 +805,18 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-pdf-page-image-command-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-pdf-page-image-command-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
@@ -911,6 +924,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
+    llama-agent-pdf-page-image-command-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-daemon
@@ -969,6 +983,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
+    llama-agent-pdf-page-image-command-smoke
 )
 
 if (BUILD_TESTING)
@@ -1067,6 +1082,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-pdf-text-processor-ctest
         COMMAND $<TARGET_FILE:llama-agent-pdf-text-processor-smoke>)
     set_property(TEST llama-agent-pdf-text-processor-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-pdf-page-image-command-ctest
+        COMMAND $<TARGET_FILE:llama-agent-pdf-page-image-command-smoke>)
+    set_property(TEST llama-agent-pdf-page-image-command-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-sandbox-docker-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-docker-smoke>)
