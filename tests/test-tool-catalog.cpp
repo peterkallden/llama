@@ -85,7 +85,7 @@ int main() {
 
     const auto read = catalog.load_profile("memory-read", error);
     assert(error.empty());
-    assert(read.size() == 8);
+    assert(read.size() == 9);
     for (const auto & definition : read) assert(definition.risk_class == common_tool_risk_class::local_read);
 
     common_tool_bootstrap_result second;
