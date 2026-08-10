@@ -94,6 +94,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Resource processor source/output limits and processing lifecycle events are covered
 - [x] Resource processor execution policies are host-configured, round-trip serialized, and fail closed for incompatible required backends
 - [x] PDF page-image command construction is typed, bounded, host-owned, and covered by a model-free smoke without requiring renderer installation
+- [x] Sandbox workspace staging uses the byte-oriented resource-store boundary and has a model-free binary materialization smoke
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract

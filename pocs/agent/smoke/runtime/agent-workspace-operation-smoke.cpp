@@ -8,6 +8,12 @@
 class smoke_resource_store final : public agent_resource_store {
 public:
     bool put_text(const agent_resource_put_request &, agent_resource_descriptor &, std::string &) override { return false; }
+    bool read_bytes(const std::string & uri, const agent_resource_read_authority &, size_t, std::string & out, std::string & error) const override {
+        if (uri != "resource://document.pdf") { error = "resource not found"; return false; }
+        out = std::string("PDF\0binary fixture", 18);
+        error.clear();
+        return true;
+    }
     bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t, std::string & out, std::string & error) const override {
         if (uri != "resource://input.txt") { error = "resource not found"; return false; }
         out = "input from research\n";
@@ -53,5 +59,14 @@ int main() {
     std::string line;
     std::getline(materialized, line);
     assert(line == "input from research");
+
+    common_runtime_resource_ref binary_input;
+    binary_input.uri = "resource://document.pdf";
+    binary_input.mime_type = "application/pdf";
+    assert(manager.materialize_resource(
+        operation, binary_input, resources, {}, "document.pdf", 4096, materialized_path, error));
+    std::ifstream binary(materialized_path, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(binary)), std::istreambuf_iterator<char>());
+    assert(bytes == std::string("PDF\0binary fixture", 18));
     return 0;
 }

@@ -111,7 +111,7 @@ public:
                     ? "input-" + std::to_string(index + 1) + ".txt"
                     : resource.name;
                 std::string materialized_path;
-                if (!workspace_manager->materialize_text_resource(
+                if (!workspace_manager->materialize_resource(
                         operation,
                         resource,
                         *resource_store,
