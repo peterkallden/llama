@@ -278,6 +278,7 @@ int main() {
     cozo_request.tool_call_id = "tool-3";
     cozo_request.source_provider = "native";
     cozo_request.source_tool = "repository.search";
+    cozo_request.metadata.processing_cache_key = "resource-processing-cache-v1;smoke";
     cozo_request.bytes = std::string("cozo\0bytes", 10);
     if (!cozo_store->put_bytes(cozo_request, cozo_descriptor, error)) {
         std::fprintf(stderr, "cozo put_bytes failed: %s\n", error.c_str());
@@ -289,6 +290,19 @@ int main() {
     if (!cozo_store->read_bytes(cozo_descriptor.uri, project_authority, 1024, content, error) ||
             content != cozo_request.bytes) {
         std::fprintf(stderr, "cozo read_bytes failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    cozo_store.reset();
+    cozo_store = make_agent_resource_store(cozo_config, error);
+    if (!cozo_store) {
+        std::fprintf(stderr, "cozo resource store reopen failed: %s\n", error.c_str());
+        return 1;
+    }
+    agent_resource_descriptor reopened_cozo_descriptor;
+    if (!cozo_store->stat(cozo_descriptor.uri, project_authority, reopened_cozo_descriptor, error) ||
+            reopened_cozo_descriptor.metadata.processing_cache_key != cozo_request.metadata.processing_cache_key) {
+        std::fprintf(stderr, "cozo resource metadata did not preserve the processing cache key: %s\n", error.c_str());
         return 1;
     }
 #else
