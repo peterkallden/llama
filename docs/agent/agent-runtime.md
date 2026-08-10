@@ -986,6 +986,77 @@ approved Docker, and approved Kubernetes. If none is available, processing
 fails with a typed unavailable result; it is not silently converted into an
 unbounded local command.
 
+### Resource processor catalog and configuration
+
+Resource processors are host-owned infrastructure. They transform an
+authoritative resource into a bounded derived representation; they are not
+entries in the model-visible tool catalog. The processor registry selects by
+resolved MIME type and target representation, while the execution policy
+selects where an external implementation may run.
+
+The current processor catalog is intentionally small:
+
+| Processor | Input | Representation | Status | Configurable processor arguments |
+| --- | --- | --- | --- | --- |
+| `pdf-text-local-v1` | `application/pdf` with a direct text layer | `text` | Implemented | No external command arguments; existing host limits apply |
+| `pdf.page_image` | `application/pdf` | `page-image` | Planned | Page, DPI, image format, colorspace and pixel/output limits |
+| `pdf.ocr` | PDF page image or `image/*` | `text`, `hocr` or `tsv` | Planned | Language, OCR engine mode, page segmentation mode, tessdata location and output limits |
+
+The first processor is a bounded local implementation used for the current
+contract smoke. It is not a complete PDF parser: it does not render pages,
+run OCR, select individual pages, or invoke an external executable. Its
+processing request is bounded by `max_source_bytes`, `max_output_bytes`,
+`max_generated_resources`, `max_duration_ms`, `max_pages` and
+`max_page_bytes`; the resource service and store remain authoritative for
+scope, reads and lineage.
+
+External processor arguments must be introduced as typed processor options,
+not as arbitrary command-line text. The planned `pdf.page_image` profile will
+map bounded values such as `page`, `dpi`, `format`, `colorspace`, `width`,
+`height` and `max_output_bytes` to a MuPDF or Ghostscript command. The planned
+`pdf.ocr` profile will map bounded values such as `language`, `oem`, `psm`,
+`tessdata_dir` and output format to an OCR provider. Until those processors are
+implemented, these are design fields and must not be added to a production
+configuration as if they were active.
+
+The active execution-policy fields are representation-independent:
+
+```json
+{
+  "resources": {
+    "processor_policies": {
+      "pdf.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "mutool",
+        "expected_version": ""
+      },
+      "pdf.page_image": {
+        "execution": "sandbox_required",
+        "backend": "kubernetes",
+        "image": "registry.example/pdf-worker@sha256:replace-me",
+        "expected_version": "mupdf-1.26"
+      }
+    }
+  }
+}
+```
+
+`execution` accepts `local_preferred`, `sandbox_preferred`,
+`local_required` and `sandbox_required`. `backend` accepts `auto`, `local`,
+`docker` and `kubernetes`. `executable` is an optional runtime executable
+name or path; an empty value permits host `PATH` resolution. `image` selects a
+host-approved sandbox image, and `expected_version` is an operator-visible
+compatibility expectation. Version mismatches must produce bounded warning
+and status information. Required policies fail closed when the selected
+execution requirement is unavailable.
+
+The processor-specific options will eventually be carried in the typed
+resource-processing request and recorded in derived-resource provenance. They
+must not be model-controlled raw flags. The original resource remains
+authoritative, and the same processor contract is used whether the execution
+provider is local, Docker or Kubernetes.
+
 The processing service loads only a host-bounded source slice for a local
 processor and enforces source, output-count, output-size, page-count, and
 optional duration limits before returning derived resource references. The
