@@ -513,7 +513,7 @@ int main() {
         std::fprintf(stderr, "resource_read did not materialize PDF text through the processing service: %s\n", processed_pdf_read.content_json.c_str());
         return 1;
     }
-    if (last_processing_operation_id != "resource-read/turn-2") {
+    if (last_processing_operation_id.rfind("resource-read/turn-2/", 0) != 0) {
         std::fprintf(stderr, "resource_read did not use the operation-scoped processing provider: %s\n", last_processing_operation_id.c_str());
         return 1;
     }

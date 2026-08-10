@@ -14,6 +14,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -1247,7 +1248,8 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     processing_request.operation_id = "resource-read/" +
                         (bindings.resource_runtime.turn_id.empty()
                             ? std::string("turn")
-                            : bindings.resource_runtime.turn_id);
+                            : bindings.resource_runtime.turn_id) +
+                        "/" + std::to_string(std::hash<std::string>{}(uri));
                     processing_request.authority = authority;
                     processing_request.media_type.declared_type = descriptor.mime_type;
                     processing_request.target_representation = "text";
