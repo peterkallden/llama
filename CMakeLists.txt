@@ -158,38 +158,6 @@ if (LLAMA_AGENT_TOOLS_CLANG)
     endif()
 endif()
 
-# Resource processors may use optional local document backends.  Discovery is
-# intentionally non-fatal: runtime capability resolution still has to verify
-# the executable and may select an isolated provider instead.
-set(HAS_MUPDF OFF)
-set(HAS_GHOSTSCRIPT OFF)
-if (LLAMA_AGENT_RUNTIME)
-    find_program(
-        LLAMA_AGENT_RESOURCE_MUPDF_EXECUTABLE
-        NAMES mutool mutool.exe
-        DOC "llama-agent: MuPDF command-line executable for resource processing"
-    )
-    find_program(
-        LLAMA_AGENT_RESOURCE_GHOSTSCRIPT_EXECUTABLE
-        NAMES gswin64c gswin64c.exe gswin32c gswin32c.exe gs gs.exe
-        DOC "llama-agent: Ghostscript command-line executable for resource processing"
-    )
-
-    if (LLAMA_AGENT_RESOURCE_MUPDF_EXECUTABLE)
-        set(HAS_MUPDF ON)
-        message(STATUS "llama-agent resource backend: MuPDF=${LLAMA_AGENT_RESOURCE_MUPDF_EXECUTABLE}")
-    else()
-        message(STATUS "llama-agent resource backend: MuPDF not found")
-    endif()
-
-    if (LLAMA_AGENT_RESOURCE_GHOSTSCRIPT_EXECUTABLE)
-        set(HAS_GHOSTSCRIPT ON)
-        message(STATUS "llama-agent resource backend: Ghostscript=${LLAMA_AGENT_RESOURCE_GHOSTSCRIPT_EXECUTABLE}")
-    else()
-        message(STATUS "llama-agent resource backend: Ghostscript not found")
-    endif()
-endif()
-
 if (LLAMA_MEMORY_COZO AND NOT LLAMA_MEMORY)
     message(FATAL_ERROR "LLAMA_MEMORY_COZO=ON requires LLAMA_MEMORY=ON")
 endif()

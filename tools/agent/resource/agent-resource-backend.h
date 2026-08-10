@@ -11,9 +11,9 @@ enum class agent_resource_backend_kind {
 };
 
 struct agent_resource_backend_capabilities {
-    // These are host-resolved capabilities, not model decisions. Configure
-    // time discovery may seed the local values, but runtime health checks and
-    // policy resolution remain authoritative.
+    // These are host-resolved runtime capabilities, not model decisions.
+    // The host may derive them from explicit paths, PATH lookup, or an
+    // approved sandbox backend after performing its own health/policy checks.
     bool has_mupdf = false;
     bool has_ghostscript = false;
     bool has_docker = false;

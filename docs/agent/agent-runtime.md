@@ -960,16 +960,13 @@ archive, or audio processors should use the same processor contract there;
 they must not add format-specific branches to the planner, resource store, or
 generic chunker.
 
-The configure step performs optional discovery for local document-processing
-backends when `LLAMA_AGENT_RUNTIME=ON`. The executable paths are exposed as
-`LLAMA_AGENT_RESOURCE_MUPDF_EXECUTABLE` and
-`LLAMA_AGENT_RESOURCE_GHOSTSCRIPT_EXECUTABLE`; the local CMake discovery
-flags are the short internal `HAS_MUPDF` and `HAS_GHOSTSCRIPT` values. Missing
-backends do not fail configuration. This is only build-environment metadata:
-runtime capability resolution must still verify that a backend is usable and
-may select an approved Docker or Kubernetes sandbox provider when local
-execution is unavailable. MuPDF and Ghostscript remain processor
-implementation details and are not model-selected tools.
+Local document-processing backends are runtime capabilities, not build
+dependencies. The agent binary must remain usable when MuPDF or Ghostscript
+is absent. A host may provide an explicit executable path or allow the
+operating system to resolve the executable through `PATH`; runtime capability
+resolution then verifies that the selected process is usable. No CMake
+discovery or link-time dependency is required. MuPDF and Ghostscript remain
+processor implementation details and are not model-selected tools.
 
 The host-side backend resolution seam applies an already host-ordered list of
 representation-specific candidates to the verified capability snapshot. It
