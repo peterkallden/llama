@@ -114,6 +114,24 @@
       "network": "none",
       "filesystem": "readonly",
       "allow_artifacts": true
+    },
+    "classes": {
+      "resource.processor.pdf.page_image": {
+        "timeout_ms": 120000,
+        "cpu_count": 1,
+        "max_output_bytes": 67108864,
+        "network": "none",
+        "filesystem": "artifact_write",
+        "allow_artifacts": true
+      },
+      "resource.processor.ocr.tesseract": {
+        "timeout_ms": 120000,
+        "cpu_count": 1,
+        "max_output_bytes": 67108864,
+        "network": "none",
+        "filesystem": "artifact_write",
+        "allow_artifacts": true
+      }
     }
   },
   "diagnostics": {

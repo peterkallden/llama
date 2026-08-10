@@ -1145,6 +1145,18 @@ compatibility expectation. Version mismatches must produce bounded warning
 and status information. Required policies fail closed when the selected
 execution requirement is unavailable.
 
+`resource_read` remains a semantic tool. For a configured sandbox-backed
+representation, host assembly may install an operation-scoped processing
+factory. Each read then creates the existing registry/service with the current
+resource authority, operation id, workspace and sandbox host context. The
+factory is short-lived for that read; it does not introduce a second queue,
+store or scheduler, and the model still cannot select a processor executable.
+The static provider path remains the fallback when no compatible explicit
+processor policy and sandbox execution class are available. The current
+operation-scoped assembly covers the CLI, daemon and MCP host seams for the
+configured PDF page-image and Tesseract processor families; general automatic
+backend resolution for all future processors remains open.
+
 The processor-specific options are host-owned typed options and must not become
 model-controlled raw flags. Resource language metadata may be supplied
 at ingestion or accepted through an existing host/policy path; model

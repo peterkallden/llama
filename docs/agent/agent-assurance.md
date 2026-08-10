@@ -266,7 +266,7 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `11e04c831` (bounded binary CLI resource upload); CLI PDF resource-read smoke `06f65c7b7`; CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
+| Commit | `811d110ee` (operation-scoped resource processor binding); `9936db1dd` (bounded binary CLI resource upload); CLI PDF resource-read smoke `06f65c7b7`; CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
 | Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
@@ -280,7 +280,9 @@ indicate a runtime regression.
 | Docker Tesseract OCR E2E | Passed with `llama-agent-pdf-ocr-worker:local` |
 | Kubernetes Tesseract OCR E2E | Passed after retry with the same worker image; project-specific resources were cleaned up |
 | Helm deployment | Not required for the current Job-per-operation backend |
-| Remaining scope | Operation-bound processor implementations, true automatic language detection, broader sandbox assurance, and model-backed Qwen/Nomic execution |
+| Operation-scoped processor binding | Passed; `resource_read` carries a host-owned operation id and can create a bounded provider for configured sandbox-backed page-image/OCR processors |
+| Focused operation-provider CTest | `3/3 passed`, `0 failed`, `0 not-run`; tool provider, CLI selection, and daemon MCP configuration paths |
+| Remaining scope | General automatic backend resolution for every processor family, true automatic language detection, broader sandbox assurance, and model-backed Qwen/Nomic execution |
 
 This checkpoint verifies the same hosted PDF and Tesseract processor contract
 across local, Docker, and Kubernetes execution placement. It does not claim that all
@@ -301,9 +303,12 @@ semantic `resource_read(representation="text")` request can invoke the
 host-owned processing provider for a non-text source, read the resulting
 derived text resource, and receive the same bounded resource response as a
 native text resource. Repeating the request reuses the processing cache. The
-common tool adapter remains independent of the concrete processor service;
-operation-bound page rendering and OCR still require runtime assembly that can
-provide their host execution context.
+common tool adapter remains independent of the concrete processor service. The
+operation-scoped factory seam is covered model-free: it preserves the active
+turn operation identity and can be used by host assembly to create sandbox
+bound page-image/OCR providers without adding a second scheduler. Live
+processor execution still requires the configured backend and matching
+sandbox execution class.
 
 ### Latest verification - 2026-08-07
 
