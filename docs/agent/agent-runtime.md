@@ -1012,6 +1012,12 @@ The operation-bound construction is intentional for now; a host factory must
 create the processor with the active operation context rather than sharing it
 across concurrent session lanes.
 
+The local MuPDF E2E smoke has now exercised the complete bounded path with the
+repository PDF fixture: resource store, binary workspace staging, local
+`common_subproc`, `E:\tools\mutool.exe`, PNG artifact collection, and derived
+resource persistence. The renderer path is selected at runtime; MuPDF remains
+an external executable and is not a build or link-time dependency.
+
 ### Resource processor catalog and configuration
 
 Resource processors are host-owned infrastructure. They transform an

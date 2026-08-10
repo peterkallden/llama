@@ -851,6 +851,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-pdf-page-image-local-e2e-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-pdf-page-image-local-e2e-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon)
 add_executable(${TARGET}
     ../../tools/agent/daemon/agent-daemon-main.cpp
@@ -962,6 +975,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-pdf-page-image-command-smoke
     llama-agent-resource-processing-host-smoke
     llama-agent-pdf-page-image-processor-smoke
+    llama-agent-pdf-page-image-local-e2e-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-daemon
@@ -1024,6 +1038,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-pdf-page-image-command-smoke
     llama-agent-resource-processing-host-smoke
     llama-agent-pdf-page-image-processor-smoke
+    llama-agent-pdf-page-image-local-e2e-smoke
 )
 
 if (BUILD_TESTING)

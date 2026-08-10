@@ -100,7 +100,8 @@ when the corresponding verification record contains evidence for it.
 - [x] Generic resource-processing host adapter is covered by a model-free CTest
 - [x] Host adapter artifact collection rejects unsafe, missing, and oversized outputs
 - [x] Hosted PDF page-image processing converts a bounded artifact into the existing derived-resource output and lineage contract
-- [ ] PDF page rendering, OCR, and isolated processor execution are verified
+- [x] Local MuPDF E2E verifies PDF store input through PNG derived-resource persistence
+- [ ] Isolated Docker/Kubernetes PDF rendering and OCR are verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [ ] Full inference continuation and context compaction are verified
