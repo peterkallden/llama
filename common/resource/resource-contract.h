@@ -114,6 +114,10 @@ struct common_runtime_resource_metadata {
     std::string limitations;
     std::vector<std::string> keywords;
     std::vector<std::string> entities;
+
+    // Host-owned identity for a reusable derived representation. This is
+    // provenance metadata, not a second resource authority.
+    std::string processing_cache_key;
 };
 
 // Derived resources, such as bounded chunks, retain explicit lineage to the
@@ -379,6 +383,11 @@ public:
     virtual ~agent_resource_processor() = default;
 
     virtual std::string id() const = 0;
+
+    // Includes implementation/options identity when a processor has
+    // operation-bound typed options. The default is sufficient for fixed
+    // processors whose id already contains their version.
+    virtual std::string cache_key() const { return id(); }
 
     virtual bool supports(
         const std::string & mime_type,

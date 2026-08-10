@@ -24,6 +24,7 @@ public:
 
     agent_resource_processing_result process(
             const agent_resource_processing_request & request) const override {
+        ++calls_;
         agent_resource_processing_result result;
         result.success = true;
         result.processor_id = id();
@@ -53,6 +54,11 @@ public:
         result.outputs.push_back(std::move(output));
         return result;
     }
+
+    size_t calls() const { return calls_; }
+
+private:
+    mutable size_t calls_ = 0;
 };
 
 class oversized_output_processor : public agent_resource_processor {
@@ -152,10 +158,23 @@ int main() {
         return 1;
     }
 
+    const auto first_derived_uri = result.resources[0].uri;
+    auto cached = service.process(request);
+    if (!cached.success ||
+            cached.resources.size() != 1 ||
+            cached.resources[0].uri != first_derived_uri ||
+            pdf_text.calls() != 1 ||
+            processing_events.size() != 5 ||
+            processing_events.back() != common_agent_event_type::resource_processing_completed) {
+        std::fprintf(stderr, "identical processing request did not reuse the derived resource cache\n");
+        return 1;
+    }
+
     agent_resource_descriptor derived_descriptor;
     if (!store.stat(result.resources[0].uri, request.authority, derived_descriptor, error) ||
             derived_descriptor.source_provider != "resource_processor" ||
-            derived_descriptor.source_tool != "fake-pdf-text-v1") {
+            derived_descriptor.source_tool != "fake-pdf-text-v1" ||
+            derived_descriptor.metadata.processing_cache_key.empty()) {
         std::fprintf(stderr, "derived descriptor did not preserve processor provenance\n");
         return 1;
     }

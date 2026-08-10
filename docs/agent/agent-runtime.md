@@ -1131,9 +1131,14 @@ binary media. Processing emits host-owned start, derived-resource, completed,
 and processor-failed events through the existing agent event sink. Processing
 is demand-driven at the representation boundary: the first PDF processor
 extracts only its requested text representation and does not eagerly render
-pages or invoke OCR. A persistent derived-result cache is intentionally not
-part of this milestone; lineage and processor provenance leave room for a
-content-identity/options cache later.
+pages or invoke OCR. Completed derived representations are reused through the
+existing resource store/catalog. The host records a deterministic processing
+cache key in resource metadata containing source identity, resolved MIME type,
+processor cache identity, representation, page/range and bounded limits. A
+cache hit is accepted only for the same authority, processor provenance and
+lineage parent; invalid entries are ignored and processing runs normally. This
+is a completed-result cache, not a second store or queue. Concurrent
+single-flight coordination remains a later activity.
 
 The design policies for later chunk analysis are:
 

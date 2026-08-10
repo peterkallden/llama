@@ -1,6 +1,7 @@
 #include "agent-resource-processing-service.h"
 
 #include "agent-resource-media-type.h"
+#include "agent-resource-processing-cache.h"
 
 #include <chrono>
 #include <utility>
@@ -124,6 +125,47 @@ agent_resource_processing_result agent_resource_processing_service::process(
         }
     }
 
+    const std::string processing_cache_key = make_agent_resource_processing_cache_key(
+        source,
+        media_type,
+        *processor,
+        request.target_representation,
+        request.page,
+        request.range,
+        request.limits);
+    std::vector<agent_resource_descriptor> existing_resources;
+    if (!store_.list(request.authority, existing_resources, error)) {
+        return processing_failure(
+            "resource.cache_lookup_failed",
+            error.empty() ? "The derived resource cache could not be inspected." : std::move(error),
+            processor->id());
+    }
+    for (const auto & existing : existing_resources) {
+        if (existing.metadata.processing_cache_key != processing_cache_key ||
+                existing.source_provider != "resource_processor" ||
+                existing.source_tool != processor->id() ||
+                existing.lineage.parent_uri != source.uri) {
+            continue;
+        }
+        agent_resource_processing_result cached;
+        cached.success = true;
+        cached.processor_id = processor->id();
+        cached.resources.push_back(existing);
+        cached.safe_summary = "Reused a cached derived resource representation.";
+        if (request.event_sink) {
+            request.event_sink({
+                common_agent_event_type::resource_processing_completed,
+                cached.safe_summary,
+                {},
+                std::nullopt,
+                {},
+                processor->id(),
+                existing.uri,
+            });
+        }
+        return cached;
+    }
+
     agent_resource_processing_request processing_request;
     processing_request.source = source;
     processing_request.authority = request.authority;
@@ -231,6 +273,7 @@ agent_resource_processing_result agent_resource_processing_service::process(
         put.source_provider = "resource_processor";
         put.source_tool = processor->id();
         put.metadata = output.metadata;
+        put.metadata.processing_cache_key = processing_cache_key;
         put.lineage = output.lineage;
         if (put.lineage.parent_uri.empty()) {
             put.lineage.parent_uri = source.uri;
