@@ -7,6 +7,7 @@
 
 struct agent_resource_processing_service_request {
     std::string source_uri;
+    std::string operation_id;
     agent_resource_read_authority authority;
     common_runtime_resource_media_type media_type;
     std::string target_representation = "text";

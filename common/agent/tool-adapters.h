@@ -34,6 +34,10 @@ struct common_native_tool_bindings {
     // Optional host-owned representation materializer. The model requests a
     // semantic representation; processor implementations remain host-side.
     agent_resource_processing_provider * resource_processing_service = nullptr;
+    // Optional operation-scoped materializer. This is used when a processor
+    // needs the current workspace/sandbox context; it does not add a queue or
+    // expose processor implementations to the model.
+    agent_resource_processing_provider_factory resource_processing_provider_factory;
     // Optional host-owned structured data backend. The backend is selected by
     // host configuration; tools only submit bounded semantic requests.
     common_agent_data_store * data_store = nullptr;

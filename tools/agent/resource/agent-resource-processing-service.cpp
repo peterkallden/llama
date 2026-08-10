@@ -61,6 +61,7 @@ agent_resource_processing_result agent_resource_processing_service::process(
         const agent_resource_processing_binding_request & request) const {
     agent_resource_processing_service_request service_request;
     service_request.source_uri = request.source_uri;
+    service_request.operation_id = request.operation_id;
     service_request.authority = request.authority;
     service_request.media_type = request.media_type;
     service_request.target_representation = request.target_representation;

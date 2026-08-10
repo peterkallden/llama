@@ -250,6 +250,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_capabilities = options.tool_capabilities;
     tool_request.tool_profiles = options.tool_profiles;
     tool_request.sandbox = options.sandbox;
+    tool_request.resource_processor_policies = options.resource_processor_policies;
     append_configured_stdio_mcp_providers(options.mcp_providers, tool_request.mcp_providers);
     if (tool_request.mcp_providers.empty()) {
         append_legacy_stdio_mcp_provider(

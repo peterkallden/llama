@@ -1,7 +1,9 @@
 #include "agent-cli-host-adapter.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
+#include "tools/agent/resource/processors/agent-pdf-page-image-processor.h"
 #include "tools/agent/resource/processors/agent-pdf-text-processor.h"
+#include "tools/agent/resource/processors/agent-tesseract-ocr-processor.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -22,6 +24,33 @@
 #include <cstdlib>
 
 namespace {
+
+class cli_operation_resource_processing_provider final
+    : public agent_resource_processing_provider {
+public:
+    cli_operation_resource_processing_provider(
+            std::shared_ptr<agent_resource_processing_host> host,
+            std::vector<std::shared_ptr<agent_resource_processor>> processors,
+            std::shared_ptr<agent_resource_processor_registry> registry,
+            std::shared_ptr<agent_resource_processing_service> service)
+        : host_(std::move(host)),
+          processors_(std::move(processors)),
+          registry_(std::move(registry)),
+          service_(std::move(service)) {}
+
+    agent_resource_processing_result process(
+            const agent_resource_processing_binding_request & request) const override {
+        return service_->process(request);
+    }
+
+private:
+    // These members deliberately keep the registry's non-owning processor
+    // pointers valid for the complete operation-scoped provider lifetime.
+    std::shared_ptr<agent_resource_processing_host> host_;
+    std::vector<std::shared_ptr<agent_resource_processor>> processors_;
+    std::shared_ptr<agent_resource_processor_registry> registry_;
+    std::shared_ptr<agent_resource_processing_service> service_;
+};
 
 class cli_agent_embedding_provider final : public agent_embedding_provider {
 public:
@@ -86,6 +115,7 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     request.tool_capabilities = options.tool_capabilities;
     request.tool_profiles = options.tool_profiles;
     request.sandbox = options.sandbox;
+    request.resource_processor_policies = options.resource_processor_policies;
     append_legacy_stdio_mcp_provider(
         options.mcp_tool_command,
         options.mcp_tool_args,
@@ -341,20 +371,23 @@ bool resolve_agent_host_tool_selection(
             };
         }
 
+        std::shared_ptr<common_agent_sandbox_docker_runtime> docker_runtime;
+        std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
+        std::shared_ptr<common_agent_workspace_manager> workspace_manager;
         if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes") {
             const auto backend = request.sandbox.backend;
-            auto docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
+            docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
                 common_agent_docker_sandbox_config{
                     request.sandbox.docker_executable,
                     request.sandbox.docker_default_image,
                 });
-            auto workspace_manager = std::make_shared<common_agent_workspace_manager>(
+            workspace_manager = std::make_shared<common_agent_workspace_manager>(
                 request.sandbox.workspace);
             const auto policies = request.sandbox.classes;
             const auto defaults = request.sandbox.defaults;
             const auto tool_context = request.tool_context;
             auto * bound_resource_store = resource_store;
-            auto kubernetes_runtime = std::make_shared<common_agent_sandbox_kubernetes_runtime>(
+            kubernetes_runtime = std::make_shared<common_agent_sandbox_kubernetes_runtime>(
                 common_agent_kubernetes_sandbox_config{
                     request.sandbox.kubernetes_executable,
                     request.sandbox.kubernetes_kubeconfig,
@@ -414,6 +447,122 @@ bool resolve_agent_host_tool_selection(
                 policy.execution_class = sandbox_request.execution_class;
                 common_agent_sandbox_tool_helper helper(*unavailable_runtime, policy);
                 return helper.run(sandbox_request);
+            };
+        }
+
+        if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes") {
+            const auto processor_policies = request.resource_processor_policies;
+            const auto sandbox_classes = request.sandbox.classes;
+            const auto sandbox_defaults = request.sandbox.defaults;
+            auto docker_runtime_for_processors = docker_runtime;
+            auto kubernetes_runtime_for_processors = kubernetes_runtime;
+            auto workspace_manager_for_processors = workspace_manager;
+            auto * bound_resource_store_for_processors = resource_store;
+            const auto sandbox_backend = request.sandbox.backend;
+            bindings.resource_processing_provider_factory = [
+                    processor_policies,
+                    sandbox_classes,
+                    sandbox_defaults,
+                    docker_runtime_for_processors,
+                    kubernetes_runtime_for_processors,
+                    workspace_manager_for_processors,
+                    bound_resource_store_for_processors,
+                    sandbox_backend](const agent_resource_processing_binding_request & binding)
+                    -> std::shared_ptr<agent_resource_processing_provider> {
+                const auto page_policy = processor_policies.find("pdf.page_image");
+                const auto ocr_policy = processor_policies.find("ocr.tesseract");
+                const bool has_page_policy = page_policy != processor_policies.end();
+                const bool has_ocr_policy = ocr_policy != processor_policies.end();
+                if (!has_page_policy && !has_ocr_policy) {
+                    return std::shared_ptr<agent_resource_processing_provider>();
+                }
+                const auto wants_sandbox = [&sandbox_backend](const agent_resource_processor_execution_policy & policy) {
+                    return (policy.execution == "sandbox_preferred" || policy.execution == "sandbox_required") &&
+                        (policy.backend == "auto" || policy.backend == sandbox_backend);
+                };
+                if ((!has_page_policy || !wants_sandbox(page_policy->second)) &&
+                        (!has_ocr_policy || !wants_sandbox(ocr_policy->second))) {
+                    return std::shared_ptr<agent_resource_processing_provider>();
+                }
+
+                auto make_policy = [&sandbox_classes, &sandbox_defaults](const std::string & execution_class) {
+                    auto policy = sandbox_defaults;
+                    const auto it = sandbox_classes.find(execution_class);
+                    if (it != sandbox_classes.end()) policy = it->second;
+                    policy.execution_class = execution_class;
+                    return policy;
+                };
+
+                const std::string operation_id = binding.operation_id.empty()
+                    ? "resource-read/turn"
+                    : binding.operation_id;
+                common_agent_workspace_context workspace;
+                workspace.namespace_id = binding.authority.namespace_id;
+                workspace.session_id = binding.authority.session_id;
+                workspace.project_id = binding.authority.project_id;
+                workspace.turn_id = binding.authority.turn_id;
+                workspace.workspace_id = workspace.project_id.empty()
+                    ? "session:" + workspace.session_id
+                    : "project:" + workspace.project_id;
+                agent_resource_processing_execution_context execution;
+                execution.workspace = workspace;
+                execution.operation_id = operation_id;
+
+                std::shared_ptr<agent_resource_processing_host> host;
+                const auto & selected_policy = has_page_policy && wants_sandbox(page_policy->second)
+                    ? page_policy->second
+                    : ocr_policy->second;
+                const std::string selected_execution_class = has_page_policy && wants_sandbox(page_policy->second)
+                    ? "resource.processor.pdf.page_image"
+                    : "resource.processor.ocr.tesseract";
+                const auto page_backend = selected_policy.backend == "kubernetes"
+                    ? "kubernetes"
+                    : sandbox_backend;
+                if (page_backend == "docker") {
+                    auto value = std::make_shared<agent_sandbox_resource_processing_host>(
+                        *docker_runtime_for_processors,
+                        make_policy(selected_execution_class));
+                    value->set_workspace_manager(workspace_manager_for_processors.get());
+                    value->set_resource_store(bound_resource_store_for_processors, binding.authority);
+                    host = std::move(value);
+                } else if (page_backend == "kubernetes") {
+                    auto value = std::make_shared<agent_sandbox_resource_processing_host>(
+                        *kubernetes_runtime_for_processors,
+                        make_policy(selected_execution_class));
+                    value->set_workspace_manager(workspace_manager_for_processors.get());
+                    value->set_resource_store(bound_resource_store_for_processors, binding.authority);
+                    host = std::move(value);
+                } else {
+                    return std::shared_ptr<agent_resource_processing_provider>();
+                }
+
+                auto registry = std::make_shared<agent_resource_processor_registry>();
+                std::vector<std::shared_ptr<agent_resource_processor>> processors;
+                std::string registration_error;
+                if (has_page_policy) {
+                    const auto & policy = page_policy->second;
+                    auto processor = std::make_shared<agent_pdf_page_image_processor>(
+                        *host,
+                        execution,
+                        agent_resource_backend_kind::local_mupdf,
+                        policy.executable.empty() ? "mutool" : policy.executable);
+                    if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
+                    processors.push_back(std::move(processor));
+                }
+                if (has_ocr_policy) {
+                    const auto & policy = ocr_policy->second;
+                    auto processor = std::make_shared<agent_tesseract_ocr_processor>(
+                        *host,
+                        execution,
+                        agent_resource_backend_kind::local_tesseract,
+                        policy.executable.empty() ? "tesseract" : policy.executable);
+                    if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
+                    processors.push_back(std::move(processor));
+                }
+                auto service = std::make_shared<agent_resource_processing_service>(
+                    *bound_resource_store_for_processors, *registry);
+                return std::make_shared<cli_operation_resource_processing_provider>(
+                    std::move(host), std::move(processors), std::move(registry), std::move(service));
             };
         }
 

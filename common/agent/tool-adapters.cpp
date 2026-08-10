@@ -1240,13 +1240,30 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
                 }
                 if (representation == "text" && !agent_resource_has_text_representation(descriptor) &&
-                        bindings.resource_processing_service != nullptr) {
+                        (bindings.resource_processing_service != nullptr ||
+                         static_cast<bool>(bindings.resource_processing_provider_factory))) {
                     agent_resource_processing_binding_request processing_request;
                     processing_request.source_uri = descriptor.uri;
+                    processing_request.operation_id = "resource-read/" +
+                        (bindings.resource_runtime.turn_id.empty()
+                            ? std::string("turn")
+                            : bindings.resource_runtime.turn_id);
                     processing_request.authority = authority;
                     processing_request.media_type.declared_type = descriptor.mime_type;
                     processing_request.target_representation = "text";
-                    const auto processed = bindings.resource_processing_service->process(processing_request);
+                    std::shared_ptr<agent_resource_processing_provider> operation_provider;
+                    agent_resource_processing_provider * provider = bindings.resource_processing_service;
+                    if (bindings.resource_processing_provider_factory) {
+                        operation_provider = bindings.resource_processing_provider_factory(processing_request);
+                        provider = operation_provider.get();
+                    }
+                    if (provider == nullptr) {
+                        return tool_execution_failure(
+                            "tool.resource_read.processing_failed",
+                            "The resource processor provider could not be created.",
+                            "The resource representation could not be materialized.");
+                    }
+                    const auto processed = provider->process(processing_request);
                     if (!processed.success || processed.resources.empty()) {
                         if (processed.failure_code == "resource.unsupported_media_type" ||
                                 processed.failure_code == "resource.text_representation_unavailable" ||

@@ -34,6 +34,25 @@ bool has_name(const std::vector<std::string> & names, const std::string & name) 
     return std::find(names.begin(), names.end(), name) != names.end();
 }
 
+class recording_resource_processing_provider final
+    : public agent_resource_processing_provider {
+public:
+    recording_resource_processing_provider(
+            agent_resource_processing_provider & delegate,
+            std::string & last_operation_id)
+        : delegate_(delegate), last_operation_id_(last_operation_id) {}
+
+    agent_resource_processing_result process(
+            const agent_resource_processing_binding_request & request) const override {
+        last_operation_id_ = request.operation_id;
+        return delegate_.process(request);
+    }
+
+private:
+    agent_resource_processing_provider & delegate_;
+    std::string & last_operation_id_;
+};
+
 } // namespace
 
 int main() {
@@ -138,6 +157,7 @@ int main() {
         return 1;
     }
     agent_resource_processing_service processing_service(g_resource_store, processor_registry);
+    std::string last_processing_operation_id;
 
     native_agent_tool_provider research_provider(
         catalog,
@@ -145,6 +165,11 @@ int main() {
             bindings.repository_root = context.repository_root;
             bindings.resource_runtime.store = &g_resource_store;
             bindings.resource_processing_service = &processing_service;
+            bindings.resource_processing_provider_factory =
+                [&](const agent_resource_processing_binding_request &) -> std::shared_ptr<agent_resource_processing_provider> {
+                    return std::make_shared<recording_resource_processing_provider>(
+                        processing_service, last_processing_operation_id);
+                };
             bindings.resource_runtime.namespace_id = context.scope.namespace_id;
             bindings.resource_runtime.session_id = context.scope.session_id;
             bindings.resource_runtime.project_id = context.scope.project_id;
@@ -486,6 +511,10 @@ int main() {
             processed_pdf_read.content_json.find("Second PDF line") == std::string::npos ||
             processed_pdf_read.content_json.find("resource.process:pdf-text-local-v1") == std::string::npos) {
         std::fprintf(stderr, "resource_read did not materialize PDF text through the processing service: %s\n", processed_pdf_read.content_json.c_str());
+        return 1;
+    }
+    if (last_processing_operation_id != "resource-read/turn-2") {
+        std::fprintf(stderr, "resource_read did not use the operation-scoped processing provider: %s\n", last_processing_operation_id.c_str());
         return 1;
     }
 

@@ -6,8 +6,9 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -391,6 +392,9 @@ struct agent_resource_processing_result {
 // common tool contract only needs a semantic representation request.
 struct agent_resource_processing_binding_request {
     std::string source_uri;
+    // Host-owned operation identity. It is derived from the active tool turn;
+    // model arguments never choose the workspace or execution backend.
+    std::string operation_id;
     agent_resource_read_authority authority;
     common_runtime_resource_media_type media_type;
     std::string target_representation = "text";
@@ -406,6 +410,13 @@ public:
     virtual agent_resource_processing_result process(
         const agent_resource_processing_binding_request & request) const = 0;
 };
+
+// Per-read construction seam for processors that need an operation-scoped
+// workspace or sandbox host. The returned provider is short-lived and remains
+// behind the semantic resource-processing contract.
+using agent_resource_processing_provider_factory = std::function<
+    std::shared_ptr<agent_resource_processing_provider>(
+        const agent_resource_processing_binding_request & request)>;
 
 class agent_resource_processor {
 public:
