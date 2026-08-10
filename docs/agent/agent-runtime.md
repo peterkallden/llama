@@ -1027,6 +1027,23 @@ not a production registry reference. Kubernetes E2E uses the active host
 policy image and keeps TLS verification disabled only for the local Docker
 Desktop test context.
 
+The current Kubernetes execution path is intentionally deployment-light: it
+creates an ephemeral Job per operation and therefore does not require Helm.
+The configured processor `image` is the image that contains the PDF worker and
+its external processor, whereas Kubernetes `staging_image` is only the
+host-owned helper used to materialize workspace and artifact data. For a
+remote cluster, the processor image must be published to a registry visible to
+that cluster and should normally be pinned by digest. The local
+`llama-agent-pdf-worker:local` image is only suitable where the cluster shares
+the local Docker image store, such as the Docker Desktop development setup.
+
+A future Helm chart may package stable cluster installation concerns—RBAC,
+service accounts, namespaces, storage defaults, NetworkPolicies, image
+references, or a resident worker/controller—but it is not part of the current
+processor contract or scheduling model. Adding Helm must not introduce a
+second queue, scheduler, or processor lifecycle beside the existing host-owned
+ephemeral Job path.
+
 ### Resource processor catalog and configuration
 
 Resource processors are host-owned infrastructure. They transform an

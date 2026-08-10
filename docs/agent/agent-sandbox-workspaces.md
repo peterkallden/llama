@@ -121,6 +121,25 @@ cleanup/retention policy are host-owned and cannot be selected by a client or
 tool request. `insecure_skip_tls_verify` is intended only for isolated local
 testing and must remain `false` in normal deployments.
 
+The current backend does not require a Helm chart. It creates an ephemeral Job
+for each processor or sandbox operation, so the processor worker is supplied as
+an image reference on the host-owned policy for that operation. The worker
+image and `staging_image` have different responsibilities: the worker image
+contains the processor implementation and its runtime dependencies, while the
+staging image only copies workspace data into or out of the PVC-backed
+operation workspace. A local Docker Desktop image such as
+`llama-agent-pdf-worker:local` is sufficient for the local Kubernetes smoke;
+remote clusters should use an image available in their registry, preferably
+addressed by an immutable digest.
+
+Helm becomes useful if the deployment later needs a repeatable installation of
+cluster-scoped or long-lived resources, such as namespaces, service accounts,
+RBAC, storage defaults, NetworkPolicies, registry configuration, or a resident
+worker/controller. Those packaging concerns must remain outside the generic
+resource-processor contract. Introducing a chart is not required for the
+current ephemeral Job model and must not create a second scheduler or worker
+lifecycle.
+
 PVC names, `ReadWriteOnce`, operation `subPath` values and the container paths
 `/workspace/source`, `/workspace/writable` and `/workspace/artifacts` remain
 backend implementation details.
