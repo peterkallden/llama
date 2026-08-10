@@ -266,12 +266,12 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `d3143098c` (CLI processor assembly and CTest registration); resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
+| Commit | `06f65c7b7` (CLI PDF resource-read smoke); CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
 | Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
 | Resource-read processing CTest | `1/1 passed`, `0 failed`, `0 not-run`; PDF text was materialized through the host provider and reused from cache |
-| CLI assembly/provider CTests | `2/2 passed`, `0 failed`, `0 not-run`; native provider and CLI selection retain the host processing service |
+| CLI assembly/provider CTests | `2/2 passed`, `0 failed`, `0 not-run`; native provider and CLI selection retain the host processing service, and CLI selection materializes a PDF text read |
 | Local MuPDF PDF E2E | Passed; PDF store input became a PNG derived resource with lineage |
 | Docker MuPDF PDF E2E | Passed with `llama-agent-pdf-worker:local` |
 | Kubernetes MuPDF PDF E2E | Passed through the ephemeral Job backend; diagnostic resources were cleaned up |
