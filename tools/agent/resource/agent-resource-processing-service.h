@@ -16,11 +16,14 @@ struct agent_resource_processing_service_request {
     common_agent_event_sink event_sink;
 };
 
-class agent_resource_processing_service {
+class agent_resource_processing_service final : public agent_resource_processing_provider {
 public:
     agent_resource_processing_service(
         agent_resource_store & store,
         const agent_resource_processor_registry & registry);
+
+    agent_resource_processing_result process(
+        const agent_resource_processing_binding_request & request) const override;
 
     agent_resource_processing_result process(
         const agent_resource_processing_service_request & request) const;

@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+class agent_resource_processing_provider;
+
 // Runtime-owned bindings. Neither the profile nor tool-call arguments choose
 // a store, scope, plan id, or native implementation.
 struct common_native_tool_bindings {
@@ -29,6 +31,9 @@ struct common_native_tool_bindings {
     // Optional host-owned resource runtime for large tool payloads that should
     // be referenced without forcing the full content inline into model context.
     agent_resource_runtime resource_runtime;
+    // Optional host-owned representation materializer. The model requests a
+    // semantic representation; processor implementations remain host-side.
+    agent_resource_processing_provider * resource_processing_service = nullptr;
     // Optional host-owned structured data backend. The backend is selected by
     // host configuration; tools only submit bounded semantic requests.
     common_agent_data_store * data_store = nullptr;

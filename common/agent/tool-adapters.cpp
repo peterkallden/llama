@@ -1239,7 +1239,38 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
                     return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
                 }
-                if (representation == "text" && !agent_resource_has_text_representation(descriptor)) {
+                if (representation == "text" && !agent_resource_has_text_representation(descriptor) &&
+                        bindings.resource_processing_service != nullptr) {
+                    agent_resource_processing_binding_request processing_request;
+                    processing_request.source_uri = descriptor.uri;
+                    processing_request.authority = authority;
+                    processing_request.media_type.declared_type = descriptor.mime_type;
+                    processing_request.target_representation = "text";
+                    const auto processed = bindings.resource_processing_service->process(processing_request);
+                    if (!processed.success || processed.resources.empty()) {
+                        if (processed.failure_code == "resource.unsupported_media_type" ||
+                                processed.failure_code == "resource.text_representation_unavailable" ||
+                                processed.failure_code == "resource.ocr_language_uncertain") {
+                            return tool_not_found_failure(
+                                "tool.resource_read.representation_unavailable",
+                                processed.safe_summary,
+                                "The requested resource representation is not available.");
+                        }
+                        return tool_execution_failure(
+                            "tool.resource_read.processing_failed",
+                            processed.safe_summary,
+                            "The resource representation could not be materialized.");
+                    }
+                    descriptor = {};
+                    if (!bindings.resource_runtime.store->stat(
+                            processed.resources.front().uri, authority, descriptor, err) ||
+                            !agent_resource_has_text_representation(descriptor)) {
+                        return tool_execution_failure(
+                            "tool.resource_read.processing_failed",
+                            "The processor did not return a readable text resource.",
+                            "The resource representation could not be materialized.");
+                    }
+                } else if (representation == "text" && !agent_resource_has_text_representation(descriptor)) {
                     return tool_not_found_failure(
                         "tool.resource_read.representation_unavailable",
                         "text representation is not available for resource media type " + descriptor.mime_type,

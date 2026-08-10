@@ -1,4 +1,6 @@
 #include "tools/agent/resource/agent-resource-store.h"
+#include "tools/agent/resource/agent-resource-processing-service.h"
+#include "tools/agent/resource/processors/agent-pdf-text-processor.h"
 #include "tools/agent/tooling/agent-tool-runtime-adapter.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 
@@ -129,11 +131,20 @@ int main() {
         return 1;
     }
 
+    agent_pdf_text_processor pdf_text_processor;
+    agent_resource_processor_registry processor_registry;
+    if (!processor_registry.add(pdf_text_processor, error)) {
+        std::fprintf(stderr, "PDF text processor registration failed: %s\n", error.c_str());
+        return 1;
+    }
+    agent_resource_processing_service processing_service(g_resource_store, processor_registry);
+
     native_agent_tool_provider research_provider(
         catalog,
-        [](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
+        [&](const agent_tool_context & context, common_native_tool_bindings & bindings, std::string &) {
             bindings.repository_root = context.repository_root;
             bindings.resource_runtime.store = &g_resource_store;
+            bindings.resource_processing_service = &processing_service;
             bindings.resource_runtime.namespace_id = context.scope.namespace_id;
             bindings.resource_runtime.session_id = context.scope.session_id;
             bindings.resource_runtime.project_id = context.scope.project_id;
@@ -220,7 +231,7 @@ int main() {
     research_context.turn_id = "turn-2";
     research_context.profile_id = "research";
     research_context.allow_network = true;
-    research_context.max_calls = 12;
+    research_context.max_calls = 16;
     research_context.async_exposed_tool_names = {"web_fetch"};
     research_context.scope.namespace_id = "provider-smoke";
     research_context.scope.session_id = "session-1";
@@ -444,6 +455,47 @@ int main() {
             resource_inspect_result.content_json.find("available_representations") == std::string::npos ||
             resource_inspect_result.content_json.find("\"text\"") == std::string::npos) {
         std::fprintf(stderr, "resource_inspect did not return the expected representation metadata: %s\n", resource_inspect_result.content_json.c_str());
+        return 1;
+    }
+
+    agent_resource_put_request pdf_request;
+    pdf_request.name = "provider-report.pdf";
+    pdf_request.description = "PDF source for host-owned resource processing coverage.";
+    pdf_request.mime_type = "application/pdf";
+    pdf_request.scope = common_runtime_resource_scope::turn;
+    pdf_request.namespace_id = research_context.scope.namespace_id;
+    pdf_request.session_id = research_context.scope.session_id;
+    pdf_request.project_id = research_context.scope.project_id;
+    pdf_request.turn_id = research_context.scope.turn_id;
+    pdf_request.source_provider = "native";
+    pdf_request.source_tool = "provider-smoke";
+    pdf_request.bytes = "%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nBT (First PDF line) Tj (Second PDF line) Tj ET\nendstream\nendobj\n";
+    agent_resource_descriptor pdf_descriptor;
+    if (!g_resource_store.put_bytes(pdf_request, pdf_descriptor, error)) {
+        std::fprintf(stderr, "PDF resource setup failed: %s\n", error.c_str());
+        return 1;
+    }
+
+    const auto processed_pdf_read = research_view->call({
+        "call-2g-pdf-text",
+        "resource_read",
+        std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":4096})",
+    }, error);
+    if (!processed_pdf_read.ok ||
+            processed_pdf_read.content_json.find("First PDF line") == std::string::npos ||
+            processed_pdf_read.content_json.find("Second PDF line") == std::string::npos ||
+            processed_pdf_read.content_json.find("resource.process:pdf-text-local-v1") == std::string::npos) {
+        std::fprintf(stderr, "resource_read did not materialize PDF text through the processing service: %s\n", processed_pdf_read.content_json.c_str());
+        return 1;
+    }
+
+    const auto cached_pdf_read = research_view->call({
+        "call-2g-pdf-text-cache",
+        "resource_read",
+        std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":4096})",
+    }, error);
+    if (!cached_pdf_read.ok || cached_pdf_read.content_json != processed_pdf_read.content_json) {
+        std::fprintf(stderr, "resource_read did not reuse the cached PDF text representation: %s\n", cached_pdf_read.content_json.c_str());
         return 1;
     }
 

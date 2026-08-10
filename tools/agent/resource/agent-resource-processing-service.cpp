@@ -58,6 +58,19 @@ agent_resource_processing_service::agent_resource_processing_service(
       registry_(registry) {}
 
 agent_resource_processing_result agent_resource_processing_service::process(
+        const agent_resource_processing_binding_request & request) const {
+    agent_resource_processing_service_request service_request;
+    service_request.source_uri = request.source_uri;
+    service_request.authority = request.authority;
+    service_request.media_type = request.media_type;
+    service_request.target_representation = request.target_representation;
+    service_request.page = request.page;
+    service_request.range = request.range;
+    service_request.limits = request.limits;
+    return process(service_request);
+}
+
+agent_resource_processing_result agent_resource_processing_service::process(
         const agent_resource_processing_service_request & request) const {
     if (request.source_uri.empty()) {
         return processing_failure(

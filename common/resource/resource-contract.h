@@ -386,6 +386,27 @@ struct agent_resource_processing_result {
     std::string processor_id;
 };
 
+// Narrow host/runtime seam for consumers such as resource_read. The full
+// processing service may add event emission and other host concerns, but the
+// common tool contract only needs a semantic representation request.
+struct agent_resource_processing_binding_request {
+    std::string source_uri;
+    agent_resource_read_authority authority;
+    common_runtime_resource_media_type media_type;
+    std::string target_representation = "text";
+    std::optional<size_t> page;
+    std::optional<agent_resource_byte_range> range;
+    agent_resource_processing_limits limits;
+};
+
+class agent_resource_processing_provider {
+public:
+    virtual ~agent_resource_processing_provider() = default;
+
+    virtual agent_resource_processing_result process(
+        const agent_resource_processing_binding_request & request) const = 0;
+};
+
 class agent_resource_processor {
 public:
     virtual ~agent_resource_processor() = default;
