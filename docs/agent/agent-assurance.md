@@ -1,9 +1,9 @@
 # Agent Beta Assurance
 
-Status: Conditional for the executed Windows/Debug beta scope; the complete
-agent CTest label and Kubernetes sandbox contract smoke passed. Live Docker
-and live Kubernetes backend execution were not available in the current host
-session, and model-backed coverage remains qualified.
+Status: Conditional for the executed Windows/Debug beta scope; the focused
+resource-processor verification and the PDF page-image path through local,
+Docker, and Kubernetes execution passed. Broader sandbox coverage, OCR,
+cache reuse, and model-backed coverage remain qualified.
 
 This document is the assurance record for the `llama-agent` beta milestone.
 It separates milestone criteria from the test evidence collected for a
@@ -258,6 +258,28 @@ service event path, media-type resolution, bounded PDF text extraction, and
 the existing text/range chunkers. The first broad CTest invocation exposed only
 a stale test expectation; it was corrected as a test-only commit and did not
 indicate a runtime regression.
+
+### Latest verification - 2026-08-10 resource-processing checkpoint
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-resource-tools` |
+| Commit | `6af690f7a` (verification); documentation follow-up `f02256c26` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
+| Focused model-free CTest | `9/9 passed`, `0 failed`, `0 not-run` |
+| Local MuPDF PDF E2E | Passed; PDF store input became a PNG derived resource with lineage |
+| Docker MuPDF PDF E2E | Passed with `llama-agent-pdf-worker:local` |
+| Kubernetes MuPDF PDF E2E | Passed through the ephemeral Job backend; diagnostic resources were cleaned up |
+| Helm deployment | Not required for the current Job-per-operation backend |
+| Remaining scope | OCR, derived-resource cache reuse, broader sandbox assurance, and model-backed Qwen/Nomic execution |
+
+This checkpoint verifies the same hosted PDF processor contract across local,
+Docker, and Kubernetes execution placement. It does not claim that all
+sandbox operations or all processor families have live backend coverage. The
+Kubernetes run used the local Docker Desktop cluster and the development worker
+image; a remote cluster requires a registry-visible, preferably digest-pinned,
+processor image.
 
 ### Latest verification - 2026-08-07
 
