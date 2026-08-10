@@ -225,6 +225,28 @@ progress path. The agent-side resident host now performs the same one-time
 common/backend/NUMA initialization before `server_context::load_model()` and
 rejects empty or missing model paths before entering model loading.
 
+### Latest verification - 2026-08-10
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-resource-tools` |
+| Commit | `c607c5a60` |
+| Platform | Windows / MSVC |
+| Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
+| Agent CTest | `36/36 passed`, `0 failed`, `0 not-run` |
+| Focused resource/tool smokes | `7/7 passed`, `0 failed`, `0 not-run` |
+| Initial regression during verification | `test-tool-catalog` failed because its profile-count assertion was stale (`8` instead of the current `9`) |
+| Regression fix | `c607c5a60` updates the test expectation; the focused CTest and complete agent label were rerun successfully |
+| Docker/Kubernetes backend execution | Not-run in this checkpoint |
+| Model-backed Qwen/Nomic execution | Not-run in this checkpoint |
+| Decision | Windows model-free resource-processing/tool assurance passed; PDF rendering/OCR, isolated execution, cache reuse, live sandbox backends, and model-backed gates remain separate |
+
+The focused resource/tool smoke set covered the generic processing contract,
+service event path, media-type resolution, bounded PDF text extraction, and
+the existing text/range chunkers. The first broad CTest invocation exposed only
+a stale test expectation; it was corrected as a test-only commit and did not
+indicate a runtime regression.
+
 ### Latest verification - 2026-08-07
 
 | Field | Value |
