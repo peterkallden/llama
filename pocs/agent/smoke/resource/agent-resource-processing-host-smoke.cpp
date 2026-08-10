@@ -33,10 +33,17 @@ int main() {
     request.limits.max_output_bytes = 1024;
 
     common_agent_sandbox_result result;
+    std::vector<agent_resource_processing_host_artifact> artifacts;
     std::string error;
-    assert(host.execute(context, request, result, error));
+    assert(host.execute(context, request, result, artifacts, error));
     assert(error.empty());
     assert(result.status == common_agent_sandbox_status::completed);
     assert(result.backend_execution_id == "local-test/processor-host-smoke");
+
+    request.artifacts.paths = {"missing.png"};
+    artifacts.clear();
+    error.clear();
+    assert(!host.execute(context, request, result, artifacts, error));
+    assert(error.find("artifact was not produced") != std::string::npos);
     return 0;
 }

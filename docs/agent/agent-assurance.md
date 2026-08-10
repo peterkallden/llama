@@ -98,6 +98,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Local sandbox execution reuses `common_subproc`, maps virtual workspace paths, and has a bounded model-free smoke
 - [x] Host sandbox helper exposes bounded raw execution results for resource-processing adapters without adding a second queue
 - [x] Generic resource-processing host adapter is covered by a model-free CTest
+- [x] Host adapter artifact collection rejects unsafe, missing, and oversized outputs
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract

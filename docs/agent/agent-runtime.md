@@ -1000,7 +1000,11 @@ result or introducing another execution queue. The generic
 `agent_resource_processing_host` seam now packages that adapter explicitly;
 processor families can use it with their own typed command construction while
 sharing workspace setup, policy validation, execution placement and bounded
-result handling.
+result handling. Its artifact boundary accepts bounded local files from the
+operation artifact directory and normalizes their MIME type; unsafe paths,
+missing outputs and size-limit violations fail closed. Remote providers can
+continue returning host-authorized resource references through the same result
+contract.
 
 ### Resource processor catalog and configuration
 
