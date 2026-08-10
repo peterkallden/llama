@@ -762,6 +762,15 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-resource-backend-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-resource-backend-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-media-type-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-media-type-smoke.cpp
@@ -898,6 +907,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-backend-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
@@ -955,6 +965,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
+    llama-agent-resource-backend-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
@@ -1040,6 +1051,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-resource-processing-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-processing-contract-smoke>)
     set_property(TEST llama-agent-resource-processing-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-resource-backend-ctest
+        COMMAND $<TARGET_FILE:llama-agent-resource-backend-smoke>)
+    set_property(TEST llama-agent-resource-backend-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-resource-media-type-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-media-type-smoke>)

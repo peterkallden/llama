@@ -971,6 +971,14 @@ may select an approved Docker or Kubernetes sandbox provider when local
 execution is unavailable. MuPDF and Ghostscript remain processor
 implementation details and are not model-selected tools.
 
+The host-side backend resolution seam applies an already host-ordered list of
+representation-specific candidates to the verified capability snapshot. It
+does not select MIME semantics, expose executables to the model, or create a
+second queue. A typical page-image order is local MuPDF, local Ghostscript,
+approved Docker, and approved Kubernetes. If none is available, processing
+fails with a typed unavailable result; it is not silently converted into an
+unbounded local command.
+
 The processing service loads only a host-bounded source slice for a local
 processor and enforces source, output-count, output-size, page-count, and
 optional duration limits before returning derived resource references. The
