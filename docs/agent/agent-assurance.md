@@ -273,11 +273,14 @@ indicate a runtime regression.
 | Local MuPDF PDF E2E | Passed; PDF store input became a PNG derived resource with lineage |
 | Docker MuPDF PDF E2E | Passed with `llama-agent-pdf-worker:local` |
 | Kubernetes MuPDF PDF E2E | Passed through the ephemeral Job backend; diagnostic resources were cleaned up |
+| Local Tesseract OCR E2E | Passed; rendered PNG became a derived text resource with lineage |
+| Docker Tesseract OCR E2E | Passed with `llama-agent-pdf-ocr-worker:local` |
+| Kubernetes Tesseract OCR E2E | Passed after retry with the same worker image; project-specific resources were cleaned up |
 | Helm deployment | Not required for the current Job-per-operation backend |
 | Remaining scope | OCR, derived-resource cache reuse, broader sandbox assurance, and model-backed Qwen/Nomic execution |
 
-This checkpoint verifies the same hosted PDF processor contract across local,
-Docker, and Kubernetes execution placement. It does not claim that all
+This checkpoint verifies the same hosted PDF and Tesseract processor contract
+across local, Docker, and Kubernetes execution placement. It does not claim that all
 sandbox operations or all processor families have live backend coverage. The
 Kubernetes run used the local Docker Desktop cluster and the development worker
 image; a remote cluster requires a registry-visible, preferably digest-pinned,

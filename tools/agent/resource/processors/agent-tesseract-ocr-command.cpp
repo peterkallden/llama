@@ -116,7 +116,6 @@ bool make_agent_tesseract_ocr_request(
     request.command.arguments = {
         "/workspace/source/" + input_name,
         output_base,
-        "--",
         "-l", options.language,
         "--oem", std::to_string(options.oem),
         "--psm", std::to_string(options.psm),

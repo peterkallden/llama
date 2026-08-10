@@ -1020,13 +1020,13 @@ resource persistence. The renderer path is selected at runtime; MuPDF remains
 an external executable and is not a build or link-time dependency.
 
 The same E2E executable can run with the locally built
-`llama-agent-pdf-worker:local` image using Docker or the Kubernetes Job
-runtime. Both backends have now completed the PDF fixture path on the local
-Docker Desktop environment. The worker image is defined by
-`docker/agent/pdf-worker.Dockerfile`; it is a test/development worker image,
-not a production registry reference. Kubernetes E2E uses the active host
-policy image and keeps TLS verification disabled only for the local Docker
-Desktop test context.
+`llama-agent-pdf-ocr-worker:local` image using Docker or the Kubernetes Job
+runtime. The image contains both MuPDF and Tesseract so the E2E can exercise
+PDF page rendering followed by OCR without changing the processor contract.
+It is defined by `docker/agent/pdf-ocr-worker.Dockerfile`; it is a
+test/development worker image, not a production registry reference.
+Kubernetes E2E uses the active host policy image and keeps TLS verification
+disabled only for the local Docker Desktop test context.
 
 The current Kubernetes execution path is intentionally deployment-light: it
 creates an ephemeral Job per operation and therefore does not require Helm.

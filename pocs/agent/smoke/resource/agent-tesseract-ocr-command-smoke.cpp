@@ -44,6 +44,8 @@ int main() {
     if (request.command.program != "tesseract" ||
             !contains_argument(request, "/workspace/source/page_1.png") ||
             !contains_argument(request, "/workspace/artifacts/ocr-page_1.png") ||
+            request.command.arguments.size() < 2 ||
+            request.command.arguments[2] != "-l" ||
             !contains_argument(request, "-l") || !contains_argument(request, "eng+swe") ||
             !contains_argument(request, "--oem") || !contains_argument(request, "3") ||
             !contains_argument(request, "--psm") || !contains_argument(request, "6") ||
