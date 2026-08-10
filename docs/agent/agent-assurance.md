@@ -96,6 +96,7 @@ when the corresponding verification record contains evidence for it.
 - [x] PDF page-image command construction is typed, bounded, host-owned, and covered by a model-free smoke without requiring renderer installation
 - [x] Sandbox workspace staging uses the byte-oriented resource-store boundary and has a model-free binary materialization smoke
 - [x] Local sandbox execution reuses `common_subproc`, maps virtual workspace paths, and has a bounded model-free smoke
+- [x] Host sandbox helper exposes bounded raw execution results for resource-processing adapters without adding a second queue
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract

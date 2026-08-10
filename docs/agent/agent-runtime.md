@@ -993,7 +993,10 @@ to the repository's `common_subproc` wrapper. The provider maps virtual
 the already-created host workspace operation, applies bounded timeout and
 combined-output limits, and returns the normal sandbox result status. This is
 an execution foundation, not yet proof that a PDF renderer is installed or
-that processor artifacts have been registered as derived resources.
+that processor artifacts have been registered as derived resources. The
+existing sandbox helper now also exposes this bounded raw result to host-owned
+resource-processing adapters, without converting it into a model-facing tool
+result or introducing another execution queue.
 
 ### Resource processor catalog and configuration
 
