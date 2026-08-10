@@ -78,6 +78,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Context-pressure evaluation can stop before draft inference and create a continuation checkpoint
 - [x] Continuation checkpoints carry a bounded working-state projection with plan/resource provenance
 - [x] Context-pressure continuation re-enters the same driver operation with bounded working state
+- [x] Bounded context compaction reuses working-state, policy-pack, and input-resource contracts
 - [x] Chat output stopped by the generation limit is marked incomplete rather than accepted as final
 - [x] Truncated chat tool-call output is rejected before parsing or dispatch
 - [x] Tool-free plain-text chat can continue within the existing bounded turn lane

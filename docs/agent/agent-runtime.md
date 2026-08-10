@@ -1921,6 +1921,15 @@ state. This keeps the result observable to the controller and daemon layer
 without persisting execution state in memory or introducing a second session
 store.
 
+The first bounded context-compaction helper now uses the same path. Before a
+context-pressure continuation, the driver projects the authoritative plan into
+`common_agent_working_state`, compacts an active policy pack with the existing
+memory-policy helper, and deduplicates/caps input-resource references while
+preserving their host-owned descriptors. This is deliberately section-level
+compaction, not a second context store. The current driver does not own a
+general conversation-history ledger, so exact tokenizer accounting and
+arbitrary chat/tool-history summarization remain outside this milestone.
+
 The agent driver now performs a bounded automatic continuation for this first
 case. When a generation slice ends with `stop_reason=limit`, the driver keeps
 the same accepted turn and current plan, constructs a bounded continuation

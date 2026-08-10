@@ -1,4 +1,5 @@
 #include "agent-runtime-execution.h"
+#include "agent/context-compaction.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -583,8 +584,16 @@ bool run_agent_runtime_driver(
         }
         execution.current_plan_id = plan->id;
         if (slice_requires_context_continuation(slice)) {
-            execution.compact_working_state = make_common_agent_working_state(
-                *plan, execution.runtime_config.generation_config.context_budgets.working_state);
+            common_agent_context_compaction_limits compaction_limits;
+            compaction_limits.working_state =
+                execution.runtime_config.generation_config.context_budgets.working_state;
+            compaction_limits.max_input_resources =
+                compaction_limits.working_state.max_resource_refs;
+            const auto compacted = compact_common_agent_context(
+                *plan, execution.policy_pack, execution.input_resources, compaction_limits);
+            execution.compact_working_state = compacted.working_state;
+            execution.policy_pack = compacted.policy_pack;
+            execution.input_resources = compacted.input_resources;
             execution.orchestration_config.prompt =
                 "Continue the same task from the bounded working state.\n"
                 "The plan and resource stores remain authoritative; do not recreate completed work.\n"

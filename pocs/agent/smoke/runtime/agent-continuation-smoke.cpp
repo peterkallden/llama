@@ -1,5 +1,6 @@
 #include "tools/agent/runtime/agent-runtime-execution.h"
 #include "agent/context-pressure.h"
+#include "agent/context-compaction.h"
 #include "agent/agent-working-state.h"
 
 #include "memory/memory-in-memory.h"
@@ -232,6 +233,34 @@ void test_working_state_projection_is_bounded_and_preserves_refs() {
     assert(tight_state.goal.size() <= tight_limits.max_value_chars);
 }
 
+void test_context_compaction_reuses_existing_state_and_resource_contracts() {
+    common_plan_state plan;
+    plan.id = "compaction-plan";
+    plan.goal = "Keep the active goal and authoritative resource references.";
+    plan.next_action = "resume synthesis";
+
+    common_agent_input_resource first;
+    first.resource.uri = "agent-resource://authoritative";
+    first.resource.name = "source.txt";
+    first.required = true;
+    auto duplicate = first;
+    duplicate.required = false;
+    common_agent_input_resource second;
+    second.resource.uri = "agent-resource://second";
+    second.resource.name = "second.txt";
+
+    common_agent_context_compaction_limits limits;
+    limits.max_input_resources = 2;
+    limits.working_state.max_total_chars = 256;
+    const auto compacted = compact_common_agent_context(
+        plan, std::nullopt, {first, duplicate, second}, limits);
+    assert(compacted.working_state.goal == plan.goal);
+    assert(compacted.working_state.continuation_action == "resume synthesis");
+    assert(compacted.input_resources.size() == 2);
+    assert(compacted.input_resources.front().required);
+    assert(compacted.dropped_input_resources == 1);
+}
+
 void test_cancellation_stops_before_next_continuation_slice() {
     fake_inference inference;
     inference.queued = {
@@ -427,6 +456,7 @@ int main() {
     test_continuation_is_consumed_in_same_driver_operation();
     test_continuation_budget_emits_checkpoint();
     test_working_state_projection_is_bounded_and_preserves_refs();
+    test_context_compaction_reuses_existing_state_and_resource_contracts();
     test_cancellation_stops_before_next_continuation_slice();
     test_deadline_stops_before_next_continuation_slice();
     test_context_pressure_reserves_completion_and_tool_space();
