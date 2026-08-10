@@ -996,7 +996,11 @@ an execution foundation, not yet proof that a PDF renderer is installed or
 that processor artifacts have been registered as derived resources. The
 existing sandbox helper now also exposes this bounded raw result to host-owned
 resource-processing adapters, without converting it into a model-facing tool
-result or introducing another execution queue.
+result or introducing another execution queue. The generic
+`agent_resource_processing_host` seam now packages that adapter explicitly;
+processor families can use it with their own typed command construction while
+sharing workspace setup, policy validation, execution placement and bounded
+result handling.
 
 ### Resource processor catalog and configuration
 
