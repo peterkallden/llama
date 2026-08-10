@@ -100,9 +100,11 @@ when the corresponding verification record contains evidence for it.
 - [x] Generic resource-processing host adapter is covered by a model-free CTest
 - [x] Host adapter artifact collection rejects unsafe, missing, and oversized outputs
 - [x] Hosted PDF page-image processing converts a bounded artifact into the existing derived-resource output and lineage contract
+- [x] Tesseract OCR command construction is typed, bounded, host-owned, and covered by a model-free smoke
+- [x] Tesseract OCR processor converts a bounded image artifact into a derived text/hOCR/TSV output and retains lineage
 - [x] Local MuPDF E2E verifies PDF store input through PNG derived-resource persistence
 - [x] Isolated Docker/Kubernetes PDF page rendering is verified with the local MuPDF worker image
-- [ ] OCR is verified
+- [ ] Tesseract OCR local/Docker/Kubernetes E2E is verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [ ] Full inference continuation and context compaction are verified

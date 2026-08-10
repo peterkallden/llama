@@ -25,6 +25,8 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
     ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../common/agent/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
@@ -827,6 +829,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-tesseract-ocr-command-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-tesseract-ocr-command-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-processing-host-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-processing-host-smoke.cpp
@@ -834,6 +849,19 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-agent-tesseract-ocr-processor-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-tesseract-ocr-processor-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors
 )
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
@@ -973,6 +1001,8 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
     llama-agent-pdf-page-image-command-smoke
+    llama-agent-tesseract-ocr-command-smoke
+    llama-agent-tesseract-ocr-processor-smoke
     llama-agent-resource-processing-host-smoke
     llama-agent-pdf-page-image-processor-smoke
     llama-agent-pdf-page-image-local-e2e-smoke
@@ -1149,6 +1179,14 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-pdf-page-image-command-ctest
         COMMAND $<TARGET_FILE:llama-agent-pdf-page-image-command-smoke>)
     set_property(TEST llama-agent-pdf-page-image-command-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-tesseract-ocr-command-ctest
+        COMMAND $<TARGET_FILE:llama-agent-tesseract-ocr-command-smoke>)
+    set_property(TEST llama-agent-tesseract-ocr-command-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-tesseract-ocr-processor-ctest
+        COMMAND $<TARGET_FILE:llama-agent-tesseract-ocr-processor-smoke>)
+    set_property(TEST llama-agent-tesseract-ocr-processor-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-resource-processing-host-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-processing-host-smoke>)

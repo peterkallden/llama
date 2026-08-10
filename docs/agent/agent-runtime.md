@@ -1059,7 +1059,7 @@ The current processor catalog is intentionally small:
 | --- | --- | --- | --- | --- |
 | `pdf-text-local-v1` | `application/pdf` with a direct text layer | `text` | Implemented | No external command arguments; existing host limits apply |
 | `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
-| `pdf.ocr` | PDF page image or `image/*` | `text`, `hocr` or `tsv` | Planned | Language, OCR engine mode, page segmentation mode, tessdata location and output limits |
+| `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Command and processor contract implemented; live E2E pending | Language, OCR engine mode, page segmentation mode and output limits |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1078,10 +1078,11 @@ command smoke verifies MuPDF and Ghostscript argument construction, safe source
 filenames, output limits and fail-closed validation without requiring either
 executable to be installed. This is not yet actual page rendering: execution,
 binary resource staging and sandbox-provider integration remain open. The
-`pdf.ocr` profile will map bounded values such as `language`, `oem`, `psm`,
-`tessdata_dir` and output format to an OCR provider. Until those processors are
-implemented, these are design fields and must not be added to a production
-configuration as if they were active.
+`tesseract-ocr-v1` maps bounded values such as `language`, `oem`, `psm` and
+output format to an external Tesseract executable. The command and processor
+contracts support image input and `text`, `hocr` or `tsv` output; local, Docker
+and Kubernetes E2E coverage remains a separate verification step. Tesseract
+is resolved at runtime and is not a build or link-time dependency.
 
 The active execution-policy fields are representation-independent:
 

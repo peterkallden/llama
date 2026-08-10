@@ -6,6 +6,7 @@
 enum class agent_resource_backend_kind {
     local_mupdf,
     local_ghostscript,
+    local_tesseract,
     docker,
     kubernetes,
 };
@@ -16,6 +17,7 @@ struct agent_resource_backend_capabilities {
     // approved sandbox backend after performing its own health/policy checks.
     bool has_mupdf = false;
     bool has_ghostscript = false;
+    bool has_tesseract = false;
     bool has_docker = false;
     bool has_kubernetes = false;
 };
@@ -39,6 +41,8 @@ inline bool is_agent_resource_backend_available(
             return capabilities.has_mupdf;
         case agent_resource_backend_kind::local_ghostscript:
             return capabilities.has_ghostscript;
+        case agent_resource_backend_kind::local_tesseract:
+            return capabilities.has_tesseract;
         case agent_resource_backend_kind::docker:
             return capabilities.has_docker;
         case agent_resource_backend_kind::kubernetes:
