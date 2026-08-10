@@ -916,10 +916,18 @@ it is omitted, the host defaults to and prefers `text`;
 the current host implementation supports `text` only when the resource media
 type is text-like, such as `text/*`, JSON, XML, YAML, or structured `+json`
 and `+xml` types. Opaque binary resources can still be persisted by the store,
-but they do not automatically expose a text representation. `resource_inspect`
-provides the descriptor and the host-resolved `available_representations` list
-before a read is chosen, and `resource_read(representation="text")` fails
-closed when that representation is unavailable.
+but they do not automatically expose a text representation. When the runtime
+binds the host-owned processing provider, a text request for a supported
+non-text resource can materialize a derived text resource through the existing
+processing service and cache, then read that derived resource with the same
+bounded offset and `max_bytes` rules. The returned resource reference and
+provenance identify the derived representation; the original resource remains
+authoritative. If no provider is bound, or no processor can satisfy the
+request, `resource_read(representation="text")` still fails closed.
+`resource_inspect` provides the descriptor and the host-resolved
+`available_representations` list before a read is chosen. This integration is
+synchronous within the existing tool-call/session lane; it does not create a
+second queue or scheduler.
 These are resource-domain operations in the existing tool catalog: processor
 selection, MIME conversion, and execution isolation remain host-owned
 infrastructure and are not model-selected tools. Binary and multimodal
@@ -940,6 +948,15 @@ same contract without exposing Ghostscript, MuPDF, OCR, Docker, or Kubernetes
 as arbitrary model-selected tools. Derived outputs must retain lineage to the
 authoritative original resource and then enter the existing bounded read and
 chunking path.
+
+The first `resource_read` integration uses a narrow common
+`agent_resource_processing_provider` seam. The common tool adapter knows only
+how to request a semantic representation; the concrete processing service in
+`tools/agent/resource/` owns registry selection, MIME resolution, limits,
+events, persistence, and cache reuse. This keeps the reusable tool contract
+independent of the host implementation and leaves operation-bound processors
+such as page rendering or OCR for the runtime assembly that can supply their
+execution context.
 
 Before processor selection, the host may resolve the resource media type from
 declared metadata and a bounded content sample. The current deterministic

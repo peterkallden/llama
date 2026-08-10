@@ -266,10 +266,11 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `06a56d51d` (language metadata and OCR auto-selection); cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
+| Commit | `69915617d` (resource_read processing integration); language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
 | Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
+| Resource-read processing CTest | `1/1 passed`, `0 failed`, `0 not-run`; PDF text was materialized through the host provider and reused from cache |
 | Local MuPDF PDF E2E | Passed; PDF store input became a PNG derived resource with lineage |
 | Docker MuPDF PDF E2E | Passed with `llama-agent-pdf-worker:local` |
 | Kubernetes MuPDF PDF E2E | Passed through the ephemeral Job backend; diagnostic resources were cleaned up |
@@ -277,7 +278,7 @@ indicate a runtime regression.
 | Docker Tesseract OCR E2E | Passed with `llama-agent-pdf-ocr-worker:local` |
 | Kubernetes Tesseract OCR E2E | Passed after retry with the same worker image; project-specific resources were cleaned up |
 | Helm deployment | Not required for the current Job-per-operation backend |
-| Remaining scope | `resource_read` processing integration, true automatic language detection, broader sandbox assurance, and model-backed Qwen/Nomic execution |
+| Remaining scope | Runtime assembly for operation-bound processors, true automatic language detection, broader sandbox assurance, and model-backed Qwen/Nomic execution |
 
 This checkpoint verifies the same hosted PDF and Tesseract processor contract
 across local, Docker, and Kubernetes execution placement. It does not claim that all
@@ -292,6 +293,15 @@ metadata, missing language metadata fails closed without a fallback, and the
 selected language participates in derived-resource cache identity. The current
 `auto` mode is metadata-driven; broad language detection remains a separate
 bounded processor capability.
+
+The resource-read integration is verified for a local PDF text processor. A
+semantic `resource_read(representation="text")` request can invoke the
+host-owned processing provider for a non-text source, read the resulting
+derived text resource, and receive the same bounded resource response as a
+native text resource. Repeating the request reuses the processing cache. The
+common tool adapter remains independent of the concrete processor service;
+operation-bound page rendering and OCR still require runtime assembly that can
+provide their host execution context.
 
 ### Latest verification - 2026-08-07
 
