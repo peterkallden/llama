@@ -266,7 +266,7 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `811d110ee` (operation-scoped resource processor binding); `9936db1dd` (bounded binary CLI resource upload); CLI PDF resource-read smoke `06f65c7b7`; CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
+| Commit | `a4d28383c` (unique operation identity per resource read); `811d110ee` (operation-scoped resource processor binding); `9936db1dd` (bounded binary CLI resource upload); CLI PDF resource-read smoke `06f65c7b7`; CLI assembly `d3143098c`; resource_read integration `69915617d`; language metadata `06a56d51d`; cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
 | Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
