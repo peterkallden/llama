@@ -1004,7 +1004,13 @@ result handling. Its artifact boundary accepts bounded local files from the
 operation artifact directory and normalizes their MIME type; unsafe paths,
 missing outputs and size-limit violations fail closed. Remote providers can
 continue returning host-authorized resource references through the same result
-contract.
+contract. The first concrete hosted processor is the operation-bound
+`pdf-page-image-v1`: it converts one completed page-image artifact into the
+existing `agent_resource_processing_output`, after which the existing
+processing service persists it with the normal source lineage and provenance.
+The operation-bound construction is intentional for now; a host factory must
+create the processor with the active operation context rather than sharing it
+across concurrent session lanes.
 
 ### Resource processor catalog and configuration
 
