@@ -1,6 +1,7 @@
 #include "agent-cli-host-adapter.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
+#include "tools/agent/resource/processors/agent-pdf-text-processor.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -302,6 +303,17 @@ bool resolve_agent_host_tool_selection(
         }
         bindings.resource_runtime.store = resource_store;
         selection.tooling.resource_runtime.store = resource_store;
+        selection.resource_processor_registry = std::make_shared<agent_resource_processor_registry>();
+        auto pdf_text_processor = std::make_shared<agent_pdf_text_processor>();
+        if (!selection.resource_processor_registry->add(*pdf_text_processor, error)) {
+            error = "resource processor setup failed: " + error;
+            return false;
+        }
+        selection.resource_processors.push_back(std::move(pdf_text_processor));
+        selection.resource_processing_service = std::make_shared<agent_resource_processing_service>(
+            *resource_store,
+            *selection.resource_processor_registry);
+        bindings.resource_processing_service = selection.resource_processing_service.get();
         bindings.data_store = request.data_store != nullptr
             ? request.data_store
             : selection.owned_data_store.get();

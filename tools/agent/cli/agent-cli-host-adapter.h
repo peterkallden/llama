@@ -4,6 +4,7 @@
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../resource/agent-resource-store.h"
+#include "../resource/agent-resource-processing-service.h"
 #include "agent/sandbox-host-config.h"
 #include "agent/sandbox-contract.h"
 #include "agent/data-store.h"
@@ -24,6 +25,9 @@ struct common_agent_cli_tool_selection {
     std::vector<std::unique_ptr<agent_mcp_tool_client>> mcp_clients;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
     std::unique_ptr<agent_resource_store> owned_resource_store;
+    std::vector<std::shared_ptr<agent_resource_processor>> resource_processors;
+    std::shared_ptr<agent_resource_processor_registry> resource_processor_registry;
+    std::shared_ptr<agent_resource_processing_service> resource_processing_service;
     std::unique_ptr<common_agent_data_store> owned_data_store;
     std::shared_ptr<common_agent_sandbox_runtime> sandbox_runtime;
     std::shared_ptr<common_agent_workspace_manager> workspace_manager;

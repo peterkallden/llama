@@ -91,6 +91,10 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP selection did not return a tool view\n");
         return 1;
     }
+    if (!selection.resource_processing_service || selection.resource_processors.size() != 1) {
+        std::fprintf(stderr, "CLI MCP selection did not retain the host-owned resource processing service\n");
+        return 1;
+    }
     if (!has_tool(selection.tooling.tools, "github_search_issues")) {
         std::fprintf(stderr, "CLI MCP selection did not expose github_search_issues\n");
         return 1;

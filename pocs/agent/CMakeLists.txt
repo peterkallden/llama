@@ -1113,6 +1113,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-cli-run-mcp-smoke>)
     set_property(TEST llama-agent-cli-run-mcp-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-cli-mcp-selection-ctest
+        COMMAND $<TARGET_FILE:llama-agent-cli-mcp-selection-smoke>)
+    set_property(TEST llama-agent-cli-mcp-selection-ctest PROPERTY LABELS agent)
+
     add_test(NAME llama-agent-mcp-stdio-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-client-smoke>)
     set_property(TEST llama-agent-mcp-stdio-client-ctest PROPERTY LABELS agent)
