@@ -231,13 +231,14 @@ rejects empty or missing model paths before entering model loading.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `c607c5a60` |
+| Commit | `64a18e549` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, Visual Studio 17 2022, build artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
-| Agent CTest | `36/36 passed`, `0 failed`, `0 not-run` |
-| Focused resource/tool smokes | `7/7 passed`, `0 failed`, `0 not-run` |
+| Agent CTest | `37/37 passed`, `0 failed`, `0 not-run` |
+| Focused resource/tool/runtime smokes | `9/9 passed`, `0 failed`, `0 not-run` |
 | Initial regression during verification | `test-tool-catalog` failed because its profile-count assertion was stale (`8` instead of the current `9`) |
 | Regression fix | `c607c5a60` updates the test expectation; the focused CTest and complete agent label were rerun successfully |
+| Research/context sweep | `0091b4354`, `1b4c1c936`, and `64a18e549` add workspace checkpoints, bounded context compaction, and checkpoint propagation across slices |
 | Docker/Kubernetes backend execution | Not-run in this checkpoint |
 | Model-backed Qwen/Nomic execution | Not-run in this checkpoint |
 | Decision | Windows model-free resource-processing/tool assurance passed; PDF rendering/OCR, isolated execution, cache reuse, live sandbox backends, and model-backed gates remain separate |
