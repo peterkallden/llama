@@ -960,6 +960,17 @@ archive, or audio processors should use the same processor contract there;
 they must not add format-specific branches to the planner, resource store, or
 generic chunker.
 
+The configure step performs optional discovery for local document-processing
+backends when `LLAMA_AGENT_RUNTIME=ON`. The executable paths are exposed as
+`LLAMA_AGENT_RESOURCE_MUPDF_EXECUTABLE` and
+`LLAMA_AGENT_RESOURCE_GHOSTSCRIPT_EXECUTABLE`; the local CMake discovery
+flags are the short internal `HAS_MUPDF` and `HAS_GHOSTSCRIPT` values. Missing
+backends do not fail configuration. This is only build-environment metadata:
+runtime capability resolution must still verify that a backend is usable and
+may select an approved Docker or Kubernetes sandbox provider when local
+execution is unavailable. MuPDF and Ghostscript remain processor
+implementation details and are not model-selected tools.
+
 The processing service loads only a host-bounded source slice for a local
 processor and enforces source, output-count, output-size, page-count, and
 optional duration limits before returning derived resource references. The
