@@ -279,6 +279,10 @@ int main() {
     cozo_request.source_provider = "native";
     cozo_request.source_tool = "repository.search";
     cozo_request.metadata.processing_cache_key = "resource-processing-cache-v1;smoke";
+    cozo_request.metadata.declared_language = "sv";
+    cozo_request.metadata.resolved_language = "swe";
+    cozo_request.metadata.language_confidence = 0.97;
+    cozo_request.metadata.language_source = "user";
     cozo_request.bytes = std::string("cozo\0bytes", 10);
     if (!cozo_store->put_bytes(cozo_request, cozo_descriptor, error)) {
         std::fprintf(stderr, "cozo put_bytes failed: %s\n", error.c_str());
@@ -301,8 +305,12 @@ int main() {
     }
     agent_resource_descriptor reopened_cozo_descriptor;
     if (!cozo_store->stat(cozo_descriptor.uri, project_authority, reopened_cozo_descriptor, error) ||
-            reopened_cozo_descriptor.metadata.processing_cache_key != cozo_request.metadata.processing_cache_key) {
-        std::fprintf(stderr, "cozo resource metadata did not preserve the processing cache key: %s\n", error.c_str());
+            reopened_cozo_descriptor.metadata.processing_cache_key != cozo_request.metadata.processing_cache_key ||
+            reopened_cozo_descriptor.metadata.declared_language != "sv" ||
+            reopened_cozo_descriptor.metadata.resolved_language != "swe" ||
+            reopened_cozo_descriptor.metadata.language_confidence != 0.97 ||
+            reopened_cozo_descriptor.metadata.language_source != "user") {
+        std::fprintf(stderr, "cozo resource metadata did not preserve processing/language metadata: %s\n", error.c_str());
         return 1;
     }
 #else

@@ -1059,7 +1059,7 @@ The current processor catalog is intentionally small:
 | --- | --- | --- | --- | --- |
 | `pdf-text-local-v1` | `application/pdf` with a direct text layer | `text` | Implemented | No external command arguments; existing host limits apply |
 | `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
-| `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Command and processor contract implemented; live E2E pending | Language, OCR engine mode, page segmentation mode and output limits |
+| `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1078,11 +1078,15 @@ command smoke verifies MuPDF and Ghostscript argument construction, safe source
 filenames, output limits and fail-closed validation without requiring either
 executable to be installed. This is not yet actual page rendering: execution,
 binary resource staging and sandbox-provider integration remain open. The
-`tesseract-ocr-v1` maps bounded values such as `language`, `oem`, `psm` and
-output format to an external Tesseract executable. The command and processor
-contracts support image input and `text`, `hocr` or `tsv` output; local, Docker
-and Kubernetes E2E coverage remains a separate verification step. Tesseract
-is resolved at runtime and is not a build or link-time dependency.
+`tesseract-ocr-v1` maps bounded values such as `language`,
+`fallback_language`, `oem`, `psm` and output format to an external Tesseract
+executable. `language` may be explicit or `auto`. In auto mode, accepted
+resource metadata is preferred (`resolved_language`, then
+`declared_language`), followed by an explicit processor fallback. No language
+is silently guessed when none is available. The derived resource records the
+selected language, confidence and source; changing language metadata or typed
+OCR options changes the cache identity and creates a new derived resource.
+Tesseract is resolved at runtime and is not a build or link-time dependency.
 
 The active execution-policy fields are representation-independent:
 
@@ -1116,9 +1120,10 @@ compatibility expectation. Version mismatches must produce bounded warning
 and status information. Required policies fail closed when the selected
 execution requirement is unavailable.
 
-The processor-specific options will eventually be carried in the typed
-resource-processing request and recorded in derived-resource provenance. They
-must not be model-controlled raw flags. The original resource remains
+The processor-specific options are host-owned typed options and must not become
+model-controlled raw flags. Resource language metadata may be supplied
+at ingestion or accepted through an existing host/policy path; model
+suggestions are not authoritative writes. The original resource remains
 authoritative, and the same processor contract is used whether the execution
 provider is local, Docker or Kubernetes.
 

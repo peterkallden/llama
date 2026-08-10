@@ -21,10 +21,25 @@ std::string output_mime_type(const std::string & representation) {
     return "text/plain";
 }
 
+std::string tesseract_language_code(std::string value) {
+    if (value == "sv") return "swe";
+    if (value == "en") return "eng";
+    if (value == "de") return "deu";
+    if (value == "fr") return "fra";
+    return value;
+}
+
 } // namespace
 
 std::string agent_tesseract_ocr_processor::id() const {
     return "tesseract-ocr-v1";
+}
+
+std::string agent_tesseract_ocr_processor::cache_key() const {
+    return id() + ";language=" + options_.language +
+        ";fallback=" + options_.fallback_language +
+        ";oem=" + std::to_string(options_.oem) +
+        ";psm=" + std::to_string(options_.psm);
 }
 
 bool agent_tesseract_ocr_processor::supports(
@@ -45,8 +60,23 @@ agent_resource_processing_result agent_tesseract_ocr_processor::process(
         return failure(id(), "resource.processor_unavailable", "The configured Tesseract executable is unavailable.");
     }
 
-    agent_tesseract_ocr_options options;
+    agent_tesseract_ocr_options options = options_;
     options.output_format = request.target_representation;
+    std::string language_source = "processor.config";
+    if (options.language == "auto") {
+        if (!request.source.metadata.resolved_language.empty()) {
+            options.language = tesseract_language_code(request.source.metadata.resolved_language);
+            language_source = "resource.metadata.resolved";
+        } else if (!request.source.metadata.declared_language.empty()) {
+            options.language = tesseract_language_code(request.source.metadata.declared_language);
+            language_source = "resource.metadata.declared";
+        } else if (!options.fallback_language.empty()) {
+            options.language = options.fallback_language;
+            language_source = "processor.fallback";
+        } else {
+            return failure(id(), "resource.ocr_language_uncertain", "OCR language is automatic but the resource has no accepted language metadata or fallback.");
+        }
+    }
     if (request.limits.max_output_bytes > 0) {
         options.max_output_bytes = request.limits.max_output_bytes;
     }
@@ -98,6 +128,11 @@ agent_resource_processing_result agent_tesseract_ocr_processor::process(
     output.metadata.content_summary = "Bounded text extracted from an image";
     output.metadata.usage_hint = "Use this derived text representation for bounded reads and chunking.";
     output.metadata.limitations = "OCR is derived evidence; the original image or document remains authoritative.";
+    output.metadata.declared_language = request.source.metadata.declared_language;
+    output.metadata.resolved_language = options.language;
+    output.metadata.language_confidence = language_source == "processor.config" ? 1.0 :
+        (request.source.metadata.language_confidence > 0.0 ? request.source.metadata.language_confidence : 0.5);
+    output.metadata.language_source = language_source;
     output.lineage.parent_uri = request.source.uri;
     output.lineage.chunk_index = 0;
     output.lineage.chunk_count = 1;

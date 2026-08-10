@@ -118,6 +118,14 @@ struct common_runtime_resource_metadata {
     // Host-owned identity for a reusable derived representation. This is
     // provenance metadata, not a second resource authority.
     std::string processing_cache_key;
+
+    // Language hints are metadata about the resource representation. A
+    // declared value may come from ingestion/user context; a resolved value
+    // is host-accepted processor metadata and must retain its source.
+    std::string declared_language;
+    std::string resolved_language;
+    double language_confidence = 0.0;
+    std::string language_source;
 };
 
 // Derived resources, such as bounded chunks, retain explicit lineage to the

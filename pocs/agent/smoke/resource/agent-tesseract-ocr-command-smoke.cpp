@@ -69,6 +69,17 @@ int main() {
         std::fprintf(stderr, "unsupported Tesseract output format was accepted\n");
         return 1;
     }
+    options.output_format = "text";
+    options.language = "auto";
+    if (!validate_agent_tesseract_ocr_options(options, error)) {
+        std::fprintf(stderr, "automatic Tesseract language was rejected: %s\n", error.c_str());
+        return 1;
+    }
+    options.fallback_language = "swe";
+    if (!validate_agent_tesseract_ocr_options(options, error)) {
+        std::fprintf(stderr, "Tesseract fallback language was rejected: %s\n", error.c_str());
+        return 1;
+    }
     if (make_agent_tesseract_ocr_request(
             agent_resource_backend_kind::docker,
             "tesseract",

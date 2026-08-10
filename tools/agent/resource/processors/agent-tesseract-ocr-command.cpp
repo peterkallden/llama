@@ -31,6 +31,10 @@ bool valid_language(const std::string & language) {
     return true;
 }
 
+bool valid_language_or_auto(const std::string & language) {
+    return language == "auto" || valid_language(language);
+}
+
 const char * output_extension(const std::string & format) {
     if (format == "text") return "txt";
     if (format == "hocr") return "hocr";
@@ -43,8 +47,12 @@ const char * output_extension(const std::string & format) {
 bool validate_agent_tesseract_ocr_options(
         const agent_tesseract_ocr_options & options,
         std::string & error) {
-    if (!valid_language(options.language)) {
+    if (!valid_language_or_auto(options.language)) {
         error = "Tesseract language must be a bounded identifier list";
+        return false;
+    }
+    if (!options.fallback_language.empty() && !valid_language(options.fallback_language)) {
+        error = "Tesseract fallback language must be a bounded identifier list";
         return false;
     }
     if (options.oem > 3) {

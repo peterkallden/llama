@@ -33,6 +33,8 @@ std::string make_agent_resource_processing_cache_key(
     append_field(key, "resolved_mime=", common_normalize_resource_media_type(media_type.resolved_type));
     append_field(key, "processor=", processor.cache_key());
     append_field(key, "representation=", target_representation);
+    append_field(key, "declared_language=", source.metadata.declared_language);
+    append_field(key, "resolved_language=", source.metadata.resolved_language);
     append_field(key, "page=", page ? std::to_string(*page) : "none");
     append_field(key, "range_offset=", range ? range->offset : 0);
     append_field(key, "range_max_bytes=", range ? range->max_bytes : 0);

@@ -104,7 +104,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Tesseract OCR processor converts a bounded image artifact into a derived text/hOCR/TSV output and retains lineage
 - [x] Local MuPDF E2E verifies PDF store input through PNG derived-resource persistence
 - [x] Isolated Docker/Kubernetes PDF page rendering is verified with the local MuPDF worker image
-- [ ] Tesseract OCR local/Docker/Kubernetes E2E is verified
+- [x] Tesseract OCR local/Docker/Kubernetes E2E is verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [ ] Full inference continuation and context compaction are verified

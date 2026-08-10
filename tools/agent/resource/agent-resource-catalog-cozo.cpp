@@ -41,7 +41,11 @@ std::string agent_resource_cozo_schema_script() {
                 limitations,
                 keywords_json,
                 entities_json,
-                processing_cache_key
+                processing_cache_key,
+                declared_language,
+                resolved_language,
+                language_confidence,
+                language_source
             ] <- [[
                 'agent-resource://schema/probe',
                 'resource-probe',
@@ -66,6 +70,10 @@ std::string agent_resource_cozo_schema_script() {
                 '',
                 '[]',
                 '[]',
+                '',
+                '',
+                '',
+                0.0,
                 ''
             ]]
             :create agent_resource {
@@ -92,7 +100,11 @@ std::string agent_resource_cozo_schema_script() {
                 limitations: String,
                 keywords_json: String,
                 entities_json: String,
-                processing_cache_key: String
+                processing_cache_key: String,
+                declared_language: String,
+                resolved_language: String,
+                language_confidence: Float,
+                language_source: String
             }
         }
         {
@@ -144,6 +156,10 @@ agent_resource_descriptor descriptor_from_row(const json & row) {
         }
     }
     descriptor.metadata.processing_cache_key = row.at(23).get<std::string>();
+    descriptor.metadata.declared_language = row.at(24).get<std::string>();
+    descriptor.metadata.resolved_language = row.at(25).get<std::string>();
+    descriptor.metadata.language_confidence = row.at(26).get<double>();
+    descriptor.metadata.language_source = row.at(27).get<std::string>();
     return descriptor;
 }
 
@@ -219,7 +235,7 @@ bool agent_cozo_resource_catalog::open(const std::string & path, std::string & e
 
     const json next_id_params = {{"prefix", "resource-"}};
     if (!run(
-            "?[resource_id] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key], starts_with(resource_id, $prefix)",
+            "?[resource_id] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source], starts_with(resource_id, $prefix)",
             next_id_params.dump(),
             result,
             error)) {
@@ -292,11 +308,15 @@ bool agent_cozo_resource_catalog::put_descriptor(
             json(descriptor.metadata.keywords).dump(),
             json(descriptor.metadata.entities).dump(),
             descriptor.metadata.processing_cache_key,
+            descriptor.metadata.declared_language,
+            descriptor.metadata.resolved_language,
+            descriptor.metadata.language_confidence,
+            descriptor.metadata.language_source,
         })})},
     };
     std::string result;
     return run(
-        "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key }",
+        "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source }",
         params.dump(),
         result,
         error);
@@ -309,7 +329,7 @@ bool agent_cozo_resource_catalog::find_descriptor(
     const json params = {{"uri", uri}};
     std::string result;
     if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key], uri == $uri",
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source], uri == $uri",
             params.dump(),
             result,
             error)) {
@@ -331,7 +351,7 @@ bool agent_cozo_resource_catalog::list_descriptors(
     std::string & error) const {
     std::string result;
     if (!run(
-            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key]",
+            "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] := *agent_resource[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source]",
             "{}",
             result,
             error)) {

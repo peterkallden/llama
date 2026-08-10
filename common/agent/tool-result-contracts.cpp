@@ -35,6 +35,10 @@ json common_tool_resource_descriptor_to_json(
             {"keywords", descriptor.metadata.keywords},
             {"entities", descriptor.metadata.entities},
             {"processing_cache_key", descriptor.metadata.processing_cache_key},
+            {"declared_language", descriptor.metadata.declared_language},
+            {"resolved_language", descriptor.metadata.resolved_language},
+            {"language_confidence", descriptor.metadata.language_confidence},
+            {"language_source", descriptor.metadata.language_source},
         }},
     };
     if (!descriptor.lineage.parent_uri.empty()) {

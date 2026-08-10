@@ -9,6 +9,7 @@
 
 struct agent_tesseract_ocr_options {
     std::string language = "eng";
+    std::string fallback_language;
     uint32_t oem = 3;
     uint32_t psm = 3;
     std::string output_format = "text";
