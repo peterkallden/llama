@@ -233,6 +233,7 @@ void append_runtime_result(common_agent_result & aggregate, const common_agent_r
     aggregate.events.insert(aggregate.events.end(), slice.events.begin(), slice.events.end());
     aggregate.trace.insert(aggregate.trace.end(), slice.trace.begin(), slice.trace.end());
     aggregate.research_result = slice.research_result;
+    aggregate.research_workspace_checkpoint = slice.research_workspace_checkpoint;
     aggregate.research_verification = slice.research_verification;
     aggregate.continuation_checkpoint = slice.continuation_checkpoint;
 }
