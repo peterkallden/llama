@@ -403,6 +403,17 @@ int main() {
         return 1;
     }
 
+    const auto default_resource_read_result = research_view->call({
+        "call-2d-default-text",
+        "resource_read",
+        std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","max_bytes":4096})",
+    }, error);
+    if (!default_resource_read_result.ok ||
+            default_resource_read_result.content_json != resource_read_result.content_json) {
+        std::fprintf(stderr, "resource_read did not default to the text representation: %s\n", default_resource_read_result.content_json.c_str());
+        return 1;
+    }
+
     const auto unavailable_representation_result = research_view->call({
         "call-2c-image",
         "resource_read",

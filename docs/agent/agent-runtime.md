@@ -911,7 +911,8 @@ out-of-bounds offset is rejected. Backends that do not implement non-zero
 ranges fail explicitly rather than silently loading the whole payload.
 
 The read contract is representation-aware without exposing converters to the
-model. `resource_read` accepts an optional bounded `representation` field;
+model. `resource_read` accepts an optional bounded `representation` field. When
+it is omitted, the host defaults to and prefers `text`;
 the current host implementation supports `text` only when the resource media
 type is text-like, such as `text/*`, JSON, XML, YAML, or structured `+json`
 and `+xml` types. Opaque binary resources can still be persisted by the store,
