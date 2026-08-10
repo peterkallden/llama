@@ -90,13 +90,75 @@ public:
         }
         common_agent_workspace_operation operation;
         std::string error;
-        if (!workspace_manager->create_operation(context, operation_id, operation, error)) {
+        if (!prepare_workspace_request(
+                context, operation_id, request, operation, operation_out, error)) {
+            const bool materialization_failed =
+                error.rfind("sandbox resource materialization failed:", 0) == 0;
             return common_tool_execution_result::failure(
-                "sandbox.workspace_setup_failed",
+                materialization_failed
+                    ? "sandbox.resource_materialization_failed"
+                    : "sandbox.workspace_setup_failed",
                 common_tool_failure_class::execution,
                 false,
-                "The sandbox workspace could not be prepared.",
+                materialization_failed
+                    ? "A sandbox input resource could not be materialized."
+                    : "The sandbox workspace could not be prepared.",
                 error);
+        }
+        return run(request);
+    }
+
+    bool run_raw_for_workspace(
+            const common_agent_workspace_context & context,
+            const std::string & operation_id,
+            common_agent_sandbox_request request,
+            common_agent_sandbox_result & result,
+            std::string & error,
+            common_agent_workspace_operation * operation_out = nullptr) {
+        common_agent_workspace_operation operation;
+        if (!prepare_workspace_request(
+                context, operation_id, request, operation, operation_out, error)) {
+            return false;
+        }
+        return run_raw(request, result, error);
+    }
+
+    bool run_raw(
+            const common_agent_sandbox_request & request,
+            common_agent_sandbox_result & result,
+            std::string & error) {
+        if (!policy.validate(request, error)) return false;
+        auto resolved_request = request;
+        if (resolved_request.image.empty()) resolved_request.image = policy.image;
+        if (!runtime.execute(resolved_request, result, error)) return false;
+        return true;
+    }
+
+    void set_workspace_manager(common_agent_workspace_manager * manager) {
+        workspace_manager = manager;
+    }
+
+    void set_resource_store(
+            agent_resource_store * store,
+            agent_resource_read_authority authority = {}) {
+        resource_store = store;
+        resource_authority = std::move(authority);
+    }
+
+private:
+    bool prepare_workspace_request(
+            const common_agent_workspace_context & context,
+            const std::string & operation_id,
+            common_agent_sandbox_request & request,
+            common_agent_workspace_operation & operation,
+            common_agent_workspace_operation * operation_out,
+            std::string & error) {
+        if (workspace_manager == nullptr) {
+            error = "sandbox workspace manager is required for workspace execution";
+            return false;
+        }
+        if (!workspace_manager->create_operation(context, operation_id, operation, error)) {
+            return false;
         }
         request.operation_id = operation.operation_id;
         request.project_id = context.project_id;
@@ -120,31 +182,15 @@ public:
                         request.artifacts.max_bytes,
                         materialized_path,
                         error)) {
-                    return common_tool_execution_result::failure(
-                        "sandbox.resource_materialization_failed",
-                        common_tool_failure_class::execution,
-                        false,
-                        "A sandbox input resource could not be materialized.",
-                        error);
+                    error = "sandbox resource materialization failed: " + error;
+                    return false;
                 }
             }
         }
         if (operation_out != nullptr) *operation_out = operation;
-        return run(request);
+        return true;
     }
 
-    void set_workspace_manager(common_agent_workspace_manager * manager) {
-        workspace_manager = manager;
-    }
-
-    void set_resource_store(
-            agent_resource_store * store,
-            agent_resource_read_authority authority = {}) {
-        resource_store = store;
-        resource_authority = std::move(authority);
-    }
-
-private:
     common_agent_sandbox_runtime & runtime;
     common_agent_sandbox_policy policy;
     common_agent_workspace_manager * workspace_manager = nullptr;

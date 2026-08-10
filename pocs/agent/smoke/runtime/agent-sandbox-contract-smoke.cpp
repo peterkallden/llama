@@ -75,6 +75,17 @@ int main() {
         return 1;
     }
 
+    common_agent_sandbox_result raw_result;
+    std::string raw_error;
+    if (!workspace_helper.run_raw_for_workspace(
+            context, "raw/op-1", request, raw_result, raw_error) ||
+            !raw_error.empty() ||
+            raw_result.status != common_agent_sandbox_status::completed ||
+            raw_result.backend_execution_id != "local-test/raw/op-1") {
+        std::fprintf(stderr, "workspace-aware sandbox helper did not expose the raw result\n");
+        return 1;
+    }
+
     std::printf("sandbox_status=ok\n");
     std::printf("sandbox_backend=%s\n", runtime.last_request.command.program.c_str());
     return 0;
