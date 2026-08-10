@@ -52,6 +52,7 @@ int main(int argc, char ** argv) {
     profile.members = {
         {"calculator", 1, true, "{}"},
         {"time_now", 1, true, "{}"},
+        {"resource_read", 1, true, "{}"},
     };
     profile.allow_network = true;
     profile.allow_policy_gated_writes = false;
@@ -103,6 +104,10 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP selection did not expose native calculator from the minimal tool profile\n");
         return 1;
     }
+    if (!has_tool(selection.tooling.tools, "resource_read")) {
+        std::fprintf(stderr, "CLI MCP selection did not expose resource_read\n");
+        return 1;
+    }
     if (has_tool(selection.tooling.tools, "github_create_issue")) {
         std::fprintf(stderr, "CLI MCP selection exposed github_create_issue despite writes being disabled\n");
         return 1;
@@ -115,6 +120,32 @@ int main(int argc, char ** argv) {
     }, error);
     if (!native_result.ok || native_result.content_json.find("5") == std::string::npos) {
         std::fprintf(stderr, "CLI MCP selection native tool call did not return the expected result: %s\n", native_result.content_json.c_str());
+        return 1;
+    }
+
+    agent_resource_put_request pdf_request;
+    pdf_request.name = "cli-selection-report.pdf";
+    pdf_request.description = "PDF source for CLI resource processing coverage.";
+    pdf_request.mime_type = "application/pdf";
+    pdf_request.scope = common_runtime_resource_scope::session;
+    pdf_request.namespace_id = options.memory_namespace;
+    pdf_request.session_id = options.memory_session;
+    pdf_request.bytes = "%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nBT (CLI PDF text) Tj ET\nendstream\nendobj\n";
+    agent_resource_descriptor pdf_descriptor;
+    if (!selection.owned_resource_store ||
+            !selection.owned_resource_store->put_bytes(pdf_request, pdf_descriptor, error)) {
+        std::fprintf(stderr, "CLI PDF resource setup failed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto pdf_read_result = selection.tool_view->call({
+        "call-resource-read-pdf",
+        "resource_read",
+        std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":1024})",
+    }, error);
+    if (!pdf_read_result.ok ||
+            pdf_read_result.content_json.find("CLI PDF text") == std::string::npos ||
+            pdf_read_result.content_json.find("resource.process:pdf-text-local-v1") == std::string::npos) {
+        std::fprintf(stderr, "CLI resource_read did not materialize PDF text: %s\n", pdf_read_result.content_json.c_str());
         return 1;
     }
 
