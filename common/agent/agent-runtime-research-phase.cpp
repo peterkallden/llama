@@ -78,6 +78,25 @@ bool run_common_agent_research_phase(
         make_common_agent_research_lifecycle_sink(context));
     context.result.research_result = research_result;
 
+    if (!research_result.complete) {
+        std::string checkpoint_error;
+        context.result.research_workspace_checkpoint =
+            make_common_agent_research_workspace_checkpoint(
+                *context.research_workspace,
+                static_cast<size_t>(context.research_workspace->iterations_completed) + 1,
+                checkpoint_error);
+        if (!checkpoint_error.empty()) {
+            context.result.error = "research checkpoint creation failed safely: " + checkpoint_error;
+            return false;
+        }
+        context.emit_trace(
+            common_runtime_trace_stage::research,
+            common_runtime_trace_kind::recorded,
+            "research workspace checkpoint created",
+            context.request.plan_id.value_or(""),
+            context.research_workspace->workspace_id);
+    }
+
     for (const auto & source : context.research_workspace->sources) {
         context.emit_event(
             common_agent_event_type::research_source_recorded,

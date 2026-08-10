@@ -93,7 +93,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Resource processor source/output limits and processing lifecycle events are covered
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Derived-resource cache reuse is verified
-- [ ] Research workspace checkpointing has been evaluated
+- [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [ ] Full inference continuation and context compaction are verified
 
 The resource chunking implementation is intentionally narrower than general

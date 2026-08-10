@@ -331,6 +331,9 @@ struct common_agent_result {
     std::vector<common_agent_generation_record> generation_records;
 
     std::optional<common_agent_research_result> research_result;
+    // Host-owned execution state for resuming an incomplete research phase;
+    // this is not durable memory and remains scoped to the active operation.
+    std::optional<common_agent_research_workspace_checkpoint> research_workspace_checkpoint;
     std::optional<common_agent_research_verification> research_verification;
 
     // Events contain structured outcomes only, never raw chain-of-thought.

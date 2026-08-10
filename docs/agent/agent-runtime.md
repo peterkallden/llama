@@ -755,6 +755,15 @@ result and is not emitted as an ordinary progress event. A future resume must
 match request/turn identity and the current plan revision before execution is
 allowed to continue.
 
+Research uses the same ownership boundary. An incomplete research phase can
+produce a `common_agent_research_workspace_checkpoint` containing the existing
+workspace, its scope/turn/plan identity, sequence, gaps, tasks, sources,
+evidence, comparisons and coverage counters. It is validated against the
+workspace's existing budgets and identity before it is exposed on the agent
+result. This is an active-operation checkpoint only: it is not written to the
+memory store, does not create a second research queue, and does not make the
+turn-scoped research workspace durable by itself.
+
 ## Current Shape
 
 The core runtime remains in-process, but it already has asynchronous internal
@@ -1947,9 +1956,10 @@ This preserves queue capacity accounting, per-session ordering, cancellation,
 and the existing terminal-event contract.
 
 This contract does not yet claim full automatic context compaction. Rendered
-memory overlays and policy packs already have bounded compaction, but full
-conversation/tool-result compaction still needs controller integration and
-resource-reference recovery. It also does not structurally repair arbitrary
+memory overlays and policy packs already have bounded compaction, and research
+workspace state can now be checkpointed without leaving the session lane, but
+full conversation/tool-result compaction still needs controller integration
+and resource-reference recovery. It also does not structurally repair arbitrary
 JSON or apply the continuation loop to chat-driver output. If the bounded
 slice budget is exhausted, the result remains incomplete and carries a
 validated checkpoint rather than being reported as a successful final answer.

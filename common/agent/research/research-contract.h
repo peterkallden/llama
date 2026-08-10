@@ -99,6 +99,25 @@ struct common_agent_research_workspace {
     int no_progress_iterations = 0;
 };
 
+// A bounded snapshot of the active research workspace. This is execution
+// state for the current session/turn and is not a second research store or a
+// long-term memory record. The workspace's existing budgets remain the source
+// of its collection bounds.
+struct common_agent_research_workspace_checkpoint {
+    std::string checkpoint_id;
+    std::string workspace_id;
+    std::string request_id;
+    std::string turn_id;
+    std::string session_id;
+    std::string plan_id;
+    size_t sequence = 0;
+    common_agent_research_workspace workspace;
+};
+
+inline bool common_agent_research_workspace_validate(
+        const common_agent_research_workspace & workspace,
+        std::string & error);
+
 inline common_agent_state_descriptor describe_common_agent_research_workspace(
         const common_agent_research_workspace & workspace) {
     common_agent_state_descriptor descriptor;
@@ -114,6 +133,47 @@ inline common_agent_state_descriptor describe_common_agent_research_workspace(
     descriptor.owner = "agent runtime research loop";
     descriptor.source_of_truth = "research workspace";
     return descriptor;
+}
+
+inline bool common_agent_research_workspace_checkpoint_valid(
+        const common_agent_research_workspace_checkpoint & checkpoint,
+        std::string & error) {
+    if (checkpoint.checkpoint_id.empty() || checkpoint.workspace_id.empty() ||
+            checkpoint.request_id.empty() || checkpoint.turn_id.empty() ||
+            checkpoint.session_id.empty() || checkpoint.sequence == 0) {
+        error = "research workspace checkpoint requires bounded identity and sequence";
+        return false;
+    }
+    if (checkpoint.workspace.workspace_id != checkpoint.workspace_id ||
+            checkpoint.workspace.request_id != checkpoint.request_id ||
+            checkpoint.workspace.turn_id != checkpoint.turn_id ||
+            checkpoint.workspace.session_id != checkpoint.session_id ||
+            checkpoint.workspace.plan_id != checkpoint.plan_id) {
+        error = "research workspace checkpoint identity does not match its workspace";
+        return false;
+    }
+    if (!common_agent_research_workspace_validate(checkpoint.workspace, error)) return false;
+    error.clear();
+    return true;
+}
+
+inline common_agent_research_workspace_checkpoint make_common_agent_research_workspace_checkpoint(
+        const common_agent_research_workspace & workspace,
+        size_t sequence,
+        std::string & error) {
+    common_agent_research_workspace_checkpoint checkpoint;
+    checkpoint.checkpoint_id = "research-checkpoint:" + workspace.workspace_id + ":" +
+        std::to_string(sequence);
+    checkpoint.workspace_id = workspace.workspace_id;
+    checkpoint.request_id = workspace.request_id;
+    checkpoint.turn_id = workspace.turn_id;
+    checkpoint.session_id = workspace.session_id;
+    checkpoint.plan_id = workspace.plan_id;
+    checkpoint.sequence = sequence;
+    checkpoint.workspace = workspace;
+    if (!common_agent_research_workspace_checkpoint_valid(checkpoint, error)) return {};
+    error.clear();
+    return checkpoint;
 }
 
 enum class common_agent_research_stop_reason { success_criteria_met, sufficient_coverage, budget_exhausted, deadline_exceeded, cancelled, no_progress, source_access_blocked, policy_blocked };

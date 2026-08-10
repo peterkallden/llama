@@ -253,6 +253,25 @@ int main() {
     std::printf("research_runtime=ok gaps=%d sources=%zu evidence=%zu\n",
         result.coverage.answered_gaps, workspace.sources.size(), workspace.evidence.size());
 
+    const auto research_checkpoint = make_common_agent_research_workspace_checkpoint(
+        workspace, 3, error);
+    if (!error.empty() ||
+            !common_agent_research_workspace_checkpoint_valid(research_checkpoint, error) ||
+            research_checkpoint.workspace.gaps.size() != workspace.gaps.size() ||
+            research_checkpoint.workspace.evidence.size() != workspace.evidence.size()) {
+        std::fprintf(stderr, "research workspace checkpoint failed: %s\n", error.c_str());
+        return 1;
+    }
+    auto resumed_workspace = research_checkpoint.workspace;
+    resumed_workspace.no_progress_iterations = 0;
+    if (resumed_workspace.workspace_id != workspace.workspace_id ||
+            resumed_workspace.sources.size() != workspace.sources.size() ||
+            !common_agent_research_workspace_validate(resumed_workspace, error)) {
+        std::fprintf(stderr, "research workspace checkpoint reload failed: %s\n", error.c_str());
+        return 1;
+    }
+    std::printf("research_workspace_checkpoint=ok sequence=%zu\n", research_checkpoint.sequence);
+
     common_agent_research_bounded_verifier verifier;
     common_agent_research_verification_context verification_context;
     common_memory_hit verifier_memory;
