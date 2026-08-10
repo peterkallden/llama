@@ -266,10 +266,10 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `6af690f7a` (verification); documentation follow-up `f02256c26` |
+| Commit | `06a56d51d` (language metadata and OCR auto-selection); cache foundation `59f5902a9`; Cozo persistence `75b0283a5` |
 | Platform | Windows / MSVC |
 | Build configuration | Debug, Cozo enabled, artifacts on `E:\llama-builds\agent-resource-tools-msvc-debug-fast` |
-| Focused model-free CTest | `9/9 passed`, `0 failed`, `0 not-run` |
+| Focused model-free CTest | `3/3 passed`, `0 failed`, `0 not-run` for the Cozo-enabled cache/language slice |
 | Local MuPDF PDF E2E | Passed; PDF store input became a PNG derived resource with lineage |
 | Docker MuPDF PDF E2E | Passed with `llama-agent-pdf-worker:local` |
 | Kubernetes MuPDF PDF E2E | Passed through the ephemeral Job backend; diagnostic resources were cleaned up |
@@ -277,7 +277,7 @@ indicate a runtime regression.
 | Docker Tesseract OCR E2E | Passed with `llama-agent-pdf-ocr-worker:local` |
 | Kubernetes Tesseract OCR E2E | Passed after retry with the same worker image; project-specific resources were cleaned up |
 | Helm deployment | Not required for the current Job-per-operation backend |
-| Remaining scope | OCR, derived-resource cache reuse, broader sandbox assurance, and model-backed Qwen/Nomic execution |
+| Remaining scope | `resource_read` processing integration, true automatic language detection, broader sandbox assurance, and model-backed Qwen/Nomic execution |
 
 This checkpoint verifies the same hosted PDF and Tesseract processor contract
 across local, Docker, and Kubernetes execution placement. It does not claim that all
@@ -285,6 +285,13 @@ sandbox operations or all processor families have live backend coverage. The
 Kubernetes run used the local Docker Desktop cluster and the development worker
 image; a remote cluster requires a registry-visible, preferably digest-pinned,
 processor image.
+
+The language metadata slice was verified with Cozo enabled. Resource metadata
+survives a store reopen, `language=auto` prefers accepted resolved or declared
+metadata, missing language metadata fails closed without a fallback, and the
+selected language participates in derived-resource cache identity. The current
+`auto` mode is metadata-driven; broad language detection remains a separate
+bounded processor capability.
 
 ### Latest verification - 2026-08-07
 
