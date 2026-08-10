@@ -59,6 +59,7 @@ struct args {
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";
     std::string resource_metadata_db;
+    std::map<std::string, agent_resource_processor_execution_policy> resource_processor_policies;
     std::vector<std::string> resource_paths;
     bool agent_runtime = false;
     std::string thinking_mode = "reflective";

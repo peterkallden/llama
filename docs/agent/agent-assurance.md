@@ -92,6 +92,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Normalized processor text enters the existing bounded resource chunking path
 - [x] The first bounded local PDF text-layer processor has a model-free smoke
 - [x] Resource processor source/output limits and processing lifecycle events are covered
+- [x] Resource processor execution policies are host-configured, round-trip serialized, and fail closed for incompatible required backends
 - [ ] PDF page rendering, OCR, and isolated processor execution are verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract

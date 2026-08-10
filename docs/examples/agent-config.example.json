@@ -58,7 +58,21 @@
     "blob_backend": "auto",
     "blob_root": "data/resources",
     "metadata_backend": "auto",
-    "metadata_db": "data/resources.cozo"
+    "metadata_db": "data/resources.cozo",
+    "processor_policies": {
+      "pdf.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "mutool",
+        "expected_version": ""
+      },
+      "pdf.page_image": {
+        "execution": "sandbox_required",
+        "backend": "kubernetes",
+        "image": "registry.example/pdf-worker@sha256:replace-me",
+        "expected_version": "mupdf-1.26"
+      }
+    }
   },
   "tools": {
     "profile": "all-configured",

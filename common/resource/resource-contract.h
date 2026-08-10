@@ -330,6 +330,17 @@ struct agent_resource_processing_limits {
     size_t max_page_bytes = 0;
 };
 
+// Host-owned execution policy for an external resource processor. This does
+// not make the processor a model-selected tool; it only selects where the
+// host may run its typed processor request.
+struct agent_resource_processor_execution_policy {
+    std::string execution = "local_preferred";
+    std::string backend = "auto";
+    std::string executable;
+    std::string image;
+    std::string expected_version;
+};
+
 struct agent_resource_processing_request {
     common_runtime_resource_ref source;
     agent_resource_read_authority authority;

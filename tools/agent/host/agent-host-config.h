@@ -7,6 +7,7 @@
 #include "agent/sandbox-policy.h"
 #include "agent/workspace-contract.h"
 #include "agent-diagnostics-config.h"
+#include "resource/resource-contract.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -57,6 +58,7 @@ struct agent_host_config {
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";
     std::string resource_metadata_db;
+    std::map<std::string, agent_resource_processor_execution_policy> resource_processor_policies;
 
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;

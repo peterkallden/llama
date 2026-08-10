@@ -968,6 +968,16 @@ resolution then verifies that the selected process is usable. No CMake
 discovery or link-time dependency is required. MuPDF and Ghostscript remain
 processor implementation details and are not model-selected tools.
 
+The host configuration can assign an execution policy per processor id below
+`resources.processor_policies`. Supported modes are `local_preferred`,
+`sandbox_preferred`, `local_required`, and `sandbox_required`; the backend is
+`auto`, `local`, `docker`, or `kubernetes`. `executable` is an optional local
+process name/path, `image` is an optional sandbox image, and
+`expected_version` is an operator-visible compatibility expectation. These
+values constrain host execution only. A runtime version mismatch must produce
+a bounded warning/status event, and a `*_required` policy must fail closed
+when its requirement cannot be met.
+
 The host-side backend resolution seam applies an already host-ordered list of
 representation-specific candidates to the verified capability snapshot. It
 does not select MIME semantics, expose executables to the model, or create a

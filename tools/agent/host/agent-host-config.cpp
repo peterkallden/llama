@@ -354,6 +354,27 @@ bool parse_agent_host_config_json(
         read_optional(resources, "blob_root", config.resource_blob_root);
         read_optional(resources, "metadata_backend", config.resource_metadata_backend);
         read_optional(resources, "metadata_db", config.resource_metadata_db);
+        if (resources.contains("processor_policies")) {
+            if (!resources["processor_policies"].is_object()) {
+                error = "resources.processor_policies must be an object";
+                return false;
+            }
+            config.resource_processor_policies.clear();
+            for (auto it = resources["processor_policies"].begin();
+                    it != resources["processor_policies"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "resources.processor_policies entries must be objects";
+                    return false;
+                }
+                agent_resource_processor_execution_policy policy;
+                read_optional(it.value(), "execution", policy.execution);
+                read_optional(it.value(), "backend", policy.backend);
+                read_optional(it.value(), "executable", policy.executable);
+                read_optional(it.value(), "image", policy.image);
+                read_optional(it.value(), "expected_version", policy.expected_version);
+                config.resource_processor_policies.emplace(it.key(), std::move(policy));
+            }
+        }
     }
 
     if (parsed.contains("sandbox")) {
@@ -798,6 +819,19 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"blob_root", config.resource_blob_root},
             {"metadata_backend", config.resource_metadata_backend},
             {"metadata_db", config.resource_metadata_db},
+            {"processor_policies", [&config]() {
+                json policies = json::object();
+                for (const auto & entry : config.resource_processor_policies) {
+                    policies[entry.first] = {
+                        {"execution", entry.second.execution},
+                        {"backend", entry.second.backend},
+                        {"executable", entry.second.executable},
+                        {"image", entry.second.image},
+                        {"expected_version", entry.second.expected_version},
+                    };
+                }
+                return policies;
+            }()},
         }},
         {"tools", {
             {"profile", config.tool_profile},
@@ -1085,6 +1119,34 @@ bool validate_agent_host_config(
             }
         }
     }
+    for (const auto & entry : config.resource_processor_policies) {
+        const auto & policy = entry.second;
+        if (entry.first.empty()) {
+            error = "resources.processor_policies ids must not be empty";
+            return false;
+        }
+        if (policy.execution != "local_preferred" &&
+                policy.execution != "sandbox_preferred" &&
+                policy.execution != "local_required" &&
+                policy.execution != "sandbox_required") {
+            error = "resource processor policy has unsupported execution mode: " + entry.first;
+            return false;
+        }
+        if (policy.backend != "auto" && policy.backend != "local" &&
+                policy.backend != "docker" && policy.backend != "kubernetes") {
+            error = "resource processor policy has unsupported backend: " + entry.first;
+            return false;
+        }
+        if (policy.execution == "sandbox_required" && policy.backend == "local") {
+            error = "sandbox_required resource processor policy cannot use the local backend: " + entry.first;
+            return false;
+        }
+        if (policy.execution == "local_required" &&
+                (policy.backend == "docker" || policy.backend == "kubernetes")) {
+            error = "local_required resource processor policy cannot use a sandbox backend: " + entry.first;
+            return false;
+        }
+    }
     if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" && config.sandbox.backend != "kubernetes") {
         error = "sandbox.backend must be none, docker or kubernetes";
         return false;
@@ -1238,6 +1300,7 @@ void apply_agent_host_config_to_daemon_options(
     options.resource_blob_root = config.resource_blob_root;
     options.resource_metadata_backend = config.resource_metadata_backend;
     options.resource_metadata_db = config.resource_metadata_db;
+    options.resource_processor_policies = config.resource_processor_policies;
     options.memory_learn_show_candidate = config.memory_learn_show_candidate;
     options.memory_learn_min_confidence = config.memory_learn_min_confidence;
     options.memory_learn_min_reuse = config.memory_learn_min_reuse;
@@ -1317,6 +1380,7 @@ void apply_agent_host_config_to_args(
     options.resource_blob_root = config.resource_blob_root;
     options.resource_metadata_backend = config.resource_metadata_backend;
     options.resource_metadata_db = config.resource_metadata_db;
+    options.resource_processor_policies = config.resource_processor_policies;
     options.plan_backend = config.plan_backend;
     options.plan_db = config.plan_db;
     options.data_backend = config.data_backend;

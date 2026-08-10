@@ -62,6 +62,7 @@ struct daemon_options {
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";
     std::string resource_metadata_db;
+    std::map<std::string, agent_resource_processor_execution_policy> resource_processor_policies;
     bool memory_learn_show_candidate = false;
     float memory_learn_min_confidence = 0.75f;
     float memory_learn_min_reuse = 0.65f;

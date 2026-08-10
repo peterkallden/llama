@@ -106,6 +106,56 @@ int main() {
         return 1;
     }
 
+    agent_host_config processor_config;
+    const nlohmann::ordered_json processor_policy_config = {
+        {"resources", {
+            {"processor_policies", {
+                {"pdf.page_image", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "kubernetes"},
+                    {"image", "registry.example/pdf-worker@sha256:test"},
+                    {"expected_version", "mupdf-1.26"},
+                }},
+                {"pdf.text", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "mutool"},
+                }},
+            }},
+        }},
+    };
+    if (!parse_agent_host_config_json(processor_policy_config, processor_config, error) ||
+            !validate_agent_host_config(processor_config, error) ||
+            processor_config.resource_processor_policies.size() != 2 ||
+            processor_config.resource_processor_policies.at("pdf.page_image").execution != "sandbox_required" ||
+            processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes") {
+        std::fprintf(stderr, "resource processor execution policy was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto serialized = agent_host_config_to_json(processor_config);
+    if (!serialized.contains("resources") ||
+            !serialized["resources"].contains("processor_policies") ||
+            serialized["resources"]["processor_policies"]["pdf.text"]["executable"] != "mutool") {
+        std::fprintf(stderr, "resource processor execution policy was not serialized\n");
+        return 1;
+    }
+
+    agent_host_config invalid_processor_config;
+    const nlohmann::ordered_json invalid_policy_config = {
+        {"resources", {
+            {"processor_policies", {
+                {"pdf.page_image", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "local"},
+                }},
+            }},
+        }},
+    };
+    if (parse_agent_host_config_json(invalid_policy_config, invalid_processor_config, error)) {
+        std::fprintf(stderr, "invalid resource processor execution policy was accepted\n");
+        return 1;
+    }
+
     std::printf("config_discovery=passed\n");
     return 0;
 }
