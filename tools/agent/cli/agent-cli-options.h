@@ -61,6 +61,7 @@ struct args {
     std::string resource_metadata_db;
     std::map<std::string, agent_resource_processor_execution_policy> resource_processor_policies;
     std::vector<std::string> resource_paths;
+    std::string resource_mime_type;
     bool agent_runtime = false;
     std::string thinking_mode = "reflective";
     int max_reflection_rounds = 1;

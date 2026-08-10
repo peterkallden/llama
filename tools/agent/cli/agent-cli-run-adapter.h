@@ -28,6 +28,13 @@ bool prepare_agent_cli_args(args & options, std::string & error);
 
 class agent_resource_store;
 
+bool import_agent_cli_resources(
+    const args & options,
+    const common_agent_scope & scope,
+    agent_resource_store & resource_store,
+    std::vector<common_agent_input_resource> & out,
+    std::string & error);
+
 bool import_agent_cli_text_resources(
     const args & options,
     const common_agent_scope & scope,

@@ -129,14 +129,18 @@ int main(int argc, char ** argv) {
         "llama-agent-cli-run-mcp-resource-one.md";
     const auto resource_two_path = std::filesystem::current_path() /
         "llama-agent-cli-run-mcp-resource-two.JSON";
+    const auto resource_pdf_path = std::filesystem::current_path() /
+        "llama-agent-cli-run-mcp-resource-three.bin";
     bool resource_files_written = false;
     {
         std::ofstream resource_one(resource_one_path, std::ios::binary);
         std::ofstream resource_two(resource_two_path, std::ios::binary);
-        if (resource_one && resource_two) {
+        std::ofstream resource_pdf(resource_pdf_path, std::ios::binary);
+        if (resource_one && resource_two && resource_pdf) {
             resource_one << "# Requirements\n- preserve provenance\n";
             resource_two << "{\"architecture\":\"resource-store\"}\n";
-            resource_files_written = resource_one.good() && resource_two.good();
+            resource_pdf << "%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nBT (CLI PDF upload) Tj ET\nendstream\nendobj\n";
+            resource_files_written = resource_one.good() && resource_two.good() && resource_pdf.good();
         }
     }
     options.resource_paths = {resource_one_path.string(), resource_two_path.string()};
@@ -146,7 +150,7 @@ int main(int argc, char ** argv) {
     resource_scope.turn_id = "resource-turn";
     std::vector<common_agent_input_resource> imported_resources;
     if (!resource_files_written || !selection.owned_resource_store ||
-            !import_agent_cli_text_resources(
+            !import_agent_cli_resources(
                 options,
                 resource_scope,
                 *selection.owned_resource_store,
@@ -162,11 +166,31 @@ int main(int argc, char ** argv) {
             imported_resources[1].resource.uri.empty()) {
         std::filesystem::remove(resource_one_path);
         std::filesystem::remove(resource_two_path);
+        std::filesystem::remove(resource_pdf_path);
         std::fprintf(stderr, "CLI MCP run smoke failed to import multiple text resources: %s\n", error.c_str());
+        return 1;
+    }
+    options.resource_paths = {resource_pdf_path.string()};
+    options.resource_mime_type = "application/pdf";
+    std::vector<common_agent_input_resource> imported_pdf;
+    if (!import_agent_cli_resources(
+            options,
+            resource_scope,
+            *selection.owned_resource_store,
+            imported_pdf,
+            error) ||
+            imported_pdf.size() != 1 ||
+            imported_pdf[0].resource.mime_type != "application/pdf" ||
+            imported_pdf[0].resource.size_bytes == 0) {
+        std::filesystem::remove(resource_one_path);
+        std::filesystem::remove(resource_two_path);
+        std::filesystem::remove(resource_pdf_path);
+        std::fprintf(stderr, "CLI MCP run smoke failed to import the PDF resource: %s\n", error.c_str());
         return 1;
     }
     std::filesystem::remove(resource_one_path);
     std::filesystem::remove(resource_two_path);
+    std::filesystem::remove(resource_pdf_path);
 
     const auto mcp_result = selection.tool_view->call({
         "call-1",

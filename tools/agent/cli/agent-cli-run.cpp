@@ -158,7 +158,7 @@ int run_agent_cli(common_memory_store & store, args a) {
             fprintf(stderr, "--resource requires an initialized resource store\n");
             return 1;
         }
-        if (!import_agent_cli_text_resources(
+        if (!import_agent_cli_resources(
                 a, agent_scope, *resource_store, input_resources, error)) {
             fprintf(stderr, "%s\n", error.c_str());
             return 1;
