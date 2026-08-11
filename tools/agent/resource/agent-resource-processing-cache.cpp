@@ -23,6 +23,8 @@ std::string make_agent_resource_processing_cache_key(
         const common_runtime_resource_media_type & media_type,
         const agent_resource_processor & processor,
         const std::string & target_representation,
+        const std::string & target_media_type,
+        agent_resource_processing_purpose purpose,
         const std::optional<size_t> & page,
         const std::optional<agent_resource_byte_range> & range,
         const agent_resource_processing_limits & limits) {
@@ -33,6 +35,8 @@ std::string make_agent_resource_processing_cache_key(
     append_field(key, "resolved_mime=", common_normalize_resource_media_type(media_type.resolved_type));
     append_field(key, "processor=", processor.cache_key());
     append_field(key, "representation=", target_representation);
+    append_field(key, "target_mime=", common_normalize_resource_media_type(target_media_type));
+    append_field(key, "purpose=", std::to_string(static_cast<int>(purpose)));
     append_field(key, "declared_language=", source.metadata.declared_language);
     append_field(key, "resolved_language=", source.metadata.resolved_language);
     append_field(key, "page=", page ? std::to_string(*page) : "none");

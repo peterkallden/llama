@@ -107,6 +107,7 @@ when the corresponding verification record contains evidence for it.
 - [x] Tesseract OCR local/Docker/Kubernetes E2E is verified
 - [x] DOCX media detection and Pandoc text-processor contracts are covered by model-free CTests
 - [x] Local Pandoc DOCX E2E creates a derived text resource with preserved lineage
+- [x] Local Pandoc reverse E2E creates a DOCX artifact from a Markdown resource with preserved lineage
 - [ ] Isolated Docker/Kubernetes DOCX processing is verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract

@@ -343,6 +343,12 @@ struct agent_resource_processing_limits {
     size_t max_page_bytes = 0;
 };
 
+enum class agent_resource_processing_purpose {
+    normalization,
+    artifact_generation,
+    preview,
+};
+
 // Host-owned execution policy for an external resource processor. This does
 // not make the processor a model-selected tool; it only selects where the
 // host may run its typed processor request.
@@ -359,6 +365,8 @@ struct agent_resource_processing_request {
     agent_resource_read_authority authority;
     common_runtime_resource_media_type media_type;
     std::string target_representation = "text";
+    std::string target_media_type;
+    agent_resource_processing_purpose purpose = agent_resource_processing_purpose::normalization;
     std::optional<size_t> page;
     std::optional<agent_resource_byte_range> range;
     agent_resource_processing_limits limits;
@@ -398,6 +406,8 @@ struct agent_resource_processing_binding_request {
     agent_resource_read_authority authority;
     common_runtime_resource_media_type media_type;
     std::string target_representation = "text";
+    std::string target_media_type;
+    agent_resource_processing_purpose purpose = agent_resource_processing_purpose::normalization;
     std::optional<size_t> page;
     std::optional<agent_resource_byte_range> range;
     agent_resource_processing_limits limits;
@@ -429,9 +439,29 @@ public:
     // processors whose id already contains their version.
     virtual std::string cache_key() const { return id(); }
 
+    struct support {
+        bool supported = false;
+        int priority = 0;
+        bool lossy = false;
+        bool requires_sandbox = false;
+    };
+
     virtual bool supports(
-        const std::string & mime_type,
-        const std::string & target_representation) const = 0;
+            const std::string & mime_type,
+            const std::string & target_representation) const = 0;
+
+    virtual support supports(
+            const agent_resource_processing_request & request) const {
+        const std::string & resolved_type = request.media_type.resolved_type.empty()
+            ? request.source.mime_type
+            : request.media_type.resolved_type;
+        return {
+            supports(resolved_type, request.target_representation),
+            0,
+            false,
+            false,
+        };
+    }
 
     virtual agent_resource_processing_result process(
         const agent_resource_processing_request & request) const = 0;
@@ -465,6 +495,23 @@ public:
             }
         }
         return nullptr;
+    }
+
+    const agent_resource_processor * resolve(
+            const agent_resource_processing_request & request) const {
+        const agent_resource_processor * selected = nullptr;
+        agent_resource_processor::support selected_support;
+        for (const auto * processor : processors_) {
+            if (processor == nullptr) continue;
+            const auto candidate = processor->supports(request);
+            if (!candidate.supported ||
+                    (selected != nullptr && candidate.priority <= selected_support.priority)) {
+                continue;
+            }
+            selected = processor;
+            selected_support = candidate;
+        }
+        return selected;
     }
 
     size_t size() const {

@@ -11,6 +11,8 @@ struct agent_resource_processing_service_request {
     agent_resource_read_authority authority;
     common_runtime_resource_media_type media_type;
     std::string target_representation = "text";
+    std::string target_media_type;
+    agent_resource_processing_purpose purpose = agent_resource_processing_purpose::normalization;
     std::optional<size_t> page;
     std::optional<agent_resource_byte_range> range;
     agent_resource_processing_limits limits;

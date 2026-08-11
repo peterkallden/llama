@@ -1087,6 +1087,7 @@ The current processor catalog is intentionally small:
 | `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
 | `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 | `pandoc-docx-text-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `text` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, plain-text output and bounded output bytes |
+| `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1115,22 +1116,35 @@ selected language, confidence and source; changing language metadata or typed
 OCR options changes the cache identity and creates a new derived resource.
 Tesseract is resolved at runtime and is not a build or link-time dependency.
 
-The `pandoc-docx-text-v1` processor converts a validated Office Open XML
-document (`.docx`) to a derived `text/plain` resource through Pandoc. Pandoc
-is also a runtime dependency: it is not discovered by CMake and is not linked
-into the agent. The host may provide an executable name resolved through
-`PATH`, or an explicit executable path. The processor invokes Pandoc with
-typed, fixed arguments (`--from=docx`, `--to=plain`, `--wrap=none` and a
-host-controlled output path); arbitrary model-provided command-line arguments
-are never accepted. The source DOCX remains authoritative, and the derived
-text resource retains its parent lineage and processor provenance.
+The generic Pandoc processor currently has two registered directions:
+`pandoc-docx-text-v1` converts a validated Office Open XML document (`.docx`)
+to a derived `text/plain` resource, while `pandoc-markdown-docx-v1` converts a
+`text/markdown` resource to a derived DOCX artifact. Both use the same
+processor contract, registry, processing service, resource store and lineage
+rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
+not linked into the agent. The host may provide an executable name resolved
+through `PATH`, or an explicit executable path.
 
-The current DOCX representation is intentionally text-oriented. It is useful
+Processor selection now evaluates the existing boolean `supports` contract
+through a structured support result containing eligibility, priority, lossiness
+and sandbox requirements. The processing request also carries target MIME type
+and purpose (`normalization`, `artifact_generation` or `preview`). This keeps
+`DOCX -> text` and `Markdown -> DOCX` semantically distinct without creating a
+second artifact registry. The processor invokes Pandoc with typed, fixed
+arguments such as `--from`, `--to`, `--wrap=none` and a host-controlled output
+path; arbitrary model-provided command-line arguments are never accepted.
+Source and generated resources retain their parent lineage and processor
+provenance.
+
+The current DOCX ingestion representation is intentionally text-oriented. It is useful
 for feeding the existing bounded reads and MIME-independent chunking path, but
 plain text does not preserve all page layout, visual positioning, or complex
 table structure. Legacy `.doc` and macro-enabled `.docm` inputs are not part
 of this processor's current contract. Visual inspection and richer Office
-representations remain separate future processors.
+representations remain separate future processors. The reverse Markdown-to-DOCX
+direction is an artifact-generation path: its result is a bounded derived
+resource suitable for download/export, not an authoritative replacement for
+the Markdown source.
 
 The active execution-policy fields are representation-independent:
 

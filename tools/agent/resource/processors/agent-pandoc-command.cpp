@@ -20,11 +20,20 @@ std::string safe_file_name(const std::string & value) {
 
 } // namespace
 
-bool validate_agent_pandoc_docx_options(
-        const agent_pandoc_docx_options & options,
+bool validate_agent_pandoc_options(
+        const agent_pandoc_options & options,
         std::string & error) {
-    if (options.output_format != "text") {
-        error = "Pandoc DOCX output format must be text";
+    if (options.input_format != "docx" && options.input_format != "markdown") {
+        error = "Pandoc input format must be docx or markdown";
+        return false;
+    }
+    if (options.output_format != "plain" && options.output_format != "docx") {
+        error = "Pandoc output format must be plain or docx";
+        return false;
+    }
+    if (options.output_extension.empty() || options.output_extension.size() > 8 ||
+            options.output_extension.find_first_not_of("abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
+        error = "Pandoc output extension is invalid";
         return false;
     }
     if (options.max_output_bytes == 0 || options.max_output_bytes > 64 * 1024 * 1024) {
@@ -35,14 +44,14 @@ bool validate_agent_pandoc_docx_options(
     return true;
 }
 
-bool make_agent_pandoc_docx_request(
+bool make_agent_pandoc_request(
         agent_resource_backend_kind backend,
         const std::string & executable,
         const std::string & operation_id,
         const std::string & project_id,
         const std::string & workspace_id,
         const common_runtime_resource_ref & source,
-        const agent_pandoc_docx_options & options,
+        const agent_pandoc_options & options,
         common_agent_sandbox_request & request,
         std::string & error) {
     if (backend != agent_resource_backend_kind::local_pandoc) {
@@ -51,23 +60,23 @@ bool make_agent_pandoc_docx_request(
     }
     if (executable.empty() || operation_id.empty() || workspace_id.empty() ||
             source.uri.empty() || source.name.empty() ||
-            source.mime_type != "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-        error = "Pandoc DOCX request requires executable, operation, workspace and DOCX source identity";
+            source.mime_type.empty()) {
+        error = "Pandoc request requires executable, operation, workspace and source identity";
         return false;
     }
-    if (!validate_agent_pandoc_docx_options(options, error)) return false;
+    if (!validate_agent_pandoc_options(options, error)) return false;
 
     const std::string input_name = safe_file_name(source.name);
     if (input_name.empty()) {
         error = "DOCX source name cannot be represented as a safe staged filename";
         return false;
     }
-    const std::string output_name = "docx-text-" + input_name + ".txt";
+    const std::string output_name = "pandoc-output-" + input_name + "." + options.output_extension;
     request = {};
     request.operation_id = operation_id;
     request.project_id = project_id;
     request.workspace_id = workspace_id;
-    request.execution_class = "resource.processor.docx.text";
+    request.execution_class = "resource.processor.pandoc";
     request.workspace.input_resources.push_back(source);
     request.limits.timeout_ms = 120000;
     request.limits.max_output_bytes = options.max_output_bytes;
@@ -80,8 +89,8 @@ bool make_agent_pandoc_docx_request(
     request.command.working_directory = "/workspace/source";
     request.command.arguments = {
         "/workspace/source/" + input_name,
-        "--from=docx",
-        "--to=plain",
+        "--from=" + options.input_format,
+        "--to=" + options.output_format,
         "--wrap=none",
         "--output",
         "/workspace/artifacts/" + output_name,

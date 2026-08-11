@@ -65,6 +65,8 @@ agent_resource_processing_result agent_resource_processing_service::process(
     service_request.authority = request.authority;
     service_request.media_type = request.media_type;
     service_request.target_representation = request.target_representation;
+    service_request.target_media_type = request.target_media_type;
+    service_request.purpose = request.purpose;
     service_request.page = request.page;
     service_request.range = request.range;
     service_request.limits = request.limits;
@@ -98,8 +100,17 @@ agent_resource_processing_result agent_resource_processing_service::process(
             "resource.media_type_resolution_failed",
             std::move(error));
     }
-    const agent_resource_processor * processor =
-        registry_.resolve(media_type.resolved_type, request.target_representation);
+    agent_resource_processing_request selection_request;
+    selection_request.source = source;
+    selection_request.authority = request.authority;
+    selection_request.media_type = media_type;
+    selection_request.target_representation = request.target_representation;
+    selection_request.target_media_type = request.target_media_type;
+    selection_request.purpose = request.purpose;
+    selection_request.page = request.page;
+    selection_request.range = request.range;
+    selection_request.limits = request.limits;
+    const agent_resource_processor * processor = registry_.resolve(selection_request);
     if (processor == nullptr) {
         return processing_failure(
             "resource.unsupported_media_type",
@@ -144,6 +155,8 @@ agent_resource_processing_result agent_resource_processing_service::process(
         media_type,
         *processor,
         request.target_representation,
+        request.target_media_type,
+        request.purpose,
         request.page,
         request.range,
         request.limits);
@@ -185,6 +198,8 @@ agent_resource_processing_result agent_resource_processing_service::process(
     processing_request.authority = request.authority;
     processing_request.media_type = media_type;
     processing_request.target_representation = request.target_representation;
+    processing_request.target_media_type = request.target_media_type;
+    processing_request.purpose = request.purpose;
     processing_request.page = request.page;
     processing_request.range = request.range;
     processing_request.limits = request.limits;

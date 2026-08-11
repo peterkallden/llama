@@ -532,7 +532,7 @@ bool resolve_agent_host_tool_selection(
                     : (selected_ocr ? ocr_policy->second : docx_policy->second);
                 const std::string selected_execution_class = selected_page
                     ? "resource.processor.pdf.page_image"
-                    : (selected_ocr ? "resource.processor.ocr.tesseract" : "resource.processor.docx.text");
+                    : (selected_ocr ? "resource.processor.ocr.tesseract" : "resource.processor.pandoc");
                 const auto page_backend = selected_page && selected_policy.backend == "kubernetes"
                     ? "kubernetes"
                     : (selected_page || selected_ocr ? sandbox_backend : "local");
@@ -586,7 +586,7 @@ bool resolve_agent_host_tool_selection(
                 }
                 if (wants_docx_local) {
                     const auto & policy = docx_policy->second;
-                    auto processor = std::make_shared<agent_docx_text_processor>(
+                    auto processor = std::make_shared<agent_pandoc_processor>(
                         *host,
                         execution,
                         agent_resource_backend_kind::local_pandoc,

@@ -10,6 +10,8 @@ std::string make_agent_resource_processing_cache_key(
         const common_runtime_resource_media_type & media_type,
         const agent_resource_processor & processor,
         const std::string & target_representation,
+        const std::string & target_media_type,
+        agent_resource_processing_purpose purpose,
         const std::optional<size_t> & page,
         const std::optional<agent_resource_byte_range> & range,
         const agent_resource_processing_limits & limits);
