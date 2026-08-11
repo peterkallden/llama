@@ -332,6 +332,13 @@ all rows through the model. The first implementation remains limited to
 bounded inspection, schema, samples and deterministic data operations; advanced
 statistics, distributions, confidence intervals and charting are later layers.
 
+The first common contract slice is implemented in
+`common/agent/dataset-contracts.h`. It validates dataset references and
+descriptors without selecting a backend. Host limits cover source bytes,
+worksheet count, rows, columns, cells and generated datasets; materialization
+and query execution remain the responsibility of the configured data-store
+seam.
+
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used

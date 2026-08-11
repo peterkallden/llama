@@ -162,8 +162,9 @@ operates on authorized dataset references, and an exported artifact is a new
 derived resource. The current CSV/Cozo foundation does not yet prove XLSX
 worksheet inspection, Pandoc structured ingestion, dataset materialization or
 dataset-reference tool execution. The model-free Pandoc processor contract now
-covers XLSX-to-structured-JSON as an intermediate resource representation, but
-that is not yet worksheet dataset ingestion. The broader claims must be added
+covers XLSX-to-structured-JSON as an intermediate resource representation, and
+the common typed dataset reference/schema contract has its own passing CTest;
+neither is yet worksheet dataset ingestion. The broader claims must be added
 only after
 focused contract tests and a bounded end-to-end fixture pass. Advanced
 statistics, formula evaluation, workbook visual fidelity and full spreadsheet
