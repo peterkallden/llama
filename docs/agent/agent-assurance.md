@@ -105,6 +105,9 @@ when the corresponding verification record contains evidence for it.
 - [x] Local MuPDF E2E verifies PDF store input through PNG derived-resource persistence
 - [x] Isolated Docker/Kubernetes PDF page rendering is verified with the local MuPDF worker image
 - [x] Tesseract OCR local/Docker/Kubernetes E2E is verified
+- [x] DOCX media detection and Pandoc text-processor contracts are covered by model-free CTests
+- [x] Local Pandoc DOCX E2E creates a derived text resource with preserved lineage
+- [ ] Isolated Docker/Kubernetes DOCX processing is verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [ ] Full inference continuation and context compaction are verified
@@ -140,9 +143,10 @@ scheduling require separate verification before the assurance scope can claim
 them.
 
 Resource processors are organized below `tools/agent/resource/processors/`.
-The first local PDF processor handles bounded direct text-layer extraction only.
-It does not render pages, perform OCR, or expose a converter executable as a
-model-selected tool. Those representations require separate processors and
+The local PDF text processor handles bounded direct text-layer extraction, and
+the Pandoc DOCX processor handles bounded DOCX-to-text normalization. Neither
+exposes a converter executable as a model-selected tool. PDF rendering, OCR,
+and isolated DOCX processing require their respective processor and
 execution-provider assurance.
 
 ### Protocols and events

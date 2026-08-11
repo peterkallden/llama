@@ -7,6 +7,7 @@ enum class agent_resource_backend_kind {
     local_mupdf,
     local_ghostscript,
     local_tesseract,
+    local_pandoc,
     docker,
     kubernetes,
 };
@@ -18,6 +19,7 @@ struct agent_resource_backend_capabilities {
     bool has_mupdf = false;
     bool has_ghostscript = false;
     bool has_tesseract = false;
+    bool has_pandoc = false;
     bool has_docker = false;
     bool has_kubernetes = false;
 };
@@ -43,6 +45,8 @@ inline bool is_agent_resource_backend_available(
             return capabilities.has_ghostscript;
         case agent_resource_backend_kind::local_tesseract:
             return capabilities.has_tesseract;
+        case agent_resource_backend_kind::local_pandoc:
+            return capabilities.has_pandoc;
         case agent_resource_backend_kind::docker:
             return capabilities.has_docker;
         case agent_resource_backend_kind::kubernetes:

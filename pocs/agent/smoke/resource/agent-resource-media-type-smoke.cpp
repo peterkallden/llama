@@ -57,6 +57,16 @@ int main() {
     });
     if (!expect_media(json, "application/json", "application/json", true, "json")) return 1;
 
+    auto docx = resolve_agent_resource_media_type({
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        bytes({'P', 'K', 0x03, 0x04, 'x'}),
+        true,
+    });
+    if (!expect_media(docx,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            true, "docx")) return 1;
+
     auto binary_declared = resolve_agent_resource_media_type({
         "application/vnd.example.binary",
         bytes({'a', 0x00, 'b'}),
@@ -81,5 +91,6 @@ int main() {
     std::printf("pdf=%s\n", pdf.resolved_type.c_str());
     std::printf("png=%s\n", png.resolved_type.c_str());
     std::printf("json_verified=%d\n", json.content_verified ? 1 : 0);
+    std::printf("docx=%s\n", docx.resolved_type.c_str());
     return 0;
 }

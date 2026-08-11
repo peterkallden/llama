@@ -38,12 +38,29 @@ std::string detect_signature_media_type(const std::string & bytes) {
     return {};
 }
 
+bool has_zip_signature(const std::string & bytes) {
+    return starts_with_bytes(bytes, "PK\x03\x04", 4) ||
+        starts_with_bytes(bytes, "PK\x05\x06", 4) ||
+        starts_with_bytes(bytes, "PK\x07\x08", 4);
+}
+
 } // namespace
 
 common_runtime_resource_media_type resolve_agent_resource_media_type(
         const agent_resource_media_type_resolution_request & request) {
     common_runtime_resource_media_type media_type;
     media_type.declared_type = common_normalize_resource_media_type(request.declared_type);
+
+    // Office Open XML is a ZIP container, but a DOCX declaration plus a ZIP
+    // signature is enough for the bounded media-type decision. The processor
+    // performs the stronger full-package validation before execution.
+    if (media_type.declared_type ==
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+            has_zip_signature(request.sample_bytes)) {
+        media_type.resolved_type = media_type.declared_type;
+        media_type.content_verified = true;
+        return media_type;
+    }
 
     const auto signature_type = detect_signature_media_type(request.sample_bytes);
     if (!signature_type.empty()) {
