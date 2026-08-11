@@ -3,10 +3,78 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 
 using json = nlohmann::ordered_json;
 
 namespace {
+
+std::string inline_text(const json & value) {
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_array()) {
+        std::string result;
+        for (const auto & item : value) result += inline_text(item);
+        return result;
+    }
+    if (!value.is_object() || !value.contains("t")) return {};
+    const auto type = value["t"].get<std::string>();
+    if (type == "Str" || type == "Code" || type == "Math") {
+        if (value["c"].is_string()) return value["c"].get<std::string>();
+        if (value["c"].is_array() && !value["c"].empty() && value["c"].back().is_string()) return value["c"].back().get<std::string>();
+    }
+    if (type == "Space" || type == "SoftBreak" || type == "LineBreak") return " ";
+    if (value["c"].is_array()) {
+        std::string result;
+        for (const auto & item : value["c"]) result += inline_text(item);
+        return result;
+    }
+    return {};
+}
+
+std::string block_text(const json & blocks) {
+    std::string result;
+    if (!blocks.is_array()) return result;
+    for (const auto & block : blocks) {
+        if (!block.is_object() || !block.contains("t")) continue;
+        if (block["t"] == "Plain" || block["t"] == "Para") {
+            for (const auto & item : block.value("c", json::array())) result += inline_text(item);
+        }
+    }
+    return result;
+}
+
+bool table_rows(const json & rows, std::vector<json> & output, std::string & error) {
+    if (!rows.is_array()) { error = "Pandoc table rows are invalid"; return false; }
+    for (const auto & row : rows) {
+        if (!row.is_array() || row.size() < 2 || !row[1].is_array()) { error = "Pandoc table row is invalid"; return false; }
+        json values = json::array();
+        for (const auto & cell : row[1]) {
+            if (!cell.is_array() || cell.size() < 5) { error = "Pandoc table cell is invalid"; return false; }
+            values.push_back(block_text(cell[4]));
+        }
+        output.push_back(std::move(values));
+    }
+    return true;
+}
+
+common_agent_dataset_column_type inferred_type(const std::string & value) {
+    if (value.empty()) return common_agent_dataset_column_type::null_;
+    if (value == "true" || value == "false") return common_agent_dataset_column_type::boolean;
+    char * end = nullptr;
+    std::strtoll(value.c_str(), &end, 10);
+    if (end != nullptr && *end == '\0') return common_agent_dataset_column_type::integer;
+    std::strtod(value.c_str(), &end);
+    if (end != nullptr && *end == '\0') return common_agent_dataset_column_type::decimal;
+    return common_agent_dataset_column_type::string;
+}
+
+json typed_value(const std::string & value, common_agent_dataset_column_type type) {
+    if (type == common_agent_dataset_column_type::null_) return nullptr;
+    if (type == common_agent_dataset_column_type::boolean) return value == "true";
+    if (type == common_agent_dataset_column_type::integer) return std::stoll(value);
+    if (type == common_agent_dataset_column_type::decimal) return std::stod(value);
+    return value;
+}
 
 common_agent_dataset_column_type column_type(const std::string & value) {
     if (value == "null") return common_agent_dataset_column_type::null_;
@@ -27,6 +95,69 @@ bool read_size(const json & object, const char * key, size_t & value) {
 }
 
 } // namespace
+
+bool normalize_agent_pandoc_workbook_json(
+        const std::string & pandoc_json,
+        std::string & worksheet_json,
+        std::string & error) {
+    const auto root = json::parse(pandoc_json, nullptr, false);
+    if (!root.is_object() || !root.contains("blocks") || !root["blocks"].is_array()) {
+        error = "Pandoc workbook JSON requires blocks";
+        return false;
+    }
+    json envelope = {{"worksheets", json::array()}};
+    std::string sheet_name;
+    size_t sheet_index = 0;
+    for (const auto & block : root["blocks"]) {
+        if (!block.is_object() || !block.contains("t")) continue;
+        if (block["t"] == "Header") {
+            const auto content = block.value("c", json::array());
+            if (content.is_array() && content.size() >= 3) sheet_name = inline_text(content[2]);
+            continue;
+        }
+        if (block["t"] != "Table") continue;
+        const auto content = block.value("c", json::array());
+        if (!content.is_array() || content.size() < 5) { error = "Pandoc table shape is unsupported"; return false; }
+        std::vector<json> header_rows;
+        const auto & head = content[3];
+        if (head.is_array() && head.size() >= 2) if (!table_rows(head[1], header_rows, error)) return false;
+        if (header_rows.empty()) { error = "Pandoc table has no header row"; return false; }
+        std::vector<std::string> names;
+        for (size_t index = 0; index < header_rows.front().size(); ++index) {
+            std::string name = header_rows.front()[index].get<std::string>();
+            names.push_back(name.empty() ? "column_" + std::to_string(index + 1) : name);
+        }
+        std::vector<json> value_rows;
+        for (const auto & body : content[4]) {
+            if (body.is_array() && body.size() >= 4 && !table_rows(body[3], value_rows, error)) return false;
+        }
+        std::vector<common_agent_dataset_column_type> types(names.size(), common_agent_dataset_column_type::null_);
+        for (const auto & values : value_rows) for (size_t index = 0; index < names.size() && index < values.size(); ++index) {
+            const auto type = inferred_type(values[index].get<std::string>());
+            if (type == common_agent_dataset_column_type::string) types[index] = type;
+            else if (types[index] == common_agent_dataset_column_type::null_) types[index] = type;
+            else if (types[index] != type) types[index] = common_agent_dataset_column_type::string;
+        }
+        json worksheet = {{"name", sheet_name.empty() ? "Sheet_" + std::to_string(sheet_index + 1) : sheet_name},
+            {"index", sheet_index++}, {"columns", json::array()}, {"rows", json::array()}};
+        for (size_t index = 0; index < names.size(); ++index) worksheet["columns"].push_back({
+            {"name", names[index]}, {"type", common_agent_dataset_column_type_name(types[index])}, {"nullable", true}});
+        for (const auto & values : value_rows) {
+            json row = json::object();
+            for (size_t index = 0; index < names.size(); ++index) {
+                const std::string value = index < values.size() ? values[index].get<std::string>() : std::string();
+                row[names[index]] = typed_value(value, types[index]);
+            }
+            worksheet["rows"].push_back(std::move(row));
+        }
+        envelope["worksheets"].push_back(std::move(worksheet));
+        sheet_name.clear();
+    }
+    if (envelope["worksheets"].empty()) { error = "Pandoc workbook JSON contains no tables"; return false; }
+    worksheet_json = envelope.dump();
+    error.clear();
+    return true;
+}
 
 bool import_agent_worksheet_envelope(
         common_agent_data_store & store,

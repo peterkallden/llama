@@ -24,3 +24,9 @@ bool import_agent_worksheet_envelope(
         std::vector<common_agent_dataset_descriptor> & imported,
         std::string & error);
 
+// Normalizes the Pandoc JSON AST emitted by the shared Pandoc processor into
+// the bounded worksheet envelope consumed by the dataset importer.
+bool normalize_agent_pandoc_workbook_json(
+        const std::string & pandoc_json,
+        std::string & worksheet_json,
+        std::string & error);

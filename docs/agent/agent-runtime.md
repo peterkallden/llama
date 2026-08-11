@@ -340,14 +340,16 @@ and query execution remain the responsibility of the configured data-store
 seam.
 
 The first importer slice is implemented in
-`tools/agent/data/agent-dataset-importer.*`. It accepts a bounded,
-host-normalized worksheet envelope, creates one immutable dataset descriptor per
-worksheet and streams each row through the existing data-store `put_row` seam.
-The envelope is deliberately an adapter boundary: converting Pandoc's native
-AST into that envelope is still a separate step, and the raw Pandoc JSON must
-not be mistaken for the canonical dataset model. A backend that does not
-implement ingestion fails explicitly rather than falling back to a second
-store or returning rows through the model context.
+`tools/agent/data/agent-dataset-importer.*`. It normalizes the bounded Pandoc
+table AST into a worksheet envelope, creates one immutable dataset descriptor
+per worksheet and streams each row through the existing data-store `put_row`
+seam. The envelope is deliberately an adapter boundary: raw Pandoc JSON must
+not be mistaken for the canonical dataset model. The initial AST adapter
+supports table headers, simple text cells and deterministic scalar type
+inference; layout, formulas and workbook-only metadata remain explicit
+limitations. A backend that does not implement ingestion fails explicitly
+rather than falling back to a second store or returning rows through the model
+context.
 
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
