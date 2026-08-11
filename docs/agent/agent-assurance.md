@@ -216,6 +216,41 @@ Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
 passes.
 
+### Latest verification - 2026-08-11 full agent/resource assurance
+
+- Branch: `kallden/agent-resource-tools`
+- Commit: `52cb88a53`
+- Build: Windows/MSVC Debug, Cozo-enabled, `E:\llama-builds\agent-resource-tools-msvc-debug-fast`, four build threads
+- Build result: passed (`112/112` build steps)
+- CTest result: passed (`47/47` tests in `-L agent`, `0` failed, `0` not-run)
+- Model-free resource smoke result: passed for the focused contract, backend,
+  lineage, chunking, PDF, OCR, host-adapter, local PDF/OCR E2E, Docker
+  sandbox, Docker PDF/OCR E2E, and Kubernetes PDF/OCR E2E checks
+- Docker result: passed; Docker Engine `29.6.1` and the local
+  `llama-agent-pdf-ocr-worker:local` image were available
+- Kubernetes result: passed for the PDF/OCR E2E; the configured node was
+  `Ready`. The generic Kubernetes sandbox smoke reported its backend exercise
+  as skipped and is therefore not counted as passed coverage.
+- Qwen model result: the static Qwen chat smoke passed with
+  `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`
+- Nomic model result: the embedding add/search diagnostics loaded
+  `nomic-embed-text-v1.5.Q4_K_M.gguf`, added the test note, generated a query
+  embedding, and returned the stored note
+- Qwen/Nomic agent result: not complete. The current Debug `llama-agent`
+  executable reports that plan Cozo support is unavailable when a plan DB is
+  requested; a bounded reflective run without a plan DB remained too slow on
+  the test CPU and was stopped. This is not counted as model-backed agent
+  assurance.
+- Not-run/qualified: full model-backed plan/continuation flow, derived-resource
+  cache reuse, and full general context compaction remain outside this run
+- Environment note: CMake UI asset download was unavailable in the isolated
+  environment; CMake used its documented no-embedded-UI fallback. This did not
+  affect the agent build or the executed agent tests.
+
+This checkpoint is the current top-level evidence record. Earlier verification
+blocks below are retained as historical records and are intentionally ordered
+after this checkpoint.
+
 ### Resident server-context initialization verification - 2026-08-07
 
 | Field | Value |
