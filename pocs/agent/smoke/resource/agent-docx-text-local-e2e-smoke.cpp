@@ -2,17 +2,23 @@
 #include "tools/agent/resource/agent-resource-store.h"
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
 #include "agent/sandbox-local-runtime.h"
+#include "agent/sandbox-docker-runtime.h"
+#include "agent/sandbox-kubernetes-runtime.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <string>
 
 int main(int argc, char ** argv) {
     const std::string pandoc = argc > 1 ? argv[1] : "pandoc";
     const std::filesystem::path source_path = argc > 2
         ? argv[2] : std::filesystem::path("E:/tools/pandoc-3.10.1/docx-smoke.docx");
+    const std::string backend = argc > 3 ? argv[3] : "local";
+    const std::string image = argc > 4 ? argv[4] : "llama-agent-pdf-ocr-worker:local";
     std::ifstream input(source_path, std::ios::binary);
     if (!input) {
         std::cerr << "could not open DOCX fixture: " << source_path.string() << "\n";
@@ -39,14 +45,36 @@ int main(int argc, char ** argv) {
     agent_resource_descriptor source;
     assert(store.put_bytes(put, source, error));
 
-    common_agent_sandbox_local_runtime runtime;
+    std::unique_ptr<common_agent_sandbox_runtime> runtime;
+    agent_resource_backend_kind processor_backend = agent_resource_backend_kind::local_pandoc;
+    if (backend == "docker") {
+        runtime = std::make_unique<common_agent_sandbox_docker_runtime>(
+            common_agent_docker_sandbox_config{"docker", image});
+        processor_backend = agent_resource_backend_kind::docker;
+    } else if (backend == "kubernetes") {
+        common_agent_kubernetes_sandbox_config config;
+        config.executable = "kubectl";
+        config.insecure_skip_tls_verify = true;
+        config.namespace_name = "default";
+        config.staging_image = "alpine:3.20";
+        config.pvc_retention = "project";
+        config.cleanup = std::getenv("LLAMA_AGENT_K8S_KEEP") == nullptr;
+        runtime = std::make_unique<common_agent_sandbox_kubernetes_runtime>(config);
+        processor_backend = agent_resource_backend_kind::kubernetes;
+    } else if (backend == "local") {
+        runtime = std::make_unique<common_agent_sandbox_local_runtime>();
+    } else {
+        std::cerr << "unsupported E2E backend: " << backend << "\n";
+        return 2;
+    }
     common_agent_sandbox_policy policy;
     policy.execution_class = "resource.processor.pandoc";
+    if (backend != "local") policy.image = image;
     policy.limits.timeout_ms = 120000;
     policy.limits.max_output_bytes = 4 * 1024 * 1024;
     policy.network = common_agent_sandbox_network_scope::none;
     policy.filesystem = common_agent_sandbox_filesystem_scope::artifact_write;
-    agent_sandbox_resource_processing_host host(runtime, policy);
+    agent_sandbox_resource_processing_host host(*runtime, policy);
     const auto workspace_root = std::filesystem::temp_directory_path() / "llama-agent-docx-e2e-workspaces";
     const auto artifact_root = std::filesystem::temp_directory_path() / "llama-agent-docx-e2e-artifacts";
     common_agent_workspace_manager workspace_manager({workspace_root.string(), artifact_root.string()});
@@ -66,13 +94,13 @@ int main(int argc, char ** argv) {
     context.workspace.session_id = "docx-e2e-session";
     context.workspace.turn_id = "docx-e2e-turn";
     agent_pandoc_processor processor(
-        host, context, agent_resource_backend_kind::local_pandoc, pandoc);
+        host, context, processor_backend, backend == "local" ? pandoc : "pandoc");
     agent_pandoc_options reverse_options;
     reverse_options.input_format = "markdown";
     reverse_options.output_format = "docx";
     reverse_options.output_extension = "docx";
     agent_pandoc_processor reverse_processor(
-        host, context, agent_resource_backend_kind::local_pandoc, pandoc, reverse_options);
+        host, context, processor_backend, backend == "local" ? pandoc : "pandoc", reverse_options);
     agent_resource_processor_registry registry;
     assert(registry.add(processor, error));
     assert(registry.add(reverse_processor, error));

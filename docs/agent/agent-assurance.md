@@ -145,10 +145,11 @@ them.
 
 Resource processors are organized below `tools/agent/resource/processors/`.
 The local PDF text processor handles bounded direct text-layer extraction, and
-the Pandoc DOCX processor handles bounded DOCX-to-text normalization. Neither
+the generic Pandoc processor handles DOCX-to-text and Markdown-to-DOCX. Neither
 exposes a converter executable as a model-selected tool. PDF rendering, OCR,
-and isolated DOCX processing require their respective processor and
-execution-provider assurance.
+and isolated DOCX processing require their respective execution-provider
+assurance; the DOCX sandbox E2E is available as an explicit Docker/Kubernetes
+run but is not checked until that live environment has passed.
 
 ### Protocols and events
 

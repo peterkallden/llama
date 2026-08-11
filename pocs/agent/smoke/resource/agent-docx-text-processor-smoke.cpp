@@ -80,6 +80,18 @@ int main() {
     assert(host.last_request.command.arguments[1] == "--from=markdown");
     assert(host.last_request.command.arguments[2] == "--to=docx");
 
+    agent_pandoc_processor docker_processor(
+        host, context, agent_resource_backend_kind::docker, "pandoc");
+    const auto docker_result = docker_processor.process(request);
+    assert(docker_result.success);
+    assert(host.last_request.command.program == "pandoc");
+    assert(host.last_request.execution_class == "resource.processor.pandoc");
+
+    agent_pandoc_processor kubernetes_processor(
+        host, context, agent_resource_backend_kind::kubernetes, "pandoc");
+    const auto kubernetes_result = kubernetes_processor.process(request);
+    assert(kubernetes_result.success);
+
     request.source_bytes = "PK not a docx";
     const auto invalid = processor.process(request);
     assert(!invalid.success);

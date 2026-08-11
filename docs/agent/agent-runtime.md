@@ -1047,8 +1047,8 @@ an external executable and is not a build or link-time dependency.
 
 The same E2E executable can run with the locally built
 `llama-agent-pdf-ocr-worker:local` image using Docker or the Kubernetes Job
-runtime. The image contains both MuPDF and Tesseract so the E2E can exercise
-PDF page rendering followed by OCR without changing the processor contract.
+runtime. The image contains MuPDF, Pandoc and Tesseract so the E2E can exercise
+PDF rendering, DOCX processing and OCR without changing the processor contract.
 It is defined by `docker/agent/pdf-ocr-worker.Dockerfile`; it is a
 test/development worker image, not a production registry reference.
 Kubernetes E2E uses the active host policy image and keeps TLS verification
@@ -1200,10 +1200,25 @@ When `docx.text` is configured, the same operation-scoped host assembly can
 install the local Pandoc processor without adding a model-visible `pandoc`
 tool. `local_preferred` with `backend=auto` uses the configured executable or
 host `PATH`; `local_required` fails closed if Pandoc cannot be started. Docker
-and Kubernetes execution for DOCX is not claimed by the current processor
-milestone because the existing isolated worker images are PDF/OCR-specific.
-Adding such a worker should reuse the same processor and execution-provider
+and Kubernetes execution for DOCX use the same isolated worker image and
+existing execution-provider contracts. The worker command remains the
+host-typed `pandoc` invocation; the model does not select an executable. The
+DOCX sandbox path is architecturally implemented, while live Docker and
+Kubernetes execution remain environment-dependent assurance runs. Adding a
+different worker image should reuse the same processor and execution-provider
 contracts rather than add a DOCX-specific queue or scheduler.
+
+The parameterized model-free E2E can be invoked as follows:
+
+```text
+llama-agent-docx-text-local-e2e-smoke.exe <pandoc-path> <docx-fixture> local
+llama-agent-docx-text-local-e2e-smoke.exe pandoc <docx-fixture> docker llama-agent-pdf-ocr-worker:local
+llama-agent-docx-text-local-e2e-smoke.exe pandoc <docx-fixture> kubernetes llama-agent-pdf-ocr-worker:local
+```
+
+The first form uses the local runtime; the latter two select the existing
+Docker or Kubernetes sandbox runtime and run both DOCX-to-text and
+Markdown-to-DOCX through the same registry and resource service.
 
 The processor-specific options are host-owned typed options and must not become
 model-controlled raw flags. Resource language metadata may be supplied

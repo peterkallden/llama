@@ -488,24 +488,30 @@ bool resolve_agent_host_tool_selection(
                     return (policy.execution == "sandbox_preferred" || policy.execution == "sandbox_required") &&
                         (policy.backend == "auto" || policy.backend == sandbox_backend);
                 };
-                if ((!has_page_policy || !wants_sandbox(page_policy->second)) &&
-                        (!has_ocr_policy || !wants_sandbox(ocr_policy->second)) &&
-                        (!has_docx_policy ||
-                         docx_policy->second.execution == "sandbox_required" ||
-                         (docx_policy->second.backend != "auto" &&
-                          docx_policy->second.backend != "local"))) {
-                    return std::shared_ptr<agent_resource_processing_provider>();
-                }
                 const bool wants_docx_local = has_docx_policy &&
-                    docx_policy->second.execution != "sandbox_required" &&
+                    (docx_policy->second.execution == "local_preferred" ||
+                     docx_policy->second.execution == "local_required") &&
                     (docx_policy->second.backend == "auto" ||
                      docx_policy->second.backend == "local");
+                const bool wants_docx_sandbox = has_docx_policy &&
+                    (docx_policy->second.execution == "sandbox_preferred" ||
+                     docx_policy->second.execution == "sandbox_required") &&
+                    (docx_policy->second.backend == "auto" ||
+                     docx_policy->second.backend == sandbox_backend);
+                if ((!has_page_policy || !wants_sandbox(page_policy->second)) &&
+                        (!has_ocr_policy || !wants_sandbox(ocr_policy->second)) &&
+                        (!has_docx_policy || (!wants_docx_local && !wants_docx_sandbox))) {
+                    return std::shared_ptr<agent_resource_processing_provider>();
+                }
 
-                auto make_policy = [&sandbox_classes, &sandbox_defaults](const std::string & execution_class) {
+                auto make_policy = [&sandbox_classes, &sandbox_defaults](
+                        const std::string & execution_class,
+                        const std::string & image) {
                     auto policy = sandbox_defaults;
                     const auto it = sandbox_classes.find(execution_class);
                     if (it != sandbox_classes.end()) policy = it->second;
                     policy.execution_class = execution_class;
+                    if (!image.empty()) policy.image = image;
                     return policy;
                 };
 
@@ -527,33 +533,38 @@ bool resolve_agent_host_tool_selection(
                 std::shared_ptr<agent_resource_processing_host> host;
                 const bool selected_page = has_page_policy && wants_sandbox(page_policy->second);
                 const bool selected_ocr = !selected_page && has_ocr_policy && wants_sandbox(ocr_policy->second);
+                const bool selected_docx = !selected_page && !selected_ocr &&
+                    (wants_docx_local || wants_docx_sandbox);
                 const auto & selected_policy = selected_page
                     ? page_policy->second
                     : (selected_ocr ? ocr_policy->second : docx_policy->second);
                 const std::string selected_execution_class = selected_page
                     ? "resource.processor.pdf.page_image"
                     : (selected_ocr ? "resource.processor.ocr.tesseract" : "resource.processor.pandoc");
-                const auto page_backend = selected_page && selected_policy.backend == "kubernetes"
-                    ? "kubernetes"
-                    : (selected_page || selected_ocr ? sandbox_backend : "local");
-                if (page_backend == "docker") {
+                const auto execution_backend = selected_docx
+                    ? (wants_docx_local ? "local" :
+                       (selected_policy.backend == "kubernetes" ? "kubernetes" : sandbox_backend))
+                    : (selected_page && selected_policy.backend == "kubernetes"
+                        ? "kubernetes"
+                        : sandbox_backend);
+                if (execution_backend == "docker") {
                     auto value = std::make_shared<agent_sandbox_resource_processing_host>(
                         *docker_runtime_for_processors,
-                        make_policy(selected_execution_class));
+                        make_policy(selected_execution_class, selected_policy.image));
                     value->set_workspace_manager(workspace_manager_for_processors.get());
                     value->set_resource_store(bound_resource_store_for_processors, binding.authority);
                     host = std::move(value);
-                } else if (page_backend == "kubernetes") {
+                } else if (execution_backend == "kubernetes") {
                     auto value = std::make_shared<agent_sandbox_resource_processing_host>(
                         *kubernetes_runtime_for_processors,
-                        make_policy(selected_execution_class));
+                        make_policy(selected_execution_class, selected_policy.image));
                     value->set_workspace_manager(workspace_manager_for_processors.get());
                     value->set_resource_store(bound_resource_store_for_processors, binding.authority);
                     host = std::move(value);
-                } else if (page_backend == "local" && wants_docx_local) {
+                } else if (execution_backend == "local" && wants_docx_local) {
                     auto value = std::make_shared<agent_sandbox_resource_processing_host>(
                         *local_runtime_for_processors,
-                        make_policy(selected_execution_class));
+                        make_policy(selected_execution_class, selected_policy.image));
                     value->set_workspace_manager(workspace_manager_for_processors.get());
                     value->set_resource_store(bound_resource_store_for_processors, binding.authority);
                     host = std::move(value);
@@ -590,6 +601,19 @@ bool resolve_agent_host_tool_selection(
                         *host,
                         execution,
                         agent_resource_backend_kind::local_pandoc,
+                        policy.executable.empty() ? "pandoc" : policy.executable);
+                    if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
+                    processors.push_back(std::move(processor));
+                }
+                if (wants_docx_sandbox) {
+                    const auto & policy = docx_policy->second;
+                    const auto backend = policy.backend == "kubernetes"
+                        ? agent_resource_backend_kind::kubernetes
+                        : agent_resource_backend_kind::docker;
+                    auto processor = std::make_shared<agent_pandoc_processor>(
+                        *host,
+                        execution,
+                        backend,
                         policy.executable.empty() ? "pandoc" : policy.executable);
                     if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
                     processors.push_back(std::move(processor));
