@@ -149,11 +149,22 @@ them.
 
 Resource processors are organized below `tools/agent/resource/processors/`.
 The local PDF text processor handles bounded direct text-layer extraction, and
-the generic Pandoc processor handles DOCX-to-text and Markdown-to-DOCX. Neither
+the generic Pandoc processor handles DOCX-to-text, Markdown-to-DOCX, ODT/HTML
+normalization and the planned structured spreadsheet direction. Neither
 exposes a converter executable as a model-selected tool. PDF rendering, OCR,
 and isolated DOCX processing require their respective execution-provider
 assurance; the DOCX sandbox E2E is available as an explicit Docker/Kubernetes
 run but is not checked until that live environment has passed.
+
+Dataset handling remains a separate assurance track. A resource is the
+authoritative source, a dataset is a typed analytical handle, a data tool
+operates on authorized dataset references, and an exported artifact is a new
+derived resource. The current CSV/Cozo foundation does not yet prove XLSX
+worksheet inspection, Pandoc structured ingestion, dataset materialization or
+dataset-reference tool execution. Those claims must be added only after
+focused contract tests and a bounded end-to-end fixture pass. Advanced
+statistics, formula evaluation, workbook visual fidelity and full spreadsheet
+feature preservation remain explicitly out of scope for the first slice.
 
 ### Protocols and events
 

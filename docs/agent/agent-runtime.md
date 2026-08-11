@@ -245,10 +245,10 @@ do not select implementations or host paths.
 | `diagnostics.symbol` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | clangd/LSP or project-index backend and definition-kind ranking |
 | `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | Semantic references, reference kinds and project-index persistence |
 | `diagnostics.call_hierarchy` | Host-native analysis | Semantic-provider contract; unavailable without a provider | Experimental | clangd/LSP callers/callees, depth bounds and project-index persistence |
-| `dataset.list` | Host-native | Lists CSV, JSON and Parquet files below the controlled root | Limited | Dataset registry, permissions/provenance and non-file sources |
-| `dataset.inspect` | Host-native | Returns bounded path, format and size metadata | Limited | Complete format metadata and schema-aware inspection |
-| `dataset.schema` | Host-native | Returns a first CSV column schema | Limited | JSON/Parquet support, type inference confidence and constraints |
-| `dataset.sample` | Host-native | Returns a bounded CSV head sample | Limited | Random/stratified sampling, seed handling and non-CSV backends |
+| `dataset.list` | Host-native | Lists bounded host-approved dataset references and legacy files | Limited | Dataset registry, permissions/provenance and non-file sources |
+| `dataset.inspect` | Host-native | Returns bounded dataset identity, source and shape metadata | Limited | Workbook/sheet metadata and richer lineage |
+| `dataset.schema` | Host-native | Returns a bounded typed column schema | Limited | Type confidence, constraints and backend parity |
+| `dataset.sample` | Host-native | Returns a bounded sample from a dataset reference | Limited | Random/stratified sampling, seed handling and non-Cozo backends |
 | `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules | Limited | Range/type/regex rules, validation profiles and artifact reports |
 | `data.query` | Store-backed | Executes a bounded backend-neutral structured query | Limited | Broader query language, materialized inputs and backend parity |
 | `data.filter` | Store-backed | Applies declarative predicates through the configured data store | Limited | More operators, typed values and derived dataset artifacts |
@@ -259,7 +259,7 @@ do not select implementations or host paths.
 | `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Limited | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
-| `artifact.export` | Store-backed artifact | Publishes bounded text through the host resource store | Limited | Binary formats, dataset export and richer provenance/retention policy |
+| `artifact.export` | Store-backed artifact | Publishes bounded text or dataset results through the host resource store | Limited | Binary formats and richer provenance/retention policy |
 
 Maturity is a capability status, not a quality rating:
 
@@ -284,6 +284,58 @@ seam. Charts and richer artifact conversion remain follow-up work. Semantic
 symbol analysis now has an explicit host-owned provider seam, while the default
 build uses a bounded text fallback when no semantic index is available. No data backend is implicitly selected when the
 host has not configured one.
+
+#### Resource, dataset, tool and artifact boundaries
+
+These concepts intentionally remain separate:
+
+* A **resource** owns authoritative bytes, media type, scope and source
+  provenance. A resource processor may create a derived representation, but it
+  does not replace the original resource.
+* A **dataset** is a structured analytical handle. It owns tabular schema,
+  rows, dataset-level lineage and backend identity; it is not a specialized
+  resource and should not be serialized into the model context as a large JSON
+  value.
+* A **data tool** is a model-visible semantic operation over authorized dataset
+  references. Spreadsheet parsing and backend-specific query details remain
+  host-owned infrastructure.
+* An **artifact** is a user-facing exported resource derived from a dataset or
+  result. Export must preserve the dataset/source provenance without mutating
+  the input dataset.
+
+The first spreadsheet direction follows the existing processor seam:
+
+```text
+authoritative XLSX resource
+    -> Pandoc-derived structured representation
+    -> bounded worksheet selection/import
+    -> dataset reference in the configured data store
+    -> dataset tools and immutable derived datasets
+    -> optional artifact export
+```
+
+Pandoc is an implementation of the resource-processing step, not the dataset
+abstraction. Its structured output is an intermediate representation that a
+dataset importer validates and materializes. Each worksheet remains a separate
+dataset; a workbook is not silently flattened into one CSV. The initial
+direction is intentionally bounded and does not promise preservation of every
+spreadsheet feature, such as VBA, visual layout, named ranges, hidden-sheet
+semantics or formula evaluation. Formula metadata and richer workbook
+inspection can be added without changing the resource/dataset boundary.
+
+Dataset contracts should retain typed columns, nullability, stable dataset
+identity, source workbook/sheet/range provenance and immutable operation
+lineage. This is also the foundation for later statistical analysis: future
+descriptive or inferential tools can consume typed dataset references and
+report their sampling, missing-value and assumption policies without moving
+all rows through the model. The first implementation remains limited to
+bounded inspection, schema, samples and deterministic data operations; advanced
+statistics, distributions, confidence intervals and charting are later layers.
+
+Large dataset results stay external. Only bounded schemas, samples, summaries
+and dataset references enter the active model context. Resource chunking is
+reserved for semantic reading of representations; dataset operations are used
+for deterministic tabular computation.
 
 The namespaced names are canonical in the catalog, native registry and
 resolved profile snapshots. Host configuration, profiles and model-visible
