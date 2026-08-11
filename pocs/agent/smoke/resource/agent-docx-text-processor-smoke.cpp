@@ -92,6 +92,60 @@ int main() {
     const auto kubernetes_result = kubernetes_processor.process(request);
     assert(kubernetes_result.success);
 
+    agent_pandoc_options odt_options;
+    odt_options.input_format = "odt";
+    odt_options.output_format = "markdown";
+    odt_options.output_extension = "md";
+    agent_pandoc_processor odt_processor(
+        host, context, agent_resource_backend_kind::local_pandoc,
+        "E:\\tools\\pandoc-3.10.1\\pandoc.exe", odt_options);
+    agent_resource_processing_request odt_request;
+    odt_request.source.uri = "agent-resource://document/report.odt";
+    odt_request.source.name = "report.odt";
+    odt_request.source.mime_type = "application/vnd.oasis.opendocument.text";
+    odt_request.source.size_bytes = 4096;
+    odt_request.source_bytes = "PK fake content.xml";
+    odt_request.target_representation = "text";
+    odt_request.target_media_type = "text/markdown";
+    odt_request.limits.max_output_bytes = 1024;
+    const auto odt_result = odt_processor.process(odt_request);
+    assert(odt_result.success);
+    assert(odt_result.processor_id == "pandoc-odt-markdown-v1");
+    assert(odt_result.outputs.size() == 1);
+    assert(odt_result.outputs[0].mime_type == "text/markdown");
+    assert(odt_result.outputs[0].lineage.parent_uri == odt_request.source.uri);
+    assert(host.last_request.command.arguments[1] == "--from=odt");
+    assert(host.last_request.command.arguments[2] == "--to=markdown");
+
+    agent_pandoc_options html_options;
+    html_options.input_format = "html";
+    html_options.output_format = "markdown";
+    html_options.output_extension = "md";
+    agent_pandoc_processor html_processor(
+        host, context, agent_resource_backend_kind::docker, "pandoc", html_options);
+    agent_resource_processing_request html_request;
+    html_request.source.uri = "agent-resource://document/report.html";
+    html_request.source.name = "report.html";
+    html_request.source.mime_type = "text/html";
+    html_request.source.size_bytes = 256;
+    html_request.source_bytes = "<html><body><h1>Heading</h1></body></html>";
+    html_request.target_representation = "text";
+    html_request.target_media_type = "text/markdown";
+    html_request.limits.max_output_bytes = 1024;
+    const auto html_result = html_processor.process(html_request);
+    assert(html_result.success);
+    assert(html_result.processor_id == "pandoc-html-markdown-v1");
+    assert(html_result.outputs[0].mime_type == "text/markdown");
+    assert(host.last_request.command.program == "pandoc");
+    assert(host.last_request.command.arguments[1] == "--from=html");
+    assert(host.last_request.command.arguments[2] == "--to=markdown");
+
+    agent_pandoc_options unsupported_options;
+    unsupported_options.input_format = "html";
+    unsupported_options.output_format = "docx";
+    std::string validation_error;
+    assert(!validate_agent_pandoc_options(unsupported_options, validation_error));
+
     request.source_bytes = "PK not a docx";
     const auto invalid = processor.process(request);
     assert(!invalid.success);

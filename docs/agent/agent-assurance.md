@@ -18,6 +18,10 @@ when the corresponding verification record contains evidence for it.
 - Scope: reflective, deliberate, research, tools, sessions, scheduling,
   resources, memory, plans, daemon, JSONL, and MCP hosts
 
+The latest resource-processor extension also covers the model-free Pandoc
+direction contracts for ODT-to-Markdown and HTML-to-Markdown. Live sandbox
+execution remains environment-dependent and is not claimed by this entry.
+
 ## Gate definitions
 
 ### Build

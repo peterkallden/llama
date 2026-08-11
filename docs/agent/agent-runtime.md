@@ -1088,6 +1088,8 @@ The current processor catalog is intentionally small:
 | `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 | `pandoc-docx-text-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `text` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, plain-text output and bounded output bytes |
 | `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
+| `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
+| `pandoc-html-markdown-v1` | `text/html` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1116,10 +1118,12 @@ selected language, confidence and source; changing language metadata or typed
 OCR options changes the cache identity and creates a new derived resource.
 Tesseract is resolved at runtime and is not a build or link-time dependency.
 
-The generic Pandoc processor currently has two registered directions:
+The generic Pandoc processor currently has four registered directions:
 `pandoc-docx-text-v1` converts a validated Office Open XML document (`.docx`)
 to a derived `text/plain` resource, while `pandoc-markdown-docx-v1` converts a
-`text/markdown` resource to a derived DOCX artifact. Both use the same
+`text/markdown` resource to a derived DOCX artifact. `pandoc-odt-markdown-v1`
+and `pandoc-html-markdown-v1` normalize OpenDocument Text and HTML resources to
+derived `text/markdown` resources. All four use the same
 processor contract, registry, processing service, resource store and lineage
 rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
 not linked into the agent. The host may provide an executable name resolved
@@ -1129,7 +1133,7 @@ Processor selection now evaluates the existing boolean `supports` contract
 through a structured support result containing eligibility, priority, lossiness
 and sandbox requirements. The processing request also carries target MIME type
 and purpose (`normalization`, `artifact_generation` or `preview`). This keeps
-`DOCX -> text` and `Markdown -> DOCX` semantically distinct without creating a
+`DOCX -> text`, `ODT/HTML -> Markdown` and `Markdown -> DOCX` semantically distinct without creating a
 second artifact registry. The processor invokes Pandoc with typed, fixed
 arguments such as `--from`, `--to`, `--wrap=none` and a host-controlled output
 path; arbitrary model-provided command-line arguments are never accepted.
@@ -1145,6 +1149,13 @@ representations remain separate future processors. The reverse Markdown-to-DOCX
 direction is an artifact-generation path: its result is a bounded derived
 resource suitable for download/export, not an authoritative replacement for
 the Markdown source.
+
+ODT and HTML normalization is also intentionally semantic-text oriented. The
+derived Markdown is suitable for bounded reads, chunking and synthesis, but it
+does not preserve every layout detail, stylesheet rule, embedded object or
+complex table. HTML is treated as untrusted input: processor execution has no
+network access by default, and scripts or external fetches are not model-visible
+operations. The authoritative ODT or HTML resource remains unchanged.
 
 The active execution-policy fields are representation-independent:
 
@@ -1168,6 +1179,18 @@ The active execution-policy fields are representation-independent:
         "execution": "local_preferred",
         "backend": "auto",
         "executable": "E:\\tools\\pandoc-3.10.1\\pandoc.exe",
+        "expected_version": "pandoc 3.10.1"
+      },
+      "odt.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "E:\\tools\\pandoc-3.10.1\\pandoc.exe",
+        "expected_version": "pandoc 3.10.1"
+      },
+      "html.text": {
+        "execution": "sandbox_preferred",
+        "backend": "docker",
+        "image": "registry.example/document-worker@sha256:replace-me",
         "expected_version": "pandoc 3.10.1"
       }
     }
@@ -1196,14 +1219,14 @@ operation-scoped assembly covers the CLI, daemon and MCP host seams for the
 configured PDF page-image and Tesseract processor families; general automatic
 backend resolution for all future processors remains open.
 
-When `docx.text` is configured, the same operation-scoped host assembly can
+When `docx.text`, `odt.text` or `html.text` is configured, the same operation-scoped host assembly can
 install the local Pandoc processor without adding a model-visible `pandoc`
 tool. `local_preferred` with `backend=auto` uses the configured executable or
 host `PATH`; `local_required` fails closed if Pandoc cannot be started. Docker
-and Kubernetes execution for DOCX use the same isolated worker image and
+and Kubernetes execution for these Pandoc directions use the same isolated worker image and
 existing execution-provider contracts. The worker command remains the
 host-typed `pandoc` invocation; the model does not select an executable. The
-DOCX sandbox path is architecturally implemented, while live Docker and
+Pandoc sandbox paths are architecturally implemented, while live Docker and
 Kubernetes execution remain environment-dependent assurance runs. Adding a
 different worker image should reuse the same processor and execution-provider
 contracts rather than add a DOCX-specific queue or scheduler.
@@ -1217,8 +1240,11 @@ llama-agent-docx-text-local-e2e-smoke.exe pandoc <docx-fixture> kubernetes llama
 ```
 
 The first form uses the local runtime; the latter two select the existing
-Docker or Kubernetes sandbox runtime and run both DOCX-to-text and
-Markdown-to-DOCX through the same registry and resource service.
+Docker or Kubernetes sandbox runtime and run the configured Pandoc directions
+through the same registry and resource service. The current E2E fixture covers
+DOCX-to-text and Markdown-to-DOCX; ODT/HTML normalization is covered by the
+deterministic processor contract smoke and can use the same parameterized
+runner after adding representative fixtures.
 
 The processor-specific options are host-owned typed options and must not become
 model-controlled raw flags. Resource language metadata may be supplied

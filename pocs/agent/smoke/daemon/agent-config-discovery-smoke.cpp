@@ -121,14 +121,27 @@ int main() {
                     {"backend", "auto"},
                     {"executable", "mutool"},
                 }},
+                {"odt.text", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "pandoc"},
+                    {"expected_version", "pandoc 3.10.1"},
+                }},
+                {"html.text", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "docker"},
+                    {"image", "registry.example/document-worker@sha256:test"},
+                }},
             }},
         }},
     };
     if (!parse_agent_host_config_json(processor_policy_config, processor_config, error) ||
             !validate_agent_host_config(processor_config, error) ||
-            processor_config.resource_processor_policies.size() != 2 ||
+            processor_config.resource_processor_policies.size() != 4 ||
             processor_config.resource_processor_policies.at("pdf.page_image").execution != "sandbox_required" ||
-            processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes") {
+            processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes" ||
+            processor_config.resource_processor_policies.at("odt.text").executable != "pandoc" ||
+            processor_config.resource_processor_policies.at("html.text").backend != "docker") {
         std::fprintf(stderr, "resource processor execution policy was not parsed: %s\n", error.c_str());
         return 1;
     }

@@ -6,7 +6,9 @@ namespace {
 
 constexpr const char * docx_mime =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+constexpr const char * odt_mime = "application/vnd.oasis.opendocument.text";
 constexpr const char * markdown_mime = "text/markdown";
+constexpr const char * html_mime = "text/html";
 
 agent_resource_processing_result failure(
         const std::string & processor_id,
@@ -25,12 +27,23 @@ bool has_docx_package_signature(const std::string & bytes) {
         bytes.find("word/document.xml") != std::string::npos;
 }
 
+bool has_odt_package_signature(const std::string & bytes) {
+    return bytes.size() >= 4 && bytes.compare(0, 2, "PK") == 0 &&
+        bytes.find("content.xml") != std::string::npos;
+}
+
+bool is_markdown_normalization(const agent_pandoc_options & options) {
+    return (options.input_format == "odt" || options.input_format == "html") &&
+        options.output_format == "markdown";
+}
+
 } // namespace
 
 std::string agent_pandoc_processor::id() const {
-    return options_.input_format == "markdown"
-        ? "pandoc-markdown-docx-v1"
-        : "pandoc-docx-text-v1";
+    if (options_.input_format == "markdown") return "pandoc-markdown-docx-v1";
+    if (options_.input_format == "odt") return "pandoc-odt-markdown-v1";
+    if (options_.input_format == "html") return "pandoc-html-markdown-v1";
+    return "pandoc-docx-text-v1";
 }
 
 std::string agent_pandoc_processor::cache_key() const {
@@ -44,7 +57,11 @@ bool agent_pandoc_processor::supports(
     return (options_.input_format == "docx" && normalized == docx_mime &&
             target_representation == "text") ||
         (options_.input_format == "markdown" && normalized == markdown_mime &&
-            target_representation == "docx");
+            target_representation == "docx") ||
+        (is_markdown_normalization(options_) &&
+            ((options_.input_format == "odt" && normalized == odt_mime) ||
+             (options_.input_format == "html" && normalized == html_mime)) &&
+            target_representation == "text");
 }
 
 agent_resource_processor::support agent_pandoc_processor::supports(
@@ -62,7 +79,13 @@ agent_resource_processor::support agent_pandoc_processor::supports(
         request.target_representation == "docx" &&
         common_normalize_resource_media_type(request.target_media_type) == docx_mime &&
         request.purpose == agent_resource_processing_purpose::artifact_generation;
-    return {forward || reverse, reverse ? 100 : 50, false, false};
+    const bool normalized_markdown = is_markdown_normalization(options_) &&
+        ((options_.input_format == "odt" && common_normalize_resource_media_type(source_type) == odt_mime) ||
+         (options_.input_format == "html" && common_normalize_resource_media_type(source_type) == html_mime)) &&
+        request.target_representation == "text" &&
+        (request.target_media_type.empty() ||
+         common_normalize_resource_media_type(request.target_media_type) == markdown_mime);
+    return {forward || reverse || normalized_markdown, reverse ? 100 : 50, normalized_markdown, false};
 }
 
 agent_resource_processing_result agent_pandoc_processor::process(
@@ -72,8 +95,13 @@ agent_resource_processing_result agent_pandoc_processor::process(
         return failure(id(), "resource.unsupported_media_type", "Pandoc does not support the requested source and target format.");
     }
     const bool forward = options_.input_format == "docx";
+    const bool odt_forward = options_.input_format == "odt";
+    const bool markdown_normalization = is_markdown_normalization(options_);
     if (forward && !has_docx_package_signature(request.source_bytes)) {
         return failure(id(), "resource.invalid_document", "The source is not a recognizable DOCX package.");
+    }
+    if (odt_forward && !has_odt_package_signature(request.source_bytes)) {
+        return failure(id(), "resource.invalid_document", "The source is not a recognizable ODT package.");
     }
     if (executable_.empty()) {
         return failure(id(), "resource.processor_unavailable", "The configured Pandoc executable is unavailable.");
@@ -109,28 +137,42 @@ agent_resource_processing_result agent_pandoc_processor::process(
     agent_resource_processing_result result;
     result.success = true;
     result.processor_id = id();
-    result.safe_summary = "DOCX text extracted through the host resource processor.";
+    result.safe_summary = forward
+        ? "DOCX text extracted through the host resource processor."
+        : markdown_normalization
+            ? "Markdown normalized through the host Pandoc resource processor."
+            : "DOCX artifact generated through the host resource processor.";
     agent_resource_processing_output output;
     output.name = artifact.name.empty()
-        ? request.source.name + (forward ? ".txt" : ".docx")
+        ? request.source.name + (forward ? ".txt" : markdown_normalization ? ".md" : ".docx")
         : artifact.name;
     output.description = forward
         ? "Normalized text representation extracted from a DOCX document."
-        : "DOCX artifact generated from a Markdown resource.";
-    output.mime_type = forward ? "text/plain" : docx_mime;
+        : markdown_normalization
+            ? "Normalized Markdown representation derived from a document resource."
+            : "DOCX artifact generated from a Markdown resource.";
+    output.mime_type = forward ? "text/plain" : markdown_normalization ? markdown_mime : docx_mime;
     output.bytes = artifact.bytes;
     output.metadata.purpose = forward
         ? "normalized DOCX text representation"
-        : "DOCX artifact generated from a Markdown resource";
+        : markdown_normalization
+            ? "normalized Markdown representation"
+            : "DOCX artifact generated from a Markdown resource";
     output.metadata.content_summary = forward
         ? "Text extracted from the authoritative DOCX resource."
-        : "DOCX artifact generated from the authoritative Markdown resource.";
+        : markdown_normalization
+            ? "Markdown derived from the authoritative source resource."
+            : "DOCX artifact generated from the authoritative Markdown resource.";
     output.metadata.usage_hint = forward
         ? "Read and chunk this derived text resource."
-        : "Download or export this derived artifact resource.";
+        : markdown_normalization
+            ? "Read and chunk this derived Markdown resource."
+            : "Download or export this derived artifact resource.";
     output.metadata.limitations = forward
         ? "Pandoc plain-text conversion may not preserve complete document layout or complex tables."
-        : "Pandoc DOCX generation does not guarantee pixel-identical Word layout.";
+        : markdown_normalization
+            ? "Pandoc Markdown conversion may not preserve complete document layout or complex tables."
+            : "Pandoc DOCX generation does not guarantee pixel-identical Word layout.";
     output.lineage.parent_uri = request.source.uri;
     output.lineage.chunk_index = 0;
     output.lineage.chunk_count = 1;

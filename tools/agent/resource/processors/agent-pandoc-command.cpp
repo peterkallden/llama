@@ -23,12 +23,23 @@ std::string safe_file_name(const std::string & value) {
 bool validate_agent_pandoc_options(
         const agent_pandoc_options & options,
         std::string & error) {
-    if (options.input_format != "docx" && options.input_format != "markdown") {
-        error = "Pandoc input format must be docx or markdown";
+    if (options.input_format != "docx" && options.input_format != "markdown" &&
+            options.input_format != "odt" && options.input_format != "html") {
+        error = "Pandoc input format must be docx, markdown, odt or html";
         return false;
     }
-    if (options.output_format != "plain" && options.output_format != "docx") {
-        error = "Pandoc output format must be plain or docx";
+    if (options.output_format != "plain" && options.output_format != "docx" &&
+            options.output_format != "markdown") {
+        error = "Pandoc output format must be plain, docx or markdown";
+        return false;
+    }
+    const bool valid_direction =
+        (options.input_format == "docx" && options.output_format == "plain") ||
+        (options.input_format == "markdown" && options.output_format == "docx") ||
+        (options.input_format == "odt" && options.output_format == "markdown") ||
+        (options.input_format == "html" && options.output_format == "markdown");
+    if (!valid_direction) {
+        error = "Pandoc format direction is not enabled for the agent resource processor";
         return false;
     }
     if (options.output_extension.empty() || options.output_extension.size() > 8 ||
@@ -37,7 +48,7 @@ bool validate_agent_pandoc_options(
         return false;
     }
     if (options.max_output_bytes == 0 || options.max_output_bytes > 64 * 1024 * 1024) {
-        error = "Pandoc DOCX output must be between 1 byte and 64 MiB";
+        error = "Pandoc output must be between 1 byte and 64 MiB";
         return false;
     }
     error.clear();
@@ -70,7 +81,7 @@ bool make_agent_pandoc_request(
 
     const std::string input_name = safe_file_name(source.name);
     if (input_name.empty()) {
-        error = "DOCX source name cannot be represented as a safe staged filename";
+        error = "Pandoc source name cannot be represented as a safe staged filename";
         return false;
     }
     const std::string output_name = "pandoc-output-" + input_name + "." + options.output_extension;
