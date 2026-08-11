@@ -170,6 +170,12 @@ focused contract tests and a bounded end-to-end fixture pass. Advanced
 statistics, formula evaluation, workbook visual fidelity and full spreadsheet
 feature preservation remain explicitly out of scope for the first slice.
 
+The importer/store seam now has focused model-free coverage: a normalized
+worksheet envelope produces per-worksheet descriptors and bounded row writes
+through the existing data-store interface. This does not yet claim that native
+Pandoc AST conversion, XLSX workbook inspection, or a live Cozo-backed XLSX
+vertical slice is complete.
+
 ### Protocols and events
 
 - [x] JSONL daemon protocol smoke passes

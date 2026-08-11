@@ -339,6 +339,16 @@ worksheet count, rows, columns, cells and generated datasets; materialization
 and query execution remain the responsibility of the configured data-store
 seam.
 
+The first importer slice is implemented in
+`tools/agent/data/agent-dataset-importer.*`. It accepts a bounded,
+host-normalized worksheet envelope, creates one immutable dataset descriptor per
+worksheet and streams each row through the existing data-store `put_row` seam.
+The envelope is deliberately an adapter boundary: converting Pandoc's native
+AST into that envelope is still a separate step, and the raw Pandoc JSON must
+not be mistaken for the canonical dataset model. A backend that does not
+implement ingestion fails explicitly rather than falling back to a second
+store or returning rows through the model context.
+
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used

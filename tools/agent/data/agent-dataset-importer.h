@@ -1,0 +1,26 @@
+#pragma once
+
+#include "agent/data-store.h"
+#include "agent/dataset-contracts.h"
+
+#include <string>
+#include <vector>
+
+// Host-normalized worksheet envelope. Resource processors may use a richer
+// intermediate (for example Pandoc AST) but must normalize it before dataset
+// materialization. Rows stay in the host store and never become a tool result.
+struct agent_dataset_import_request {
+    std::string source_resource_uri;
+    std::string source_workbook_name;
+    std::string import_processor_id;
+    std::string import_processor_version;
+    std::string worksheet_json;
+    common_agent_dataset_limits limits;
+};
+
+bool import_agent_worksheet_envelope(
+        common_agent_data_store & store,
+        const agent_dataset_import_request & request,
+        std::vector<common_agent_dataset_descriptor> & imported,
+        std::string & error);
+

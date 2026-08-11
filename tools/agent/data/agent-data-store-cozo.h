@@ -18,7 +18,7 @@ public:
 
     bool open(const std::string & path, std::string & error);
     void close();
-    bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error);
+    bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) override;
     bool execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) override;
 
 private:

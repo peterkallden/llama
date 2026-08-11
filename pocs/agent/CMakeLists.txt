@@ -33,6 +33,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-processing-cache.cpp
     ../../common/agent/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
+    ../../tools/agent/data/agent-dataset-importer.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
     ../../tools/agent/diagnostics/agent-clangd-provider.cpp
@@ -844,6 +845,18 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-dataset-importer-smoke)
+add_executable(${TARGET}
+    smoke/data/agent-dataset-importer-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-docx-text-local-e2e-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-docx-text-local-e2e-smoke.cpp
@@ -1042,6 +1055,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-pdf-text-processor-smoke
     llama-agent-docx-text-processor-smoke
     llama-agent-dataset-contract-smoke
+    llama-agent-dataset-importer-smoke
     llama-agent-docx-text-local-e2e-smoke
     llama-agent-pdf-page-image-command-smoke
     llama-agent-tesseract-ocr-command-smoke
@@ -1110,6 +1124,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-pdf-text-processor-smoke
     llama-agent-docx-text-processor-smoke
     llama-agent-dataset-contract-smoke
+    llama-agent-dataset-importer-smoke
     llama-agent-docx-text-local-e2e-smoke
     llama-agent-pdf-page-image-command-smoke
     llama-agent-resource-processing-host-smoke
@@ -1233,6 +1248,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-dataset-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-dataset-contract-smoke>)
     set_property(TEST llama-agent-dataset-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-dataset-importer-ctest
+        COMMAND $<TARGET_FILE:llama-agent-dataset-importer-smoke>)
+    set_property(TEST llama-agent-dataset-importer-ctest PROPERTY LABELS agent)
 
 
     add_test(NAME llama-agent-pdf-page-image-command-ctest

@@ -13,6 +13,21 @@ class common_agent_data_store {
 public:
     virtual ~common_agent_data_store() = default;
 
+    // Optional host-owned ingestion seam. Implementations may stream bounded
+    // rows into their existing backend without returning the row set through
+    // the model-facing tool protocol.
+    virtual bool put_row(
+            const std::string & dataset,
+            const std::string & row_id,
+            const std::string & row_json,
+            std::string & error) {
+        (void) dataset;
+        (void) row_id;
+        (void) row_json;
+        error = "data store does not support dataset ingestion";
+        return false;
+    }
+
     virtual bool execute(
         const std::string & operation,
         const std::string & request_json,
