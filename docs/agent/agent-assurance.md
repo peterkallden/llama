@@ -241,6 +241,10 @@ passes.
   requested; a bounded reflective run without a plan DB remained too slow on
   the test CPU and was stopped. This is not counted as model-backed agent
   assurance.
+- Phi follow-up: `Phi-3.5-mini-instruct-q4km-current.gguf` loaded successfully
+  and reached the deliberate agent inference after Nomic retrieval, but the
+  bounded CPU run also exceeded the practical smoke duration without a final
+  result. It is therefore not counted as model-backed agent assurance.
 - Not-run/qualified: full model-backed plan/continuation flow, derived-resource
   cache reuse, and full general context compaction remain outside this run
 - Environment note: CMake UI asset download was unavailable in the isolated
