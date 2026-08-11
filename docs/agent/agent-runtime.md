@@ -1142,6 +1142,7 @@ The current processor catalog is intentionally small:
 | `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
 | `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 | `pandoc-html-markdown-v1` | `text/html` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
+| `pandoc-xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Contract implemented; worksheet importer not yet connected | Pandoc executable, structured JSON output and bounded output bytes |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1170,12 +1171,14 @@ selected language, confidence and source; changing language metadata or typed
 OCR options changes the cache identity and creates a new derived resource.
 Tesseract is resolved at runtime and is not a build or link-time dependency.
 
-The generic Pandoc processor currently has four registered directions:
+The generic Pandoc processor currently has five registered directions:
 `pandoc-docx-text-v1` converts a validated Office Open XML document (`.docx`)
 to a derived `text/plain` resource, while `pandoc-markdown-docx-v1` converts a
 `text/markdown` resource to a derived DOCX artifact. `pandoc-odt-markdown-v1`
 and `pandoc-html-markdown-v1` normalize OpenDocument Text and HTML resources to
-derived `text/markdown` resources. All four use the same
+derived `text/markdown` resources. `pandoc-xlsx-workbook-json-v1` produces a
+bounded structured JSON intermediate representation for a later host-owned
+worksheet dataset importer; it is not itself a dataset. All five use the same
 processor contract, registry, processing service, resource store and lineage
 rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
 not linked into the agent. The host may provide an executable name resolved

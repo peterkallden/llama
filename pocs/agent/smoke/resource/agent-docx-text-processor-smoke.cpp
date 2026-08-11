@@ -140,6 +140,32 @@ int main() {
     assert(host.last_request.command.arguments[1] == "--from=html");
     assert(host.last_request.command.arguments[2] == "--to=markdown");
 
+    agent_pandoc_options xlsx_options;
+    xlsx_options.input_format = "xlsx";
+    xlsx_options.output_format = "json";
+    xlsx_options.output_extension = "json";
+    agent_pandoc_processor xlsx_processor(
+        host, context, agent_resource_backend_kind::local_pandoc,
+        "E:\\tools\\pandoc-3.10.1\\pandoc.exe", xlsx_options);
+    agent_resource_processing_request xlsx_request;
+    xlsx_request.source.uri = "agent-resource://workbook/sales.xlsx";
+    xlsx_request.source.name = "sales.xlsx";
+    xlsx_request.source.mime_type =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    xlsx_request.source.size_bytes = 4096;
+    xlsx_request.source_bytes = "PK [Content_Types].xml xl/workbook.xml xl/worksheets/sheet1.xml";
+    xlsx_request.target_representation = "workbook-json";
+    xlsx_request.target_media_type = "application/json";
+    xlsx_request.limits.max_output_bytes = 4096;
+    const auto xlsx_result = xlsx_processor.process(xlsx_request);
+    assert(xlsx_result.success);
+    assert(xlsx_result.processor_id == "pandoc-xlsx-workbook-json-v1");
+    assert(xlsx_result.outputs.size() == 1);
+    assert(xlsx_result.outputs[0].mime_type == "application/json");
+    assert(xlsx_result.outputs[0].lineage.parent_uri == xlsx_request.source.uri);
+    assert(host.last_request.command.arguments[1] == "--from=xlsx");
+    assert(host.last_request.command.arguments[2] == "--to=json");
+
     agent_pandoc_options unsupported_options;
     unsupported_options.input_format = "html";
     unsupported_options.output_format = "docx";

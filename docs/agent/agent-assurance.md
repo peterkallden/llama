@@ -161,7 +161,10 @@ authoritative source, a dataset is a typed analytical handle, a data tool
 operates on authorized dataset references, and an exported artifact is a new
 derived resource. The current CSV/Cozo foundation does not yet prove XLSX
 worksheet inspection, Pandoc structured ingestion, dataset materialization or
-dataset-reference tool execution. Those claims must be added only after
+dataset-reference tool execution. The model-free Pandoc processor contract now
+covers XLSX-to-structured-JSON as an intermediate resource representation, but
+that is not yet worksheet dataset ingestion. The broader claims must be added
+only after
 focused contract tests and a bounded end-to-end fixture pass. Advanced
 statistics, formula evaluation, workbook visual fidelity and full spreadsheet
 feature preservation remain explicitly out of scope for the first slice.

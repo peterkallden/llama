@@ -24,20 +24,22 @@ bool validate_agent_pandoc_options(
         const agent_pandoc_options & options,
         std::string & error) {
     if (options.input_format != "docx" && options.input_format != "markdown" &&
-            options.input_format != "odt" && options.input_format != "html") {
-        error = "Pandoc input format must be docx, markdown, odt or html";
+            options.input_format != "odt" && options.input_format != "html" &&
+            options.input_format != "xlsx") {
+        error = "Pandoc input format must be docx, markdown, odt, html or xlsx";
         return false;
     }
     if (options.output_format != "plain" && options.output_format != "docx" &&
-            options.output_format != "markdown") {
-        error = "Pandoc output format must be plain, docx or markdown";
+            options.output_format != "markdown" && options.output_format != "json") {
+        error = "Pandoc output format must be plain, docx, markdown or json";
         return false;
     }
     const bool valid_direction =
         (options.input_format == "docx" && options.output_format == "plain") ||
         (options.input_format == "markdown" && options.output_format == "docx") ||
         (options.input_format == "odt" && options.output_format == "markdown") ||
-        (options.input_format == "html" && options.output_format == "markdown");
+        (options.input_format == "html" && options.output_format == "markdown") ||
+        (options.input_format == "xlsx" && options.output_format == "json");
     if (!valid_direction) {
         error = "Pandoc format direction is not enabled for the agent resource processor";
         return false;
