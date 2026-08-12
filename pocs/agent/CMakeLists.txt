@@ -167,6 +167,7 @@ endif()
 target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-protocol)
 
 set(AGENT_MCP_SERVER_SOURCES
+    ../../common/agent/dataset-contracts.cpp
     ../../common/agent/schema-contract.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
