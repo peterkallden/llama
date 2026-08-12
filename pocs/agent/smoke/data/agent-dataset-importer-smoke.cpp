@@ -81,6 +81,23 @@ int main() {
     assert(store.descriptors.size() == 2);
     assert(store.datasets[0] == imported[0].ref.uri);
 
+    agent_dataset_import_request document_request = request;
+    document_request.source_resource_uri = "agent-resource://uploads/report.docx";
+    document_request.source_workbook_name = "report.docx";
+    document_request.source_representation = "document:table";
+    document_request.source_representation_uri = "agent-resource://document/report.json";
+    document_request.import_processor_id = "pandoc-docx-document-json-v1";
+    document_request.sheet_name.reset();
+    document_request.limits.max_rows = 100;
+    std::string document_normalized;
+    assert(normalize_agent_pandoc_document_json(pandoc_json, document_normalized, error));
+    document_request.worksheet_json = document_normalized;
+    assert(import_agent_worksheet_envelope(store, document_request, imported, error));
+    assert(imported.size() == 2);
+    assert(imported[0].ref.source_representation == "document:table");
+    assert(imported[0].origin.kind == "document_table");
+    assert(imported[0].origin.source_representation_uri == document_request.source_representation_uri);
+
     request.sheet_name = "Customers";
     request.limits.max_rows = 100;
     assert(import_agent_worksheet_envelope(store, request, imported, error));

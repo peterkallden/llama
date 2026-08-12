@@ -13,6 +13,11 @@
 struct agent_dataset_import_request {
     std::string source_resource_uri;
     std::string source_workbook_name;
+    // Stable representation kind for provenance. The default preserves the
+    // existing spreadsheet import contract; document tables use
+    // "document:table".
+    std::string source_representation = "xlsx:worksheet";
+    std::string source_representation_uri;
     std::string import_processor_id;
     std::string import_processor_version;
     std::string worksheet_json;
@@ -32,6 +37,14 @@ bool import_agent_worksheet_envelope(
 // Normalizes the Pandoc JSON AST emitted by the shared Pandoc processor into
 // the bounded worksheet envelope consumed by the dataset importer.
 bool normalize_agent_pandoc_workbook_json(
+        const std::string & pandoc_json,
+        std::string & worksheet_json,
+        std::string & error);
+
+// The Pandoc AST shape is shared by workbook and document representations.
+// Keep the workbook-named entry point for compatibility, while exposing the
+// document meaning explicitly at the caller boundary.
+bool normalize_agent_pandoc_document_json(
         const std::string & pandoc_json,
         std::string & worksheet_json,
         std::string & error);

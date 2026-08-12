@@ -379,6 +379,16 @@ limitations. A backend that does not implement ingestion fails explicitly
 rather than falling back to a second store or returning rows through the model
 context.
 
+The same adapter is now explicitly available for `document-json` through
+`normalize_agent_pandoc_document_json`. It reuses the worksheet envelope and
+importer rather than creating a document-specific dataset path. The host marks
+the import as `document:table` and supplies the semantic-document resource URI;
+the resulting descriptor is therefore classified as `document_table` while
+retaining the original document resource and table node provenance. A complete
+document analysis can use one Pandoc JSON processing result as the source for
+both text projection and simple table materialization; the model does not
+select Pandoc or a converter executable.
+
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.

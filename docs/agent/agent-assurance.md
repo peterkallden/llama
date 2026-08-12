@@ -98,6 +98,7 @@ limited adapter concern.
 - [x] Resource processing resolves MIME types before host-controlled processor selection
 - [x] Derived processor outputs persist through the existing resource store and retain lineage
 - [x] Normalized processor text enters the existing bounded resource chunking path
+- [x] Simple Pandoc document tables reuse the existing dataset importer with document-table provenance
 - [x] The first bounded local PDF text-layer processor has a model-free smoke
 - [x] Resource processor source/output limits and processing lifecycle events are covered
 - [x] Resource processor execution policies are host-configured, round-trip serialized, and fail closed for incompatible required backends

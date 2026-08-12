@@ -181,6 +181,13 @@ bool normalize_agent_pandoc_workbook_json(
     return true;
 }
 
+bool normalize_agent_pandoc_document_json(
+        const std::string & pandoc_json,
+        std::string & worksheet_json,
+        std::string & error) {
+    return normalize_agent_pandoc_workbook_json(pandoc_json, worksheet_json, error);
+}
+
 bool import_agent_worksheet_envelope(
         common_agent_data_store & store,
         const agent_dataset_import_request & request,
@@ -227,7 +234,8 @@ bool import_agent_worksheet_envelope(
         descriptor.ref.row_count = worksheet["rows"].size();
         descriptor.ref.column_count = worksheet["columns"].size();
         descriptor.ref.source_resource_uri = request.source_resource_uri;
-        descriptor.ref.source_representation = "xlsx:worksheet";
+        descriptor.ref.source_representation = request.source_representation.empty()
+            ? "xlsx:worksheet" : request.source_representation;
         descriptor.source_workbook_name = request.source_workbook_name;
         descriptor.source_sheet_name = sheet_name;
         descriptor.source_sheet_index = worksheet_index;
@@ -235,7 +243,8 @@ bool import_agent_worksheet_envelope(
         descriptor.source_object = worksheet.value("object", std::string());
         descriptor.origin.kind = descriptor.ref.source_representation == "xlsx:worksheet"
             ? "spreadsheet" : "document_table";
-        descriptor.origin.source_representation_uri = worksheet.value("semantic_resource_uri", std::string());
+        descriptor.origin.source_representation_uri = worksheet.value(
+            "semantic_resource_uri", request.source_representation_uri);
         descriptor.origin.source_node_id = worksheet.value("node_id", "document-node://table/" + std::to_string(worksheet_index.value_or(0)));
         descriptor.origin.table_index = worksheet.value("table_index", worksheet_index.value_or(0));
         descriptor.origin.caption = worksheet.value("caption", std::string());
