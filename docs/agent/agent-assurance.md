@@ -21,6 +21,10 @@ when the corresponding verification record contains evidence for it.
 The latest resource-processor extension also covers the model-free Pandoc
 direction contracts for ODT-to-Markdown and HTML-to-Markdown. Live sandbox
 execution remains environment-dependent and is not claimed by this entry.
+The current model-free processor smoke also covers DOCX-to-document-JSON and
+HTML-to-document-JSON command contracts. These outputs are bounded derived
+document representations; table-to-dataset extraction remains a separate,
+limited adapter concern.
 
 ## Gate definitions
 

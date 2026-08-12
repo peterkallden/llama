@@ -140,6 +140,38 @@ int main() {
     assert(host.last_request.command.arguments[1] == "--from=html");
     assert(host.last_request.command.arguments[2] == "--to=markdown");
 
+    agent_pandoc_options document_json_options;
+    document_json_options.output_format = "json";
+    document_json_options.output_extension = "json";
+    agent_pandoc_processor document_json_processor(
+        host, context, agent_resource_backend_kind::local_pandoc,
+        "E:\\tools\\pandoc-3.10.1\\pandoc.exe", document_json_options);
+    agent_resource_processing_request document_json_request = request;
+    document_json_request.target_representation = "document-json";
+    document_json_request.target_media_type = "application/json";
+    const auto document_json_result = document_json_processor.process(document_json_request);
+    assert(document_json_result.success);
+    assert(document_json_result.processor_id == "pandoc-docx-document-json-v1");
+    assert(document_json_result.outputs[0].mime_type == "application/json");
+    assert(document_json_result.outputs[0].lineage.parent_uri == request.source.uri);
+    assert(host.last_request.command.arguments[1] == "--from=docx");
+    assert(host.last_request.command.arguments[2] == "--to=json");
+
+    agent_pandoc_options html_json_options = html_options;
+    html_json_options.output_format = "json";
+    html_json_options.output_extension = "json";
+    agent_pandoc_processor html_json_processor(
+        host, context, agent_resource_backend_kind::local_pandoc, "pandoc", html_json_options);
+    agent_resource_processing_request html_json_request = html_request;
+    html_json_request.target_representation = "document-json";
+    html_json_request.target_media_type = "application/json";
+    const auto html_json_result = html_json_processor.process(html_json_request);
+    assert(html_json_result.success);
+    assert(html_json_result.processor_id == "pandoc-html-document-json-v1");
+    assert(html_json_result.outputs[0].mime_type == "application/json");
+    assert(host.last_request.command.arguments[1] == "--from=html");
+    assert(host.last_request.command.arguments[2] == "--to=json");
+
     agent_pandoc_options xlsx_options;
     xlsx_options.input_format = "xlsx";
     xlsx_options.output_format = "json";

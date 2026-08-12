@@ -1258,9 +1258,11 @@ The current processor catalog is intentionally small:
 | `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
 | `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 | `pandoc-docx-text-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `text` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, plain-text output and bounded output bytes |
+| `pandoc-docx-document-json-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
 | `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
 | `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 | `pandoc-html-markdown-v1` | `text/html` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
+| `pandoc-html-document-json-v1` | `text/html` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
 | `pandoc-xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Contract implemented; bounded worksheet importer connected | Pandoc executable, structured JSON output, worksheet selection and bounded dataset materialization |
 
 The first processor is a bounded local implementation used for the current
@@ -1290,18 +1292,28 @@ selected language, confidence and source; changing language metadata or typed
 OCR options changes the cache identity and creates a new derived resource.
 Tesseract is resolved at runtime and is not a build or link-time dependency.
 
-The generic Pandoc processor currently has five registered directions:
+The generic Pandoc processor currently has seven registered directions:
 `pandoc-docx-text-v1` converts a validated Office Open XML document (`.docx`)
 to a derived `text/plain` resource, while `pandoc-markdown-docx-v1` converts a
 `text/markdown` resource to a derived DOCX artifact. `pandoc-odt-markdown-v1`
 and `pandoc-html-markdown-v1` normalize OpenDocument Text and HTML resources to
 derived `text/markdown` resources. `pandoc-xlsx-workbook-json-v1` produces a
 bounded structured JSON intermediate representation for a later host-owned
-worksheet dataset importer; it is not itself a dataset. All five use the same
+worksheet dataset importer; it is not itself a dataset. All directions use the same
 processor contract, registry, processing service, resource store and lineage
 rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
 not linked into the agent. The host may provide an executable name resolved
 through `PATH`, or an explicit executable path.
+
+`pandoc-docx-document-json-v1` and `pandoc-html-document-json-v1` produce a
+structured Pandoc JSON representation as a derived `application/json` resource.
+This is a document representation, not a dataset and not a model-visible
+converter operation. It preserves a structural boundary for a later
+document/table adapter: the document remains available for ordinary reading,
+while simple table nodes may be projected into the existing dataset contract
+with document origin metadata. The current scope does not infer complex table
+semantics, extract tables from PDF, or materialize datasets directly during
+Pandoc processing.
 
 Processor selection now evaluates the existing boolean `supports` contract
 through a structured support result containing eligibility, priority, lossiness

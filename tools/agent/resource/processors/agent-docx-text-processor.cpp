@@ -50,6 +50,12 @@ bool is_markdown_normalization(const agent_pandoc_options & options) {
 std::string agent_pandoc_processor::id() const {
     if (options_.input_format == "markdown") return "pandoc-markdown-docx-v1";
     if (options_.input_format == "odt") return "pandoc-odt-markdown-v1";
+    if (options_.input_format == "docx" && options_.output_format == "json") {
+        return "pandoc-docx-document-json-v1";
+    }
+    if (options_.input_format == "html" && options_.output_format == "json") {
+        return "pandoc-html-document-json-v1";
+    }
     if (options_.input_format == "html") return "pandoc-html-markdown-v1";
     if (options_.input_format == "xlsx") return "pandoc-xlsx-workbook-json-v1";
     return "pandoc-docx-text-v1";
@@ -65,12 +71,16 @@ bool agent_pandoc_processor::supports(
     const auto normalized = common_normalize_resource_media_type(mime_type);
     return (options_.input_format == "docx" && normalized == docx_mime &&
             target_representation == "text") ||
+        (options_.input_format == "docx" && normalized == docx_mime &&
+            target_representation == "document-json") ||
         (options_.input_format == "markdown" && normalized == markdown_mime &&
             target_representation == "docx") ||
         (is_markdown_normalization(options_) &&
             ((options_.input_format == "odt" && normalized == odt_mime) ||
              (options_.input_format == "html" && normalized == html_mime)) &&
             target_representation == "text") ||
+        (options_.input_format == "html" && options_.output_format == "json" &&
+            normalized == html_mime && target_representation == "document-json") ||
         (options_.input_format == "xlsx" && normalized == xlsx_mime &&
             target_representation == "workbook-json");
 }
@@ -85,6 +95,15 @@ agent_resource_processor::support agent_pandoc_processor::supports(
         request.target_representation == "text" &&
         (request.target_media_type.empty() ||
          common_normalize_resource_media_type(request.target_media_type) == "text/plain");
+    const bool document_json = options_.output_format == "json" &&
+        request.target_representation == "document-json" &&
+        (options_.input_format == "docx" || options_.input_format == "html") &&
+        ((options_.input_format == "docx" &&
+          common_normalize_resource_media_type(source_type) == docx_mime) ||
+         (options_.input_format == "html" &&
+          common_normalize_resource_media_type(source_type) == html_mime)) &&
+        (request.target_media_type.empty() ||
+         common_normalize_resource_media_type(request.target_media_type) == "application/json");
     const bool reverse = options_.input_format == "markdown" &&
         common_normalize_resource_media_type(source_type) == markdown_mime &&
         request.target_representation == "docx" &&
@@ -101,8 +120,8 @@ agent_resource_processor::support agent_pandoc_processor::supports(
         request.target_representation == "workbook-json" &&
         (request.target_media_type.empty() ||
          common_normalize_resource_media_type(request.target_media_type) == "application/json");
-    return {forward || reverse || normalized_markdown || workbook_json,
-        reverse ? 100 : 50, normalized_markdown || workbook_json, false};
+    return {forward || document_json || reverse || normalized_markdown || workbook_json,
+        reverse ? 100 : 50, normalized_markdown || workbook_json || document_json, false};
 }
 
 agent_resource_processing_result agent_pandoc_processor::process(
@@ -114,6 +133,8 @@ agent_resource_processing_result agent_pandoc_processor::process(
     const bool forward = options_.input_format == "docx";
     const bool odt_forward = options_.input_format == "odt";
     const bool xlsx_forward = options_.input_format == "xlsx";
+    const bool document_json = options_.output_format == "json" &&
+        request.target_representation == "document-json";
     const bool markdown_normalization = is_markdown_normalization(options_);
     if (forward && !has_docx_package_signature(request.source_bytes)) {
         return failure(id(), "resource.invalid_document", "The source is not a recognizable DOCX package.");
@@ -156,11 +177,13 @@ agent_resource_processing_result agent_pandoc_processor::process(
 
     const auto & artifact = artifacts.front();
     const bool workbook_json = xlsx_forward;
-    const bool text_forward = forward || odt_forward || xlsx_forward;
+    const bool text_forward = (forward || odt_forward) && !document_json;
     agent_resource_processing_result result;
     result.success = true;
     result.processor_id = id();
-    result.safe_summary = workbook_json
+    result.safe_summary = document_json
+        ? "Structured Pandoc document representation created through the host resource processor."
+        : workbook_json
         ? "Structured XLSX representation created through the host resource processor."
         : text_forward
         ? "Document text extracted through the host resource processor."
@@ -169,42 +192,52 @@ agent_resource_processing_result agent_pandoc_processor::process(
             : "DOCX artifact generated through the host resource processor.";
     agent_resource_processing_output output;
     output.name = artifact.name.empty()
-        ? request.source.name + (workbook_json ? ".json" : text_forward ? ".txt" : markdown_normalization ? ".md" : ".docx")
+        ? request.source.name + (document_json || workbook_json ? ".json" : text_forward ? ".txt" : markdown_normalization ? ".md" : ".docx")
         : artifact.name;
-    output.description = workbook_json
+    output.description = document_json
+        ? "Structured document representation derived from an authoritative document resource."
+        : workbook_json
         ? "Structured Pandoc representation derived from an XLSX workbook."
         : text_forward
         ? "Normalized text representation extracted from a DOCX document."
         : markdown_normalization
             ? "Normalized Markdown representation derived from a document resource."
             : "DOCX artifact generated from a Markdown resource.";
-    output.mime_type = workbook_json ? "application/json" :
+    output.mime_type = document_json || workbook_json ? "application/json" :
         (text_forward || markdown_normalization)
             ? (odt_forward || markdown_normalization ? markdown_mime : "text/plain")
             : docx_mime;
     output.bytes = artifact.bytes;
-    output.metadata.purpose = workbook_json
+    output.metadata.purpose = document_json
+        ? "structured document representation"
+        : workbook_json
         ? "structured XLSX workbook representation"
         : text_forward
         ? "normalized DOCX text representation"
         : markdown_normalization
             ? "normalized Markdown representation"
             : "DOCX artifact generated from a Markdown resource";
-    output.metadata.content_summary = workbook_json
+    output.metadata.content_summary = document_json
+        ? "Structured intermediate representation derived from the authoritative document resource."
+        : workbook_json
         ? "Structured intermediate representation derived from the authoritative XLSX resource."
         : text_forward
         ? "Text extracted from the authoritative DOCX resource."
         : markdown_normalization
             ? "Markdown derived from the authoritative source resource."
             : "DOCX artifact generated from the authoritative Markdown resource.";
-    output.metadata.usage_hint = workbook_json
+    output.metadata.usage_hint = document_json
+        ? "Pass to the host-owned document/table normalizer; do not treat this intermediate JSON as a dataset itself."
+        : workbook_json
         ? "Pass to a host-owned worksheet dataset importer; do not treat this intermediate JSON as the dataset itself."
         : text_forward
         ? "Read and chunk this derived text resource."
         : markdown_normalization
             ? "Read and chunk this derived Markdown resource."
             : "Download or export this derived artifact resource.";
-    output.metadata.limitations = workbook_json
+    output.metadata.limitations = document_json
+        ? "Pandoc JSON preserves document structure but does not by itself infer table semantics or create datasets."
+        : workbook_json
         ? "Pandoc structured output is an intermediate worksheet representation and may not preserve all workbook metadata, formulas or layout."
         : text_forward
         ? "Pandoc plain-text conversion may not preserve complete document layout or complex tables."
