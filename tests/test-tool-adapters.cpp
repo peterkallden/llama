@@ -10,6 +10,7 @@
 class test_resource_store final : public agent_resource_store {
 public:
     bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string &) override {
+        last_request = request;
         out.uri = "resource://test/" + request.name;
         out.name = request.name;
         out.mime_type = request.mime_type;
@@ -19,6 +20,7 @@ public:
     bool read_text(const std::string &, const agent_resource_read_authority &, size_t, std::string &, std::string &) const override { return false; }
     bool stat(const std::string &, const agent_resource_read_authority &, agent_resource_descriptor &, std::string &) const override { return false; }
     bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
+    agent_resource_put_request last_request;
 };
 
 class test_data_store final : public common_agent_data_store {
@@ -32,11 +34,10 @@ public:
         descriptor = stored_descriptor;
         return true;
     }
-
     bool execute(const std::string & operation, const std::string & request_json, std::string & result, std::string & error) override {
         last_operation = operation;
         last_request = request_json;
-        if (operation == "data.query") { result = R"({"columns":["name"],"rows":[["alpha"]],"row_count":1,"truncated":false})"; return true; }
+        if (operation == "data.query") { result = R"({"columns":["name","value"],"rows":[{"name":"alpha","value":1},{"name":"beta","value":2}],"row_count":2,"scan_truncated":false,"result_truncated":false})"; return true; }
         if (operation == "data.filter") { result = R"({"rows":[{"name":"alpha"}],"row_count":1})"; return true; }
         if (operation == "data.aggregate") { result = R"({"rows":[{"group":"all","count":2}]})"; return true; }
         if (operation == "data.join") { result = R"({"rows":[{"id":"1","name":"alpha"}]})"; return true; }
@@ -294,6 +295,14 @@ int main() {
     assert(result.ok && foundation_data.last_operation == "statistics.describe");
     result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
     assert(result.ok && result.output.find("resource://") != std::string::npos);
+    result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
+           foundation_resources.last_request.mime_type == "text/csv" &&
+           foundation_resources.last_request.text == "name,value\nalpha,1\nbeta,2\n" &&
+           foundation_resources.last_request.lineage.parent_uri == "dataset://analysis/sales" &&
+           foundation_resources.last_request.lineage.derivation == "artifact.export:dataset-csv");
+    result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"json","name":"sales.json"})"});
+    assert(!result.ok);
 
     common_tool_profile execution_profile;
     execution_profile.id = "developer-execution";

@@ -163,7 +163,8 @@ bool persist_tool_resource(
         const std::string & source_tool,
         const common_runtime_resource_metadata & metadata,
         common_runtime_resource_ref & resource,
-        std::string & error) {
+        std::string & error,
+        common_runtime_resource_lineage lineage = {}) {
     if (bindings.resource_runtime.store == nullptr) {
         error = "resource store is unavailable";
         return false;
@@ -178,6 +179,7 @@ bool persist_tool_resource(
     request.source_provider = "native";
     request.source_tool = source_tool;
     request.metadata = metadata;
+    request.lineage = std::move(lineage);
     apply_agent_resource_runtime(bindings.resource_runtime, request);
 
     agent_resource_descriptor descriptor;
@@ -461,6 +463,133 @@ std::string trim_copy(const std::string & value) {
     while (begin < end && std::isspace((unsigned char) value[begin])) ++begin;
     while (end > begin && std::isspace((unsigned char) value[end - 1])) --end;
     return value.substr(begin, end - begin);
+}
+
+std::string csv_escape(const json & value) {
+    if (value.is_null()) return {};
+    std::string text = value.is_string() ? value.get<std::string>() : value.dump();
+    const bool quote = text.find_first_of(",\"\r\n") != std::string::npos;
+    if (!quote) return text;
+    std::string escaped = "\"";
+    for (const char c : text) {
+        if (c == '\"') escaped += "\"\"";
+        else escaped += c;
+    }
+    escaped += '"';
+    return escaped;
+}
+
+common_tool_execution_result export_dataset_csv(
+        const common_native_tool_bindings & bindings,
+        const json & arguments) {
+    if (!bindings.data_store) {
+        return tool_execution_failure(
+            "tool.artifact.export.backend_unavailable",
+            "dataset export requires a structured data backend",
+            "The dataset backend is unavailable.");
+    }
+    if (!arguments.contains("source_dataset") || !arguments["source_dataset"].is_string() ||
+            arguments["source_dataset"].get<std::string>().empty()) {
+        return tool_validation_failure(
+            "tool.artifact.export.invalid_dataset",
+            "source_dataset must be a non-empty dataset URI");
+    }
+    const auto format = lower_copy(arguments.value("format", std::string("csv")));
+    if (format != "csv") {
+        return tool_validation_failure(
+            "tool.artifact.export.unsupported_format",
+            "dataset artifact export currently supports only csv");
+    }
+    const auto name = arguments.value("name", std::string("dataset-export.csv"));
+    const int max_rows = arguments.value("max_rows", 10000);
+    if (name.empty() || name.size() > 256 || max_rows < 1 || max_rows > 10000) {
+        return tool_validation_failure(
+            "tool.artifact.export.out_of_bounds",
+            "dataset CSV export name or max_rows is out of bounds");
+    }
+
+    const auto dataset_uri = arguments["source_dataset"].get<std::string>();
+    common_agent_dataset_descriptor descriptor;
+    std::string error;
+    if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, error)) {
+        return tool_not_found_failure(
+            "tool.artifact.export.dataset_unavailable", std::move(error),
+            "The source dataset is unavailable.");
+    }
+    if (descriptor.ref.row_count > static_cast<size_t>(max_rows)) {
+        return tool_limit_failure(
+            "tool.artifact.export.row_limit",
+            "dataset contains more rows than the bounded CSV export limit",
+            "The dataset is too large for this bounded export.");
+    }
+
+    json query = {
+        {"dataset", dataset_uri}, {"limit", max_rows},
+        {"max_scan_rows", max_rows}, {"max_result_rows", max_rows}};
+    const auto queried = execute_data_backend(bindings, "data.query", query.dump());
+    if (!queried.ok) return queried;
+    const auto result = json::parse(queried.output, nullptr, false);
+    if (!result.is_object() || result.value("scan_truncated", false) ||
+            result.value("result_truncated", false) || !result.contains("rows") ||
+            !result["rows"].is_array()) {
+        return tool_limit_failure(
+            "tool.artifact.export.incomplete_dataset",
+            "dataset query was incomplete or did not return rows",
+            "The dataset could not be exported completely.");
+    }
+
+    std::vector<std::string> columns;
+    for (const auto & column : descriptor.columns) columns.push_back(column.name);
+    if (columns.empty() && result.contains("columns") && result["columns"].is_array()) {
+        for (const auto & column : result["columns"]) if (column.is_string()) columns.push_back(column.get<std::string>());
+    }
+    if (columns.size() > 512) {
+        return tool_limit_failure(
+            "tool.artifact.export.column_limit",
+            "dataset contains more than 512 columns",
+            "The dataset has too many columns for this export.");
+    }
+    std::string csv;
+    for (size_t index = 0; index < columns.size(); ++index) {
+        if (index) csv += ',';
+        csv += csv_escape(columns[index]);
+    }
+    csv += '\n';
+    for (const auto & row : result["rows"]) {
+        for (size_t index = 0; index < columns.size(); ++index) {
+            if (index) csv += ',';
+            csv += row.is_object() ? csv_escape(row.value(columns[index], json())) : std::string();
+        }
+        csv += '\n';
+        if (csv.size() > 65536) {
+            return tool_limit_failure(
+                "tool.artifact.export.byte_limit",
+                "dataset CSV export exceeded the bounded artifact size",
+                "The dataset is too large for this bounded export.");
+        }
+    }
+
+    common_runtime_resource_ref resource;
+    common_runtime_resource_lineage lineage;
+    lineage.parent_uri = dataset_uri;
+    lineage.chunk_count = 1;
+    lineage.byte_length = csv.size();
+    lineage.derivation = "artifact.export:dataset-csv";
+    if (!persist_tool_resource(
+            bindings, name, "CSV artifact exported from a dataset", "text/csv", csv,
+            "artifact.export",
+            make_tool_resource_metadata(
+                "Provide a bounded CSV artifact derived from a structured dataset.",
+                "CSV export of dataset " + dataset_uri + ".",
+                "Use the artifact resource for download or bounded resource reads.",
+                "The export is bounded by row, column and byte limits; the source dataset remains authoritative."),
+            resource, error, std::move(lineage))) {
+        return tool_execution_failure("tool.artifact.export.store_failed", std::move(error), "The CSV artifact could not be stored.");
+    }
+    return common_tool_execution_result::success(
+        json({{"resource", resource.uri}, {"name", resource.name}, {"mime_type", resource.mime_type},
+              {"source_dataset", dataset_uri}, {"rows", result["rows"].size()}, {"columns", columns.size()}}).dump(),
+        "Exported a bounded CSV artifact from the dataset.", {std::move(resource)});
 }
 
 bool select_dataset_reference(const json & arguments, std::string & dataset, std::string & error) {
@@ -1145,7 +1274,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (definition.executor_id == "builtin.artifact.export" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("name") || !arguments["name"].is_string() || !arguments.contains("content") || !arguments["content"].is_string()) return tool_validation_failure("tool.artifact.export.invalid_arguments", "artifact.export requires name and content");
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.artifact.export.invalid_arguments", std::move(err));
+                if (arguments.contains("source_dataset")) return export_dataset_csv(bindings, arguments);
+                if (!arguments.contains("name") || !arguments["name"].is_string() || !arguments.contains("content") || !arguments["content"].is_string()) return tool_validation_failure("tool.artifact.export.invalid_arguments", "artifact.export requires name and content, or source_dataset");
                 common_runtime_resource_ref resource;
                 const auto mime = arguments.value("mime_type", std::string("text/plain"));
                 if (!persist_tool_resource(bindings, arguments["name"].get<std::string>(), "Exported tool artifact", mime, arguments["content"].get<std::string>(), "artifact.export", make_tool_resource_metadata("artifact", "Exported tool result", "Read as an artifact resource", "Bounded host-owned export"), resource, err)) return tool_execution_failure("tool.artifact.export.failed", std::move(err), "Artifact export failed.");

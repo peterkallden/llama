@@ -332,6 +332,15 @@ all rows through the model. The first implementation remains limited to
 bounded inspection, schema, samples and deterministic data operations; advanced
 statistics, distributions, confidence intervals and charting are later layers.
 
+The first dataset artifact-export slice reuses `artifact.export` rather than
+adding a spreadsheet-specific tool. The model may provide
+`source_dataset`, `format: "csv"`, an optional name and a bounded `max_rows`;
+the host reads the dataset through the configured data store, serializes a
+bounded CSV, and stores it as a derived `text/csv` resource. Inline text export
+continues to use the same tool. The exported resource carries a lineage parent
+of the dataset URI, while the dataset remains authoritative. XLSX export,
+larger streaming exports and chart artifacts are intentionally later work.
+
 The first common contract slice is implemented in
 `common/agent/dataset-contracts.h`. It validates dataset references and
 descriptors without selecting a backend. Host limits cover source bytes,

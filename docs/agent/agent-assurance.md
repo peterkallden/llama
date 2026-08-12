@@ -185,6 +185,13 @@ The Cozo data-store CTest also covers bounded descriptive statistics, including
 numeric count/min/max/mean, schema-selected numeric columns and fail-closed
 handling for the not-yet-implemented grouped form.
 
+The adapter CTest also covers the first dataset artifact-export slice. A
+bounded dataset query is serialized as CSV through the existing
+`artifact.export` seam, stored as a derived resource, and checked for
+`text/csv` media type and dataset-parent lineage. Unsupported formats are
+rejected by the tool contract. This does not yet claim streaming export, XLSX
+writer support, or chart artifact generation.
+
 This still does not claim XLSX workbook inspection, formula/layout fidelity or
 a live XLSX-to-Cozo vertical slice. The current evidence covers the dataset/store
 boundary and derived-operation behavior using deterministic descriptors and
