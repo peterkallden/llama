@@ -858,6 +858,18 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-data-manipulation-smoke)
+add_executable(${TARGET}
+    smoke/data/agent-data-manipulation-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-storage-cozo)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-docx-text-local-e2e-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-docx-text-local-e2e-smoke.cpp
@@ -1057,6 +1069,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-docx-text-processor-smoke
     llama-agent-dataset-contract-smoke
     llama-agent-dataset-importer-smoke
+    llama-agent-data-manipulation-smoke
     llama-agent-docx-text-local-e2e-smoke
     llama-agent-pdf-page-image-command-smoke
     llama-agent-tesseract-ocr-command-smoke
@@ -1253,6 +1266,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-dataset-importer-ctest
         COMMAND $<TARGET_FILE:llama-agent-dataset-importer-smoke>)
     set_property(TEST llama-agent-dataset-importer-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-data-manipulation-ctest
+        COMMAND $<TARGET_FILE:llama-agent-data-manipulation-smoke>)
+    set_property(TEST llama-agent-data-manipulation-ctest PROPERTY LABELS agent)
 
 
     add_test(NAME llama-agent-pdf-page-image-command-ctest

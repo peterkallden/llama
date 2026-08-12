@@ -355,6 +355,13 @@ The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.
 
+The model-free `llama-agent-data-manipulation-ctest` exercises the existing
+Cozo data-store path with two imported-style worksheet datasets. It verifies
+bounded filtering, joining, aggregation and materialization of an immutable
+derived dataset whose lineage still points to the authoritative workbook
+resource. This smoke is intentionally store-level; it does not introduce a
+second spreadsheet or query execution path.
+
 Dataset descriptors are persisted through the existing data-store seam as
 host-owned metadata. Cozo stores the descriptor separately from row payloads,
 typed value indexes and row ordering, and creates that metadata relation when
