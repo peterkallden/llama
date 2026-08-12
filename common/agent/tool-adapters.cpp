@@ -1101,7 +1101,8 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"datasets", datasets}, {"truncated", datasets.size() >= static_cast<size_t>(limit)}});
             }, error);
-        } else if (definition.executor_id == "builtin.dataset.inspect" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.dataset.inspect" &&
+                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", std::move(err));
@@ -1110,7 +1111,8 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.inspect.unavailable", std::move(err), "Dataset is unavailable.");
                 return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"format", lower_copy(path.extension().string()).substr(1)}, {"size_bytes", std::filesystem::file_size(path)}});
             }, error);
-        } else if (definition.executor_id == "builtin.dataset.schema" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.dataset.schema" &&
+                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.schema.invalid_arguments", std::move(err));
@@ -1122,7 +1124,8 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto names = split_csv(line); json columns = json::array(); for (const auto & name : names) columns.push_back({{"name", name}, {"type", "string"}, {"nullable", true}});
                 return tool_success_json({{"columns", columns}});
             }, error);
-        } else if (definition.executor_id == "builtin.dataset.sample" && !bindings.repository_root.empty()) {
+        } else if (definition.executor_id == "builtin.dataset.sample" &&
+                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.sample.invalid_arguments", std::move(err));

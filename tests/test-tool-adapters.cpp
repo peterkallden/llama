@@ -249,6 +249,22 @@ int main() {
     result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find("dataset://analysis/sales") != std::string::npos);
+
+    // First-class dataset tools do not require a repository root. The host
+    // data-store binding is sufficient; legacy path tools remain unavailable.
+    common_native_tool_bindings dataset_only_bindings;
+    test_data_store dataset_only_data;
+    dataset_only_bindings.data_store = &dataset_only_data;
+    common_tool_registry dataset_only_registry;
+    common_tool_adapter_result dataset_only_adapters;
+    assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id,
+        dataset_only_bindings, dataset_only_registry, dataset_only_adapters, error));
+    result = dataset_only_registry.execute({"dataset.inspect", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("resource://uploads/sales.xlsx") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.schema", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("decimal") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
+    assert(result.ok && dataset_only_data.last_operation == "data.query");
     result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
     assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});

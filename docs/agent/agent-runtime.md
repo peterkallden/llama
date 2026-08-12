@@ -375,6 +375,10 @@ both in the same call. Dataset-URI inspection reads descriptor metadata from
 the configured data store. Dataset-URI samples are delegated to the existing
 bounded `data.query` path, so large row sets remain outside model context while
 legacy CSV support continues to work during migration.
+The first-class dataset URI path only requires the host-owned data-store
+binding; it does not require a repository root. Legacy file access remains
+repository-root scoped. The same binding rule applies when these tools are
+exposed through MCP.
 
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
