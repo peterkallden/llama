@@ -188,6 +188,36 @@ bool normalize_agent_pandoc_document_json(
     return normalize_agent_pandoc_workbook_json(pandoc_json, worksheet_json, error);
 }
 
+bool make_agent_document_table_catalog(
+        const std::string & worksheet_json,
+        common_agent_document_table_catalog & catalog,
+        std::string & error) {
+    const auto root = json::parse(worksheet_json, nullptr, false);
+    if (!root.is_object() || !root.contains("worksheets") || !root["worksheets"].is_array()) {
+        error = "document table catalog requires a worksheet envelope";
+        return false;
+    }
+    catalog = {};
+    if (root["worksheets"].size() > 64) {
+        error = "document table catalog exceeds the bounded table limit";
+        return false;
+    }
+    for (const auto & worksheet : root["worksheets"]) {
+        if (!worksheet.is_object() || !worksheet.contains("name") || !worksheet["name"].is_string()) {
+            error = "document table catalog contains an invalid table";
+            return false;
+        }
+        common_agent_document_table_entry entry;
+        entry.table_index = worksheet.value("table_index", worksheet.value("index", size_t(0)));
+        entry.name = worksheet["name"].get<std::string>();
+        entry.caption = worksheet.value("caption", std::string());
+        entry.node_id = worksheet.value("node_id", "document-node://table/" + std::to_string(entry.table_index));
+        catalog.tables.push_back(std::move(entry));
+    }
+    error.clear();
+    return true;
+}
+
 bool import_agent_worksheet_envelope(
         common_agent_data_store & store,
         const agent_dataset_import_request & request,

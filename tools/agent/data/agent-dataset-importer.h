@@ -48,3 +48,8 @@ bool normalize_agent_pandoc_document_json(
         const std::string & pandoc_json,
         std::string & worksheet_json,
         std::string & error);
+
+bool make_agent_document_table_catalog(
+        const std::string & worksheet_json,
+        common_agent_document_table_catalog & catalog,
+        std::string & error);

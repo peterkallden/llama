@@ -15,6 +15,7 @@
 #include "agent/sandbox-runtime.h"
 #include "../diagnostics/agent-clangd-provider.h"
 #include "../data/agent-data-store-factory.h"
+#include "../data/agent-dataset-importer.h"
 #include "../tooling/agent-sandbox-helper.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 
@@ -24,6 +25,9 @@
 #include <filesystem>
 #include <memory>
 #include <cstdlib>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::ordered_json;
 
 namespace {
 
@@ -349,6 +353,97 @@ bool resolve_agent_host_tool_selection(
         bindings.data_store = request.data_store != nullptr
             ? request.data_store
             : selection.owned_data_store.get();
+        if (bindings.data_store != nullptr && resource_store != nullptr) {
+            const auto runtime = bindings.resource_runtime;
+            auto read_document_json = [resource_store, runtime](
+                    const std::string & uri, std::string & document_json,
+                    agent_resource_descriptor & descriptor, std::string & read_error) {
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                if (!resource_store->stat(uri, authority, descriptor, read_error)) return false;
+                if (descriptor.mime_type != "application/json") {
+                    read_error = "document table tools require an application/json document representation";
+                    return false;
+                }
+                return resource_store->read_bytes(uri, authority, 4 * 1024 * 1024, document_json, read_error);
+            };
+            bindings.document_tables = [read_document_json](const std::string & input) mutable {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object()) return common_tool_execution_result::failure(
+                    "tool.document.tables.invalid_arguments", common_tool_failure_class::validation, false,
+                    "Document table arguments are invalid.", "invalid document table arguments");
+                agent_resource_descriptor descriptor;
+                std::string document_json, error;
+                if (!read_document_json(arguments["resource"].get<std::string>(), document_json, descriptor, error))
+                    return common_tool_execution_result::failure("tool.document.tables.unavailable", common_tool_failure_class::not_found, false,
+                        "The document representation is unavailable.", std::move(error));
+                std::string worksheet_json;
+                if (!normalize_agent_pandoc_document_json(document_json, worksheet_json, error))
+                    return common_tool_execution_result::failure("tool.document.tables.invalid_document", common_tool_failure_class::validation, false,
+                        "The document representation could not be normalized.", std::move(error));
+                common_agent_document_table_catalog catalog;
+                if (!make_agent_document_table_catalog(worksheet_json, catalog, error))
+                    return common_tool_execution_result::failure("tool.document.tables.invalid_document", common_tool_failure_class::validation, false,
+                        "The document table catalog could not be created.", std::move(error));
+                const size_t limit = std::min<size_t>(arguments.value("max_results", 32), catalog.tables.size());
+                json tables = json::array();
+                for (size_t index = 0; index < limit; ++index) {
+                    const auto & table = catalog.tables[index];
+                    tables.push_back({{"index", table.table_index}, {"name", table.name},
+                        {"caption", table.caption}, {"node_id", table.node_id}});
+                }
+                return common_tool_execution_result::success(json({
+                    {"resource", arguments["resource"]}, {"tables", tables},
+                    {"truncated", catalog.tables.size() > limit}}).dump());
+            };
+            bindings.document_table = [read_document_json, data_store = bindings.data_store](const std::string & input) mutable {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object()) return common_tool_execution_result::failure(
+                    "tool.document.table.invalid_arguments", common_tool_failure_class::validation, false,
+                    "Document table arguments are invalid.", "invalid document table arguments");
+                agent_resource_descriptor descriptor;
+                std::string document_json, error;
+                if (!read_document_json(arguments["resource"].get<std::string>(), document_json, descriptor, error))
+                    return common_tool_execution_result::failure("tool.document.table.unavailable", common_tool_failure_class::not_found, false,
+                        "The document representation is unavailable.", std::move(error));
+                std::string worksheet_json;
+                if (!normalize_agent_pandoc_document_json(document_json, worksheet_json, error))
+                    return common_tool_execution_result::failure("tool.document.table.invalid_document", common_tool_failure_class::validation, false,
+                        "The document representation could not be normalized.", std::move(error));
+                common_agent_document_table_catalog catalog;
+                if (!make_agent_document_table_catalog(worksheet_json, catalog, error))
+                    return common_tool_execution_result::failure("tool.document.table.invalid_document", common_tool_failure_class::validation, false,
+                        "The document table catalog could not be created.", std::move(error));
+                common_agent_document_table_locator locator;
+                if (arguments.contains("table")) locator.name = arguments["table"].get<std::string>();
+                else if (arguments.contains("table_index")) locator.table_index = arguments["table_index"].get<size_t>();
+                else locator.node_id = arguments["node_id"].get<std::string>();
+                common_agent_document_table_entry selected;
+                if (!resolve_common_agent_document_table(catalog, locator, selected, error))
+                    return common_tool_execution_result::failure("tool.document.table.not_found", common_tool_failure_class::not_found, false,
+                        "The requested document table was not found.", std::move(error));
+                agent_dataset_import_request import;
+                // The catalog descriptor is intentionally bounded and does
+                // not carry the full derived-resource lineage. The imported
+                // dataset keeps the semantic representation URI; the
+                // resource store remains authoritative for its parent chain.
+                import.source_resource_uri = descriptor.uri;
+                import.source_workbook_name = descriptor.name;
+                import.source_representation = "document:table";
+                import.source_representation_uri = descriptor.uri;
+                import.import_processor_id = "document-json-table-import-v1";
+                import.import_processor_version = "1";
+                import.worksheet_json = worksheet_json;
+                import.sheet_index = selected.table_index;
+                std::vector<common_agent_dataset_descriptor> imported;
+                if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1)
+                    return common_tool_execution_result::failure("tool.document.table.materialization_failed", common_tool_failure_class::execution, false,
+                        "The selected document table could not be materialized.", std::move(error));
+                return common_tool_execution_result::success(json({
+                    {"table_index", selected.table_index}, {"name", selected.name},
+                    {"node_id", selected.node_id}, {"dataset", imported.front().ref.uri},
+                    {"source_resource", imported.front().ref.source_resource_uri}}).dump());
+            };
+        }
         bindings.memory_store = &store;
         bindings.memory_query = query;
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
