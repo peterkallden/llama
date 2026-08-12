@@ -43,6 +43,28 @@ int main() {
     assert(classify_common_agent_table_headers(
         {{"Population by city"}, {"Stockholm"}}, confidence, reason) == common_agent_table_header_mode::ambiguous);
 
+    common_agent_document_table_catalog catalog;
+    catalog.tables = {
+        {0, "Population", "Population", "document-node://table/0", "dataset://report/table/0"},
+        {1, "Budget summary", "Budget summary", "document-node://table/1", "dataset://report/table/1"},
+    };
+    common_agent_document_table_entry resolved;
+    common_agent_document_table_locator by_name;
+    by_name.name = "  budget   SUMMARY ";
+    assert(resolve_common_agent_document_table(catalog, by_name, resolved, error));
+    assert(resolved.table_index == 1 && resolved.dataset_uri == "dataset://report/table/1");
+    common_agent_document_table_locator by_index;
+    by_index.table_index = 0;
+    assert(resolve_common_agent_document_table(catalog, by_index, resolved, error));
+    assert(resolved.name == "Population");
+    common_agent_document_table_locator by_node;
+    by_node.node_id = "document-node://table/1";
+    assert(resolve_common_agent_document_table(catalog, by_node, resolved, error));
+    assert(resolved.table_index == 1);
+    catalog.tables.push_back({2, "Budget summary", "", "document-node://table/2", "dataset://report/table/2"});
+    assert(!resolve_common_agent_document_table(catalog, by_name, resolved, error));
+    assert(error == "document table name is ambiguous");
+
     descriptor.ref.column_count = 1;
     assert(!validate_common_agent_dataset_descriptor(
         descriptor, common_agent_dataset_limits{}, error));

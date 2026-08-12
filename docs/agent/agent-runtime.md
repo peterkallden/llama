@@ -389,6 +389,14 @@ document analysis can use one Pandoc JSON processing result as the source for
 both text projection and simple table materialization; the model does not
 select Pandoc or a converter executable.
 
+Document table catalogs are host-owned bounded projections over the same
+origin metadata. A model-friendly lookup may use a unique table name or
+caption, while `table_index` and `node_id` remain canonical host addresses.
+Names are normalized for surrounding whitespace, repeated whitespace and case;
+duplicate normalized names fail with an ambiguity error rather than selecting
+arbitrarily. The catalog can therefore expose both `Budget summary` and table
+index `1` without making a display name part of the canonical dataset URI.
+
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.

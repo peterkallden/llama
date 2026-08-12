@@ -73,6 +73,36 @@ struct common_agent_dataset_origin {
     std::string header_reason;
 };
 
+// A bounded model-facing catalog entry. The canonical identity remains the
+// host-owned node or dataset URI; name is a convenience lookup key.
+struct common_agent_document_table_entry {
+    size_t table_index = 0;
+    std::string name;
+    std::string caption;
+    std::string node_id;
+    std::string dataset_uri;
+};
+
+struct common_agent_document_table_catalog {
+    std::string source_resource_uri;
+    std::string source_representation_uri;
+    std::vector<common_agent_document_table_entry> tables;
+};
+
+struct common_agent_document_table_locator {
+    std::optional<size_t> table_index;
+    std::string name;
+    std::string node_id;
+};
+
+// Resolves a host-validated table locator. Names are trimmed, whitespace-
+// collapsed and compared case-insensitively. A non-unique name fails closed.
+bool resolve_common_agent_document_table(
+        const common_agent_document_table_catalog & catalog,
+        const common_agent_document_table_locator & locator,
+        common_agent_document_table_entry & resolved,
+        std::string & error);
+
 struct common_agent_dataset_descriptor {
     common_agent_dataset_ref ref;
     std::vector<common_agent_dataset_column> columns;

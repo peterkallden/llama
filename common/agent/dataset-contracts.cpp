@@ -8,6 +8,80 @@
 
 namespace {
 
+std::string normalized_table_name(const std::string & value) {
+    std::string result;
+    bool pending_space = false;
+    for (const unsigned char character : value) {
+        if (std::isspace(character)) {
+            pending_space = !result.empty();
+            continue;
+        }
+        if (pending_space) result.push_back(' ');
+        pending_space = false;
+        result.push_back(static_cast<char>(std::tolower(character)));
+    }
+    return result;
+}
+
+} // namespace
+
+bool resolve_common_agent_document_table(
+        const common_agent_document_table_catalog & catalog,
+        const common_agent_document_table_locator & locator,
+        common_agent_document_table_entry & resolved,
+        std::string & error) {
+    if (locator.table_index.has_value() && !locator.node_id.empty()) {
+        error = "table locator must not combine table_index and node_id";
+        return false;
+    }
+    if (locator.table_index.has_value()) {
+        for (const auto & table : catalog.tables) {
+            if (table.table_index == locator.table_index.value()) {
+                resolved = table;
+                error.clear();
+                return true;
+            }
+        }
+        error = "document table index was not found";
+        return false;
+    }
+    if (!locator.node_id.empty()) {
+        for (const auto & table : catalog.tables) {
+            if (table.node_id == locator.node_id) {
+                resolved = table;
+                error.clear();
+                return true;
+            }
+        }
+        error = "document table node was not found";
+        return false;
+    }
+    const auto wanted = normalized_table_name(locator.name);
+    if (wanted.empty()) {
+        error = "document table locator requires index, name or node_id";
+        return false;
+    }
+    const common_agent_document_table_entry * match = nullptr;
+    for (const auto & table : catalog.tables) {
+        if (normalized_table_name(table.name) != wanted &&
+                normalized_table_name(table.caption) != wanted) continue;
+        if (match != nullptr) {
+            error = "document table name is ambiguous";
+            return false;
+        }
+        match = &table;
+    }
+    if (match == nullptr) {
+        error = "document table name was not found";
+        return false;
+    }
+    resolved = *match;
+    error.clear();
+    return true;
+}
+
+namespace {
+
 bool normalize_condition_value(
         const std::string & field,
         const nlohmann::ordered_json & value,
