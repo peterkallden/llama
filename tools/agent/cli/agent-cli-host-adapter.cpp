@@ -337,6 +337,7 @@ bool resolve_agent_host_tool_selection(
             }
             resource_store = selection.owned_resource_store.get();
         }
+        bindings.resource_runtime = selection.tooling.resource_runtime;
         bindings.resource_runtime.store = resource_store;
         selection.tooling.resource_runtime.store = resource_store;
         selection.resource_processor_registry = std::make_shared<agent_resource_processor_registry>();
