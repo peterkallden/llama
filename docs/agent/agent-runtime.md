@@ -351,6 +351,13 @@ limitations. A backend that does not implement ingestion fails explicitly
 rather than falling back to a second store or returning rows through the model
 context.
 
+Dataset descriptors are persisted through the existing data-store seam as
+host-owned metadata. Cozo stores the descriptor separately from row payloads,
+typed value indexes and row ordering, and creates that metadata relation when
+opening an older database. This keeps dataset identity/provenance available to
+inspection tools without making the row store or resource store a second
+authority.
+
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used

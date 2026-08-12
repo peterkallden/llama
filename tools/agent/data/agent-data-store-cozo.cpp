@@ -39,11 +39,12 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
     std::string relations;
     if (!run("::relations", "{}", relations, error)) { close(); return false; }
     const auto parsed = json::parse(relations, nullptr, false);
-    bool rows_present = false, values_present = false, order_present = false;
+    bool rows_present = false, values_present = false, order_present = false, dataset_present = false;
     if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0].is_string()) {
         rows_present |= row[0] == "agent_data_rows";
         values_present |= row[0] == "agent_data_values";
         order_present |= row[0] == "agent_data_row_order";
+        dataset_present |= row[0] == "agent_dataset_metadata";
     }
     if (!rows_present) { std::string ignored; if (!run(agent_cozo_schema_script(), "{}", ignored, error)) { close(); return false; } }
     else if (!values_present) { std::string ignored; if (!run(agent_cozo_values_schema_script(), "{}", ignored, error)) { close(); return false; } }
@@ -61,6 +62,7 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         }
         if (!order_rows.empty() && !run("?[dataset, row_id, row_seq] <- $rows :put agent_data_row_order { dataset, row_id => row_seq }", json({{"rows", order_rows}}).dump(), raw, error)) { close(); return false; }
     }
+    if (!dataset_present) { std::string ignored; if (!run(agent_cozo_dataset_schema_script(), "{}", ignored, error)) { close(); return false; } }
     return true;
 }
 
@@ -87,6 +89,34 @@ bool common_agent_cozo_data_store::put_row(const std::string & dataset, const st
     const auto values = agent_cozo_encode_row_values(dataset, row_id, parsed);
     if (!values.empty() && !run("?[dataset, row_id, field, value_kind, value_text, value_number] <- $rows :put agent_data_values { dataset, row_id, field => value_kind, value_text, value_number }", json({{"rows", values}}).dump(), result, error)) return false;
     return true;
+}
+
+bool common_agent_cozo_data_store::put_dataset_descriptor(
+        const common_agent_dataset_descriptor & descriptor,
+        std::string & error) {
+    if (!validate_common_agent_dataset_descriptor(descriptor, common_agent_dataset_limits{}, error)) return false;
+    json columns = json::array();
+    for (const auto & column : descriptor.columns) columns.push_back({
+        {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)},
+        {"nullable", column.nullable}});
+    const json value = {
+        {"uri", descriptor.ref.uri}, {"name", descriptor.ref.name},
+        {"row_count", descriptor.ref.row_count}, {"column_count", descriptor.ref.column_count},
+        {"source_resource_uri", descriptor.ref.source_resource_uri},
+        {"source_representation", descriptor.ref.source_representation},
+        {"columns", columns}, {"source_workbook_name", descriptor.source_workbook_name},
+        {"source_sheet_name", descriptor.source_sheet_name},
+        {"source_sheet_index", descriptor.source_sheet_index ? json(*descriptor.source_sheet_index) : json()},
+        {"source_range", descriptor.source_range}, {"source_object", descriptor.source_object},
+        {"import_processor_id", descriptor.import_processor_id},
+        {"import_processor_version", descriptor.import_processor_version},
+        {"parent_dataset_uris", descriptor.lineage.parent_dataset_uris},
+        {"operation", descriptor.lineage.operation},
+        {"operation_summary", descriptor.lineage.operation_summary},
+    };
+    std::string result;
+    return run("?[dataset_uri, descriptor_json] <- [[$dataset_uri, $descriptor_json]] :put agent_dataset_metadata { dataset_uri => descriptor_json }",
+        json({{"dataset_uri", descriptor.ref.uri}, {"descriptor_json", value.dump()}}).dump(), result, error);
 }
 
 bool common_agent_cozo_data_store::execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) {

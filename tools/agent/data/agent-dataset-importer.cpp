@@ -234,6 +234,7 @@ bool import_agent_worksheet_envelope(
             std::string row_id = descriptor.ref.uri + "/row/" + std::to_string(row_index);
             if (!store.put_row(descriptor.ref.uri, row_id, row.dump(), error)) return false;
         }
+        if (!store.put_dataset_descriptor(descriptor, error)) return false;
         imported.push_back(std::move(descriptor));
     }
     error.clear();

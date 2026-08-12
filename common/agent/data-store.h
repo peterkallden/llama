@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/dataset-contracts.h"
+
 #include <string>
 
 struct common_agent_data_store_config {
@@ -25,6 +27,14 @@ public:
         (void) row_id;
         (void) row_json;
         error = "data store does not support dataset ingestion";
+        return false;
+    }
+
+    virtual bool put_dataset_descriptor(
+            const common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) descriptor;
+        error = "data store does not support dataset descriptors";
         return false;
     }
 

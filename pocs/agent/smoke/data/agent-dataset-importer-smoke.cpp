@@ -21,9 +21,17 @@ public:
         return false;
     }
 
+    bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor,
+            std::string & error) override {
+        descriptors.push_back(descriptor);
+        error.clear();
+        return true;
+    }
+
     std::vector<std::string> datasets;
     std::vector<std::string> row_ids;
     std::vector<std::string> rows;
+    std::vector<common_agent_dataset_descriptor> descriptors;
 };
 
 int main() {
@@ -60,6 +68,7 @@ int main() {
     assert(imported[0].ref.source_resource_uri == request.source_resource_uri);
     assert(imported[0].source_sheet_name == "Sales");
     assert(store.rows.size() == 2);
+    assert(store.descriptors.size() == 1);
     assert(store.datasets[0] == imported[0].ref.uri);
 
     request.limits.max_rows = 1;

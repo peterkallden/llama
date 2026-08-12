@@ -175,6 +175,10 @@ is normalized into a worksheet envelope, which produces per-worksheet
 descriptors and bounded row writes through the existing data-store interface.
 This still does not claim XLSX workbook inspection, formula/layout fidelity or
 a live Cozo-backed XLSX vertical slice is complete.
+Cozo descriptor persistence adds a host-owned metadata relation and an
+open-time additive migration path; the focused importer smoke passes against a
+recording store, while a dedicated live Cozo metadata/reload test remains part
+of the next verification slice.
 
 ### Protocols and events
 
