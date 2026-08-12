@@ -177,6 +177,10 @@ with parent-dataset lineage and source-resource provenance. The corresponding
 Cozo CTest verifies descriptor persistence, reload, materialization, lineage,
 and fail-closed handling for truncated results.
 
+The separate `llama-agent-data-manipulation-ctest` also covers the intended
+model-free workbook-shaped path: bounded filter, inner join, grouped count/sum,
+and immutable aggregate materialization with source-resource provenance.
+
 This still does not claim XLSX workbook inspection, formula/layout fidelity or
 a live XLSX-to-Cozo vertical slice. The current evidence covers the dataset/store
 boundary and derived-operation behavior using deterministic descriptors and
