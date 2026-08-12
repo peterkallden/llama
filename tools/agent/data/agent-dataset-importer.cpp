@@ -190,6 +190,10 @@ bool import_agent_worksheet_envelope(
             return false;
         }
         const std::string sheet_name = worksheet["name"].get<std::string>();
+        const auto worksheet_index = worksheet.contains("index") && worksheet["index"].is_number_unsigned()
+            ? std::optional<size_t>(worksheet["index"].get<size_t>()) : std::nullopt;
+        if (request.sheet_name.has_value() && request.sheet_name.value() != sheet_name) continue;
+        if (request.sheet_index.has_value() && (!worksheet_index.has_value() || request.sheet_index.value() != worksheet_index.value())) continue;
         if (sheet_name.empty() || worksheet["columns"].size() > request.limits.max_columns ||
                 worksheet["rows"].size() > request.limits.max_rows) {
             error = "worksheet shape exceeds host limits";
@@ -204,9 +208,7 @@ bool import_agent_worksheet_envelope(
         descriptor.ref.source_representation = "xlsx:worksheet";
         descriptor.source_workbook_name = request.source_workbook_name;
         descriptor.source_sheet_name = sheet_name;
-        if (worksheet.contains("index") && worksheet["index"].is_number_unsigned()) {
-            descriptor.source_sheet_index = worksheet["index"].get<size_t>();
-        }
+        descriptor.source_sheet_index = worksheet_index;
         descriptor.source_range = worksheet.value("range", std::string());
         descriptor.source_object = worksheet.value("object", std::string());
         descriptor.import_processor_id = request.import_processor_id;
@@ -236,6 +238,10 @@ bool import_agent_worksheet_envelope(
         }
         if (!store.put_dataset_descriptor(descriptor, error)) return false;
         imported.push_back(std::move(descriptor));
+    }
+    if ((request.sheet_name.has_value() || request.sheet_index.has_value()) && imported.empty()) {
+        error = "requested worksheet was not found";
+        return false;
     }
     error.clear();
     return true;

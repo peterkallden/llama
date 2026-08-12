@@ -159,14 +159,13 @@ run but is not checked until that live environment has passed.
 Dataset handling remains a separate assurance track. A resource is the
 authoritative source, a dataset is a typed analytical handle, a data tool
 operates on authorized dataset references, and an exported artifact is a new
-derived resource. The current CSV/Cozo foundation does not yet prove XLSX
-worksheet inspection, Pandoc structured ingestion, dataset materialization or
-dataset-reference tool execution. The model-free Pandoc processor contract now
-covers XLSX-to-structured-JSON as an intermediate resource representation, and
-the common typed dataset reference/schema contract has its own passing CTest;
-neither is yet worksheet dataset ingestion. The broader claims must be added
-only after
-focused contract tests and a bounded end-to-end fixture pass. Advanced
+derived resource. The current CSV/Cozo foundation does not yet prove full XLSX
+workbook fidelity or dataset-reference tool execution. The model-free Pandoc
+processor contract covers XLSX-to-structured-JSON, and the bounded worksheet
+importer now materializes separate typed dataset descriptors with source
+workbook/sheet provenance and host-owned sheet selection. The broader claims
+must be added only after focused contract tests and a bounded end-to-end fixture
+pass. Advanced
 statistics, formula evaluation, workbook visual fidelity and full spreadsheet
 feature preservation remain explicitly out of scope for the first slice.
 

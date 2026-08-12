@@ -4,6 +4,7 @@
 #include "agent/dataset-contracts.h"
 
 #include <string>
+#include <optional>
 #include <vector>
 
 // Host-normalized worksheet envelope. Resource processors may use a richer
@@ -15,6 +16,10 @@ struct agent_dataset_import_request {
     std::string import_processor_id;
     std::string import_processor_version;
     std::string worksheet_json;
+    // Optional host-owned selection. When absent, all bounded worksheets are
+    // imported; when present, exactly the matching worksheet is imported.
+    std::optional<std::string> sheet_name;
+    std::optional<size_t> sheet_index;
     common_agent_dataset_limits limits;
 };
 

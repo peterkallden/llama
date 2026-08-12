@@ -51,6 +51,11 @@ int main() {
         [[[],0,[],[
           [[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"1"}]}]],[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"10.5"}]}]]]],
           [[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"2"}]}]],[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"12.0"}]}]]]]]],[]]
+      ]},
+      {"t":"Header","c":[1,[],[{"t":"Str","c":"Customers"}]]},
+      {"t":"Table","c":[[],[],[],
+        [[],[[[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"name"}]}]]]]]],
+        [[[],0,[],[[[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"Ada"}]}]]]]]],[]]
       ]}
     ]})";
     std::string normalized;
@@ -62,15 +67,21 @@ int main() {
 
     std::vector<common_agent_dataset_descriptor> imported;
     assert(import_agent_worksheet_envelope(store, request, imported, error));
-    assert(imported.size() == 1);
+    assert(imported.size() == 2);
     assert(imported[0].ref.name == "Sales");
     assert(imported[0].ref.row_count == 2);
     assert(imported[0].ref.source_resource_uri == request.source_resource_uri);
     assert(imported[0].source_sheet_name == "Sales");
-    assert(store.rows.size() == 2);
-    assert(store.descriptors.size() == 1);
+    assert(store.rows.size() == 3);
+    assert(imported[1].ref.name == "Customers");
+    assert(store.descriptors.size() == 2);
     assert(store.datasets[0] == imported[0].ref.uri);
 
+    request.sheet_name = "Customers";
+    request.limits.max_rows = 100;
+    assert(import_agent_worksheet_envelope(store, request, imported, error));
+    assert(imported.size() == 1 && imported[0].ref.name == "Customers");
+    request.sheet_name.reset();
     request.limits.max_rows = 1;
     assert(!import_agent_worksheet_envelope(store, request, imported, error));
     assert(error == "worksheet shape exceeds host limits");

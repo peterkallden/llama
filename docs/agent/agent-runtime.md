@@ -351,6 +351,10 @@ limitations. A backend that does not implement ingestion fails explicitly
 rather than falling back to a second store or returning rows through the model
 context.
 
+The importer can materialize all bounded worksheets, or one exact worksheet
+selected by the host with `sheet_name` or `sheet_index`; selection is not a
+model-selected parser operation. A missing requested worksheet fails closed.
+
 Dataset descriptors are persisted through the existing data-store seam as
 host-owned metadata. Cozo stores the descriptor separately from row payloads,
 typed value indexes and row ordering, and creates that metadata relation when
@@ -1210,7 +1214,7 @@ The current processor catalog is intentionally small:
 | `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
 | `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 | `pandoc-html-markdown-v1` | `text/html` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
-| `pandoc-xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Contract implemented; worksheet importer not yet connected | Pandoc executable, structured JSON output and bounded output bytes |
+| `pandoc-xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Contract implemented; bounded worksheet importer connected | Pandoc executable, structured JSON output, worksheet selection and bounded dataset materialization |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
