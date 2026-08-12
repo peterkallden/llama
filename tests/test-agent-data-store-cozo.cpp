@@ -31,6 +31,19 @@ int main() {
     TEST_ASSERT(store.put_row("orders", "2", R"({"id":2,"customer_id":11,"region":"south","value":8})", error));
     TEST_ASSERT(store.put_row("orders", "3", R"({"id":3,"customer_id":10,"region":"north","value":4})", error));
     TEST_ASSERT(store.put_row("customers", "10", R"({"customer_id":10,"name":"Ada"})", error));
+    common_agent_dataset_descriptor orders_descriptor;
+    orders_descriptor.ref = {"orders", "Orders", 3, 4, "resource://uploads/orders.csv", "tabular-dataset"};
+    orders_descriptor.columns = {{"id", common_agent_dataset_column_type::integer, false},
+        {"customer_id", common_agent_dataset_column_type::integer, false},
+        {"region", common_agent_dataset_column_type::string, true},
+        {"value", common_agent_dataset_column_type::integer, true}};
+    orders_descriptor.import_processor_id = "test-importer";
+    TEST_ASSERT(store.put_dataset_descriptor(orders_descriptor, error));
+    common_agent_dataset_descriptor customers_descriptor = orders_descriptor;
+    customers_descriptor.ref = {"customers", "Customers", 1, 2, "resource://uploads/customers.csv", "tabular-dataset"};
+    customers_descriptor.columns = {{"customer_id", common_agent_dataset_column_type::integer, false},
+        {"name", common_agent_dataset_column_type::string, true}};
+    TEST_ASSERT(store.put_dataset_descriptor(customers_descriptor, error));
 
     std::string output;
     TEST_ASSERT(store.execute("data.query", R"({"dataset":"orders","order_by":[{"field":"value","direction":"desc"}],"max_scan_rows":2,"max_result_rows":1})", output, error));
@@ -67,6 +80,16 @@ int main() {
 
     TEST_ASSERT(!store.execute("data.join", R"({"dataset":"orders","right":"customers","on":[]})", output, error));
     TEST_ASSERT(error.find("left") != std::string::npos);
+
+    TEST_ASSERT(store.execute("data.filter", R"({"dataset":"orders","conditions":[{"field":"region","operator":"=","value":"north"}],"materialize":true,"result_dataset":"dataset://derived/north-orders"})", output, error));
+    const auto materialized = json::parse(output);
+    TEST_ASSERT(materialized["materialized"] == true && materialized["dataset"] == "dataset://derived/north-orders" && materialized["rows"] == 2);
+    common_agent_dataset_descriptor derived;
+    TEST_ASSERT(store.get_dataset_descriptor("dataset://derived/north-orders", derived, error));
+    TEST_ASSERT(derived.lineage.parent_dataset_uris.size() == 1 && derived.lineage.parent_dataset_uris[0] == "orders" &&
+        derived.lineage.operation == "data.filter" && derived.ref.source_resource_uri == "resource://uploads/orders.csv");
+    TEST_ASSERT(!store.execute("data.filter", R"({"dataset":"orders","conditions":[],"max_scan_rows":1,"materialize":true,"result_dataset":"dataset://derived/truncated"})", output, error));
+    TEST_ASSERT(error.find("truncated") != std::string::npos);
 
     store.close();
     fs::remove_all(root, ec);

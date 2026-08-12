@@ -18,6 +18,108 @@ extern "C" {
 using json = nlohmann::ordered_json;
 
 namespace {
+
+common_agent_dataset_column_type infer_dataset_column_type(const json & value) {
+    if (value.is_null()) return common_agent_dataset_column_type::null_;
+    if (value.is_boolean()) return common_agent_dataset_column_type::boolean;
+    if (value.is_number_integer()) return common_agent_dataset_column_type::integer;
+    if (value.is_number_float()) return common_agent_dataset_column_type::decimal;
+    if (value.is_string()) return common_agent_dataset_column_type::string;
+    return common_agent_dataset_column_type::unknown;
+}
+
+bool materialize_data_result(
+        common_agent_cozo_data_store & store,
+        const std::string & operation,
+        const json & request,
+        std::string & result_json,
+        std::string & error) {
+    if (!request.value("materialize", false)) return true;
+    if (!request.contains("result_dataset") || !request["result_dataset"].is_string() ||
+            request["result_dataset"].get<std::string>().empty()) {
+        error = "materialized data operation requires result_dataset";
+        return false;
+    }
+    const auto result = json::parse(result_json, nullptr, false);
+    if (!result.is_object() || result.value("scan_truncated", false) || result.value("result_truncated", false)) {
+        error = "cannot materialize a truncated data operation result";
+        return false;
+    }
+    if (!result.contains("rows") || !result["rows"].is_array()) {
+        error = "data operation did not produce materializable rows";
+        return false;
+    }
+    std::vector<std::string> parents;
+    if (operation == "data.join") {
+        parents = {request.value("left", std::string()), request.value("right", std::string())};
+    } else {
+        parents = {request.value("dataset", std::string())};
+    }
+    common_agent_dataset_descriptor first_parent;
+    if (parents.empty() || parents.front().empty() || !store.get_dataset_descriptor(parents.front(), first_parent, error)) {
+        if (error.empty()) error = "materialized data operation requires parent dataset metadata";
+        return false;
+    }
+    common_agent_dataset_descriptor descriptor;
+    descriptor.ref.uri = request["result_dataset"].get<std::string>();
+    descriptor.ref.name = descriptor.ref.uri.substr(descriptor.ref.uri.find_last_of('/') + 1);
+    descriptor.ref.row_count = result["rows"].size();
+    descriptor.ref.source_resource_uri = first_parent.ref.source_resource_uri;
+    descriptor.ref.source_representation = "derived-dataset";
+    descriptor.lineage.parent_dataset_uris = parents;
+    descriptor.lineage.operation = operation;
+    descriptor.lineage.operation_summary = "Materialized bounded result of " + operation;
+    descriptor.import_processor_id = "cozo-data-operation-v1";
+    descriptor.import_processor_version = "1";
+    std::vector<std::string> column_names;
+    if (result.contains("columns") && result["columns"].is_array()) {
+        for (const auto & column : result["columns"]) if (column.is_string()) column_names.push_back(column.get<std::string>());
+    }
+    std::set<std::string> column_set(column_names.begin(), column_names.end());
+    for (const auto & row : result["rows"]) if (row.is_object()) for (auto it = row.begin(); it != row.end(); ++it) column_set.insert(it.key());
+    if (column_set.empty()) for (const auto & column : first_parent.columns) column_set.insert(column.name);
+    column_names.assign(column_set.begin(), column_set.end());
+    for (const auto & name : column_names) {
+        common_agent_dataset_column column;
+        column.name = name;
+        column.type = common_agent_dataset_column_type::unknown;
+        for (size_t row_index = 0; row_index < result["rows"].size(); ++row_index) {
+            const auto & row = result["rows"][row_index];
+            json cell;
+            if (row.is_object() && row.contains(name)) cell = row[name];
+            else if (row.is_array() && result.contains("columns") && result["columns"].is_array()) {
+                const auto column_index = std::find(column_names.begin(), column_names.end(), name);
+                if (column_index != column_names.end()) {
+                    const auto index = static_cast<size_t>(std::distance(column_names.begin(), column_index));
+                    if (index < row.size()) cell = row[index];
+                }
+            }
+            const auto type = infer_dataset_column_type(cell);
+            if (type != common_agent_dataset_column_type::null_) { column.type = type; break; }
+        }
+        descriptor.columns.push_back(std::move(column));
+    }
+    descriptor.ref.column_count = descriptor.columns.size();
+    if (!validate_common_agent_dataset_descriptor(descriptor, common_agent_dataset_limits{}, error)) return false;
+    for (size_t index = 0; index < result["rows"].size(); ++index) {
+        json row = result["rows"][index];
+        if (row.is_array()) {
+            json object = json::object();
+            for (size_t column_index = 0; column_index < row.size() && column_index < column_names.size(); ++column_index) object[column_names[column_index]] = row[column_index];
+            row = std::move(object);
+        }
+        if (!row.is_object() || !store.put_row(descriptor.ref.uri, std::to_string(index), row.dump(), error)) return false;
+    }
+    if (!store.put_dataset_descriptor(descriptor, error)) return false;
+    result_json = json({
+        {"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name},
+        {"rows", descriptor.ref.row_count}, {"columns", descriptor.ref.column_count},
+        {"source", descriptor.ref.source_resource_uri},
+        {"lineage", {{"parents", descriptor.lineage.parent_dataset_uris},
+                      {"operation", descriptor.lineage.operation}}},
+        {"materialized", true}}).dump();
+    return true;
+}
 }
 
 common_agent_cozo_data_store::~common_agent_cozo_data_store() { close(); }
@@ -193,10 +295,14 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
             std::string & metadata_error) {
         return agent_cozo_read_scan_metadata(dataset_name, scan_limit, scanned, truncated, run_query, metadata_error);
     };
-    if (operation == "data.aggregate") return agent_cozo_execute_native_aggregate(
-        request, max_scan_rows, max_result_rows, run_query, read_metadata, result_json, error);
-    if (operation == "data.join") return agent_cozo_execute_native_join(
-        request, max_scan_rows, max_result_rows, run_query, read_metadata, result_json, error);
+    if (operation == "data.aggregate") {
+        if (!agent_cozo_execute_native_aggregate(request, max_scan_rows, max_result_rows, run_query, read_metadata, result_json, error)) return false;
+        return materialize_data_result(*this, operation, request, result_json, error);
+    }
+    if (operation == "data.join") {
+        if (!agent_cozo_execute_native_join(request, max_scan_rows, max_result_rows, run_query, read_metadata, result_json, error)) return false;
+        return materialize_data_result(*this, operation, request, result_json, error);
+    }
 
     std::vector<json> rows;
     size_t scanned_rows = 0;
@@ -222,7 +328,7 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         const bool result_truncated = rows.size() > limit;
         if (result_truncated) rows.resize(limit);
         result_json = json({{"rows", rows}, {"scanned_rows", scanned_rows}, {"row_count", rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", result_truncated}}).dump();
-        return true;
+        return materialize_data_result(*this, operation, request, result_json, error);
     } else if (operation == "data.query") {
         for (auto it = rows.begin(); it != rows.end();) {
             bool keep = true; for (const auto & condition : request.value("where", json::array())) if (!agent_cozo_match_condition(*it, condition)) keep = false;
@@ -241,7 +347,7 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         }
         const bool result_truncated = rows.size() > max_result_rows;
         if (result_truncated) rows.resize(max_result_rows);
-        result_json = json({{"rows", rows}, {"scanned_rows", scanned_rows}, {"row_count", rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", result_truncated}}).dump(); return true;
+        result_json = json({{"rows", rows}, {"scanned_rows", scanned_rows}, {"row_count", rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", result_truncated}}).dump(); return materialize_data_result(*this, operation, request, result_json, error);
     }
 
     const auto selected = request.value("select", json::array());
@@ -259,6 +365,6 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         if (request.value("distinct", false) && !distinct_rows.insert(projected.dump()).second) continue;
         output_rows.push_back(std::move(projected));
     }
-    result_json = json({{"columns", columns}, {"rows", output_rows}, {"scanned_rows", scanned_rows}, {"row_count", output_rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", rows.size() > output_rows.size()}}).dump();
-    return true;
+        result_json = json({{"columns", columns}, {"rows", output_rows}, {"scanned_rows", scanned_rows}, {"row_count", output_rows.size()}, {"scan_truncated", scan_truncated}, {"result_truncated", rows.size() > output_rows.size()}}).dump();
+    return materialize_data_result(*this, operation, request, result_json, error);
 }

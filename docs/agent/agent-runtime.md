@@ -370,6 +370,16 @@ and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used
 for deterministic tabular computation.
 
+Structured operations retain their existing bounded row-result behavior by
+default. A host-approved operation may additionally request `materialize=true`
+with an explicit `result_dataset` URI. The Cozo implementation then creates a
+new dataset descriptor and rows in the same store, records the parent dataset
+URI(s), operation and source-resource provenance, and returns only the new
+dataset descriptor. Materialization is fail-closed when scanning or returning
+rows was truncated; partial results are never presented as complete derived
+datasets. This is the first immutable-derived-dataset seam, not yet a general
+transaction or cross-backend materialization guarantee.
+
 The namespaced names are canonical in the catalog, native registry and
 resolved profile snapshots. Host configuration, profiles and model-visible
 tool views must use these names directly.
