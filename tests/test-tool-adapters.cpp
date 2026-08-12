@@ -255,8 +255,19 @@ int main() {
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
     result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});
     assert(result.ok && foundation_data.last_operation == "data.query");
+    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","where":{"status":"failed"}})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("where":[{"field":"status","operator":"=","value":"failed"}])") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","where":"status -eq \"failed\" and attempt -gt 1"})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("field":"status")") != std::string::npos &&
+           foundation_data.last_request.find(R"("operator":"=","value":"failed")") != std::string::npos &&
+           foundation_data.last_request.find(R"("field":"attempt","operator":">","value":1)") != std::string::npos);
     result = foundation_registry.execute({"data.filter", R"({"dataset":"tool-events","conditions":[{"field":"status","operator":"=","value":"failed"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.filter");
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"tool-events","conditions":{"status":{"in":["failed","blocked"]}}})"});
+    assert(result.ok && foundation_data.last_operation == "data.filter" &&
+           foundation_data.last_request.find(R"("operator":"in","value":["failed","blocked"])") != std::string::npos);
     result = foundation_registry.execute({"data.aggregate", R"({"dataset":"tool-events","measures":[{"function":"count","column":"*"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.aggregate");
     result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":[{"left":"id","right":"id"}]})"});

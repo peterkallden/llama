@@ -1,5 +1,6 @@
 #include "agent-mcp-server-tool-registry.h"
 
+#include "agent/dataset-contracts.h"
 #include "agent/schema-contract.h"
 
 #include <nlohmann/json.hpp>
@@ -60,9 +61,13 @@ bool agent_mcp_server_tool_registry::validate_tool_arguments(
         error = "MCP tool arguments must be a JSON object";
         return false;
     }
+    auto normalized_input = arguments;
+    if (!normalize_common_agent_dataset_tool_arguments(name, normalized_input, error)) {
+        return false;
+    }
     std::string normalized_arguments;
     if (!common_schema_normalize_and_validate_object(
-            arguments.dump(),
+            normalized_input.dump(),
             tool->input_schema_json,
             normalized_arguments,
             error)) {
@@ -87,9 +92,13 @@ bool agent_mcp_server_tool_registry::call_tool(
         return false;
     }
 
+    auto normalized_input = arguments;
+    if (!normalize_common_agent_dataset_tool_arguments(name, normalized_input, error)) {
+        return false;
+    }
     std::string normalized_arguments;
     if (!common_schema_normalize_and_validate_object(
-            arguments.dump(), tool->input_schema_json, normalized_arguments, error)) {
+            normalized_input.dump(), tool->input_schema_json, normalized_arguments, error)) {
         return false;
     }
 

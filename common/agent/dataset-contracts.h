@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 // Dataset is a structured analytical handle. It is intentionally separate
 // from common_runtime_resource_ref, which remains the authority for source
 // bytes, media type and resource lineage.
@@ -75,4 +77,13 @@ bool validate_common_agent_dataset_ref(
 bool validate_common_agent_dataset_descriptor(
         const common_agent_dataset_descriptor & descriptor,
         const common_agent_dataset_limits & limits,
+        std::string & error);
+
+// Converts the small model-friendly predicate form used by dataset tools into
+// the canonical field/operator/value condition list consumed by data stores.
+// Only dataset query/filter arguments are changed; unrelated tool arguments
+// are left untouched.
+bool normalize_common_agent_dataset_tool_arguments(
+        const std::string & tool_name,
+        nlohmann::ordered_json & arguments,
         std::string & error);

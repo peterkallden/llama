@@ -511,6 +511,31 @@ returned result. Results report `scanned_rows`, `row_count`, `scan_truncated`,
 bounded scan from a small result. Cozo keeps a structured field-value relation
 alongside the JSON payload relation and compiles typed `data.filter`/
 `data.query` predicates into CozoScript before materializing matching payloads.
+
+Dataset predicates have one canonical host/backend form:
+`{"field":"country","operator":"=","value":"Sweden"}`. To make
+the same tools usable by smaller models, the tool boundary also normalizes two
+bounded shorthand forms before validation and backend execution:
+
+```json
+{"where":{"country":"Sweden","population":{"gt":100000}}}
+```
+
+and:
+
+```text
+population -gt 100000 and country in ["Sweden", "Norway"]
+```
+
+The object form means an `AND` list of equality or one-operator predicates.
+The expression form supports only bounded `AND` predicates with `eq`/`-eq`,
+`neq`/`-neq`, `gt`/`-gt`, `gte`/`-gte`, `lt`/`-lt`, `lte`/`-lte` and `in`.
+`data.query.where` and `data.filter.conditions` use the same normalizer.
+Canonical predicates remain the authoritative contract; tracing, repair and
+backend calls use the canonical representation. The normalizer is shared by
+native and MCP tool paths and does not turn the expression form into a general
+SQL or scripting language.
+
 Ordering, grouping, aggregation, inner joins and left joins use the structured
 relation as well. Cozo-backed rows now have a host-owned per-dataset ordinal,
 which lets native aggregation and joins apply `max_scan_rows` before grouping or

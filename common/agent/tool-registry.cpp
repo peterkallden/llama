@@ -1,5 +1,6 @@
 #include "agent/tool-registry.h"
 #include "agent/schema-contract.h"
+#include "agent/dataset-contracts.h"
 #include "plan/plan-json.h"
 
 bool common_tool_registry::register_tool(common_registered_tool tool, std::string & error) {
@@ -22,6 +23,9 @@ bool common_tool_registry::validate(const common_registered_tool_call & call, st
     const auto it = tools.find(call.name); if (it == tools.end()) { error = "tool is not registered"; return false; }
     std::string normalized;
     if (!common_plan_normalize_tool_arguments_json(call.name, call.arguments_json, normalized, error)) return false;
+    auto parsed = common_json_contract_value::parse(normalized, nullptr, false);
+    if (!parsed.is_object() || !normalize_common_agent_dataset_tool_arguments(call.name, parsed, error)) return false;
+    normalized = parsed.dump();
     return common_schema_normalize_and_validate_object(normalized, it->second.arguments_schema, normalized, error);
 }
 
@@ -30,8 +34,15 @@ common_tool_execution_result common_tool_registry::execute(const common_register
     const auto it = tools.find(call.name);
     if (it == tools.end()) return common_tool_execution_result::failure("tool.unknown", common_tool_failure_class::validation, false, "Tool is not registered.", "tool is not registered");
     std::string normalized;
-    if (!common_plan_normalize_tool_arguments_json(call.name, call.arguments_json, normalized, error) ||
-            !common_schema_normalize_and_validate_object(normalized, it->second.arguments_schema, normalized, error)) {
+    if (!common_plan_normalize_tool_arguments_json(call.name, call.arguments_json, normalized, error)) {
+        return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
+    }
+    auto parsed = common_json_contract_value::parse(normalized, nullptr, false);
+    if (!parsed.is_object() || !normalize_common_agent_dataset_tool_arguments(call.name, parsed, error)) {
+        return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
+    }
+    normalized = parsed.dump();
+    if (!common_schema_normalize_and_validate_object(normalized, it->second.arguments_schema, normalized, error)) {
         return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
     }
     return it->second.handler(normalized);
