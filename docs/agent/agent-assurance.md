@@ -170,15 +170,19 @@ focused contract tests and a bounded end-to-end fixture pass. Advanced
 statistics, formula evaluation, workbook visual fidelity and full spreadsheet
 feature preservation remain explicitly out of scope for the first slice.
 
-The importer/store seam now has focused model-free coverage: a Pandoc table AST
-is normalized into a worksheet envelope, which produces per-worksheet
-descriptors and bounded row writes through the existing data-store interface.
+The importer/store seam has focused model-free coverage: a Pandoc table AST is
+normalized into a worksheet envelope, which produces per-worksheet descriptors
+and bounded row writes through the existing data-store interface. The live Cozo
+store now also materializes bounded filter results as immutable derived datasets
+with parent-dataset lineage and source-resource provenance. The corresponding
+Cozo CTest verifies descriptor persistence, reload, materialization, lineage,
+and fail-closed handling for truncated results.
+
 This still does not claim XLSX workbook inspection, formula/layout fidelity or
-a live Cozo-backed XLSX vertical slice is complete.
-Cozo descriptor persistence adds a host-owned metadata relation and an
-open-time additive migration path; the focused importer smoke passes against a
-recording store, while a dedicated live Cozo metadata/reload test remains part
-of the next verification slice.
+a live XLSX-to-Cozo vertical slice. The current evidence covers the dataset/store
+boundary and derived-operation behavior using deterministic descriptors and
+bounded operation results; Pandoc workbook parsing and full XLSX ingestion remain
+separate follow-up verification.
 
 ### Protocols and events
 
@@ -250,6 +254,26 @@ they are not a replacement for those maturity labels.
 Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
 passes.
+
+### Latest verification - 2026-08-12 dataset/tool focused slice
+
+- Branch: `kallden/agent-resource-tools`
+- Commit: `03ccea89b` (code); this assurance update is a separate local commit
+- Build: clean Windows/MSVC Debug tree with Cozo enabled,
+  `E:\llama-builds\agent-resource-tools-msvc-debug-clean`, serial build after
+  the known MSVC PDB-lock retry
+- Focused build: passed; Cozo data-store target and dataset/tool smoke targets
+  built successfully
+- CTest result: passed (`5/5`, `0` failed, `0` not-run) for
+  `test-tool-adapters`, `test-agent-data-store-cozo`,
+  `llama-agent-tool-provider-ctest`, `llama-agent-dataset-contract-ctest`,
+  and `llama-agent-dataset-importer-ctest`
+- Covered behavior: dataset-reference tool contracts, Cozo descriptor
+  persistence/reload, bounded derived-dataset materialization, parent-dataset
+  lineage, source-resource provenance, and rejection of truncated results
+- Not claimed: real XLSX workbook parsing through Pandoc into Cozo, advanced
+  statistics, formula evaluation, workbook visual fidelity, cross-backend
+  transactions, or model-backed dataset analysis
 
 ### Latest verification - 2026-08-11 full agent/resource assurance
 
