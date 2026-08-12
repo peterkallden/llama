@@ -1276,6 +1276,39 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 while (rows.size() < static_cast<size_t>(limit) && std::getline(file, line)) { const auto fields = split_csv(line); json row = json::object(); for (size_t i = 0; i < fields.size() && i < columns.size(); ++i) row[columns[i].get<std::string>()] = fields[i]; rows.push_back(std::move(row)); }
                 return tool_success_json({{"columns", columns}, {"rows", rows}});
             }, error);
+        } else if (definition.executor_id == "builtin.document.tables" && bindings.document_tables) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) ||
+                        !arguments.contains("resource") || !arguments["resource"].is_string()) {
+                    return tool_validation_failure("tool.document.tables.invalid_arguments",
+                        err.empty() ? "document.tables requires resource" : std::move(err));
+                }
+                if (arguments.value("max_results", 32) < 1 || arguments.value("max_results", 32) > 64) {
+                    return tool_validation_failure("tool.document.tables.invalid_limit", "document.tables max_results is out of bounds");
+                }
+                return bindings.document_tables(arguments.dump());
+            }, error);
+        } else if (definition.executor_id == "builtin.document.table" && bindings.document_table) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err;
+                json arguments;
+                if (!parse_object(input, arguments, err) ||
+                        !arguments.contains("resource") || !arguments["resource"].is_string()) {
+                    return tool_validation_failure("tool.document.table.invalid_arguments",
+                        err.empty() ? "document.table requires resource" : std::move(err));
+                }
+                size_t locators = 0;
+                for (const auto * key : {"table", "table_index", "node_id"}) {
+                    if (arguments.contains(key)) ++locators;
+                }
+                if (locators != 1) {
+                    return tool_validation_failure("tool.document.table.invalid_locator",
+                        "document.table requires exactly one of table, table_index or node_id");
+                }
+                return bindings.document_table(arguments.dump());
+            }, error);
         } else if (definition.executor_id == "builtin.artifact.export" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;

@@ -41,6 +41,11 @@ struct common_native_tool_bindings {
     // Optional host-owned structured data backend. The backend is selected by
     // host configuration; tools only submit bounded semantic requests.
     common_agent_data_store * data_store = nullptr;
+    // Host-owned document table projection. The callback receives the
+    // validated semantic tool JSON; processor and dataset implementation
+    // details remain outside the model-facing adapter layer.
+    std::function<common_tool_execution_result(const std::string &)> document_tables;
+    std::function<common_tool_execution_result(const std::string &)> document_table;
     // Optional host-owned semantic diagnostics provider. A runtime may back
     // this with clangd, an index, or another project-aware implementation.
     // The native adapters keep a bounded text fallback when it is absent.

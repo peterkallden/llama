@@ -100,6 +100,7 @@ limited adapter concern.
 - [x] Normalized processor text enters the existing bounded resource chunking path
 - [x] Simple Pandoc document tables reuse the existing dataset importer with document-table provenance
 - [x] Document table catalogs resolve unique names, indexes and node IDs and reject ambiguous names
+- [x] Document table list/resolve tools use host-owned callbacks and bounded locator validation
 - [x] The first bounded local PDF text-layer processor has a model-free smoke
 - [x] Resource processor source/output limits and processing lifecycle events are covered
 - [x] Resource processor execution policies are host-configured, round-trip serialized, and fail closed for incompatible required backends

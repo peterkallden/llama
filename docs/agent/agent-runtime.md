@@ -397,6 +397,15 @@ duplicate normalized names fail with an ambiguity error rather than selecting
 arbitrarily. The catalog can therefore expose both `Budget summary` and table
 index `1` without making a display name part of the canonical dataset URI.
 
+The model-facing surface is intentionally semantic and small:
+`document.tables({resource, max_results})` lists bounded table descriptors, and
+`document.table({resource, table | table_index | node_id})` resolves exactly one
+table and returns its dataset handle. The host validates that exactly one
+locator is supplied; processor selection, `document-json` caching and dataset
+materialization remain behind host callbacks. These tools are therefore also
+available through MCP when the active tool profile includes them, but MCP does
+not expose Pandoc, table parsing libraries or filesystem paths.
+
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.

@@ -187,6 +187,8 @@ int main() {
         {"dataset.inspect", 1, true, "{}"},
         {"dataset.schema", 1, true, "{}"},
         {"dataset.sample", 1, true, "{}"},
+        {"document.tables", 1, true, "{}"},
+        {"document.table", 1, true, "{}"},
         {"dataset.validate", 1, true, "{}"},
         {"data.query", 1, true, "{}"},
         {"data.filter", 1, true, "{}"},
@@ -213,6 +215,21 @@ int main() {
     foundation_bindings.resource_runtime.store = &foundation_resources;
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
+    foundation_bindings.document_tables = [](const std::string & input) {
+        return common_tool_execution_result::success(
+            std::string(R"({"resource":"agent-resource://document/report.json","tables":[{"index":0,"name":"Population","node_id":"document-node://table/0","dataset":"dataset://report/table/0"}]})") +
+            "\n" + input);
+    };
+    foundation_bindings.document_table = [](const std::string & input) {
+        if (input.find("Budget summary") == std::string::npos &&
+                input.find("table_index") == std::string::npos) {
+            return common_tool_execution_result::failure(
+                "tool.document.table.not_found", common_tool_failure_class::not_found,
+                false, "Document table was not found.", "document table was not found");
+        }
+        return common_tool_execution_result::success(
+            R"({"table_index":1,"name":"Budget summary","dataset":"dataset://report/table/1"})");
+    };
     foundation_bindings.resource_runtime.namespace_id = "test";
     foundation_bindings.resource_runtime.session_id = "session-1";
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
@@ -250,6 +267,12 @@ int main() {
     result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find("dataset://analysis/sales") != std::string::npos);
+    result = foundation_registry.execute({"document.tables", R"({"resource":"agent-resource://document/report.json"})"});
+    assert(result.ok && result.output.find("Population") != std::string::npos);
+    result = foundation_registry.execute({"document.table", R"({"resource":"agent-resource://document/report.json","table":"Budget summary"})"});
+    assert(result.ok && result.output.find("dataset://report/table/1") != std::string::npos);
+    result = foundation_registry.execute({"document.table", R"({"resource":"agent-resource://document/report.json","table":"Budget summary","table_index":1})"});
+    assert(!result.ok && result.failure_code == "tool.document.table.invalid_locator");
 
     // First-class dataset tools do not require a repository root. The host
     // data-store binding is sufficient; legacy path tools remain unavailable.
