@@ -358,6 +358,13 @@ opening an older database. This keeps dataset identity/provenance available to
 inspection tools without making the row store or resource store a second
 authority.
 
+The native `dataset.inspect`, `dataset.schema` and `dataset.sample` adapters
+accept either a bounded legacy file path or a first-class dataset URI, but not
+both in the same call. Dataset-URI inspection reads descriptor metadata from
+the configured data store. Dataset-URI samples are delegated to the existing
+bounded `data.query` path, so large row sets remain outside model context while
+legacy CSV support continues to work during migration.
+
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used

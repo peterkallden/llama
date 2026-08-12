@@ -463,6 +463,37 @@ std::string trim_copy(const std::string & value) {
     return value.substr(begin, end - begin);
 }
 
+bool select_dataset_reference(const json & arguments, std::string & dataset, std::string & error) {
+    const bool has_dataset = arguments.contains("dataset") && arguments["dataset"].is_string();
+    const bool has_path = arguments.contains("path") && arguments["path"].is_string();
+    if (has_dataset == has_path) { error = "dataset operation requires exactly one of dataset or path"; return false; }
+    dataset = has_dataset ? arguments["dataset"].get<std::string>() : std::string();
+    return true;
+}
+
+common_tool_execution_result execute_dataset_descriptor_tool(
+        const common_native_tool_bindings & bindings,
+        const json & arguments,
+        const char * operation) {
+    std::string dataset, error;
+    if (!select_dataset_reference(arguments, dataset, error)) return tool_validation_failure("tool.dataset.invalid_reference", error);
+    if (!dataset.empty()) {
+        if (!bindings.data_store) return tool_execution_failure("tool.dataset.backend_unavailable", "dataset descriptor backend is unavailable", "The dataset backend is unavailable.");
+        common_agent_dataset_descriptor descriptor;
+        if (!bindings.data_store->get_dataset_descriptor(dataset, descriptor, error)) return tool_not_found_failure("tool.dataset.unavailable", error, "The dataset reference is unavailable.");
+        if (std::string(operation) == "inspect") return tool_success_json({
+            {"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name}, {"rows", descriptor.ref.row_count},
+            {"columns", descriptor.ref.column_count}, {"source", descriptor.ref.source_resource_uri},
+            {"source_sheet", descriptor.source_sheet_name}, {"source_range", descriptor.source_range},
+            {"import_processor", descriptor.import_processor_id}});
+        json columns = json::array();
+        for (const auto & column : descriptor.columns) columns.push_back({
+            {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)}, {"nullable", column.nullable}});
+        return tool_success_json({{"dataset", descriptor.ref.uri}, {"columns", columns}});
+    }
+    return tool_validation_failure("tool.dataset.legacy_path_required", "legacy dataset path handling must be provided by the existing adapter branch");
+}
+
 bool agent_resource_has_text_representation(const agent_resource_descriptor & descriptor) {
     return common_resource_media_type_is_text_like(descriptor.mime_type);
 }
@@ -1073,14 +1104,18 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (definition.executor_id == "builtin.dataset.inspect" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", "dataset.inspect requires path");
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", std::move(err));
+                if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "inspect");
+                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", "dataset.inspect requires dataset or path");
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.inspect.unavailable", std::move(err), "Dataset is unavailable.");
                 return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"format", lower_copy(path.extension().string()).substr(1)}, {"size_bytes", std::filesystem::file_size(path)}});
             }, error);
         } else if (definition.executor_id == "builtin.dataset.schema" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.schema.invalid_arguments", "dataset.schema requires path");
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.schema.invalid_arguments", std::move(err));
+                if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "schema");
+                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.schema.invalid_arguments", "dataset.schema requires dataset or path");
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.schema.unavailable", std::move(err), "Dataset is unavailable.");
                 if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.schema.unsupported_format", "dataset.schema currently supports CSV");
                 std::ifstream file(path); std::string line; if (!std::getline(file, line)) return tool_success_json({{"columns", json::array()}});
@@ -1090,7 +1125,13 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (definition.executor_id == "builtin.dataset.sample" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.sample.invalid_arguments", "dataset.sample requires path");
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.sample.invalid_arguments", std::move(err));
+                if (arguments.contains("dataset")) {
+                    const size_t rows = std::min<size_t>(arguments.value("rows", 20), 100);
+                    json query = {{"dataset", arguments["dataset"]}, {"limit", rows}, {"max_result_rows", rows}, {"max_scan_rows", 10000}};
+                    return execute_data_backend(bindings, "data.query", query.dump());
+                }
+                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.sample.invalid_arguments", "dataset.sample requires dataset or path");
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.sample.unavailable", std::move(err), "Dataset is unavailable.");
                 if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.sample.unsupported_format", "dataset.sample currently supports CSV");
                 const int limit = arguments.value("rows", 20); std::ifstream file(path); std::string line; json rows = json::array(); json columns = json::array();

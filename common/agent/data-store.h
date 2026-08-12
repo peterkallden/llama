@@ -38,6 +38,16 @@ public:
         return false;
     }
 
+    virtual bool get_dataset_descriptor(
+            const std::string & dataset_uri,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) dataset_uri;
+        descriptor = {};
+        error = "data store does not support dataset descriptors";
+        return false;
+    }
+
     virtual bool execute(
         const std::string & operation,
         const std::string & request_json,

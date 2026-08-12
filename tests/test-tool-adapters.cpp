@@ -23,6 +23,16 @@ public:
 
 class test_data_store final : public common_agent_data_store {
 public:
+    bool get_dataset_descriptor(const std::string & dataset_uri,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        if (dataset_uri != stored_descriptor.ref.uri) {
+            error = "unknown dataset";
+            return false;
+        }
+        descriptor = stored_descriptor;
+        return true;
+    }
+
     bool execute(const std::string & operation, const std::string & request_json, std::string & result, std::string & error) override {
         last_operation = operation;
         last_request = request_json;
@@ -38,6 +48,21 @@ public:
 
     std::string last_operation;
     std::string last_request;
+    common_agent_dataset_descriptor stored_descriptor = [] {
+        common_agent_dataset_descriptor value;
+        value.ref.uri = "dataset://analysis/sales";
+        value.ref.name = "Sales";
+        value.ref.row_count = 2;
+        value.ref.column_count = 2;
+        value.ref.source_resource_uri = "resource://uploads/sales.xlsx";
+        value.ref.source_representation = "tabular-dataset";
+        value.source_sheet_name = "Sales";
+        value.source_range = "A1:B3";
+        value.import_processor_id = "pandoc-xlsx-workbook-json-v1";
+        value.columns = {{"name", common_agent_dataset_column_type::string, true},
+                         {"value", common_agent_dataset_column_type::decimal, true}};
+        return value;
+    }();
 };
 
 int main() {
@@ -216,6 +241,16 @@ int main() {
     assert(result.ok && result.output.find("name") != std::string::npos && result.output.find("value") != std::string::npos);
     result = foundation_registry.execute({"dataset.sample", R"({"path":"datasets/sample.csv","rows":1})"});
     assert(result.ok && result.output.find("alpha") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("resource://uploads/sales.xlsx") != std::string::npos &&
+           result.output.find("Sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.schema", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("decimal") != std::string::npos && result.output.find("value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find("dataset://analysis/sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
     result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});

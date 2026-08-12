@@ -20,6 +20,7 @@ public:
     void close();
     bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) override;
     bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor, std::string & error) override;
+    bool get_dataset_descriptor(const std::string & dataset_uri, common_agent_dataset_descriptor & descriptor, std::string & error) override;
     bool execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) override;
 
 private:

@@ -119,6 +119,51 @@ bool common_agent_cozo_data_store::put_dataset_descriptor(
         json({{"dataset_uri", descriptor.ref.uri}, {"descriptor_json", value.dump()}}).dump(), result, error);
 }
 
+bool common_agent_cozo_data_store::get_dataset_descriptor(
+        const std::string & dataset_uri,
+        common_agent_dataset_descriptor & descriptor,
+        std::string & error) {
+    descriptor = {};
+    if (dataset_uri.empty()) { error = "dataset uri must not be empty"; return false; }
+    std::string raw;
+    if (!run("?[descriptor_json] := *agent_dataset_metadata[$dataset_uri, descriptor_json]",
+            json({{"dataset_uri", dataset_uri}}).dump(), raw, error)) return false;
+    const auto result = json::parse(raw, nullptr, false);
+    if (!result.is_object() || !result.contains("rows") || result["rows"].empty() ||
+            !result["rows"][0].is_array() || result["rows"][0].empty()) {
+        error = "dataset descriptor was not found";
+        return false;
+    }
+    const auto value = json::parse(result["rows"][0][0].get<std::string>(), nullptr, false);
+    if (!value.is_object()) { error = "dataset descriptor is invalid"; return false; }
+    descriptor.ref.uri = value.value("uri", dataset_uri);
+    descriptor.ref.name = value.value("name", std::string());
+    descriptor.ref.row_count = value.value("row_count", size_t(0));
+    descriptor.ref.column_count = value.value("column_count", size_t(0));
+    descriptor.ref.source_resource_uri = value.value("source_resource_uri", std::string());
+    descriptor.ref.source_representation = value.value("source_representation", std::string());
+    for (const auto & column : value.value("columns", json::array())) if (column.is_object()) {
+        const auto type = column.value("type", std::string("unknown"));
+        common_agent_dataset_column_type column_type = common_agent_dataset_column_type::unknown;
+        for (int i = 0; i <= static_cast<int>(common_agent_dataset_column_type::unknown); ++i) {
+            const auto candidate = static_cast<common_agent_dataset_column_type>(i);
+            if (type == common_agent_dataset_column_type_name(candidate)) { column_type = candidate; break; }
+        }
+        descriptor.columns.push_back({column.value("name", std::string()), column_type, column.value("nullable", true)});
+    }
+    descriptor.source_workbook_name = value.value("source_workbook_name", std::string());
+    descriptor.source_sheet_name = value.value("source_sheet_name", std::string());
+    if (value.contains("source_sheet_index") && value["source_sheet_index"].is_number_unsigned()) descriptor.source_sheet_index = value["source_sheet_index"].get<size_t>();
+    descriptor.source_range = value.value("source_range", std::string());
+    descriptor.source_object = value.value("source_object", std::string());
+    descriptor.import_processor_id = value.value("import_processor_id", std::string());
+    descriptor.import_processor_version = value.value("import_processor_version", std::string());
+    descriptor.lineage.parent_dataset_uris = value.value("parent_dataset_uris", std::vector<std::string>());
+    descriptor.lineage.operation = value.value("operation", std::string());
+    descriptor.lineage.operation_summary = value.value("operation_summary", std::string());
+    return validate_common_agent_dataset_descriptor(descriptor, common_agent_dataset_limits{}, error);
+}
+
 bool common_agent_cozo_data_store::execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) {
     const auto request = json::parse(request_json, nullptr, false);
     if (!request.is_object()) { error = "data operation requires an object request"; return false; }
