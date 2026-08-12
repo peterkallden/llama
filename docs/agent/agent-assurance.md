@@ -189,6 +189,13 @@ the bounded header classifier and Cozo descriptor reload of document-table
 origin metadata. This is not yet evidence for automatic DOCX/HTML table
 discovery or a complete document AST.
 
+The Pandoc worksheet normalizer also carries explicit header metadata and
+bounded header-classification status into the importer envelope. Headerless
+tables are not silently assigned columns unless the bounded sample clearly
+supports a first-row interpretation; other orientations remain a
+normalization-required failure. PDF table extraction remains outside this
+assurance scope.
+
 The Cozo data-store CTest also covers bounded descriptive statistics, including
 numeric count/min/max/mean, schema-selected numeric columns and fail-closed
 handling for the not-yet-implemented grouped form.

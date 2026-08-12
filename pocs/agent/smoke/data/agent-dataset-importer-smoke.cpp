@@ -75,6 +75,7 @@ int main() {
     assert(imported[0].origin.kind == "spreadsheet" &&
            imported[0].origin.source_node_id == "document-node://table/0" &&
            imported[0].origin.header_mode == common_agent_table_header_mode::explicit_);
+    assert(imported[0].origin.header_confidence == 1.0);
     assert(store.rows.size() == 3);
     assert(imported[1].ref.name == "Customers");
     assert(store.descriptors.size() == 2);

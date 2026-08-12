@@ -345,6 +345,12 @@ The first table scope deliberately excludes PDF table extraction, merged-cell
 normalization, nested or pivot-like tables, automatic unit inference and
 LLM-authored authoritative metadata. These remain backlog items.
 
+The Pandoc worksheet normalizer now carries the bounded classification result
+into the worksheet envelope. Explicit Pandoc headers are recorded with full
+confidence. Headerless tables are sampled; only a clear first-row signal is
+eligible for automatic materialization, while first-column, both-direction and
+ambiguous results fail closed with a normalization-required diagnostic.
+
 The first dataset artifact-export slice reuses `artifact.export` rather than
 adding a spreadsheet-specific tool. The model may provide
 `source_dataset`, `format: "csv"`, an optional name and a bounded `max_rows`;
