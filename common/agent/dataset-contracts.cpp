@@ -3,6 +3,8 @@
 #include <limits>
 #include <cctype>
 #include <sstream>
+#include <algorithm>
+#include <cstdlib>
 
 namespace {
 
@@ -165,6 +167,79 @@ const char * common_agent_dataset_column_type_name(
         case common_agent_dataset_column_type::unknown: return "unknown";
     }
     return "unknown";
+}
+
+const char * common_agent_table_header_mode_name(
+        common_agent_table_header_mode mode) {
+    switch (mode) {
+        case common_agent_table_header_mode::explicit_: return "explicit";
+        case common_agent_table_header_mode::first_row: return "first_row";
+        case common_agent_table_header_mode::first_column: return "first_column";
+        case common_agent_table_header_mode::both: return "both";
+        case common_agent_table_header_mode::none: return "none";
+        case common_agent_table_header_mode::ambiguous: return "ambiguous";
+    }
+    return "ambiguous";
+}
+
+namespace {
+
+bool looks_numeric(const std::string & value) {
+    if (value.empty()) return false;
+    char * end = nullptr;
+    std::strtod(value.c_str(), &end);
+    return end != nullptr && *end == '\0';
+}
+
+bool looks_like_header_value(const std::string & value) {
+    if (value.empty() || value.size() > 128) return false;
+    return !looks_numeric(value) && value.find_first_of("\r\n") == std::string::npos;
+}
+
+} // namespace
+
+common_agent_table_header_mode classify_common_agent_table_headers(
+        const std::vector<std::vector<std::string>> & rows,
+        double & confidence,
+        std::string & reason) {
+    confidence = 0.0;
+    reason.clear();
+    if (rows.size() < 2 || rows.front().size() < 2) {
+        reason = "table sample is too small to classify headers";
+        return common_agent_table_header_mode::ambiguous;
+    }
+    const size_t width = rows.front().size();
+    if (std::any_of(rows.begin(), rows.end(), [width](const auto & row) { return row.size() != width; })) {
+        reason = "table is not rectangular";
+        return common_agent_table_header_mode::ambiguous;
+    }
+    size_t first_row_text = 0;
+    for (size_t index = 0; index < rows.front().size(); ++index) {
+        if (looks_like_header_value(rows.front()[index]) ||
+                (index == 0 && rows.front()[index].empty())) ++first_row_text;
+    }
+    size_t first_column_text = 0;
+    for (size_t index = 1; index < rows.size(); ++index) if (looks_like_header_value(rows[index][0])) ++first_column_text;
+    const double row_score = static_cast<double>(first_row_text) / width;
+    const double column_score = static_cast<double>(first_column_text) / (rows.size() - 1);
+    if (row_score >= 0.8 && column_score >= 0.8 && rows.front().front().empty()) {
+        confidence = 0.6;
+        reason = "first row and first column both look like labels";
+        return common_agent_table_header_mode::both;
+    }
+    if (row_score >= 0.8) {
+        confidence = row_score;
+        reason = "first row is text-like while sampled data follows column shape";
+        return common_agent_table_header_mode::first_row;
+    }
+    if (column_score >= 0.8) {
+        confidence = column_score;
+        reason = "first column is text-like while sampled data follows row shape";
+        return common_agent_table_header_mode::first_column;
+    }
+    confidence = 0.5;
+    reason = "header orientation is not distinguishable from the bounded sample";
+    return common_agent_table_header_mode::ambiguous;
 }
 
 bool validate_common_agent_dataset_ref(

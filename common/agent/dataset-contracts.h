@@ -48,6 +48,31 @@ struct common_agent_dataset_lineage {
     std::string operation_summary;
 };
 
+enum class common_agent_table_header_mode {
+    explicit_,
+    first_row,
+    first_column,
+    both,
+    none,
+    ambiguous,
+};
+
+const char * common_agent_table_header_mode_name(
+        common_agent_table_header_mode mode);
+
+struct common_agent_dataset_origin {
+    std::string kind;
+    std::string source_representation_uri;
+    std::string source_node_id;
+    size_t table_index = 0;
+    std::vector<std::string> section_path;
+    std::string caption;
+    std::vector<std::string> notes;
+    common_agent_table_header_mode header_mode = common_agent_table_header_mode::none;
+    double header_confidence = 0.0;
+    std::string header_reason;
+};
+
 struct common_agent_dataset_descriptor {
     common_agent_dataset_ref ref;
     std::vector<common_agent_dataset_column> columns;
@@ -59,7 +84,16 @@ struct common_agent_dataset_descriptor {
     std::string import_processor_id;
     std::string import_processor_version;
     common_agent_dataset_lineage lineage;
+    common_agent_dataset_origin origin;
 };
+
+// Classifies a bounded rectangular table sample. The host may materialize a
+// dataset automatically only for explicit or high-confidence simple headers;
+// ambiguous candidates remain available for a later normalization step.
+common_agent_table_header_mode classify_common_agent_table_headers(
+        const std::vector<std::vector<std::string>> & rows,
+        double & confidence,
+        std::string & reason);
 
 struct common_agent_dataset_limits {
     size_t max_source_bytes = 128 * 1024 * 1024;

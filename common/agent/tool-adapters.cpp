@@ -614,7 +614,12 @@ common_tool_execution_result execute_dataset_descriptor_tool(
             {"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name}, {"rows", descriptor.ref.row_count},
             {"columns", descriptor.ref.column_count}, {"source", descriptor.ref.source_resource_uri},
             {"source_sheet", descriptor.source_sheet_name}, {"source_range", descriptor.source_range},
-            {"import_processor", descriptor.import_processor_id}});
+            {"import_processor", descriptor.import_processor_id},
+            {"origin", {{"kind", descriptor.origin.kind}, {"semantic_resource", descriptor.origin.source_representation_uri},
+                         {"node_id", descriptor.origin.source_node_id}, {"table_index", descriptor.origin.table_index},
+                         {"caption", descriptor.origin.caption},
+                         {"header_mode", common_agent_table_header_mode_name(descriptor.origin.header_mode)},
+                         {"header_confidence", descriptor.origin.header_confidence}}}});
         json columns = json::array();
         for (const auto & column : descriptor.columns) columns.push_back({
             {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)}, {"nullable", column.nullable}});

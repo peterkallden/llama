@@ -181,6 +181,14 @@ The separate `llama-agent-data-manipulation-ctest` also covers the intended
 model-free workbook-shaped path: bounded filter, inner join, grouped count/sum,
 and immutable aggregate materialization with source-resource provenance.
 
+Dataset descriptors now also have a generic origin projection for document
+tables and spreadsheet worksheets. It can preserve a semantic representation
+URI, document node ID, table index, caption and bounded header classification
+without turning document context into a second store. Contract coverage checks
+the bounded header classifier and Cozo descriptor reload of document-table
+origin metadata. This is not yet evidence for automatic DOCX/HTML table
+discovery or a complete document AST.
+
 The Cozo data-store CTest also covers bounded descriptive statistics, including
 numeric count/min/max/mean, schema-selected numeric columns and fail-closed
 handling for the not-yet-implemented grouped form.

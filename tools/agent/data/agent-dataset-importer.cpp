@@ -138,8 +138,10 @@ bool normalize_agent_pandoc_workbook_json(
             else if (types[index] == common_agent_dataset_column_type::null_) types[index] = type;
             else if (types[index] != type) types[index] = common_agent_dataset_column_type::string;
         }
-        json worksheet = {{"name", sheet_name.empty() ? "Sheet_" + std::to_string(sheet_index + 1) : sheet_name},
-            {"index", sheet_index++}, {"columns", json::array()}, {"rows", json::array()}};
+        const auto table_index = sheet_index++;
+        json worksheet = {{"name", sheet_name.empty() ? "Sheet_" + std::to_string(table_index + 1) : sheet_name},
+            {"index", table_index}, {"table_index", table_index}, {"node_id", "document-node://table/" + std::to_string(table_index)},
+            {"header_mode", "explicit"}, {"columns", json::array()}, {"rows", json::array()}};
         for (size_t index = 0; index < names.size(); ++index) worksheet["columns"].push_back({
             {"name", names[index]}, {"type", common_agent_dataset_column_type_name(types[index])}, {"nullable", true}});
         for (const auto & values : value_rows) {
@@ -211,6 +213,15 @@ bool import_agent_worksheet_envelope(
         descriptor.source_sheet_index = worksheet_index;
         descriptor.source_range = worksheet.value("range", std::string());
         descriptor.source_object = worksheet.value("object", std::string());
+        descriptor.origin.kind = descriptor.ref.source_representation == "xlsx:worksheet"
+            ? "spreadsheet" : "document_table";
+        descriptor.origin.source_representation_uri = worksheet.value("semantic_resource_uri", std::string());
+        descriptor.origin.source_node_id = worksheet.value("node_id", "document-node://table/" + std::to_string(worksheet_index.value_or(0)));
+        descriptor.origin.table_index = worksheet.value("table_index", worksheet_index.value_or(0));
+        descriptor.origin.caption = worksheet.value("caption", std::string());
+        descriptor.origin.header_mode = worksheet.value("header_mode", std::string("explicit")) == "explicit"
+            ? common_agent_table_header_mode::explicit_ : common_agent_table_header_mode::ambiguous;
+        descriptor.origin.header_reason = worksheet.value("header_reason", std::string("Pandoc supplied an explicit table header"));
         descriptor.import_processor_id = request.import_processor_id;
         descriptor.import_processor_version = request.import_processor_version;
         for (const auto & column : worksheet["columns"]) {

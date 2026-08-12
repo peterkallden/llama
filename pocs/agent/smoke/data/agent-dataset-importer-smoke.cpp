@@ -72,6 +72,9 @@ int main() {
     assert(imported[0].ref.row_count == 2);
     assert(imported[0].ref.source_resource_uri == request.source_resource_uri);
     assert(imported[0].source_sheet_name == "Sales");
+    assert(imported[0].origin.kind == "spreadsheet" &&
+           imported[0].origin.source_node_id == "document-node://table/0" &&
+           imported[0].origin.header_mode == common_agent_table_header_mode::explicit_);
     assert(store.rows.size() == 3);
     assert(imported[1].ref.name == "Customers");
     assert(store.descriptors.size() == 2);

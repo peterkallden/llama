@@ -332,6 +332,19 @@ all rows through the model. The first implementation remains limited to
 bounded inspection, schema, samples and deterministic data operations; advanced
 statistics, distributions, confidence intervals and charting are later layers.
 
+Document table extraction uses the same dataset contract. Simple rectangular
+tables from Pandoc/HTML-derived structure may carry a generic origin projection
+with the source representation URI, document node ID, table index, caption,
+header mode and bounded classification reason. The document representation
+keeps the table; the dataset is an additional analytical handle. Header
+classification is host-owned and bounded: explicit headers win, otherwise a
+small sample may suggest first-row, first-column, both or ambiguous. An
+ambiguous table is not silently materialized with invented column names.
+
+The first table scope deliberately excludes PDF table extraction, merged-cell
+normalization, nested or pivot-like tables, automatic unit inference and
+LLM-authored authoritative metadata. These remain backlog items.
+
 The first dataset artifact-export slice reuses `artifact.export` rather than
 adding a spreadsheet-specific tool. The model may provide
 `source_dataset`, `format: "csv"`, an optional name and a bounded `max_rows`;

@@ -23,10 +23,25 @@ int main() {
     descriptor.source_range = "A1:B3";
     descriptor.import_processor_id = "pandoc-xlsx-workbook-json-v1";
     descriptor.import_processor_version = "pandoc-3.10.1";
+    descriptor.origin.kind = "spreadsheet";
+    descriptor.origin.source_node_id = "document-node://table/0";
+    descriptor.origin.header_mode = common_agent_table_header_mode::explicit_;
 
     std::string error;
     assert(validate_common_agent_dataset_descriptor(
         descriptor, common_agent_dataset_limits{}, error));
+
+    double confidence = 0.0;
+    std::string reason;
+    assert(classify_common_agent_table_headers(
+        {{"City", "Population"}, {"Stockholm", "1000000"}, {"Uppsala", "170000"}},
+        confidence, reason) == common_agent_table_header_mode::first_row);
+    assert(confidence >= 0.8 && !reason.empty());
+    assert(classify_common_agent_table_headers(
+        {{"", "Q1", "Q2"}, {"Population", "10", "12"}, {"Revenue", "4", "5"}},
+        confidence, reason) == common_agent_table_header_mode::both);
+    assert(classify_common_agent_table_headers(
+        {{"Population by city"}, {"Stockholm"}}, confidence, reason) == common_agent_table_header_mode::ambiguous);
 
     descriptor.ref.column_count = 1;
     assert(!validate_common_agent_dataset_descriptor(

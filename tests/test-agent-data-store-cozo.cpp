@@ -38,7 +38,21 @@ int main() {
         {"region", common_agent_dataset_column_type::string, true},
         {"value", common_agent_dataset_column_type::integer, true}};
     orders_descriptor.import_processor_id = "test-importer";
+    orders_descriptor.origin.kind = "document_table";
+    orders_descriptor.origin.source_representation_uri = "resource://uploads/orders.semantic";
+    orders_descriptor.origin.source_node_id = "document-node://table/2";
+    orders_descriptor.origin.table_index = 2;
+    orders_descriptor.origin.caption = "Orders by customer";
+    orders_descriptor.origin.header_mode = common_agent_table_header_mode::first_row;
+    orders_descriptor.origin.header_confidence = 0.9;
     TEST_ASSERT(store.put_dataset_descriptor(orders_descriptor, error));
+    common_agent_dataset_descriptor reloaded_orders;
+    TEST_ASSERT(store.get_dataset_descriptor("orders", reloaded_orders, error));
+    TEST_ASSERT(reloaded_orders.origin.kind == "document_table" &&
+        reloaded_orders.origin.source_node_id == "document-node://table/2" &&
+        reloaded_orders.origin.table_index == 2 &&
+        reloaded_orders.origin.caption == "Orders by customer" &&
+        reloaded_orders.origin.header_mode == common_agent_table_header_mode::first_row);
     common_agent_dataset_descriptor customers_descriptor = orders_descriptor;
     customers_descriptor.ref = {"customers", "Customers", 1, 2, "resource://uploads/customers.csv", "tabular-dataset"};
     customers_descriptor.columns = {{"customer_id", common_agent_dataset_column_type::integer, false},

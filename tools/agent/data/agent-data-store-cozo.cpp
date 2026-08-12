@@ -69,6 +69,13 @@ bool materialize_data_result(
     descriptor.lineage.parent_dataset_uris = parents;
     descriptor.lineage.operation = operation;
     descriptor.lineage.operation_summary = "Materialized bounded result of " + operation;
+    descriptor.origin.kind = "derived";
+    descriptor.origin.source_representation_uri = first_parent.origin.source_representation_uri;
+    descriptor.origin.source_node_id = first_parent.origin.source_node_id;
+    descriptor.origin.table_index = first_parent.origin.table_index;
+    descriptor.origin.section_path = first_parent.origin.section_path;
+    descriptor.origin.caption = first_parent.origin.caption;
+    descriptor.origin.notes = first_parent.origin.notes;
     descriptor.import_processor_id = "cozo-data-operation-v1";
     descriptor.import_processor_version = "1";
     std::vector<std::string> column_names;
@@ -212,6 +219,16 @@ bool common_agent_cozo_data_store::put_dataset_descriptor(
         {"source_range", descriptor.source_range}, {"source_object", descriptor.source_object},
         {"import_processor_id", descriptor.import_processor_id},
         {"import_processor_version", descriptor.import_processor_version},
+        {"origin_kind", descriptor.origin.kind},
+        {"origin_source_representation_uri", descriptor.origin.source_representation_uri},
+        {"origin_source_node_id", descriptor.origin.source_node_id},
+        {"origin_table_index", descriptor.origin.table_index},
+        {"origin_section_path", descriptor.origin.section_path},
+        {"origin_caption", descriptor.origin.caption},
+        {"origin_notes", descriptor.origin.notes},
+        {"origin_header_mode", common_agent_table_header_mode_name(descriptor.origin.header_mode)},
+        {"origin_header_confidence", descriptor.origin.header_confidence},
+        {"origin_header_reason", descriptor.origin.header_reason},
         {"parent_dataset_uris", descriptor.lineage.parent_dataset_uris},
         {"operation", descriptor.lineage.operation},
         {"operation_summary", descriptor.lineage.operation_summary},
@@ -260,6 +277,21 @@ bool common_agent_cozo_data_store::get_dataset_descriptor(
     descriptor.source_object = value.value("source_object", std::string());
     descriptor.import_processor_id = value.value("import_processor_id", std::string());
     descriptor.import_processor_version = value.value("import_processor_version", std::string());
+    descriptor.origin.kind = value.value("origin_kind", std::string());
+    descriptor.origin.source_representation_uri = value.value("origin_source_representation_uri", std::string());
+    descriptor.origin.source_node_id = value.value("origin_source_node_id", std::string());
+    descriptor.origin.table_index = value.value("origin_table_index", size_t(0));
+    descriptor.origin.section_path = value.value("origin_section_path", std::vector<std::string>());
+    descriptor.origin.caption = value.value("origin_caption", std::string());
+    descriptor.origin.notes = value.value("origin_notes", std::vector<std::string>());
+    const auto origin_header_mode = value.value("origin_header_mode", std::string("none"));
+    if (origin_header_mode == "explicit") descriptor.origin.header_mode = common_agent_table_header_mode::explicit_;
+    else if (origin_header_mode == "first_row") descriptor.origin.header_mode = common_agent_table_header_mode::first_row;
+    else if (origin_header_mode == "first_column") descriptor.origin.header_mode = common_agent_table_header_mode::first_column;
+    else if (origin_header_mode == "both") descriptor.origin.header_mode = common_agent_table_header_mode::both;
+    else if (origin_header_mode == "ambiguous") descriptor.origin.header_mode = common_agent_table_header_mode::ambiguous;
+    descriptor.origin.header_confidence = value.value("origin_header_confidence", 0.0);
+    descriptor.origin.header_reason = value.value("origin_header_reason", std::string());
     descriptor.lineage.parent_dataset_uris = value.value("parent_dataset_uris", std::vector<std::string>());
     descriptor.lineage.operation = value.value("operation", std::string());
     descriptor.lineage.operation_summary = value.value("operation_summary", std::string());
