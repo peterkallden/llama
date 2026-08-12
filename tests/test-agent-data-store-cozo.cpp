@@ -63,6 +63,17 @@ int main() {
     auto bounded_aggregate = json::parse(output);
     TEST_ASSERT(bounded_aggregate["scan_mode"] == "native_bounded" && bounded_aggregate["scanned_rows"] == 2 && bounded_aggregate["scan_truncated"] == true);
 
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"orders","columns":["value"]})", output, error));
+    auto statistics = json::parse(output);
+    TEST_ASSERT(statistics["columns"].size() == 1 && statistics["columns"][0]["count"] == 3 &&
+        statistics["columns"][0]["null_count"] == 0 && statistics["columns"][0]["min"] == 4.0 &&
+        statistics["columns"][0]["max"] == 12.0 && statistics["columns"][0]["mean"] == 8.0);
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"orders"})", output, error));
+    statistics = json::parse(output);
+    TEST_ASSERT(statistics["columns"].size() == 3);
+    TEST_ASSERT(!store.execute("statistics.describe", R"({"dataset":"orders","group_by":["region"]})", output, error));
+    TEST_ASSERT(error.find("group_by") != std::string::npos);
+
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);
     TEST_ASSERT(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 4 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));

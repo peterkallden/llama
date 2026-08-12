@@ -336,8 +336,40 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         }
         agent_cozo_sort_rows(rows, request.value("order_by", json::array()));
     } else if (operation == "statistics.describe") {
+        if (request.contains("group_by") && request["group_by"].is_array() && !request["group_by"].empty()) {
+            error = "statistics.describe group_by is not implemented in the bounded first slice";
+            return false;
+        }
+        json requested_columns = request.value("columns", json::array());
+        if (requested_columns.empty()) {
+            common_agent_dataset_descriptor descriptor;
+            if (!get_dataset_descriptor(request["dataset"].get<std::string>(), descriptor, error)) return false;
+            for (const auto & column : descriptor.columns) {
+                if (column.type == common_agent_dataset_column_type::integer ||
+                        column.type == common_agent_dataset_column_type::decimal) {
+                    requested_columns.push_back(column.name);
+                    if (requested_columns.size() >= 32) break;
+                }
+            }
+        }
         json columns = json::array();
-        for (const auto & name : request.value("columns", json::array())) { if (!name.is_string()) continue; double sum = 0; size_t count = 0; for (const auto & row : rows) if (row.contains(name) && row[name].is_number()) { sum += row[name].get<double>(); ++count; } columns.push_back({{"name", name}, {"count", count}, {"mean", count ? sum / count : 0.0}}); }
+        for (const auto & name : requested_columns) {
+            if (!name.is_string()) continue;
+            double sum = 0, minimum = 0, maximum = 0;
+            size_t count = 0, null_count = 0;
+            for (const auto & row : rows) {
+                if (!row.is_object() || !row.contains(name) || row[name].is_null()) { ++null_count; continue; }
+                if (!row[name].is_number()) continue;
+                const double value = row[name].get<double>();
+                if (count == 0) minimum = maximum = value;
+                else { minimum = std::min(minimum, value); maximum = std::max(maximum, value); }
+                sum += value;
+                ++count;
+            }
+            columns.push_back({{"name", name}, {"count", count}, {"null_count", null_count},
+                {"min", count ? json(minimum) : json()}, {"max", count ? json(maximum) : json()},
+                {"mean", count ? json(sum / count) : json()}});
+        }
         result_json = json({{"columns", columns}, {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated}}).dump(); return true;
     } else if (operation == "data.transform") {
         for (auto & row : rows) for (const auto & transform : request.value("operations", json::array())) if (transform.is_object()) {

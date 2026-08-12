@@ -505,6 +505,14 @@ basic aggregation, descriptive statistics, joins and bounded column
 transformations. The host still owns opening the database and binding the store
 to the runtime; the model cannot select a database path or backend.
 
+The first bounded statistics contract returns `count`, `null_count`, `min`,
+`max` and `mean` for selected numeric columns, together with scan metadata. If
+no columns are supplied, the host uses numeric columns from the persisted
+dataset schema. `group_by` is reserved for a later grouped-statistics contract
+and is rejected in this first slice rather than silently ignored. This keeps
+descriptive statistics deterministic and separate from future advanced
+statistical analysis.
+
 Database-backed operations should be expressed as database operations whenever
 the selected backend can execute them safely. The common data contract groups
 them as follows:

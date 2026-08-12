@@ -181,6 +181,10 @@ The separate `llama-agent-data-manipulation-ctest` also covers the intended
 model-free workbook-shaped path: bounded filter, inner join, grouped count/sum,
 and immutable aggregate materialization with source-resource provenance.
 
+The Cozo data-store CTest also covers bounded descriptive statistics, including
+numeric count/min/max/mean, schema-selected numeric columns and fail-closed
+handling for the not-yet-implemented grouped form.
+
 This still does not claim XLSX workbook inspection, formula/layout fidelity or
 a live XLSX-to-Cozo vertical slice. The current evidence covers the dataset/store
 boundary and derived-operation behavior using deterministic descriptors and
