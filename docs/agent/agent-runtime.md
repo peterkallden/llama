@@ -561,12 +561,20 @@ transformations. The host still owns opening the database and binding the store
 to the runtime; the model cannot select a database path or backend.
 
 The first bounded statistics contract returns `count`, `null_count`, `min`,
-`max` and `mean` for selected numeric columns, together with scan metadata. If
-no columns are supplied, the host uses numeric columns from the persisted
-dataset schema. `group_by` is reserved for a later grouped-statistics contract
-and is rejected in this first slice rather than silently ignored. This keeps
-descriptive statistics deterministic and separate from future advanced
-statistical analysis.
+`max`, `mean` and population `stddev` for selected numeric columns, together
+with scan metadata. If no columns are supplied, the host uses numeric columns
+from the persisted dataset schema. `group_by` returns one bounded description
+per group. The result keeps group keys separate from column statistics, so
+callers can distinguish a grouped result from an overall description. This
+keeps descriptive statistics deterministic and separate from future advanced
+statistical analysis such as IQR/MAD outlier detection.
+
+The dataset contract also has a small model-facing normalization layer. It
+accepts a single `group_by` or `column` value for `statistics.describe`, a
+single group key and shorthand measures for `data.aggregate`, a shared `on`
+column for `data.join`, and `limit` as an alias for `dataset.sample.rows`.
+These forms are converted to the same canonical operations before validation;
+backends do not implement separate shorthand paths.
 
 Database-backed operations should be expressed as database operations whenever
 the selected backend can execute them safely. The common data contract groups

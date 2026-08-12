@@ -387,6 +387,53 @@ bool normalize_common_agent_dataset_tool_arguments(
         nlohmann::ordered_json normalized;
         if (!normalize_condition_list(arguments["conditions"], normalized, error)) return false;
         arguments["conditions"] = std::move(normalized);
+    } else if (tool_name == "statistics.describe") {
+        if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
+            arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});
+        }
+        if (!arguments.contains("columns") && arguments.contains("column")) {
+            if (!arguments["column"].is_string() || arguments["column"].get<std::string>().empty()) {
+                error = "statistics.describe column must be a non-empty string";
+                return false;
+            }
+            arguments["columns"] = nlohmann::ordered_json::array({arguments["column"]});
+            arguments.erase("column");
+        }
+    } else if (tool_name == "data.aggregate") {
+        if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
+            arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});
+        }
+        if (!arguments.contains("measures")) {
+            nlohmann::ordered_json measures = nlohmann::ordered_json::array();
+            for (const auto & function : {"count", "sum", "avg", "min", "max"}) {
+                if (!arguments.contains(function)) continue;
+                const auto & value = arguments[function];
+                nlohmann::ordered_json measure = {{"function", function}};
+                if (std::string(function) != "count") {
+                    if (!value.is_string() || value.get<std::string>().empty()) {
+                        error = std::string("data.aggregate ") + function + " must name a column";
+                        return false;
+                    }
+                    measure["column"] = value;
+                } else {
+                    measure["column"] = value.is_string() ? value : "*";
+                }
+                measures.push_back(std::move(measure));
+                arguments.erase(function);
+            }
+            if (!measures.empty()) arguments["measures"] = std::move(measures);
+        }
+    } else if (tool_name == "data.join" && arguments.contains("on") && arguments["on"].is_string()) {
+        if (!arguments.contains("left") || !arguments.contains("right")) {
+            error = "data.join shorthand requires left and right datasets";
+            return false;
+        }
+        const auto column = arguments["on"];
+        arguments["on"] = nlohmann::ordered_json::array({
+            nlohmann::ordered_json{{"left", column}, {"right", column}}});
+    } else if (tool_name == "dataset.sample" && !arguments.contains("rows") && arguments.contains("limit")) {
+        arguments["rows"] = arguments["limit"];
+        arguments.erase("limit");
     }
     error.clear();
     return true;

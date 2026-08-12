@@ -204,8 +204,9 @@ normalization-required failure. PDF table extraction remains outside this
 assurance scope.
 
 The Cozo data-store CTest also covers bounded descriptive statistics, including
-numeric count/min/max/mean, schema-selected numeric columns and fail-closed
-handling for the not-yet-implemented grouped form.
+numeric count/min/max/mean/stddev, schema-selected numeric columns and grouped
+statistics. The tool-adapter CTest covers the corresponding small-model
+normalizations.
 
 The adapter CTest also covers the first dataset artifact-export slice. A
 bounded dataset query is serialized as CSV through the existing

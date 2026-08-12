@@ -316,6 +316,20 @@ int main() {
     assert(result.ok && foundation_data.last_operation == "data.transform");
     result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","columns":["value"]})"});
     assert(result.ok && foundation_data.last_operation == "statistics.describe");
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","column":"value","group_by":"region"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
+           foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"a","group_by":"region","sum":"amount"})"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("function":"sum","column":"amount")" ) != std::string::npos);
+    result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":"id"})"});
+    assert(result.ok && foundation_data.last_operation == "data.join" &&
+           foundation_data.last_request.find(R"("left":"id","right":"id")" ) != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","limit":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("limit":1)" ) != std::string::npos);
     result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
     assert(result.ok && result.output.find("resource://") != std::string::npos);
     result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});

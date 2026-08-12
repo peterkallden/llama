@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 
@@ -81,12 +82,19 @@ int main() {
     auto statistics = json::parse(output);
     TEST_ASSERT(statistics["columns"].size() == 1 && statistics["columns"][0]["count"] == 3 &&
         statistics["columns"][0]["null_count"] == 0 && statistics["columns"][0]["min"] == 4.0 &&
-        statistics["columns"][0]["max"] == 12.0 && statistics["columns"][0]["mean"] == 8.0);
+        statistics["columns"][0]["max"] == 12.0 && statistics["columns"][0]["mean"] == 8.0 &&
+        std::abs(statistics["columns"][0]["stddev"].get<double>() - 3.265986323710904) < 1e-9);
     TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"orders"})", output, error));
     statistics = json::parse(output);
     TEST_ASSERT(statistics["columns"].size() == 3);
-    TEST_ASSERT(!store.execute("statistics.describe", R"({"dataset":"orders","group_by":["region"]})", output, error));
-    TEST_ASSERT(error.find("group_by") != std::string::npos);
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"orders","columns":["value"],"group_by":["region"]})", output, error));
+    auto grouped_statistics = json::parse(output);
+    TEST_ASSERT(grouped_statistics["group_by"].size() == 1 && grouped_statistics["groups"].size() == 2);
+    for (const auto & group : grouped_statistics["groups"]) {
+        if (group["region"] == "north") {
+            TEST_ASSERT(group["columns"][0]["count"] == 2 && group["columns"][0]["mean"] == 8.0);
+        }
+    }
 
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);

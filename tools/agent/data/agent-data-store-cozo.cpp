@@ -12,6 +12,7 @@ extern "C" {
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -368,9 +369,16 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         }
         agent_cozo_sort_rows(rows, request.value("order_by", json::array()));
     } else if (operation == "statistics.describe") {
-        if (request.contains("group_by") && request["group_by"].is_array() && !request["group_by"].empty()) {
-            error = "statistics.describe group_by is not implemented in the bounded first slice";
+        const auto group_by = request.value("group_by", json::array());
+        if (!group_by.is_array() || group_by.size() > 16) {
+            error = "statistics.describe group_by must be an array with at most 16 fields";
             return false;
+        }
+        for (const auto & field : group_by) {
+            if (!field.is_string() || field.get<std::string>().empty()) {
+                error = "statistics.describe group_by fields must be non-empty strings";
+                return false;
+            }
         }
         json requested_columns = request.value("columns", json::array());
         if (requested_columns.empty()) {
@@ -384,25 +392,79 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
                 }
             }
         }
-        json columns = json::array();
-        for (const auto & name : requested_columns) {
-            if (!name.is_string()) continue;
-            double sum = 0, minimum = 0, maximum = 0;
-            size_t count = 0, null_count = 0;
-            for (const auto & row : rows) {
-                if (!row.is_object() || !row.contains(name) || row[name].is_null()) { ++null_count; continue; }
-                if (!row[name].is_number()) continue;
-                const double value = row[name].get<double>();
-                if (count == 0) minimum = maximum = value;
-                else { minimum = std::min(minimum, value); maximum = std::max(maximum, value); }
-                sum += value;
-                ++count;
+        struct statistic_accumulator {
+            size_t count = 0;
+            size_t null_count = 0;
+            double sum = 0;
+            double sum_squares = 0;
+            double minimum = 0;
+            double maximum = 0;
+        };
+        struct group_accumulator {
+            json values = json::object();
+            std::map<std::string, statistic_accumulator> columns;
+        };
+        std::map<std::string, group_accumulator> groups;
+        for (const auto & row : rows) {
+            if (!row.is_object()) continue;
+            json group_values = json::object();
+            std::string group_key;
+            for (const auto & field : group_by) {
+                const auto name = field.get<std::string>();
+                const auto value = row.contains(name) ? row[name] : json();
+                group_values[name] = value;
+                group_key += value.dump() + "\x1f";
             }
-            columns.push_back({{"name", name}, {"count", count}, {"null_count", null_count},
-                {"min", count ? json(minimum) : json()}, {"max", count ? json(maximum) : json()},
-                {"mean", count ? json(sum / count) : json()}});
+            auto & group = groups[group_key];
+            group.values = std::move(group_values);
+            for (const auto & name : requested_columns) {
+                if (!name.is_string()) continue;
+                const auto column = name.get<std::string>();
+                auto & accumulator = group.columns[column];
+                if (!row.contains(column) || row[column].is_null()) {
+                    ++accumulator.null_count;
+                    continue;
+                }
+                if (!row[column].is_number()) continue;
+                const double value = row[column].get<double>();
+                if (accumulator.count == 0) accumulator.minimum = accumulator.maximum = value;
+                else {
+                    accumulator.minimum = std::min(accumulator.minimum, value);
+                    accumulator.maximum = std::max(accumulator.maximum, value);
+                }
+                accumulator.sum += value;
+                accumulator.sum_squares += value * value;
+                ++accumulator.count;
+            }
         }
-        result_json = json({{"columns", columns}, {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated}}).dump(); return true;
+        json columns = json::array();
+        json grouped = json::array();
+        for (auto & entry : groups) {
+            json group = entry.second.values;
+            json described = json::array();
+            for (const auto & name : requested_columns) {
+                if (!name.is_string()) continue;
+                const auto column = name.get<std::string>();
+                const auto & accumulator = entry.second.columns[column];
+                const double variance = accumulator.count == 0 ? 0.0
+                    : std::max(0.0, accumulator.sum_squares / accumulator.count -
+                        (accumulator.sum / accumulator.count) * (accumulator.sum / accumulator.count));
+                described.push_back({{"name", column}, {"count", accumulator.count},
+                    {"null_count", accumulator.null_count},
+                    {"min", accumulator.count ? json(accumulator.minimum) : json()},
+                    {"max", accumulator.count ? json(accumulator.maximum) : json()},
+                    {"mean", accumulator.count ? json(accumulator.sum / accumulator.count) : json()},
+                    {"stddev", accumulator.count ? json(std::sqrt(variance)) : json()}});
+            }
+            if (group_by.empty()) columns = std::move(described);
+            else {
+                group["columns"] = std::move(described);
+                grouped.push_back(std::move(group));
+            }
+        }
+        result_json = json({{"columns", columns}, {"groups", grouped},
+            {"group_by", group_by}, {"scanned_rows", scanned_rows},
+            {"scan_truncated", scan_truncated}}).dump(); return true;
     } else if (operation == "data.transform") {
         for (auto & row : rows) for (const auto & transform : request.value("operations", json::array())) if (transform.is_object()) {
             const auto type = transform.value("type", std::string());
