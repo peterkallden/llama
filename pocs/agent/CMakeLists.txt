@@ -1044,6 +1044,7 @@ endforeach()
 
 set(AGENT_RUNTIME_TARGETS
     llama-agent-cli
+    llama-agent-cli-document-table-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -1133,6 +1134,7 @@ set(AGENT_RUNTIME_SMOKE_MCP_TARGETS
 set(AGENT_RUNTIME_SMOKE_CLI_TARGETS
     llama-agent-cli-mcp-selection-smoke
     llama-agent-cli-run-mcp-smoke
+    llama-agent-cli-document-table-smoke
 )
 
 set(AGENT_RUNTIME_SMOKE_DAEMON_TARGETS
