@@ -27,7 +27,9 @@ if (LLAMA_MEMORY_COZO)
         ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-encoding.cpp
     )
     target_include_directories(llama-agent-storage-cozo
-        PUBLIC ${PROJECT_SOURCE_DIR}/tools/agent/data
+        PUBLIC
+            ${PROJECT_SOURCE_DIR}/common
+            ${PROJECT_SOURCE_DIR}/tools/agent/data
         PRIVATE ${COZO_INCLUDE_DIR}
     )
     target_compile_features(llama-agent-storage-cozo PUBLIC cxx_std_17)
