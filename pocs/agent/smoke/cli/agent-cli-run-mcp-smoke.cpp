@@ -54,6 +54,8 @@ int main(int argc, char ** argv) {
         "--max-plan-revisions", "2",
         "--max-research-iterations", "1",
         "--tool-profile", "cli-research-read",
+        "--agent-trace",
+        "--plan-show-summary",
         "--mcp-tool-command", server_path.string(),
         "--mcp-tool-server-name", "github",
         "--mcp-tool-prefix", "github",
@@ -94,7 +96,8 @@ int main(int argc, char ** argv) {
     if (options.thinking_mode != "deliberate" ||
             options.max_reflection_rounds != 3 ||
             options.max_plan_revisions != 2 ||
-            options.max_research_iterations != 1) {
+            options.max_research_iterations != 1 ||
+            !options.agent_trace || !options.plan_show_summary) {
         std::fprintf(stderr, "CLI MCP run smoke did not preserve thinking policy arguments\n");
         return 1;
     }

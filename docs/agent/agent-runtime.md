@@ -3229,6 +3229,30 @@ assertion, as intended. This indicates a model planning/selection gap, not a
 successful join path; the host resolver cannot repair a join that the model
 never requested.
 
+The focused `scripts/test-qwen-nomic-document-table.ps1` helper exercises the
+model-facing document-table path. It supplies a checked-in Pandoc-style JSON
+document representation, exposes the `research` profile, enables tracing and
+plan summaries, and asks Qwen to call `document.tables`, select the unique
+`Budget summary` table by name, and aggregate its materialized dataset. The
+script uses the normal `run` CLI command; `chat` remains accepted as a legacy
+alias. The command usage documents the same `--agent-trace` and
+`--plan-show-summary` options for `run`, so model-backed diagnostics use the
+same host/runtime path as ordinary CLI execution.
+
+For a local focused run:
+
+```powershell
+pwsh -File scripts/test-qwen-nomic-document-table.ps1 `
+  -BuildDir E:\llama-builds\agent-resource-tools-msvc-debug-regen-20260812 `
+  -WorkSubdir work\qwen-nomic-document-table-e2e
+```
+
+The log is intentionally retained under the selected work directory. A
+successful run must show the document-table tool calls, `data.aggregate`, and
+the expected total. If a small model emits a prose plan but does not select
+those tools, the run is a useful model-planning diagnostic but is not counted
+as a passing end-to-end document-table result.
+
 The non-smoke CTest baseline can be run after loading the local agent build
 environment:
 

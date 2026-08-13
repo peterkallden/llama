@@ -11,9 +11,10 @@
 void print_agent_usage(const char * argv0, const char * command_name) {
     fprintf(stderr,
         "usage:\n"
-        "  %s %s --memory-db PATH --model MODEL --prompt TEXT [--config PATH] [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
+        "  %s %s --model MODEL --prompt TEXT [--backend auto|in-memory|cozo] [--memory-db PATH] [--config PATH] [--embedding-model MODEL] [--agent-profile default|learning|research|safe|static]\n"
         "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
+        "         [--max-tool-rounds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--agent-inference-backend cli|server-context]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
@@ -22,6 +23,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--memory-scope turn|session|project|global] [--memory-namespace ID] [--memory-session ID] [--memory-project ID] [--memory-turn ID]\n"
         "         [--plan-backend in-memory|cozo] [--plan-db PATH] [--plan-id ID] [--agent-plan off|auto]\n"
         "         [--agent-bootstrap none|default|--agent-import PATH|--agent-export PATH] [--agent-blueprint ID] [--repository-root PATH]\n"
+        "         [--agent-trace] [--plan-show-summary] [--include-summary]\n"
         "  %s daemon-chat --model MODEL --prompt TEXT [--embedding-model MODEL] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F] [--memory-learn-show-candidate]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"

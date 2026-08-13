@@ -26,6 +26,13 @@ HTML-to-document-JSON command contracts. These outputs are bounded derived
 document representations; table-to-dataset extraction remains a separate,
 limited adapter concern.
 
+The `run` CLI now documents the tracing and plan-summary switches used by the
+focused Qwen/Nomic document-table helper. The helper is an optional
+model-backed diagnostic, not a deterministic assurance gate: in the recorded
+Windows Debug attempt both models loaded, but the small Qwen CPU inference did
+not complete within more than 30 minutes and produced no tool trace. This is
+reported as not complete below, not as model-backed pass coverage.
+
 ## Gate definitions
 
 ### Build
@@ -56,6 +63,7 @@ limited adapter concern.
 - [x] User-supplied resources can flow through resource references
 - [x] Memory and resource authorities remain host-owned
 - [x] Developer workspace tools are implemented with bounded host-native tests
+- [x] Document-table tools are exposed in the research and all-configured model tool views
 
 ### Sessions and scheduling
 
@@ -289,6 +297,25 @@ criteria describe whether a tool is safe and verified for the current host;
 they are not a replacement for those maturity labels.
 
 ## Verification record
+
+### Latest verification - 2026-08-13 document-table CLI/model slice
+
+- Branch: `kallden/agent-resource-tools`
+- Code changes: `run` usage now documents `--agent-trace` and
+  `--plan-show-summary`; the CLI run/MCP parser smoke asserts both flags; a
+  checked-in document representation and Qwen/Nomic document-table helper
+  were added.
+- Focused build: passed; `llama-agent-cli-run-mcp-smoke` and `llama-agent-cli`
+  built in the E: Debug tree with MSVC and the E: sccache cache.
+- CTest result: passed (`2/2`, `0` failed, `0` not-run):
+  `llama-agent-cli-run-mcp-ctest` and
+  `llama-agent-cli-document-table-ctest`.
+- Model-backed result: not complete. Nomic loaded and generated the query
+  embedding; Qwen loaded and entered CPU inference, but the run produced no
+  stdout/stderr or tool trace after more than 30 minutes and was stopped.
+- Qualified: this does not prove a document-table model path. The model-free
+  host/tool contracts pass, while the small-model planning/inference path
+  remains an explicit diagnostic and is not counted as assurance.
 
 Each record must identify exactly what was run. Counts use `passed/total`;
 skipped and unavailable tests are recorded separately rather than counted as
