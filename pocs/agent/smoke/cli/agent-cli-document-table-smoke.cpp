@@ -45,6 +45,13 @@ public:
     std::vector<std::string> rows;
 };
 
+static bool has_chat_tool(const agent_tool_view & view, const std::string & name) {
+    for (const auto & tool : view.chat_tools()) {
+        if (tool.name == name) return true;
+    }
+    return false;
+}
+
 int main() {
     common_memory_in_memory_store memory;
     std::string error;
@@ -81,6 +88,9 @@ int main() {
             selection, error)) return fail("tool selection failed: " + error);
     if (selection.tool_view == nullptr) return fail("tool view was not created");
     if (selection.owned_resource_store == nullptr) return fail("resource store was not created");
+    if (!has_chat_tool(*selection.tool_view, "document.tables") ||
+            !has_chat_tool(*selection.tool_view, "document.table"))
+        return fail("document table tools were not exposed to the model tool view");
 
     const std::string document_json = R"({"blocks":[
       {"t":"Header","c":[1,[],[{"t":"Str","c":"Budget summary"}]]},

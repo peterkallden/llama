@@ -404,7 +404,9 @@ The model-facing surface is intentionally semantic and small:
 table and returns its dataset handle. The host validates that exactly one
 locator is supplied; processor selection, `document-json` caching and dataset
 materialization remain behind host callbacks. These tools are therefore also
-available through MCP when the active tool profile includes them, but MCP does
+model-visible in the `research`, `developer-read` and `all-configured` native
+profiles, and are also available through MCP when the active tool profile
+includes them, but MCP does
 not expose Pandoc, table parsing libraries or filesystem paths.
 
 The importer can materialize all bounded worksheets, or one exact worksheet
