@@ -2,7 +2,6 @@
 
 #include "memory/memory-in-memory.h"
 
-#include <cassert>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -49,7 +48,11 @@ public:
 int main() {
     common_memory_in_memory_store memory;
     std::string error;
-    assert(memory.open("", error));
+    const auto fail = [](const std::string & message) {
+        std::cerr << message << "\n";
+        return 1;
+    };
+    if (!memory.open("", error)) return fail("memory setup failed: " + error);
 
     common_tool_profile profile;
     profile.id = "cli-document-tables";
@@ -73,11 +76,11 @@ int main() {
     common_memory_query query;
     query.scope = common_memory_scope::session;
     query.session_id = "session-1";
-    assert(resolve_agent_host_tool_selection(
-        memory, nullptr, nullptr, nullptr, profile.id, request, query, nullptr,
-        selection, error));
-    assert(selection.tool_view != nullptr);
-    assert(selection.owned_resource_store != nullptr);
+    if (!resolve_agent_host_tool_selection(
+            memory, nullptr, nullptr, nullptr, profile.id, request, query, nullptr,
+            selection, error)) return fail("tool selection failed: " + error);
+    if (selection.tool_view == nullptr) return fail("tool view was not created");
+    if (selection.owned_resource_store == nullptr) return fail("resource store was not created");
 
     const std::string document_json = R"({"blocks":[
       {"t":"Header","c":[1,[],[{"t":"Str","c":"Budget summary"}]]},
@@ -97,7 +100,8 @@ int main() {
     put.project_id = "project-1";
     put.bytes = document_json;
     agent_resource_descriptor document;
-    assert(selection.owned_resource_store->put_bytes(put, document, error));
+    if (!selection.owned_resource_store->put_bytes(put, document, error))
+        return fail("document resource setup failed: " + error);
 
     auto listed = selection.tool_view->call({
         "list-tables", "document.tables",
@@ -108,27 +112,35 @@ int main() {
                   << " summary=" << listed.safe_summary
                   << " detail=" << listed.raw_diagnostic << "\n";
     }
-    assert(listed.ok);
-    assert(listed.content_json.find("Budget summary") != std::string::npos);
-    assert(listed.content_json.find("document-node://table/0") != std::string::npos);
+    if (!listed.ok) return fail("document.tables returned an invalid result");
+    if (listed.content_json.find("Budget summary") == std::string::npos)
+        return fail("document.tables omitted the table name");
+    if (listed.content_json.find("document-node://table/0") == std::string::npos)
+        return fail("document.tables omitted the table node");
 
     auto selected = selection.tool_view->call({
         "select-table", "document.table",
         std::string("{\"resource\":\"") + document.uri + "\",\"table\":\" budget   SUMMARY \"}",
     }, error);
-    assert(selected.ok);
-    assert(selected.content_json.find("dataset://import/0/Budget summary") != std::string::npos);
-    assert(data.descriptor.origin.kind == "document_table");
-    assert(data.descriptor.origin.source_representation_uri == document.uri);
-    assert(data.descriptor.origin.source_node_id == "document-node://table/0");
-    assert(data.last_dataset == data.descriptor.ref.uri);
-    assert(data.rows.size() == 1);
+    if (!selected.ok) return fail("document.table returned an invalid result");
+    if (selected.content_json.find("dataset://import/0/Budget summary") == std::string::npos)
+        return fail("document.table omitted the dataset reference");
+    if (data.descriptor.origin.kind != "document_table")
+        return fail("dataset origin kind was not preserved");
+    if (data.descriptor.origin.source_representation_uri != document.uri)
+        return fail("dataset source representation was not preserved");
+    if (data.descriptor.origin.source_node_id != "document-node://table/0")
+        return fail("dataset source node was not preserved");
+    if (data.last_dataset != data.descriptor.ref.uri)
+        return fail("dataset row and descriptor references differ");
+    if (data.rows.size() != 1) return fail("unexpected materialized row count");
 
     auto invalid = selection.tool_view->call({
         "invalid-table", "document.table",
         std::string("{\"resource\":\"") + document.uri + "\",\"table\":\"Budget summary\",\"table_index\":0}",
     }, error);
-    assert(!invalid.ok);
-    assert(invalid.failure_code == "tool.document.table.invalid_locator");
+    if (invalid.ok) return fail("invalid table locator was accepted");
+    if (invalid.failure_code != "tool.document.table.invalid_locator")
+        return fail("invalid table locator returned the wrong failure code");
     return 0;
 }
