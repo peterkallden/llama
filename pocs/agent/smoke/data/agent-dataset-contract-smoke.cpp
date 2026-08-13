@@ -21,7 +21,7 @@ int main() {
     descriptor.source_sheet_name = "Sales";
     descriptor.source_sheet_index = 0;
     descriptor.source_range = "A1:B3";
-    descriptor.import_processor_id = "pandoc-xlsx-workbook-json-v1";
+    descriptor.import_processor_id = "xlsx-workbook-json-v1";
     descriptor.import_processor_version = "pandoc-3.10.1";
     descriptor.origin.kind = "spreadsheet";
     descriptor.origin.source_node_id = "document-node://table/0";

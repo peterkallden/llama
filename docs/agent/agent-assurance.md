@@ -167,8 +167,9 @@ Dataset handling remains a separate assurance track. A resource is the
 authoritative source, a dataset is a typed analytical handle, a data tool
 operates on authorized dataset references, and an exported artifact is a new
 derived resource. The current CSV/Cozo foundation does not yet prove full XLSX
-workbook fidelity or dataset-reference tool execution. The model-free Pandoc
-processor contract covers XLSX-to-structured-JSON, and the bounded worksheet
+workbook fidelity or dataset-reference tool execution. The model-free XLSX
+processor contract covers ZIP/XML-to-structured-JSON through the checked-in
+bounded normalizer, and the bounded worksheet
 importer now materializes separate typed dataset descriptors with source
 workbook/sheet provenance and host-owned sheet selection. The broader claims
 must be added only after focused contract tests and a bounded end-to-end fixture
@@ -215,10 +216,11 @@ bounded dataset query is serialized as CSV through the existing
 rejected by the tool contract. This does not yet claim streaming export, XLSX
 writer support, or chart artifact generation.
 
-This still does not claim XLSX workbook inspection, formula/layout fidelity or
+The XLSX reference normalizer is covered by a deterministic model-free script
+smoke. This still does not claim full XLSX workbook formula/layout fidelity or
 a live XLSX-to-Cozo vertical slice. The current evidence covers the dataset/store
 boundary and derived-operation behavior using deterministic descriptors and
-bounded operation results; Pandoc workbook parsing and full XLSX ingestion remain
+bounded operation results; full configured XLSX-to-Cozo execution remains a
 separate follow-up verification.
 
 ### Protocols and events
@@ -308,7 +310,8 @@ passes.
 - Covered behavior: dataset-reference tool contracts, Cozo descriptor
   persistence/reload, bounded derived-dataset materialization, parent-dataset
   lineage, source-resource provenance, and rejection of truncated results
-- Not claimed: real XLSX workbook parsing through Pandoc into Cozo, advanced
+- Not claimed: full XLSX workbook formula/layout fidelity or a live configured
+  XLSX-to-Cozo vertical slice, advanced
   statistics, formula evaluation, workbook visual fidelity, cross-backend
   transactions, or model-backed dataset analysis
 

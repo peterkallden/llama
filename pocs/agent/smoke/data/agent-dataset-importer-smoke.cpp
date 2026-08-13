@@ -39,7 +39,7 @@ int main() {
     agent_dataset_import_request request;
     request.source_resource_uri = "agent-resource://uploads/sales.xlsx";
     request.source_workbook_name = "sales.xlsx";
-    request.import_processor_id = "pandoc-xlsx-workbook-json-v1";
+    request.import_processor_id = "xlsx-workbook-json-v1";
     request.import_processor_version = "pandoc-3.10.1";
     std::string error;
 

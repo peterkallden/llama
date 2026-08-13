@@ -60,7 +60,7 @@ public:
         value.ref.source_representation = "tabular-dataset";
         value.source_sheet_name = "Sales";
         value.source_range = "A1:B3";
-        value.import_processor_id = "pandoc-xlsx-workbook-json-v1";
+        value.import_processor_id = "xlsx-workbook-json-v1";
         value.columns = {{"name", common_agent_dataset_column_type::string, true},
                          {"value", common_agent_dataset_column_type::decimal, true}};
         return value;

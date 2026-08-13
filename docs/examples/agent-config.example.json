@@ -71,6 +71,12 @@
         "backend": "kubernetes",
         "image": "registry.example/pdf-worker@sha256:replace-me",
         "expected_version": "mupdf-1.26"
+      },
+      "xlsx.workbook": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "python",
+        "expected_version": "Python 3.x; agent-xlsx-to-json.py"
       }
     }
   },

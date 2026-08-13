@@ -1,4 +1,5 @@
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
+#include "tools/agent/resource/processors/agent-xlsx-workbook-json-processor.h"
 
 #include <cassert>
 
@@ -172,31 +173,28 @@ int main() {
     assert(host.last_request.command.arguments[1] == "--from=html");
     assert(host.last_request.command.arguments[2] == "--to=json");
 
-    agent_pandoc_options xlsx_options;
-    xlsx_options.input_format = "xlsx";
-    xlsx_options.output_format = "json";
-    xlsx_options.output_extension = "json";
-    agent_pandoc_processor xlsx_processor(
-        host, context, agent_resource_backend_kind::local_pandoc,
-        "E:\\tools\\pandoc-3.10.1\\pandoc.exe", xlsx_options);
+    agent_xlsx_workbook_json_processor xlsx_processor(
+        host, context, agent_resource_backend_kind::local_process,
+        "python", "scripts/agent-xlsx-to-json.py");
     agent_resource_processing_request xlsx_request;
     xlsx_request.source.uri = "agent-resource://workbook/sales.xlsx";
     xlsx_request.source.name = "sales.xlsx";
     xlsx_request.source.mime_type =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     xlsx_request.source.size_bytes = 4096;
-    xlsx_request.source_bytes = "PK [Content_Types].xml xl/workbook.xml xl/worksheets/sheet1.xml";
+    xlsx_request.source_bytes = "PK\x03\x04 fake XLSX package";
     xlsx_request.target_representation = "workbook-json";
     xlsx_request.target_media_type = "application/json";
     xlsx_request.limits.max_output_bytes = 4096;
     const auto xlsx_result = xlsx_processor.process(xlsx_request);
     assert(xlsx_result.success);
-    assert(xlsx_result.processor_id == "pandoc-xlsx-workbook-json-v1");
+    assert(xlsx_result.processor_id == "xlsx-workbook-json-v1");
     assert(xlsx_result.outputs.size() == 1);
     assert(xlsx_result.outputs[0].mime_type == "application/json");
     assert(xlsx_result.outputs[0].lineage.parent_uri == xlsx_request.source.uri);
-    assert(host.last_request.command.arguments[1] == "--from=xlsx");
-    assert(host.last_request.command.arguments[2] == "--to=json");
+    assert(host.last_request.execution_class == "resource.processor.xlsx");
+    assert(host.last_request.command.program == "python");
+    assert(host.last_request.command.arguments[0] == "scripts/agent-xlsx-to-json.py");
 
     agent_pandoc_options unsupported_options;
     unsupported_options.input_format = "html";

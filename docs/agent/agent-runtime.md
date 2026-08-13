@@ -1307,7 +1307,7 @@ The current processor catalog is intentionally small:
 | `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 | `pandoc-html-markdown-v1` | `text/html` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |
 | `pandoc-html-document-json-v1` | `text/html` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
-| `pandoc-xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Contract implemented; bounded worksheet importer connected | Pandoc executable, structured JSON output, worksheet selection and bounded dataset materialization |
+| `xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Generic processor contract and bounded normalizer provided | Configured external XLSX normalizer, worksheet selection and bounded dataset materialization |
 
 The first processor is a bounded local implementation used for the current
 contract smoke. It is not a complete PDF parser: it does not render pages,
@@ -1341,9 +1341,12 @@ The generic Pandoc processor currently has seven registered directions:
 to a derived `text/plain` resource, while `pandoc-markdown-docx-v1` converts a
 `text/markdown` resource to a derived DOCX artifact. `pandoc-odt-markdown-v1`
 and `pandoc-html-markdown-v1` normalize OpenDocument Text and HTML resources to
-derived `text/markdown` resources. `pandoc-xlsx-workbook-json-v1` produces a
+derived `text/markdown` resources. `xlsx-workbook-json-v1` produces a
 bounded structured JSON intermediate representation for a later host-owned
-worksheet dataset importer; it is not itself a dataset. All directions use the same
+worksheet dataset importer; it is not itself a dataset. XLSX is deliberately not
+routed through Pandoc: the installed Pandoc release supports XLSX output but not
+XLSX input. The reference normalizer is `scripts/agent-xlsx-to-json.py`, invoked
+through the generic external-process resource host. All directions use the same
 processor contract, registry, processing service, resource store and lineage
 rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
 not linked into the agent. The host may provide an executable name resolved
@@ -1422,6 +1425,12 @@ The active execution-policy fields are representation-independent:
         "backend": "docker",
         "image": "registry.example/document-worker@sha256:replace-me",
         "expected_version": "pandoc 3.10.1"
+      },
+      "xlsx.workbook": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "python",
+        "expected_version": "Python 3.x; agent-xlsx-to-json.py"
       }
     }
   }
@@ -1449,7 +1458,7 @@ operation-scoped assembly covers the CLI, daemon and MCP host seams for the
 configured PDF page-image and Tesseract processor families; general automatic
 backend resolution for all future processors remains open.
 
-When `docx.text`, `odt.text` or `html.text` is configured, the same operation-scoped host assembly can
+When `docx.text`, `odt.text`, `html.text` or `xlsx.workbook` is configured, the same operation-scoped host assembly can
 install the local Pandoc processor without adding a model-visible `pandoc`
 tool. `local_preferred` with `backend=auto` uses the configured executable or
 host `PATH`; `local_required` fails closed if Pandoc cannot be started. Docker

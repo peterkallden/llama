@@ -25,6 +25,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
     ../../tools/agent/resource/processors/agent-pandoc-command.cpp
     ../../tools/agent/resource/processors/agent-docx-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
     ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
     ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp

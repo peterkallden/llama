@@ -4,6 +4,7 @@
 #include <vector>
 
 enum class agent_resource_backend_kind {
+    local_process,
     local_mupdf,
     local_ghostscript,
     local_tesseract,
@@ -16,6 +17,7 @@ struct agent_resource_backend_capabilities {
     // These are host-resolved runtime capabilities, not model decisions.
     // The host may derive them from explicit paths, PATH lookup, or an
     // approved sandbox backend after performing its own health/policy checks.
+    bool has_local_process = true;
     bool has_mupdf = false;
     bool has_ghostscript = false;
     bool has_tesseract = false;
@@ -39,6 +41,8 @@ inline bool is_agent_resource_backend_available(
         agent_resource_backend_kind kind,
         const agent_resource_backend_capabilities & capabilities) {
     switch (kind) {
+        case agent_resource_backend_kind::local_process:
+            return capabilities.has_local_process;
         case agent_resource_backend_kind::local_mupdf:
             return capabilities.has_mupdf;
         case agent_resource_backend_kind::local_ghostscript:
