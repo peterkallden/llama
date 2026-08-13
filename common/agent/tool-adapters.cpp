@@ -1213,7 +1213,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return tool_success_json({{"valid", violations.empty()}, {"violations", violations}});
             }, error);
-        } else if (definition.executor_id == "builtin.data.query" || definition.executor_id == "builtin.data.filter" || definition.executor_id == "builtin.data.aggregate" || definition.executor_id == "builtin.data.join" || definition.executor_id == "builtin.data.transform" || definition.executor_id == "builtin.statistics.describe") {
+        } else if (definition.executor_id == "builtin.data.query" || definition.executor_id == "builtin.data.filter" || definition.executor_id == "builtin.data.aggregate" || definition.executor_id == "builtin.data.join" || definition.executor_id == "builtin.data.transform" || definition.executor_id == "builtin.statistics.describe" || definition.executor_id == "builtin.statistics.outliers") {
             const auto operation = definition.name;
             installed = register_definition(definition, registry, [bindings, operation](const std::string & input) {
                 std::string err; json arguments;

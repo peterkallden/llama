@@ -256,6 +256,7 @@ do not select implementations or host paths.
 | `data.join` | Store-backed | Joins two host-approved datasets | Limited | Join validation, larger results and artifact-backed output datasets |
 | `data.transform` | Store-backed | Applies bounded column transformations | Limited | Safer expression language, type checking and artifact persistence |
 | `statistics.describe` | Store-backed | Produces bounded descriptive statistics | Limited | Confidence intervals, distributions and assumption reporting |
+| `statistics.outliers` | Store-backed | Identifies bounded numeric outliers with IQR thresholds | Limited | Z-score, MAD and richer anomaly models |
 | `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Limited | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
@@ -568,6 +569,14 @@ per group. The result keeps group keys separate from column statistics, so
 callers can distinguish a grouped result from an overall description. This
 keeps descriptive statistics deterministic and separate from future advanced
 statistical analysis such as IQR/MAD outlier detection.
+
+The first outlier contract is `statistics.outliers`. It uses the bounded IQR
+rule (`q1 - multiplier * iqr`, `q3 + multiplier * iqr`) and defaults to a
+multiplier of `1.5`. With `group_by`, thresholds are computed independently
+per group. The result returns the thresholds and bounded source rows that were
+flagged. It is intentionally not a claim that a flagged row is erroneous;
+the operation identifies statistical candidates for review. Z-score, MAD and
+period-change detection remain later extensions.
 
 The dataset contract also has a small model-facing normalization layer. It
 accepts a single `group_by` or `column` value for `statistics.describe`, a
@@ -2350,7 +2359,7 @@ backend is configured.
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
 | Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
 | Dataset: `dataset.list`, `dataset.inspect`, `dataset.schema`, `dataset.sample`, `dataset.validate` | Yes | A matching profile and host-owned repository/workspace root; current file support is bounded, with CSV as the primary implementation |
-| Structured data: `data.query`, `data.filter`, `data.aggregate`, `data.join`, `data.transform`, `statistics.describe` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
+| Structured data: `data.query`, `data.filter`, `data.aggregate`, `data.join`, `data.transform`, `statistics.describe`, `statistics.outliers` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
 | `resource_read` and `artifact.export` | Yes, when bound | A matching profile and host-owned resource store; artifact output remains bounded |
 | Network: `web_search`, `web_fetch` | Yes, when allowed | A matching profile, network policy and the host's safe network provider |
 | `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads |

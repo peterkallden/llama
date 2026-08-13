@@ -31,6 +31,11 @@ int main() {
     TEST_ASSERT(store.put_row("orders", "1", R"({"id":1,"customer_id":10,"region":"north","value":12})", error));
     TEST_ASSERT(store.put_row("orders", "2", R"({"id":2,"customer_id":11,"region":"south","value":8})", error));
     TEST_ASSERT(store.put_row("orders", "3", R"({"id":3,"customer_id":10,"region":"north","value":4})", error));
+    TEST_ASSERT(store.put_row("metrics", "1", R"({"region":"all","value":10})", error));
+    TEST_ASSERT(store.put_row("metrics", "2", R"({"region":"all","value":11})", error));
+    TEST_ASSERT(store.put_row("metrics", "3", R"({"region":"all","value":12})", error));
+    TEST_ASSERT(store.put_row("metrics", "4", R"({"region":"all","value":13})", error));
+    TEST_ASSERT(store.put_row("metrics", "5", R"({"region":"all","value":100})", error));
     TEST_ASSERT(store.put_row("customers", "10", R"({"customer_id":10,"name":"Ada"})", error));
     common_agent_dataset_descriptor orders_descriptor;
     orders_descriptor.ref = {"orders", "Orders", 3, 4, "resource://uploads/orders.csv", "tabular-dataset"};
@@ -95,6 +100,12 @@ int main() {
             TEST_ASSERT(group["columns"][0]["count"] == 2 && group["columns"][0]["mean"] == 8.0);
         }
     }
+    TEST_ASSERT(store.execute("statistics.outliers", R"({"dataset":"metrics","column":"value","group_by":["region"]})", output, error));
+    auto outliers = json::parse(output);
+    TEST_ASSERT(outliers["method"] == "iqr" && outliers["columns"].size() == 1 &&
+        outliers["columns"][0]["groups"].size() == 1 &&
+        outliers["columns"][0]["groups"][0]["outliers"].size() == 1 &&
+        outliers["columns"][0]["groups"][0]["outliers"][0]["value"] == 100.0);
 
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);

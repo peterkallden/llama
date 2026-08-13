@@ -296,7 +296,8 @@ bool resolve_agent_host_tool_selection(
             std::vector<common_tool_definition> available_tools;
             for (auto & definition : profile_snapshot->tools) {
                 if (definition.executor_id.rfind("builtin.data.", 0) != 0 &&
-                        definition.executor_id != "builtin.statistics.describe") {
+                        definition.executor_id != "builtin.statistics.describe" &&
+                        definition.executor_id != "builtin.statistics.outliers") {
                     available_tools.push_back(std::move(definition));
                 }
             }

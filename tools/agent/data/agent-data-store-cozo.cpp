@@ -465,6 +465,117 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
         result_json = json({{"columns", columns}, {"groups", grouped},
             {"group_by", group_by}, {"scanned_rows", scanned_rows},
             {"scan_truncated", scan_truncated}}).dump(); return true;
+    } else if (operation == "statistics.outliers") {
+        const auto method = request.value("method", std::string("iqr"));
+        if (method != "iqr") { error = "statistics.outliers only supports the iqr method"; return false; }
+        const double multiplier = request.value("multiplier", 1.5);
+        if (!(multiplier >= 0.1 && multiplier <= 10.0)) {
+            error = "statistics.outliers multiplier must be between 0.1 and 10.0";
+            return false;
+        }
+        const auto group_by = request.value("group_by", json::array());
+        if (!group_by.is_array() || group_by.size() > 16) {
+            error = "statistics.outliers group_by must be an array with at most 16 fields";
+            return false;
+        }
+        for (const auto & field : group_by) {
+            if (!field.is_string() || field.get<std::string>().empty()) {
+                error = "statistics.outliers group_by fields must be non-empty strings";
+                return false;
+            }
+        }
+        json requested_columns = request.value("columns", json::array());
+        if (requested_columns.empty() && request.contains("column")) {
+            requested_columns = json::array({request["column"]});
+        }
+        if (requested_columns.empty()) {
+            common_agent_dataset_descriptor descriptor;
+            if (!get_dataset_descriptor(request["dataset"].get<std::string>(), descriptor, error)) return false;
+            for (const auto & column : descriptor.columns) {
+                if (column.type == common_agent_dataset_column_type::integer ||
+                        column.type == common_agent_dataset_column_type::decimal) {
+                    requested_columns.push_back(column.name);
+                    if (requested_columns.size() >= 32) break;
+                }
+            }
+        }
+        for (const auto & column : requested_columns) {
+            if (!column.is_string() || column.get<std::string>().empty()) {
+                error = "statistics.outliers columns must contain non-empty strings";
+                return false;
+            }
+        }
+        struct outlier_group {
+            json values = json::object();
+            std::map<std::string, std::vector<std::pair<double, json>>> observations;
+        };
+        std::map<std::string, outlier_group> groups;
+        for (const auto & row : rows) {
+            if (!row.is_object()) continue;
+            json group_values = json::object();
+            std::string group_key;
+            for (const auto & field : group_by) {
+                const auto name = field.get<std::string>();
+                const auto value = row.contains(name) ? row[name] : json();
+                group_values[name] = value;
+                group_key += value.dump() + "\x1f";
+            }
+            auto & group = groups[group_key];
+            group.values = std::move(group_values);
+            for (const auto & column : requested_columns) {
+                const auto name = column.get<std::string>();
+                if (row.contains(name) && row[name].is_number()) {
+                    group.observations[name].push_back({row[name].get<double>(), row});
+                }
+            }
+        }
+        const auto quantile = [](std::vector<double> values, double probability) {
+            std::sort(values.begin(), values.end());
+            if (values.empty()) return 0.0;
+            const double position = probability * static_cast<double>(values.size() - 1);
+            const size_t lower = static_cast<size_t>(position);
+            const size_t upper = std::min(values.size() - 1, lower + 1);
+            return values[lower] + (values[upper] - values[lower]) * (position - static_cast<double>(lower));
+        };
+        json output_columns = json::array();
+        for (const auto & column : requested_columns) {
+            const auto name = column.get<std::string>();
+            json output_groups = json::array();
+            for (const auto & entry : groups) {
+                const auto found = entry.second.observations.find(name);
+                if (found == entry.second.observations.end()) continue;
+                const auto & observations = found->second;
+                json output_group = entry.second.values;
+                output_group["count"] = observations.size();
+                output_group["outliers"] = json::array();
+                if (observations.size() >= 4) {
+                    std::vector<double> values;
+                    values.reserve(observations.size());
+                    for (const auto & observation : observations) values.push_back(observation.first);
+                    const double q1 = quantile(values, 0.25);
+                    const double q3 = quantile(values, 0.75);
+                    const double iqr = q3 - q1;
+                    const double lower = q1 - multiplier * iqr;
+                    const double upper = q3 + multiplier * iqr;
+                    output_group["q1"] = q1;
+                    output_group["q3"] = q3;
+                    output_group["iqr"] = iqr;
+                    output_group["lower"] = lower;
+                    output_group["upper"] = upper;
+                    for (const auto & observation : observations) {
+                        if (observation.first < lower || observation.first > upper) {
+                            output_group["outliers"].push_back({{"value", observation.first}, {"row", observation.second}});
+                        }
+                    }
+                }
+                output_groups.push_back(std::move(output_group));
+            }
+            output_columns.push_back({{"name", name}, {"groups", output_groups}});
+        }
+        result_json = json({{"method", method}, {"multiplier", multiplier},
+            {"group_by", group_by}, {"columns", output_columns},
+            {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated}}).dump();
+        return true;
     } else if (operation == "data.transform") {
         for (auto & row : rows) for (const auto & transform : request.value("operations", json::array())) if (transform.is_object()) {
             const auto type = transform.value("type", std::string());

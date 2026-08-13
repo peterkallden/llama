@@ -205,8 +205,8 @@ assurance scope.
 
 The Cozo data-store CTest also covers bounded descriptive statistics, including
 numeric count/min/max/mean/stddev, schema-selected numeric columns and grouped
-statistics. The tool-adapter CTest covers the corresponding small-model
-normalizations.
+statistics, plus IQR outlier detection with grouped thresholds. The
+tool-adapter CTest covers the corresponding small-model normalizations.
 
 The adapter CTest also covers the first dataset artifact-export slice. A
 bounded dataset query is serialized as CSV through the existing

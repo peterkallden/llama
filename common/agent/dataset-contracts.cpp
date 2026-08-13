@@ -387,7 +387,7 @@ bool normalize_common_agent_dataset_tool_arguments(
         nlohmann::ordered_json normalized;
         if (!normalize_condition_list(arguments["conditions"], normalized, error)) return false;
         arguments["conditions"] = std::move(normalized);
-    } else if (tool_name == "statistics.describe") {
+    } else if (tool_name == "statistics.describe" || tool_name == "statistics.outliers") {
         if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
             arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});
         }

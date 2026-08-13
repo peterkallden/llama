@@ -43,6 +43,7 @@ public:
         if (operation == "data.join") { result = R"({"rows":[{"id":"1","name":"alpha"}]})"; return true; }
         if (operation == "data.transform") { result = R"({"dataset":"dataset://derived/1"})"; return true; }
         if (operation == "statistics.describe") { result = R"({"columns":[{"name":"value","count":2,"mean":1.5}]})"; return true; }
+        if (operation == "statistics.outliers") { result = R"({"columns":[]})"; return true; }
         error = "unexpected data operation";
         return false;
     }
@@ -196,6 +197,7 @@ int main() {
         {"data.join", 1, true, "{}"},
         {"data.transform", 1, true, "{}"},
         {"statistics.describe", 1, true, "{}"},
+        {"statistics.outliers", 1, true, "{}"},
         {"diagnostics.test_failures", 1, true, "{}"},
         {"diagnostics.symbol", 1, true, "{}"},
         {"diagnostics.references", 1, true, "{}"},
@@ -318,6 +320,10 @@ int main() {
     assert(result.ok && foundation_data.last_operation == "statistics.describe");
     result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","column":"value","group_by":"region"})"});
     assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
+           foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
+    result = foundation_registry.execute({"statistics.outliers", R"({"dataset":"a","column":"value","group_by":"region"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.outliers" &&
            foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
     result = foundation_registry.execute({"data.aggregate", R"({"dataset":"a","group_by":"region","sum":"amount"})"});
