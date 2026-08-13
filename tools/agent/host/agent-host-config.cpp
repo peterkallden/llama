@@ -370,6 +370,7 @@ bool parse_agent_host_config_json(
                 read_optional(it.value(), "execution", policy.execution);
                 read_optional(it.value(), "backend", policy.backend);
                 read_optional(it.value(), "executable", policy.executable);
+                read_optional(it.value(), "script", policy.script);
                 read_optional(it.value(), "image", policy.image);
                 read_optional(it.value(), "expected_version", policy.expected_version);
                 config.resource_processor_policies.emplace(it.key(), std::move(policy));
@@ -826,6 +827,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"execution", entry.second.execution},
                         {"backend", entry.second.backend},
                         {"executable", entry.second.executable},
+                        {"script", entry.second.script},
                         {"image", entry.second.image},
                         {"expected_version", entry.second.expected_version},
                     };

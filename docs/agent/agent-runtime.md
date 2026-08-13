@@ -1352,6 +1352,19 @@ rules. Pandoc is a runtime dependency: it is not discovered by CMake and is
 not linked into the agent. The host may provide an executable name resolved
 through `PATH`, or an explicit executable path.
 
+XLSX normalizer implementation backlog
+----------------------------------------
+
+The current reference normalizer is `scripts/agent-xlsx-to-json.py`, which
+requires Python in the selected processor runtime. This is intentionally an
+implementation detail behind the generic processor contract, but it should
+not become an implicit product-runtime requirement. Evaluate a compiled
+worker or an already-supported host utility (for example a small Rust
+`calamine` worker, a bounded C++ ZIP/XML implementation, or an approved
+LibreOffice worker) before packaging XLSX ingestion for production. Any
+replacement must emit the same bounded worksheet envelope and retain the
+existing sandbox, resource-lineage and dataset-import seams.
+
 `pandoc-docx-document-json-v1` and `pandoc-html-document-json-v1` produce a
 structured Pandoc JSON representation as a derived `application/json` resource.
 This is a document representation, not a dataset and not a model-visible

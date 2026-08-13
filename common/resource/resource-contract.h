@@ -356,6 +356,9 @@ struct agent_resource_processor_execution_policy {
     std::string execution = "local_preferred";
     std::string backend = "auto";
     std::string executable;
+    // Optional typed helper/script path for processors that use an external
+    // implementation. It is host configuration, never model input.
+    std::string script;
     std::string image;
     std::string expected_version;
 };

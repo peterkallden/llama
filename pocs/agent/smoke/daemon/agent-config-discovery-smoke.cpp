@@ -132,16 +132,23 @@ int main() {
                     {"backend", "docker"},
                     {"image", "registry.example/document-worker@sha256:test"},
                 }},
+                {"xlsx.workbook", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "python"},
+                    {"script", "scripts/agent-xlsx-to-json.py"},
+                }},
             }},
         }},
     };
     if (!parse_agent_host_config_json(processor_policy_config, processor_config, error) ||
             !validate_agent_host_config(processor_config, error) ||
-            processor_config.resource_processor_policies.size() != 4 ||
+            processor_config.resource_processor_policies.size() != 5 ||
             processor_config.resource_processor_policies.at("pdf.page_image").execution != "sandbox_required" ||
             processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes" ||
             processor_config.resource_processor_policies.at("odt.text").executable != "pandoc" ||
-            processor_config.resource_processor_policies.at("html.text").backend != "docker") {
+            processor_config.resource_processor_policies.at("html.text").backend != "docker" ||
+            processor_config.resource_processor_policies.at("xlsx.workbook").script != "scripts/agent-xlsx-to-json.py") {
         std::fprintf(stderr, "resource processor execution policy was not parsed: %s\n", error.c_str());
         return 1;
     }

@@ -76,6 +76,7 @@
         "execution": "local_preferred",
         "backend": "auto",
         "executable": "python",
+        "script": "scripts/agent-xlsx-to-json.py",
         "expected_version": "Python 3.x; agent-xlsx-to-json.py"
       }
     }
