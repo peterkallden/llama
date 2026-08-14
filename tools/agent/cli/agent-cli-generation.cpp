@@ -194,10 +194,15 @@ bool generate_chat_turn_result(
     result.status = common_agent_generation_status::completed;
     result.stop_reason = stop_reason;
     if (options.generation_trace) {
+        std::string preview = result.content.substr(0, 2048);
+        for (char & ch : preview) {
+            if (static_cast<unsigned char>(ch) < 0x20 || ch == 0x7f) ch = ' ';
+        }
         fprintf(stderr,
-            "agent generation trace: completed decoded_tokens=%d stop_reason=%s\n",
+            "agent generation trace: completed decoded_tokens=%d stop_reason=%s content_preview=%s\n",
             result.decoded_tokens,
-            common_agent_generation_stop_reason_name(result.stop_reason));
+            common_agent_generation_stop_reason_name(result.stop_reason),
+            preview.c_str());
     }
     return true;
 }

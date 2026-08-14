@@ -3251,8 +3251,11 @@ The script is fail-closed: it requires completed traces for the expected
 tool-failure, repair-limit, or unavailable-document diagnostics. A process exit
 alone is not evidence that the model actually used the tools.
 
-For diagnostics, `--generation-trace` records bounded model generation and
-token-progress details. `--agent-trace` records the corresponding bounded host
+For diagnostics, `--generation-trace` records bounded model generation,
+token-progress details, and a bounded preview of each completed generated
+content value. The preview is intended for local debugging of planner,
+reflection, repair, and answer formatting; it must not be treated as an
+authoritative audit log. `--agent-trace` records the corresponding bounded host
 tool lifecycle: normalized tool name, argument keys, selected resource URI,
 whether safe defaults were applied, failure code, and a short sanitized
 diagnostic. During a `repair*` step it additionally records bounded

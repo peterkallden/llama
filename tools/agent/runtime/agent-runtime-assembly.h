@@ -25,6 +25,7 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
 struct common_agent_generation_config {
     int n_predict = 0;
     int n_threads = 2;
+    bool generation_trace = false;
     size_t context_size_tokens = 0;
     common_agent_context_budget_config context_budgets;
 };

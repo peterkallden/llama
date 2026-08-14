@@ -973,7 +973,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         turn_request.policy.deliberation_policy = deliberation_policy;
     }
     turn_request.runtime_config = make_agent_runtime_config({
-        {options.n_predict, options.n_threads, static_cast<size_t>(std::max(0, options.context_size)), options.context_budgets},
+        {options.n_predict, options.n_threads, options.generation_trace, static_cast<size_t>(std::max(0, options.context_size)), options.context_budgets},
         options.context_budgets,
         options.memory_learn == "post-turn",
         {options.memory_learn_min_confidence, options.memory_learn_min_reuse},

@@ -25,6 +25,7 @@ common_agent_generation_options make_agent_cli_generation_options(
     common_agent_generation_options options;
     options.n_predict = generation_config.n_predict;
     options.n_threads = generation_config.n_threads;
+    options.generation_trace = generation_config.generation_trace;
     return common_agent_generation_options_with_n_predict(
         options,
         n_predict);
