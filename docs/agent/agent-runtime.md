@@ -1204,6 +1204,65 @@ identifier namespace. The same model-facing convention is used by
 resource_inspect; other resource-domain tools may adopt it through the same
 normalization seam when their contracts are updated.
 
+### Compact tool notation
+
+The runtime generates a compact, line-oriented model description from the
+strict input and result schemas. This is a presentation projection only. It is
+not a second tool contract and the model still returns JSON tool arguments.
+The strict schema remains the source of truth for validation, bounds, enum
+values, defaults, and host dispatch.
+
+For example, the strict resource_read input schema is projected to:
+
+    resource_read
+    Read a bounded host-owned resource.
+    args: id:string; representation?:text|bytes="text"; offset?:integer[0..1073741824]; max_bytes?:integer[1..32768]
+    returns: resource, representation, content, content_encoding
+
+The mapping is deterministic:
+
+    strict schema property       compact notation
+    required string id           id:string
+    optional enum                representation?:text|bytes
+    bounded integer              max_bytes?:integer[1..32768]
+    default value                representation?:text|bytes="text"
+    x-agent-type                 uses the semantic type name
+    result object properties     returns: property1, property2
+
+For a structured data tool the same renderer produces a compact description
+such as:
+
+    data.aggregate
+    Aggregate dataset values.
+    args: dataset:dataset_ref; measures:measure[]; group_by?:column[]
+    returns: rows, dataset
+
+The renderer currently handles bounded object schemas, required and optional
+properties, scalar types, arrays, enums, defaults, numeric limits, semantic
+x-agent-type labels, and result-property summaries. Unsupported complex schema
+constructs use a bounded generic description rather than an invented
+interpretation.
+
+The model-facing and host-facing paths are deliberately separate:
+
+    strict JSON schema
+        -> compact model description
+        -> model emits JSON arguments
+        -> safe alias/default normalization
+        -> strict schema validation
+        -> host canonicalization and execution
+
+For example:
+
+    model JSON:       {"id":"r1","representation":"text"}
+    normalized JSON:  {"uri":"agent-resource://resource/resource-1","representation":"text"}
+
+The URI is introduced only after the current-turn handle has been resolved by
+the host. MCP and native tool views use the same compact description renderer;
+their original JSON schemas remain available as the parameters contract.
+This keeps the presentation small for compact models without weakening the
+runtime or MCP validation boundary.
+
 The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
 resource reference, the host-resolved media type, the requested representation,

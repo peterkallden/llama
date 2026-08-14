@@ -428,23 +428,24 @@ the existing text/range chunkers. The first broad CTest invocation exposed only
 a stale test expectation; it was corrected as a test-only commit and did not
 indicate a runtime regression.
 
-### Latest verification - 2026-08-14 model-facing resource handles
+### Latest verification - 2026-08-14 compact model tool descriptions
 
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | `50b6a734c` |
+| Commit | 663664877 (with c249d08a7 and e50c3dfc0) |
 | Build configuration | Windows / MSVC Debug, Cozo-enabled CPU tree, four build threads |
 | `test-agent-runtime-json` | Passed |
 | `test-tool-catalog` | Passed |
 | Failed | `0` |
 | Not-run | `0` for the focused contract set |
-| Scope | Model-facing resource catalog uses `rN` handles; host normalizes `id` to canonical URI; unknown handles fail closed |
+| Scope | Strict schemas generate bounded compact tool descriptions; resource handles use rN; host normalizes id to canonical URI |
 | Not covered | Full agent CTest suite, model-backed Qwen/Phi execution, and dynamic tool-view narrowing |
 
-The model-facing schema is separate from the host execution schema. This keeps
-the model contract small while preserving canonical URI-based storage,
-authority checks, lineage, and provenance inside the host runtime.
+The model-facing description is generated from the strict schema and is used
+by native and MCP tool views. JSON parameters and host validation remain
+unchanged. Focused tests cover schema rendering, resource handle
+normalization, and the registered tool bridge.
 
 ### Previous verification - 2026-08-10 resource-processing checkpoint
 
