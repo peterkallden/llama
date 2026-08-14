@@ -102,6 +102,21 @@ int main() {
     TEST_ASSERT(changed);
     TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
 
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        request,
+        "document.tables",
+        nlohmann::ordered_json::object({{
+            "resource",
+            "agent-resource://turn/t/document.json name=document-table-model.json role=reference mime_type=application/json"
+        }}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
     normalized_tool_arguments.clear();
     TEST_ASSERT(common_plan_normalize_tool_arguments_json(
         "document.table",

@@ -162,6 +162,18 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
                     ambiguous_resource_name = false;
                     break;
                 }
+                // Resource descriptors are rendered as bounded human-readable
+                // lines in the prompt. Small models may copy that complete
+                // line instead of returning only the authoritative URI. Accept
+                // that exact URI-prefixed projection, but resolve only against
+                // caller-owned input resources.
+                if (!input.resource.uri.empty() &&
+                        supplied_resource.size() > input.resource.uri.size() &&
+                        supplied_resource.compare(0, input.resource.uri.size(), input.resource.uri) == 0 &&
+                        supplied_resource[input.resource.uri.size()] == ' ') {
+                    matching_resource = &input;
+                    continue;
+                }
                 if (!input.resource.name.empty() && supplied_resource == input.resource.name) {
                     if (matching_resource != nullptr) {
                         ambiguous_resource_name = true;
