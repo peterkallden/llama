@@ -1018,9 +1018,20 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         if (!is_mcp_definition_allowed(definition, exposed_name, context)) {
             continue;
         }
-        chat_tools.push_back({
+        std::string compact_error;
+        const auto model_description = common_render_compact_tool_description(
             exposed_name,
             definition.description,
+            definition.input_schema_json,
+            R"({"type":"object"})",
+            compact_error);
+        if (!compact_error.empty()) {
+            error = compact_error;
+            return nullptr;
+        }
+        chat_tools.push_back({
+            exposed_name,
+            model_description,
             definition.input_schema_json,
         });
         resolved_definitions.emplace(exposed_name, std::move(definition));
