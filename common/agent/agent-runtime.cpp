@@ -1022,12 +1022,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             std::string tool_result = execution.output;
             if (tool_result.size() > context_budgets.tool_observation_chars) tool_result.resize(context_budgets.tool_observation_chars);
+            const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
             common_plan_operation observed;
             observed.kind = common_plan_operation_kind::record_observation;
             observed.plan_id = plan.id;
             observed.expected_version = plan.version;
             observed.reason_summary = "registered tool result";
-            observed.observation = common_plan_observation{next_tool_observation_id(plan, tool_step_id, tool_call->name), tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0};
+            observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             if (tool_step_id == "request") executed_request_tool = true; else {
                 executed_step_ids.insert(tool_step_id);
@@ -1037,6 +1038,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 complete.expected_version = plan.version;
                 complete.step_id = tool_step_id;
                 complete.reason_summary = "registered tool completed";
+                complete.evidence_ids.push_back(tool_observation_id);
+                complete.evidence_ids.insert(
+                    complete.evidence_ids.end(),
+                    observed.observation->evidence_ids.begin(),
+                    observed.observation->evidence_ids.end());
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
                 append_event(result, request, {common_agent_event_type::plan_updated, "tool step completed", {}, plan.id});
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,

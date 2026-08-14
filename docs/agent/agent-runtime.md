@@ -583,7 +583,10 @@ evidence requirements, while deliberate may return after a bounded decision
 observation. Returning to the plan is explicit and cannot be performed while
 required evidence is missing. The existing tool-start trace now records the
 resolved family for active plan tool steps, which makes family transitions
-observable without exposing host scheduler state to the model.
+observable without exposing host scheduler state to the model. Successful
+tool-step completion also forwards the deterministic tool-observation ID to
+the existing plan-store completion operation, so `required_evidence` remains
+validated by `common_plan_policy` rather than by a parallel navigation rule.
 
 ## Tool naming convention
 

@@ -37,6 +37,7 @@ public:
         first.status = common_plan_step_status::active;
         first.selected_tool = "lookup";
         first.tool_call = common_plan_tool_call{"lookup", R"({"id":"first"})"};
+        first.required_evidence = {"tool:first:lookup"};
         common_plan_step second{"second", "Second lookup", "Get follow-up fact"};
         second.selected_tool = "lookup";
         second.tool_call = common_plan_tool_call{"lookup", R"({"id":"second"})"};
