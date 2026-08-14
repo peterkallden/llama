@@ -16,6 +16,8 @@ int main() {
     assert(common_tool_profile_to_chat_tools(catalog, "minimal", registry, tools, error));
     assert(tools.size() == 2);
     assert(tools[0].name == "calculator");
+    assert(tools[0].description.find("args: expression:string") != std::string::npos);
+    assert(tools[0].description.find("returns:") != std::string::npos);
     assert(tools[0].parameters.find("expression") != std::string::npos);
 
     common_chat_msg assistant;

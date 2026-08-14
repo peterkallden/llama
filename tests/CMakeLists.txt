@@ -351,6 +351,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-reflection-json.cpp
         test-tool-adapters.cpp
         test-tool-catalog.cpp
+        test-tool-chat-bridge.cpp
         test-agent-clangd-protocol.cpp
         test-agent-config-bootstrap.cpp
         test-agent-bootstrap.cpp
