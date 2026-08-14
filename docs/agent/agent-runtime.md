@@ -508,6 +508,13 @@ legacy `tool`/`args` shapes and canonicalizes bounded control values; semantic
 defaults remain a separate host-owned step. The executor receives the
 normalized arguments rather than the pre-normalized model payload.
 
+Planner proposals use the simpler canonical tool shape `{"tool":"domain.operation","args":{...}}`.
+Older named-call and nested `tool`/`arguments` wrappers remain accepted at the
+compatibility boundary so persisted plans and older small-model output do not
+need a parallel execution path. Document table selection also accepts the
+model-friendly alias `table_name` and canonicalizes it to `table`; the native
+adapter still requires exactly one of `table`, `table_index` or `node_id`.
+
 For an unavailable tool there is no argument skeleton. The repair context only
 offers the effective tool view, so reflection can select a valid alternative
 without expanding host authority. The context is emitted through the normal
