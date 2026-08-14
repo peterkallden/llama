@@ -433,7 +433,7 @@ indicate a runtime regression.
 | Field | Value |
 |---|---|
 | Branch | `kallden/agent-resource-tools` |
-| Commit | Local verification checkpoint; commit follows focused tests |
+| Commit | `50b6a734c` |
 | Build configuration | Windows / MSVC Debug, Cozo-enabled CPU tree, four build threads |
 | `test-agent-runtime-json` | Passed |
 | `test-tool-catalog` | Passed |
