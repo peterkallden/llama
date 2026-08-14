@@ -63,13 +63,17 @@ int main() {
     const auto * document_tables = catalog.find_definition("document.tables");
     const auto * document_table = catalog.find_definition("document.table");
     const auto * data_aggregate = catalog.find_definition("data.aggregate");
-    assert(document_tables && document_table && data_aggregate);
+    const auto * value_counts = catalog.find_definition("statistics.value_counts");
+    assert(document_tables && document_table && data_aggregate && value_counts);
     const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
     const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
     const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
     assert(document_tables_result["required"].size() == 3);
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    const auto value_counts_schema = nlohmann::json::parse(value_counts->input_schema_json);
+    assert(value_counts_schema["required"].size() == 2);
+    assert(value_counts_schema["properties"]["limit"].value("maximum", 0) == 1000);
 
     const auto * build = catalog.find_definition("development.build");
     const auto * test = catalog.find_definition("development.test");

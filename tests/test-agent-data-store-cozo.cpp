@@ -107,6 +107,17 @@ int main() {
         outliers["columns"][0]["groups"][0]["outliers"].size() == 1 &&
         outliers["columns"][0]["groups"][0]["outliers"][0]["value"] == 100.0);
 
+    TEST_ASSERT(store.put_row("orders", "4", R"({"id":4,"customer_id":12,"region":"north","value":null})", error));
+    TEST_ASSERT(store.execute("statistics.value_counts", R"({"dataset":"orders","column":"region","limit":2})", output, error));
+    auto value_counts = json::parse(output);
+    TEST_ASSERT(value_counts["column"] == "region" && value_counts["distinct_count"] == 2 &&
+        value_counts["null_count"] == 0 && value_counts["values"].size() == 2 &&
+        value_counts["values"][0]["value"] == "north" && value_counts["values"][0]["count"] == 3 &&
+        value_counts["result_truncated"] == false);
+    TEST_ASSERT(store.execute("statistics.value_counts", R"({"dataset":"orders","column":"value"})", output, error));
+    value_counts = json::parse(output);
+    TEST_ASSERT(value_counts["null_count"] == 1 && value_counts["distinct_count"] == 3);
+
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);
     TEST_ASSERT(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 4 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));

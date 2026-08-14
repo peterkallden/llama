@@ -399,6 +399,11 @@ bool normalize_common_agent_dataset_tool_arguments(
             arguments["columns"] = nlohmann::ordered_json::array({arguments["column"]});
             arguments.erase("column");
         }
+    } else if (tool_name == "statistics.value_counts") {
+        if (!arguments.contains("column") || !arguments["column"].is_string() || arguments["column"].get<std::string>().empty()) {
+            error = "statistics.value_counts requires a non-empty column";
+            return false;
+        }
     } else if (tool_name == "data.aggregate") {
         if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
             arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});

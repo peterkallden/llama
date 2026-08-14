@@ -576,6 +576,39 @@ bool common_agent_cozo_data_store::execute(const std::string & operation, const 
             {"group_by", group_by}, {"columns", output_columns},
             {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated}}).dump();
         return true;
+    } else if (operation == "statistics.value_counts") {
+        if (!request.contains("column") || !request["column"].is_string() || request["column"].get<std::string>().empty()) {
+            error = "statistics.value_counts requires a non-empty column";
+            return false;
+        }
+        const auto column = request["column"].get<std::string>();
+        const size_t limit = std::min<size_t>(request.value("limit", max_result_rows), 1000);
+        if (limit == 0) { error = "statistics.value_counts limit must be greater than zero"; return false; }
+        struct value_count { json value; size_t count = 0; };
+        std::map<std::string, value_count> counts;
+        size_t null_count = 0;
+        for (const auto & row : rows) {
+            if (!row.is_object() || !row.contains(column) || row[column].is_null()) { ++null_count; continue; }
+            const auto key = row[column].dump();
+            auto & entry = counts[key];
+            entry.value = row[column];
+            ++entry.count;
+        }
+        std::vector<value_count> ordered;
+        ordered.reserve(counts.size());
+        for (auto & entry : counts) ordered.push_back(std::move(entry.second));
+        std::sort(ordered.begin(), ordered.end(), [](const value_count & left, const value_count & right) {
+            if (left.count != right.count) return left.count > right.count;
+            return left.value.dump() < right.value.dump();
+        });
+        const bool result_truncated = ordered.size() > limit;
+        if (result_truncated) ordered.resize(limit);
+        json values = json::array();
+        for (const auto & entry : ordered) values.push_back({{"value", entry.value}, {"count", entry.count}});
+        result_json = json({{"column", column}, {"values", values}, {"distinct_count", counts.size()},
+            {"null_count", null_count}, {"scanned_rows", scanned_rows}, {"scan_truncated", scan_truncated},
+            {"result_truncated", result_truncated}}).dump();
+        return true;
     } else if (operation == "data.transform") {
         for (auto & row : rows) for (const auto & transform : request.value("operations", json::array())) if (transform.is_object()) {
             const auto type = transform.value("type", std::string());

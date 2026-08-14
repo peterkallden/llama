@@ -273,6 +273,7 @@ do not select implementations or host paths.
 | `data.transform` | Store-backed | Applies bounded column transformations | Limited | Safer expression language, type checking and artifact persistence |
 | `statistics.describe` | Store-backed | Produces bounded descriptive statistics | Limited | Confidence intervals, distributions and assumption reporting |
 | `statistics.outliers` | Store-backed | Identifies bounded numeric outliers with IQR thresholds | Limited | Z-score, MAD and richer anomaly models |
+| `statistics.value_counts` | Store-backed | Returns bounded frequency counts for one column, including nulls | Limited | Grouped frequencies, percentages and cumulative distributions |
 | `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Limited | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
