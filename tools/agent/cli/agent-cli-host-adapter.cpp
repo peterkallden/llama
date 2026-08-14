@@ -985,6 +985,9 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     if (!turn_request.generation_options.t_max_predict_ms && options.inference_step_timeout_ms > 0) {
         turn_request.generation_options.t_max_predict_ms = options.inference_step_timeout_ms;
     }
+    if (!turn_request.generation_options.t_max_prompt_ms && options.inference_step_timeout_ms > 0) {
+        turn_request.generation_options.t_max_prompt_ms = options.inference_step_timeout_ms;
+    }
     turn_request.memory_scope = memory_scope;
     turn_request.memory_enabled = memory_enabled;
     turn_request.fallback_reason = fallback_reason;

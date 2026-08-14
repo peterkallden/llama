@@ -7,6 +7,7 @@ param(
     [string]$WorkSubdir = "work\qwen-nomic-document-table",
     [ValidateSet("reflective", "research")]
     [string]$ThinkingMode = "research",
+    [uint32]$InferenceStepTimeoutMs = 60000,
     [switch]$Build
 )
 
@@ -55,7 +56,12 @@ function Assert-LogContains {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$workDir = Join-Path $repoRoot ("{0}-{1}" -f $WorkSubdir, $stamp)
+$workBase = if ([System.IO.Path]::IsPathRooted($WorkSubdir)) {
+    [System.IO.Path]::GetFullPath($WorkSubdir)
+} else {
+    Join-Path $repoRoot $WorkSubdir
+}
+$workDir = "{0}-{1}" -f $workBase, $stamp
 $resourceRoot = Join-Path $workDir "resources"
 $dataDb = Join-Path $workDir "data.cozo"
 $document = Join-Path $repoRoot "pocs\agent\smoke\data\fixtures\document-table\document-table-model.json"
@@ -102,7 +108,8 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "--resource-metadata-backend", "in-memory",
     "--resource", $document, "--resource-mime-type", "application/json",
     "--memory-project", "qwen-nomic-document-table", "--plan-scope", "project",
-    "--agent-trace", "--plan-show-summary", "--prompt", $prompt,
+    "--agent-trace", "--generation-trace", "--inference-step-timeout-ms", $InferenceStepTimeoutMs,
+    "--plan-show-summary", "--prompt", $prompt,
     "-n", "256", "--context-size", "2048", "--threads", "4", "-ngl", "0")
 
 Assert-LogContains $logPath @("document.tables", "document.table", "data.aggregate", "200")
