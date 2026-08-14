@@ -75,6 +75,7 @@ int main() {
     request.tool_context.scope.namespace_id = "local";
     request.tool_context.scope.session_id = "session-1";
     request.tool_context.scope.project_id = "project-1";
+    request.tool_context.scope.turn_id = "turn-1";
     request.tool_profiles.emplace(profile.id, profile);
     smoke_data_store data;
     request.data_store = &data;
@@ -104,16 +105,29 @@ int main() {
     put.name = "report.document.json";
     put.description = "Structured document representation for table lookup smoke.";
     put.mime_type = "application/json";
-    put.scope = common_runtime_resource_scope::session;
+    put.scope = common_runtime_resource_scope::turn;
     put.namespace_id = "local";
     put.session_id = "session-1";
     put.project_id = "project-1";
+    put.turn_id = "turn-1";
     put.bytes = document_json;
     agent_resource_descriptor document;
     if (!selection.owned_resource_store->put_bytes(put, document, error))
         return fail("document resource setup failed: " + error);
 
-    auto listed = selection.tool_view->call({
+    // Reproduce the CLI host lifetime transfer: the resolved tool view keeps
+    // non-owning bindings, while the resource store is retained by tooling
+    // for the complete runtime operation.
+    common_agent_runtime_tooling tooling = std::move(selection.tooling);
+    auto tool_view = std::move(selection.tool_view);
+    auto owned_resource_store = std::move(selection.owned_resource_store);
+    if (!tool_view || !owned_resource_store) return fail("CLI ownership transfer failed");
+    tooling.tool_view = tool_view.get();
+    auto shared_resource_store = std::shared_ptr<agent_resource_store>(
+        std::move(owned_resource_store));
+    tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_resource_store));
+
+    auto listed = tool_view->call({
         "list-tables", "document.tables",
         std::string("{\"resource\":\"") + document.uri + "\"}",
     }, error);
@@ -128,7 +142,7 @@ int main() {
     if (listed.content_json.find("document-node://table/0") == std::string::npos)
         return fail("document.tables omitted the table node");
 
-    auto selected = selection.tool_view->call({
+    auto selected = tool_view->call({
         "select-table", "document.table",
         std::string("{\"resource\":\"") + document.uri + "\",\"table\":\" budget   SUMMARY \"}",
     }, error);
@@ -145,7 +159,7 @@ int main() {
         return fail("dataset row and descriptor references differ");
     if (data.rows.size() != 1) return fail("unexpected materialized row count");
 
-    auto invalid = selection.tool_view->call({
+    auto invalid = tool_view->call({
         "invalid-table", "document.table",
         std::string("{\"resource\":\"") + document.uri + "\",\"table\":\"Budget summary\",\"table_index\":0}",
     }, error);

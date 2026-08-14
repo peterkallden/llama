@@ -362,7 +362,14 @@ bool resolve_agent_host_tool_selection(
                     const std::string & uri, std::string & document_json,
                     agent_resource_descriptor & descriptor, std::string & read_error) {
                 const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
-                if (!resource_store->stat(uri, authority, descriptor, read_error)) return false;
+                if (!resource_store->stat(uri, authority, descriptor, read_error)) {
+                    std::vector<agent_resource_descriptor> visible_resources;
+                    std::string list_error;
+                    if (resource_store->list(authority, visible_resources, list_error)) {
+                        read_error += " (visible_resources=" + std::to_string(visible_resources.size()) + ")";
+                    }
+                    return false;
+                }
                 if (descriptor.mime_type != "application/json") {
                     read_error = "document table tools require an application/json document representation";
                     return false;

@@ -311,6 +311,28 @@ static std::string tool_argument_keys(const std::string & arguments_json) {
     return keys.empty() ? "<none>" : keys;
 }
 
+static std::string tool_argument_resource_ref(const std::string & arguments_json) {
+    const auto arguments = json::parse(arguments_json, nullptr, false);
+    if (!arguments.is_object() || !arguments.contains("resource") ||
+            !arguments["resource"].is_string()) {
+        return {};
+    }
+    std::string value = arguments["resource"].get<std::string>();
+    if (value.size() > 256) value.resize(256);
+    return " resource_ref=" + value;
+}
+
+static std::string tool_trace_diagnostic(const std::string & diagnostic) {
+    if (diagnostic.empty()) return {};
+    std::string value;
+    value.reserve(std::min<size_t>(diagnostic.size(), 256));
+    for (const unsigned char ch : diagnostic) {
+        if (value.size() >= 256) break;
+        value += (ch >= 0x20 && ch != 0x7f) ? static_cast<char>(ch) : ' ';
+    }
+    return " diagnostic=" + value;
+}
+
 static bool is_incomplete_tool_call(
         const std::string & tool_name,
         const json & arguments,
@@ -796,6 +818,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::started,
                 "tool call prepared args=" + tool_argument_keys(tool_call->arguments_json) +
+                    tool_argument_resource_ref(tool_call->arguments_json) +
                     " name_normalized=" + (name_normalization_applied ? "true" : "false") +
                     " defaults_applied=" + (defaults_applied ? "true" : "false"),
                 plan.id, tool_step_id, tool_call->name);
@@ -890,7 +913,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     tool_call->name,
                     execution.resource_refs);
                 append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
-                    execution.safe_summary, plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                    "failure_code=" + execution.failure_code + " " + execution.safe_summary +
+                        tool_trace_diagnostic(execution.raw_diagnostic) +
+                        tool_argument_resource_ref(tool_call->arguments_json),
+                    plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
             std::string tool_result = execution.output;

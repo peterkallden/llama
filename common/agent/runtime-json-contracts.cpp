@@ -151,6 +151,31 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }
     } else if (tool_name == "document.tables" || tool_name == "document.table") {
+        if (normalized_arguments.contains("resource") &&
+                normalized_arguments["resource"].is_string()) {
+            const std::string supplied_resource = normalized_arguments["resource"].get<std::string>();
+            const common_agent_input_resource * matching_resource = nullptr;
+            bool ambiguous_resource_name = false;
+            for (const auto & input : request.input_resources) {
+                if (supplied_resource == input.resource.uri) {
+                    matching_resource = nullptr;
+                    ambiguous_resource_name = false;
+                    break;
+                }
+                if (!input.resource.name.empty() && supplied_resource == input.resource.name) {
+                    if (matching_resource != nullptr) {
+                        ambiguous_resource_name = true;
+                        break;
+                    }
+                    matching_resource = &input;
+                }
+            }
+            if (!ambiguous_resource_name && matching_resource != nullptr &&
+                    !matching_resource->resource.uri.empty()) {
+                normalized_arguments["resource"] = matching_resource->resource.uri;
+                changed = true;
+            }
+        }
         // A single caller-owned input resource is an unambiguous safe default.
         // With multiple resources the model must select one explicitly.
         if (!normalized_arguments.contains("resource") && request.input_resources.size() == 1 &&

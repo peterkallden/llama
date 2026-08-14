@@ -177,6 +177,7 @@ bool run_agent_runtime_host(
                 execution.turn_request.memory_scope,
                 execution.turn_request.memory_enabled,
                 execution.tooling,
+                execution.turn_request.request.input_resources,
             };
             driver_execution.execution_control = execution.turn_request.execution_control;
             driver_execution.research_should_stop = execution.turn_request.request.research_should_stop;

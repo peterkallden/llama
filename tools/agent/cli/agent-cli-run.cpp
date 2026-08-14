@@ -164,6 +164,11 @@ int run_agent_cli(common_memory_store & store, args a) {
             return 1;
         }
     }
+    if (resource_store) {
+        auto shared_resource_store = std::shared_ptr<agent_resource_store>(
+            std::move(resource_store));
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_resource_store));
+    }
 #endif
 
     common_agent_runtime_session runtime_session;

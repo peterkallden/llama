@@ -1184,6 +1184,13 @@ together, so `resource_read` receives a valid host provider for the whole
 operation. Adding operation-bound processors later should extend this
 host-owned assembly seam rather than create a second provider or queue.
 
+The CLI also retains the imported resource store through the complete runtime
+operation. The resolved native tool bindings keep non-owning store references,
+while `common_agent_runtime_tooling::owned_resources` owns the operation-scoped
+store after CLI resource import. This mirrors the daemon assembly and prevents
+turn-scoped resources from disappearing between import and a later model tool
+call. The document-table model-free smoke covers this ownership transfer.
+
 Before processor selection, the host may resolve the resource media type from
 declared metadata and a bounded content sample. The current deterministic
 resolver recognizes strong PDF, PNG, JPEG, GIF, and ZIP signatures. Declared
@@ -3238,6 +3245,19 @@ script uses the normal `run` CLI command; `chat` remains accepted as a legacy
 alias. The command usage documents the same `--agent-trace` and
 `--plan-show-summary` options for `run`, so model-backed diagnostics use the
 same host/runtime path as ordinary CLI execution.
+
+The script is fail-closed: it requires completed traces for the expected
+`document.tables`, `document.table`, and `data.aggregate` calls and rejects
+tool-failure, repair-limit, or unavailable-document diagnostics. A process exit
+alone is not evidence that the model actually used the tools.
+
+For diagnostics, `--generation-trace` records bounded model generation and
+token-progress details. `--agent-trace` records the corresponding bounded host
+tool lifecycle: normalized tool name, argument keys, selected resource URI,
+whether safe defaults were applied, failure code, and a short sanitized
+diagnostic. It does not record raw tool arguments or resource contents. Keeping
+these signals under the existing agent trace makes a failed model-backed tool
+selection diagnosable without introducing a second tracing channel.
 
 For a local focused run:
 

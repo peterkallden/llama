@@ -53,6 +53,14 @@ function Assert-LogContains {
     }
 }
 
+function Assert-LogDoesNotContain {
+    param([string]$LogPath, [string[]]$Patterns)
+    $text = Get-Content -LiteralPath $LogPath -Raw
+    foreach ($pattern in $Patterns) {
+        if ($text -match [regex]::Escape($pattern)) { throw "Smoke log contained unexpected text: $pattern" }
+    }
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -113,4 +121,13 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "-n", "256", "--context-size", "2048", "--threads", "4", "-ngl", "0")
 
 Assert-LogContains $logPath @("document.tables", "document.table", "data.aggregate", "200")
+Assert-LogContains $logPath @(
+    "stage=tool kind=completed",
+    "tool=document.tables",
+    "tool=document.table",
+    "tool=data.aggregate")
+Assert-LogDoesNotContain $logPath @(
+    "stage=tool kind=failed",
+    "tool_call_limit_reached",
+    "document representation is unavailable")
 Write-Host "Qwen/Nomic document-table smoke passed. Log: $logPath"
