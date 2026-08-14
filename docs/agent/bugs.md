@@ -3,6 +3,31 @@
 This file records agent-specific bugs that affected runtime behavior and the
 commits that fixed them.
 
+## Research checkpoint missing turn identity for project-scoped plans
+
+- Status: Fixed and verified
+- Fix commit: `2ba75c1ff` (`Assign turn identity to agent runtime runs`)
+- Affected area: CLI agent-runtime research runs with `project` or `session` plan scope
+- Failure: `research workspace checkpoint requires bounded identity and sequence`
+
+### Description
+
+The CLI generated an implicit `memory_turn` only when the persisted plan scope
+was `turn`. Research workspaces are execution state for one operation and
+require a turn identity even when the plan itself is persisted at project or
+session scope. A model-backed research run could therefore generate a valid
+plan and then fail while creating its first research checkpoint, before any
+planned tool call was dispatched.
+
+### Why this was a bug
+
+Persisted plan scope and active operation identity are separate dimensions. The
+runtime correctly required bounded checkpoint identity, but the CLI incorrectly
+treated a non-turn plan scope as permission to omit the operation turn ID. The
+CLI now assigns an implicit bounded turn ID to every agent-runtime invocation
+when the caller did not provide one. The plan remains in its requested scope;
+only the active operation identity is filled in.
+
 ## Resident server-context initialization before model loading
 
 - Status: Fixed and verified
@@ -36,4 +61,3 @@ entering the lower-level load path. Invalid paths therefore produce a bounded
 
 The fix is intentionally contained in the agent resident host; it does not
 change the shared `tools/server/server-context.cpp` implementation.
-
