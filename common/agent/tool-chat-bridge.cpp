@@ -1,5 +1,6 @@
 #include "agent/tool-chat-bridge.h"
 #include "agent/tool-result-contracts.h"
+#include "agent/tool-schema-compact.h"
 
 bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, const std::string & profile_id,
         const common_tool_registry & registry, std::vector<common_chat_tool> & tools, std::string & error) {
@@ -12,7 +13,18 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
         const bool proposal = definition.risk_class == common_tool_risk_class::memory_proposal && definition.requires_confirmation && registry.is_policy_gated(definition.name);
         const bool sandbox = definition.risk_class == common_tool_risk_class::sandbox_execution && definition.requires_confirmation && registry.is_policy_gated(definition.name);
         if (!read_only && !proposal && !sandbox) continue;
-        tools.push_back({definition.name, definition.description,
+        std::string compact_error;
+        const auto model_description = common_render_compact_tool_description(
+            definition.name,
+            definition.description,
+            definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
+            definition.result_schema_json,
+            compact_error);
+        if (!compact_error.empty()) {
+            error = compact_error;
+            return false;
+        }
+        tools.push_back({definition.name, model_description,
             definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
             definition.result_schema_json});
     }

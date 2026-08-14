@@ -3,6 +3,7 @@
 
 #include "agent/tool-registry.h"
 #include "agent/schema-contract.h"
+#include "agent/tool-schema-compact.h"
 
 #include <algorithm>
 #include <atomic>
@@ -957,9 +958,22 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         if (!definition.enabled || !is_definition_allowed(definition, registry, context)) {
             continue;
         }
-        chat_tools.push_back({
+        std::string compact_error;
+        const auto model_description = common_render_compact_tool_description(
             definition.name,
             definition.description,
+            definition.model_input_schema_json.empty()
+                ? definition.input_schema_json
+                : definition.model_input_schema_json,
+            definition.result_schema_json,
+            compact_error);
+        if (!compact_error.empty()) {
+            error = compact_error;
+            return nullptr;
+        }
+        chat_tools.push_back({
+            definition.name,
+            model_description,
             definition.model_input_schema_json.empty()
                 ? definition.input_schema_json
                 : definition.model_input_schema_json,

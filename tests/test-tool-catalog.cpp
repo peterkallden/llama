@@ -1,4 +1,5 @@
 #include "agent/tool-catalog.h"
+#include "agent/tool-schema-compact.h"
 
 #include <cassert>
 #include <cstdio>
@@ -97,6 +98,19 @@ int main() {
     assert(resource_schema["properties"]["offset"].value("minimum", 1) == 0);
     assert(resource_schema["properties"]["offset"].value("maximum", 0) == 1073741824);
     assert(resource_schema["properties"]["max_bytes"].value("maximum", 0) == 32768);
+    std::string compact_error;
+    const auto compact_read = common_render_compact_tool_description(
+        resource_read->name,
+        resource_read->description,
+        resource_read->model_input_schema_json,
+        resource_read->result_schema_json,
+        compact_error);
+    assert(compact_error.empty());
+    assert(compact_read.find("resource_read") != std::string::npos);
+    assert(compact_read.find("args: id:string") != std::string::npos);
+    assert(compact_read.find("representation?:text|bytes") != std::string::npos);
+    assert(compact_read.find("max_bytes?:integer[1..32768]") != std::string::npos);
+    assert(compact_read.find("returns:") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 
