@@ -16,6 +16,9 @@ struct common_tool_definition {
     uint32_t version = 1;
     std::string description;
     std::string input_schema_json;
+    // Optional model-facing schema. The native execution schema remains
+    // host-facing and may use canonical resource URIs after normalization.
+    std::string model_input_schema_json;
     std::string result_schema_json;
     std::string executor_id;
     std::vector<std::string> capabilities;

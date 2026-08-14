@@ -1,4 +1,5 @@
 #include "agent/runtime-json-contracts.h"
+#include "agent/input-resources.h"
 #include "plan/plan-json.h"
 
 #include <cassert>
@@ -52,6 +53,44 @@ int main() {
     TEST_ASSERT(normalized.value("uri", "") == "agent-resource://turn/t/r");
     TEST_ASSERT(normalized.value("max_bytes", 0) == 8192);
 
+    request.input_resources.push_back({
+        common_runtime_resource_ref{"agent-resource://turn/t/document.json", "document", "", "application/json", 0},
+        "reference",
+        true});
+    request.input_resources.push_back({
+        common_runtime_resource_ref{"agent-resource://turn/t/second", "second.csv", "", "text/csv", 0},
+        "reference",
+        false});
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        request,
+        "resource_read",
+        nlohmann::ordered_json::object({{"id", "r2"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("uri", "") == "agent-resource://turn/t/second");
+    TEST_ASSERT(!normalized.contains("id"));
+
+    const auto rendered_resources = common_agent_render_input_resource_context(request.input_resources);
+    TEST_ASSERT(rendered_resources.find("id=r1") != std::string::npos);
+    TEST_ASSERT(rendered_resources.find("id=r2") != std::string::npos);
+    TEST_ASSERT(rendered_resources.find("agent-resource://turn/t/document.json") == std::string::npos);
+    TEST_ASSERT(rendered_resources.find("second.csv") != std::string::npos);
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
+        request,
+        "resource_read",
+        nlohmann::ordered_json::object({{"id", "r3"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(error.find("not available") != std::string::npos);
+
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
@@ -73,14 +112,12 @@ int main() {
     const auto normalized_tool = nlohmann::ordered_json::parse(normalized_tool_arguments);
     TEST_ASSERT(normalized_tool.size() == 1 && normalized_tool.value("id", "") == "first");
 
-    request.input_resources.push_back({
-        common_runtime_resource_ref{"agent-resource://turn/t/document.json", "document", "", "application/json", 0},
-        "reference",
-        true});
+    common_agent_request document_request = request;
+    document_request.input_resources.resize(1);
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
-        request,
+        document_request,
         "document.tables",
         nlohmann::ordered_json::object(),
         normalized,
@@ -91,9 +128,9 @@ int main() {
 
     normalized = nlohmann::ordered_json();
     changed = false;
-    request.input_resources.front().resource.name = "document-table-model.json";
+    document_request.input_resources.front().resource.name = "document-table-model.json";
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
-        request,
+        document_request,
         "document.tables",
         nlohmann::ordered_json::object({{"resource", "document-table-model.json"}}),
         normalized,
@@ -105,7 +142,7 @@ int main() {
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
-        request,
+        document_request,
         "document.tables",
         nlohmann::ordered_json::object({{
             "resource",

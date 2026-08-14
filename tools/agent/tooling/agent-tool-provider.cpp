@@ -960,7 +960,9 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         chat_tools.push_back({
             definition.name,
             definition.description,
-            definition.input_schema_json,
+            definition.model_input_schema_json.empty()
+                ? definition.input_schema_json
+                : definition.model_input_schema_json,
             definition.result_schema_json,
         });
         resolved_definitions.emplace(definition.name, definition);

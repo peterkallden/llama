@@ -27,6 +27,43 @@ bool infer_memory_search_query(const std::string & prompt, std::string & query) 
     return query.size() <= 1024;
 }
 
+bool resolve_model_resource_handle(
+        const common_agent_request & request,
+        const json & arguments,
+        json & normalized_arguments,
+        std::string & error) {
+    const char * supplied_key = nullptr;
+    for (const char * key : {"id", "resource", "resource_id"}) {
+        if (arguments.contains(key)) {
+            supplied_key = key;
+            break;
+        }
+    }
+    if (supplied_key == nullptr) return true;
+    if (!arguments.at(supplied_key).is_string()) {
+        error = "resource handle must be a string";
+        return false;
+    }
+    const auto handle = arguments.at(supplied_key).get<std::string>();
+    if (handle.size() < 2 || handle[0] != 'r') {
+        error = "resource handle must use the current-turn form r1, r2, ...";
+        return false;
+    }
+    size_t index = 0;
+    try { index = std::stoul(handle.substr(1)); }
+    catch (...) { error = "resource handle is invalid"; return false; }
+    if (index == 0 || index > request.input_resources.size() ||
+            request.input_resources[index - 1].resource.uri.empty()) {
+        error = "resource handle is not available in the current turn";
+        return false;
+    }
+    normalized_arguments.erase("id");
+    normalized_arguments.erase("resource");
+    normalized_arguments.erase("resource_id");
+    normalized_arguments["uri"] = request.input_resources[index - 1].resource.uri;
+    return true;
+}
+
 } // namespace
 
 nlohmann::ordered_json common_agent_runtime_user_correction_to_json(
@@ -146,7 +183,12 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!normalized_arguments.contains("start_line")) { normalized_arguments["start_line"] = 1; changed = true; }
         if (!normalized_arguments.contains("end_line")) { normalized_arguments["end_line"] = 200; changed = true; }
     } else if (tool_name == "resource_read") {
+        if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
         if (!normalized_arguments.contains("max_bytes")) { normalized_arguments["max_bytes"] = 8192; changed = true; }
+        if (normalized_arguments.contains("uri")) changed = true;
+    } else if (tool_name == "resource_inspect") {
+        if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+        if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "repository.list" || tool_name == "workspace.list") {
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }

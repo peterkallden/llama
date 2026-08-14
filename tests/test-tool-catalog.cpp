@@ -88,6 +88,12 @@ int main() {
     const auto * resource_read = catalog.find_definition("resource_read");
     assert(resource_read);
     const auto resource_schema = nlohmann::json::parse(resource_read->input_schema_json);
+    const auto resource_model_schema = nlohmann::json::parse(resource_read->model_input_schema_json);
+    assert(resource_model_schema["required"].size() == 1);
+    assert(resource_model_schema["required"][0] == "id");
+    assert(resource_model_schema["properties"].contains("id"));
+    assert(!resource_model_schema["properties"].contains("uri"));
+    assert(resource_schema["required"][0] == "uri");
     assert(resource_schema["properties"]["offset"].value("minimum", 1) == 0);
     assert(resource_schema["properties"]["offset"].value("maximum", 0) == 1073741824);
     assert(resource_schema["properties"]["max_bytes"].value("maximum", 0) == 32768);

@@ -17,6 +17,11 @@ common_tool_definition tool(
     definition.name = name;
     definition.description = description;
     definition.input_schema_json = input;
+    if (std::string(name) == "resource_inspect") {
+        definition.model_input_schema_json = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","minLength":1,"maxLength":64}}})";
+    } else if (std::string(name) == "resource_read") {
+        definition.model_input_schema_json = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","minLength":1,"maxLength":64},"representation":{"type":"string","enum":["text","bytes"],"default":"text"},"offset":{"type":"integer","minimum":0,"maximum":1073741824},"max_bytes":{"type":"integer","minimum":1,"maximum":32768}}})";
+    }
     definition.result_schema_json = result;
     definition.executor_id = executor;
     definition.risk_class = risk;
@@ -117,9 +122,14 @@ std::vector<common_tool_profile> builtin_profiles() {
 bool validate(const common_tool_definition & definition, std::string & error) {
     if (definition.name.empty() || definition.executor_id.empty()) { error = "tool definition requires a name and native executor id"; return false; }
     const auto input = json::parse(definition.input_schema_json, nullptr, false);
+    const auto model_input = definition.model_input_schema_json.empty()
+        ? input
+        : json::parse(definition.model_input_schema_json, nullptr, false);
     const auto result = json::parse(definition.result_schema_json, nullptr, false);
     const auto policy = json::parse(definition.policy_json, nullptr, false);
-    if (!input.is_object() || input.value("type", std::string()) != "object" || !result.is_object() || !policy.is_object()) { error = "tool definition has invalid JSON schema or policy"; return false; }
+    if (!input.is_object() || input.value("type", std::string()) != "object" ||
+            !model_input.is_object() || model_input.value("type", std::string()) != "object" ||
+            !result.is_object() || !policy.is_object()) { error = "tool definition has invalid JSON schema or policy"; return false; }
     return true;
 }
 

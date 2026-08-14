@@ -1174,6 +1174,36 @@ selection, MIME conversion, and execution isolation remain host-owned
 infrastructure and are not model-selected tools. Binary and multimodal
 representations can be added later without changing the chunking contract.
 
+### Model-facing resource handles
+
+The model-facing resource contract deliberately uses a short current-turn
+handle instead of the authoritative resource URI. The rendered catalog exposes
+bounded descriptors such as id=r1, name, and mime_type; it does not expose
+local paths, blob keys, or storage URIs as the identifier the model must copy.
+For example, the model-facing resource_read input is:
+
+```json
+{
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "representation": { "type": "string", "enum": ["text", "bytes"] },
+    "offset": { "type": "integer", "minimum": 0 },
+    "max_bytes": { "type": "integer", "minimum": 1, "maximum": 32768 }
+  }
+}
+```
+
+The host maps r1 to the corresponding caller-owned resource before native
+schema validation and execution. The internal execution contract continues to
+use the canonical uri, so resource storage and provenance remain unchanged.
+Unknown handles, handles from another turn, and malformed handles fail closed.
+This is a bounded projection, not a second resource store or a persistent
+identifier namespace. The same model-facing convention is used by
+resource_inspect; other resource-domain tools may adopt it through the same
+normalization seam when their contracts are updated.
+
 The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
 resource reference, the host-resolved media type, the requested representation,

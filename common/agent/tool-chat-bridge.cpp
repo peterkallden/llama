@@ -12,7 +12,8 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
         const bool proposal = definition.risk_class == common_tool_risk_class::memory_proposal && definition.requires_confirmation && registry.is_policy_gated(definition.name);
         const bool sandbox = definition.risk_class == common_tool_risk_class::sandbox_execution && definition.requires_confirmation && registry.is_policy_gated(definition.name);
         if (!read_only && !proposal && !sandbox) continue;
-        tools.push_back({definition.name, definition.description, definition.input_schema_json,
+        tools.push_back({definition.name, definition.description,
+            definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
             definition.result_schema_json});
     }
     error.clear();

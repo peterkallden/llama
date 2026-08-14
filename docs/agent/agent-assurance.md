@@ -428,7 +428,25 @@ the existing text/range chunkers. The first broad CTest invocation exposed only
 a stale test expectation; it was corrected as a test-only commit and did not
 indicate a runtime regression.
 
-### Latest verification - 2026-08-10 resource-processing checkpoint
+### Latest verification - 2026-08-14 model-facing resource handles
+
+| Field | Value |
+|---|---|
+| Branch | `kallden/agent-resource-tools` |
+| Commit | Local verification checkpoint; commit follows focused tests |
+| Build configuration | Windows / MSVC Debug, Cozo-enabled CPU tree, four build threads |
+| `test-agent-runtime-json` | Passed |
+| `test-tool-catalog` | Passed |
+| Failed | `0` |
+| Not-run | `0` for the focused contract set |
+| Scope | Model-facing resource catalog uses `rN` handles; host normalizes `id` to canonical URI; unknown handles fail closed |
+| Not covered | Full agent CTest suite, model-backed Qwen/Phi execution, and dynamic tool-view narrowing |
+
+The model-facing schema is separate from the host execution schema. This keeps
+the model contract small while preserving canonical URI-based storage,
+authority checks, lineage, and provenance inside the host runtime.
+
+### Previous verification - 2026-08-10 resource-processing checkpoint
 
 | Field | Value |
 |---|---|
