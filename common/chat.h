@@ -218,6 +218,10 @@ struct common_chat_tool {
     std::string name;
     std::string description;
     std::string parameters;
+    // Optional host-owned result contract. Chat templates do not need to
+    // render this field; planner/reflection prompt builders may use it to
+    // describe values available for plan bindings.
+    std::string result_schema;
 };
 
 enum common_chat_tool_choice {

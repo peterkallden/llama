@@ -59,6 +59,17 @@ int main() {
     assert(web_search->executor_id == "builtin.web_search");
     assert(web_fetch->executor_id == "builtin.web_fetch");
 
+    const auto * document_tables = catalog.find_definition("document.tables");
+    const auto * document_table = catalog.find_definition("document.table");
+    const auto * data_aggregate = catalog.find_definition("data.aggregate");
+    assert(document_tables && document_table && data_aggregate);
+    const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
+    const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
+    const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
+    assert(document_tables_result["required"].size() == 3);
+    assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+
     const auto * build = catalog.find_definition("development.build");
     const auto * test = catalog.find_definition("development.test");
     if (!build || !test) {
