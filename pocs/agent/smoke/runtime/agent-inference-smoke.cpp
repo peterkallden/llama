@@ -4,6 +4,7 @@
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "tools/agent/cli/agent-cli-host-adapter.h"
+#include "tools/agent/cli/agent-cli-run-adapter.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
 #include "tools/agent/cli/agent-cli-selection.h"
 #include "tools/agent/runtime/agent-runtime-assembly.h"
@@ -1845,6 +1846,19 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
     assert(inputs.tooling.tool_view == nullptr);
 }
 
+static void test_agent_runtime_gets_turn_identity_for_project_scope() {
+    args options = make_test_args();
+    options.agent_runtime = true;
+    options.plan_scope = "project";
+    options.memory_scope = "project";
+    options.memory_turn.clear();
+    std::string error;
+    assert(prepare_agent_cli_args(options, error));
+    assert(error.empty());
+    assert(!options.memory_turn.empty());
+    assert(options.memory_turn.rfind("implicit-", 0) == 0);
+}
+
 static void test_runtime_session_reuse() {
     common_agent_runtime_session session;
     auto * fake_model = reinterpret_cast<llama_model *>(0x1);
@@ -1943,6 +1957,7 @@ static bool run_named_test(const std::string & name) {
         test_runtime_resident_agent_host_builder();
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
+        test_agent_runtime_gets_turn_identity_for_project_scope();
     } else if (name == "runtime-session-reuse") {
         test_runtime_session_reuse();
     } else {

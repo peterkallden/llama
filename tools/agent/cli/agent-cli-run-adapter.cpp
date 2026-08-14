@@ -101,7 +101,10 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     }
 
     const bool bootstrap_enabled = options.agent_bootstrap == "default" || !options.agent_import.empty();
-    if (options.agent_runtime && options.plan_scope == "turn" && options.memory_turn.empty()) {
+    // Research workspaces are turn-scoped execution state even when the
+    // persisted plan scope is session/project. Every agent-runtime turn must
+    // therefore carry a bounded operation identity for checkpointing.
+    if (options.agent_runtime && options.memory_turn.empty()) {
         options.memory_turn = "implicit-" + std::to_string(std::time(nullptr));
     }
     if (bootstrap_enabled && options.agent_runtime && options.agent_blueprint.empty()) {
