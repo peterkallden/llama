@@ -581,7 +581,9 @@ the owning plan step. A failed tool blocks the navigation context. Deliberate
 and research use the same contract; research normally supplies stricter
 evidence requirements, while deliberate may return after a bounded decision
 observation. Returning to the plan is explicit and cannot be performed while
-required evidence is missing.
+required evidence is missing. The existing tool-start trace now records the
+resolved family for active plan tool steps, which makes family transitions
+observable without exposing host scheduler state to the model.
 
 ## Tool naming convention
 

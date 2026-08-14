@@ -4,6 +4,7 @@
 #include "agent/memory-learning.h"
 #include "agent/research/research-runner.h"
 #include "agent/runtime-json-contracts.h"
+#include "agent/tool-navigation.h"
 #include "plan/plan-bindings.h"
 #include "plan/plan-json.h"
 #include "plan/plan-goal.h"
@@ -777,6 +778,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
 
     std::vector<std::string> guidance;
     std::set<std::string> executed_step_ids;
+    common_agent_tool_navigation_context tool_navigation;
+    bool tool_navigation_active = false;
     bool executed_request_tool = false;
     size_t plan_revision_count = 0;
     size_t runtime_iteration_limit = request.max_iterations;
@@ -881,11 +884,41 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); append_event(result, request, {common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
+            if (tool_step_id != "request") {
+                std::vector<std::string> required_evidence;
+                for (const auto & step : plan.steps) {
+                    if (step.id == tool_step_id) {
+                        required_evidence = step.required_evidence;
+                        break;
+                    }
+                }
+                if (!tool_navigation_active || tool_navigation.step_id != tool_step_id) {
+                    if (!common_agent_tool_navigation_begin(
+                            tool_navigation,
+                            request.deliberation_policy.mode,
+                            request.turn_id.empty() ? plan.id : request.turn_id,
+                            plan.id,
+                            tool_step_id,
+                            tool_call->name,
+                            required_evidence,
+                            error)) {
+                        result.error = "tool navigation setup failed: " + error;
+                        return result;
+                    }
+                    tool_navigation_active = true;
+                } else if (!common_agent_tool_navigation_select_tool(tool_navigation, tool_call->name, error)) {
+                    result.error = "tool navigation selection failed: " + error;
+                    return result;
+                }
+            }
             const std::string model_arguments_json = tool_call->arguments_json;
             const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::started,
                 "tool call prepared args=" + tool_argument_keys(tool_call->arguments_json) +
                     tool_argument_resource_ref(tool_call->arguments_json) +
+                    (tool_navigation_active && tool_navigation.step_id == tool_step_id
+                        ? " family=" + tool_navigation.current_family
+                        : std::string()) +
                     " name_normalized=" + (name_normalization_applied ? "true" : "false") +
                     " defaults_applied=" + (defaults_applied ? "true" : "false") +
                     tool_trace_attempt_arguments(tool_step_id, model_arguments_json, tool_call->arguments_json),
