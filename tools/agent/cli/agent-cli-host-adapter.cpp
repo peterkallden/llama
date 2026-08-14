@@ -978,6 +978,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     });
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;
+    turn_request.generation_options.generation_trace = options.generation_trace;
     if (turn_request.generation_options.n_threads < 1) {
         turn_request.generation_options.n_threads = options.n_threads;
     }

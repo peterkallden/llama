@@ -83,6 +83,7 @@ struct args {
     bool plan_show_summary = false;
     bool include_summary = false;
     bool agent_trace = false;
+    bool generation_trace = false;
     bool memory_global_opt_in = false;
     bool tool_profile_explicit = false;
     std::map<std::string, std::vector<std::string>> tool_capabilities;

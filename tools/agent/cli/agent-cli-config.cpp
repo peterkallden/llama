@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--max-tool-rounds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
+        "         [--inference-step-timeout-ms N] [--generation-trace]\n"
         "         [--agent-inference-backend cli|server-context]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
@@ -115,6 +117,14 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
         } else if (strcmp(argv[i], "--context-size") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.context_size = std::stoi(v);
             if (out.context_size < 0) { fprintf(stderr, "--context-size must not be negative\n"); return false; }
+        } else if (strcmp(argv[i], "--inference-step-timeout-ms") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false;
+            const long long timeout_ms = std::stoll(v);
+            if (timeout_ms < 0 || timeout_ms > std::numeric_limits<uint32_t>::max()) {
+                fprintf(stderr, "--inference-step-timeout-ms is outside the supported range\n");
+                return false;
+            }
+            out.inference_step_timeout_ms = static_cast<uint32_t>(timeout_ms);
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.n_threads = std::stoi(v);
             if (out.n_threads < 1) {
@@ -191,6 +201,8 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             out.include_summary = true;
         } else if (strcmp(argv[i], "--agent-trace") == 0) {
             out.agent_trace = true;
+        } else if (strcmp(argv[i], "--generation-trace") == 0) {
+            out.generation_trace = true;
         } else if (strcmp(argv[i], "--memory-global-opt-in") == 0) {
             out.memory_global_opt_in = true;
         } else {

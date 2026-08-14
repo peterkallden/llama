@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$BuildDir = "build-plan-cozo-ssl",
+    [string]$BuildDir = "C:\llama-builds\agent-resource-tools-msvc-debug-cuda12b",
     [string]$Configuration = "Release",
     [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
@@ -34,7 +34,7 @@ function Invoke-LoggedCommand {
     Remove-Item -LiteralPath $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
     New-Item -ItemType File -Force -Path $stdoutPath,$stderrPath | Out-Null
     $arguments = ($ArgumentList | ForEach-Object { Quote-Argument $_ }) -join ' '
-    $toolPath = 'E:\progs\bin;E:\tools;C:\Windows\System32;C:\Windows;C:\Program Files\Git\cmd;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
+    $toolPath = 'C:\tools;C:\tools\LLVM\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin;C:\Users\kalld\Documents\Codex\llama-dyn\work\cozo-release\win;C:\Windows\System32;C:\Windows;C:\Program Files\Git\cmd;C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
     $command = ('"{0}" {1} 1> "{2}" 2> "{3}"' -f $FilePath, $arguments, $stdoutPath, $stderrPath)
     & cmd.exe /d /c ('set "Path=" & set PATH={0} & {1}' -f $toolPath, $command)
     $exitCode = $LASTEXITCODE
@@ -97,13 +97,13 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "--agent-profile", "research", "--tool-profile", "research",
     "--thinking-mode", $ThinkingMode, "--max-reflection-rounds", "1",
     "--max-research-iterations", "1", "--agent-plan", "auto",
-    "--max-plan-revisions", "1", "--max-tool-rounds", "4",
+    "--max-plan-revisions", "1", "--max-tool-rounds", "1",
     "--resource-blob-backend", "fs", "--resource-blob-root", $resourceRoot,
     "--resource-metadata-backend", "in-memory",
     "--resource", $document, "--resource-mime-type", "application/json",
     "--memory-project", "qwen-nomic-document-table", "--plan-scope", "project",
     "--agent-trace", "--plan-show-summary", "--prompt", $prompt,
-    "-n", "64", "--context-size", "512", "--threads", "2", "-ngl", "0")
+    "-n", "256", "--context-size", "2048", "--threads", "4", "-ngl", "0")
 
 Assert-LogContains $logPath @("document.tables", "document.table", "data.aggregate", "200")
 Write-Host "Qwen/Nomic document-table smoke passed. Log: $logPath"

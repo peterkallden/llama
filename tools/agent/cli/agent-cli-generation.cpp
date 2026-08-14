@@ -67,6 +67,16 @@ bool generate_chat_turn_result(
         return false;
     }
 
+    if (options.generation_trace) {
+        fprintf(stderr,
+            "agent generation trace: prompt_tokens=%d n_predict=%d threads=%d tools=%zu tool_choice=%d\n",
+            n_prompt,
+            options.n_predict,
+            options.n_threads,
+            tools.size(),
+            static_cast<int>(tool_choice));
+    }
+
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = n_prompt + options.n_predict;
     ctx_params.n_batch = n_prompt;
@@ -105,6 +115,7 @@ bool generate_chat_turn_result(
     std::optional<steady_clock::time_point> predict_started_at;
 
     bool logged_prompt_decode = false;
+    int next_progress_log = 16;
     for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + options.n_predict; ) {
         if (n_pos == 0 && budget_exceeded(prompt_started_at, options.t_max_prompt_ms)) {
             result.stop_reason = common_agent_generation_stop_reason::limit;
@@ -153,6 +164,15 @@ bool generate_chat_turn_result(
         result.content += piece;
         batch = llama_batch_get_one(&token, 1);
         result.decoded_tokens++;
+        if (options.generation_trace && result.decoded_tokens >= next_progress_log) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                steady_clock::now() - *predict_started_at).count();
+            fprintf(stderr,
+                "agent generation trace: decoded_tokens=%d elapsed_ms=%lld\n",
+                result.decoded_tokens,
+                static_cast<long long>(elapsed_ms));
+            next_progress_log += 16;
+        }
         if (prepared.stream) {
             const auto parsed = nlohmann::ordered_json::parse(result.content, nullptr, false);
             if (!parsed.is_discarded()) {
@@ -173,6 +193,12 @@ bool generate_chat_turn_result(
 
     result.status = common_agent_generation_status::completed;
     result.stop_reason = stop_reason;
+    if (options.generation_trace) {
+        fprintf(stderr,
+            "agent generation trace: completed decoded_tokens=%d stop_reason=%s\n",
+            result.decoded_tokens,
+            common_agent_generation_stop_reason_name(result.stop_reason));
+    }
     return true;
 }
 

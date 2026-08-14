@@ -55,6 +55,8 @@ int main(int argc, char ** argv) {
         "--max-research-iterations", "1",
         "--tool-profile", "cli-research-read",
         "--agent-trace",
+        "--generation-trace",
+        "--inference-step-timeout-ms", "1500",
         "--plan-show-summary",
         "--mcp-tool-command", server_path.string(),
         "--mcp-tool-server-name", "github",
@@ -145,6 +147,10 @@ int main(int argc, char ** argv) {
             resource_pdf << "%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nBT (CLI PDF upload) Tj ET\nendstream\nendobj\n";
             resource_files_written = resource_one.good() && resource_two.good() && resource_pdf.good();
         }
+    }
+    if (!options.generation_trace || options.inference_step_timeout_ms != 1500) {
+        std::fprintf(stderr, "CLI MCP run smoke failed to parse generation diagnostics options\n");
+        return 1;
     }
     options.resource_paths = {resource_one_path.string(), resource_two_path.string()};
     common_agent_scope resource_scope;

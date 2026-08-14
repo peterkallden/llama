@@ -44,6 +44,9 @@ struct common_agent_generation_options {
     // count.  Keeping this unset prevents a library default from silently
     // forcing model-backed agent turns onto a single CPU thread.
     int n_threads = 0;
+    // Emit bounded progress diagnostics for model generation. This never
+    // includes the generated content itself.
+    bool generation_trace = false;
     std::optional<int64_t> t_max_prompt_ms;
     std::optional<int64_t> t_max_predict_ms;
 };
