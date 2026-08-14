@@ -5,7 +5,7 @@ param(
     [string]$ChatModel = "C:\Users\kalld\models\Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     [string]$EmbeddingModel = "C:\Users\kalld\models\nomic-embed-text-v1.5.Q4_K_M.gguf",
     [string]$WorkSubdir = "work\qwen-nomic-document-table",
-    [ValidateSet("reflective", "research")]
+    [ValidateSet("reflective", "deliberate", "research")]
     [string]$ThinkingMode = "research",
     [uint32]$InferenceStepTimeoutMs = 60000,
     [switch]$Build
