@@ -3255,9 +3255,13 @@ For diagnostics, `--generation-trace` records bounded model generation and
 token-progress details. `--agent-trace` records the corresponding bounded host
 tool lifecycle: normalized tool name, argument keys, selected resource URI,
 whether safe defaults were applied, failure code, and a short sanitized
-diagnostic. It does not record raw tool arguments or resource contents. Keeping
-these signals under the existing agent trace makes a failed model-backed tool
-selection diagnosable without introducing a second tracing channel.
+diagnostic. During a `repair*` step it additionally records bounded
+`model_args` and, when normalization changed them, `normalized_args`; sensitive
+fields such as tokens, passwords, secrets, authorization and API keys are
+redacted. It does not record unbounded raw arguments or resource contents.
+Keeping these signals under the existing agent trace makes a failed
+model-backed tool selection diagnosable without introducing a second tracing
+channel.
 
 For a local focused run:
 

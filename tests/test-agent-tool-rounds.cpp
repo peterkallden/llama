@@ -157,13 +157,23 @@ int main() {
         const auto repair_result = repair_runtime.run(repair_request);
         assert(repair_result.error.empty());
         bool repair_event = false;
+        bool repair_arguments_trace = false;
         for (const auto & event : repair_result.events) repair_event = repair_event || event.type == common_agent_event_type::tool_repair_context_created;
+        for (const auto & trace : repair_result.trace) {
+            repair_arguments_trace = repair_arguments_trace || trace.detail.find("model_args=") != std::string::npos;
+            if (args.find("secret") != std::string::npos && trace.detail.find("model_args=") != std::string::npos) {
+                assert(trace.detail.find("<redacted>") != std::string::npos);
+                assert(trace.detail.find("do-not-log") == std::string::npos);
+            }
+        }
         assert(repair_event);
+        if (args.find("secret") != std::string::npos) assert(repair_arguments_trace);
     };
 
     // The same runtime repair path is available to every thinking mode.
     run_repair_case(common_agent_thinking_mode::reflective, "repair-reflective", "lookup", R"({"wrong":true})", "\"id\":\"\"");
     run_repair_case(common_agent_thinking_mode::deliberate, "repair-deliberate", "lookup", R"({"wrong":true})", "\"id\":\"\"");
+    run_repair_case(common_agent_thinking_mode::reflective, "repair-redaction", "lookup", R"({"token":"do-not-log","wrong":true})", "\"id\":\"\"");
     run_repair_case(common_agent_thinking_mode::reflective, "repair-unavailable", "missing", R"({})", "\"lookup\"");
     return 0;
 }

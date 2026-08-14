@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cctype>
 #include <set>
 
 using json = nlohmann::ordered_json;
@@ -331,6 +332,71 @@ static std::string tool_trace_diagnostic(const std::string & diagnostic) {
         value += (ch >= 0x20 && ch != 0x7f) ? static_cast<char>(ch) : ' ';
     }
     return " diagnostic=" + value;
+}
+
+static bool tool_argument_key_is_sensitive(const std::string & key) {
+    std::string normalized;
+    normalized.reserve(key.size());
+    for (const unsigned char ch : key) {
+        if (std::isalnum(ch)) normalized += static_cast<char>(std::tolower(ch));
+    }
+    return normalized.find("secret") != std::string::npos ||
+        normalized.find("token") != std::string::npos ||
+        normalized.find("password") != std::string::npos ||
+        normalized.find("authorization") != std::string::npos ||
+        normalized.find("apikey") != std::string::npos ||
+        normalized.find("bearer") != std::string::npos;
+}
+
+static json bounded_tool_trace_arguments(const json & value, size_t depth = 0) {
+    if (depth >= 3) return "<nested>";
+    if (value.is_object()) {
+        json sanitized = json::object();
+        size_t count = 0;
+        for (const auto & item : value.items()) {
+            if (count++ >= 16) {
+                sanitized["..."] = "<truncated>";
+                break;
+            }
+            sanitized[item.key()] = tool_argument_key_is_sensitive(item.key())
+                ? json("<redacted>")
+                : bounded_tool_trace_arguments(item.value(), depth + 1);
+        }
+        return sanitized;
+    }
+    if (value.is_array()) {
+        json sanitized = json::array();
+        const size_t limit = std::min<size_t>(value.size(), 16);
+        for (size_t index = 0; index < limit; ++index) {
+            sanitized.push_back(bounded_tool_trace_arguments(value[index], depth + 1));
+        }
+        if (value.size() > limit) sanitized.push_back("<truncated>");
+        return sanitized;
+    }
+    if (value.is_string()) {
+        std::string text = value.get<std::string>();
+        if (text.size() > 256) text = text.substr(0, 256) + "...";
+        return text;
+    }
+    return value;
+}
+
+static std::string tool_trace_attempt_arguments(
+        const std::string & step_id,
+        const std::string & model_arguments_json,
+        const std::string & normalized_arguments_json) {
+    if (step_id.rfind("repair", 0) != 0) return {};
+    const auto model_arguments = json::parse(model_arguments_json, nullptr, false);
+    const auto normalized_arguments = json::parse(normalized_arguments_json, nullptr, false);
+    if (model_arguments.is_discarded() || normalized_arguments.is_discarded()) {
+        return " model_args=<invalid-json>";
+    }
+    const auto bounded_model = bounded_tool_trace_arguments(model_arguments).dump();
+    const auto bounded_normalized = bounded_tool_trace_arguments(normalized_arguments).dump();
+    std::string result = " model_args=" + bounded_model;
+    if (bounded_normalized != bounded_model) result += " normalized_args=" + bounded_normalized;
+    if (result.size() > 1536) result.resize(1536);
+    return result;
 }
 
 static bool is_incomplete_tool_call(
@@ -815,12 +881,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); append_event(result, request, {common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
+            const std::string model_arguments_json = tool_call->arguments_json;
             const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::started,
                 "tool call prepared args=" + tool_argument_keys(tool_call->arguments_json) +
                     tool_argument_resource_ref(tool_call->arguments_json) +
                     " name_normalized=" + (name_normalization_applied ? "true" : "false") +
-                    " defaults_applied=" + (defaults_applied ? "true" : "false"),
+                    " defaults_applied=" + (defaults_applied ? "true" : "false") +
+                    tool_trace_attempt_arguments(tool_step_id, model_arguments_json, tool_call->arguments_json),
                 plan.id, tool_step_id, tool_call->name);
             if (!tools->validate(*tool_call, error)) {
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
