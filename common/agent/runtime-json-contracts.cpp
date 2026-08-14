@@ -150,6 +150,14 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
     } else if (tool_name == "repository.list" || tool_name == "workspace.list") {
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }
+    } else if (tool_name == "document.tables" || tool_name == "document.table") {
+        // A single caller-owned input resource is an unambiguous safe default.
+        // With multiple resources the model must select one explicitly.
+        if (!normalized_arguments.contains("resource") && request.input_resources.size() == 1 &&
+                !request.input_resources.front().resource.uri.empty()) {
+            normalized_arguments["resource"] = request.input_resources.front().resource.uri;
+            changed = true;
+        }
     }
 
     return true;

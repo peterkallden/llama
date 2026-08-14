@@ -57,6 +57,16 @@ bool calculator_expression_from_value(const json & value, std::string & expressi
 
 json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     if (!arguments.is_object()) return arguments;
+    const bool document_table_tool = tool_name == "document.tables" || tool_name == "document.table";
+    if (document_table_tool && !arguments.contains("resource")) {
+        for (const char * alias : {"resource_uri", "uri"}) {
+            if (arguments.contains(alias) && arguments[alias].is_string()) {
+                arguments["resource"] = arguments[alias];
+                arguments.erase(alias);
+                break;
+            }
+        }
+    }
     const bool memory_id_tool = tool_name == "memory_get" ||
         tool_name == "memory_propose_update" || tool_name == "memory_propose_forget";
     if (memory_id_tool && arguments.contains("memory_id") && !arguments.contains("id") &&

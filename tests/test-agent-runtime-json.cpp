@@ -73,6 +73,32 @@ int main() {
     const auto normalized_tool = nlohmann::ordered_json::parse(normalized_tool_arguments);
     TEST_ASSERT(normalized_tool.size() == 1 && normalized_tool.value("id", "") == "first");
 
+    request.input_resources.push_back({
+        common_runtime_resource_ref{"agent-resource://turn/t/document.json", "document", "", "application/json", 0},
+        "reference",
+        true});
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        request,
+        "document.tables",
+        nlohmann::ordered_json::object(),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
+    normalized_tool_arguments.clear();
+    TEST_ASSERT(common_plan_normalize_tool_arguments_json(
+        "document.table",
+        R"({"uri":"agent-resource://turn/t/document.json","table":"Budget summary"})",
+        normalized_tool_arguments,
+        error));
+    const auto normalized_document_tool = nlohmann::ordered_json::parse(normalized_tool_arguments);
+    TEST_ASSERT(normalized_document_tool.value("resource", "") == "agent-resource://turn/t/document.json");
+    TEST_ASSERT(!normalized_document_tool.contains("uri"));
+
     return 0;
 }
 

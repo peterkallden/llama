@@ -295,6 +295,22 @@ static std::string next_tool_observation_id(const common_plan_state & plan, cons
     return seen_base ? attempt_prefix + std::to_string(next_attempt) : base;
 }
 
+static std::string tool_argument_keys(const std::string & arguments_json) {
+    const auto arguments = json::parse(arguments_json, nullptr, false);
+    if (!arguments.is_object()) return "invalid";
+    std::string keys;
+    for (const auto & item : arguments.items()) {
+        if (!keys.empty()) keys += ",";
+        keys += item.key();
+        if (keys.size() >= 256) {
+            keys.resize(256);
+            keys += "...";
+            break;
+        }
+    }
+    return keys.empty() ? "<none>" : keys;
+}
+
 static bool is_incomplete_tool_call(
         const std::string & tool_name,
         const json & arguments,
@@ -778,6 +794,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (!tools->is_read_only(tool_call->name) && !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(tool_call->name))) { result.failures.push_back(tool_failure(tool_call->name, tool_step_id, {}, "tool.policy_denied", common_agent_failure_class::policy, false, "The tool is not approved by the active policy.")); append_event(result, request, {common_agent_event_type::tool_rejected, "tool is not approved for this batch", {}, plan.id}); result.error = "planned tool is not approved for this batch"; return result; }
             const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
+            append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::started,
+                "tool call prepared args=" + tool_argument_keys(tool_call->arguments_json) +
+                    " name_normalized=" + (name_normalization_applied ? "true" : "false") +
+                    " defaults_applied=" + (defaults_applied ? "true" : "false"),
+                plan.id, tool_step_id, tool_call->name);
             if (!tools->validate(*tool_call, error)) {
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
@@ -824,7 +845,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     tool_call->name,
                     {});
                 append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
-                    validation_error, plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                    "validation_error=" + validation_error + " args=" + tool_argument_keys(tool_call->arguments_json),
+                    plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
             const auto execution = tools->execute(*tool_call);
