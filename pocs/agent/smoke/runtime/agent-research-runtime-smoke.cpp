@@ -369,6 +369,10 @@ int main() {
     bool research_task_started = false;
     bool research_task_completed = false;
     bool research_sources_compared = false;
+    bool research_trace_task = false;
+    bool research_trace_source = false;
+    bool research_trace_evidence = false;
+    bool research_trace_comparison = false;
     for (const auto & event : runtime_result.events) {
         research_started = research_started || event.type == common_agent_event_type::research_started;
         research_completed = research_completed || event.type == common_agent_event_type::research_completed;
@@ -387,6 +391,19 @@ int main() {
         research_trace_completed = research_trace_completed ||
             trace.stage == common_runtime_trace_stage::research &&
             trace.kind == common_runtime_trace_kind::completed;
+        research_trace_task = research_trace_task ||
+            trace.stage == common_runtime_trace_stage::research &&
+            trace.detail.find("task=") != std::string::npos &&
+            trace.detail.find("iteration=") != std::string::npos;
+        research_trace_source = research_trace_source ||
+            trace.stage == common_runtime_trace_stage::research &&
+            trace.detail.find("research source recorded source=") != std::string::npos;
+        research_trace_evidence = research_trace_evidence ||
+            trace.stage == common_runtime_trace_stage::research &&
+            trace.detail.find("research evidence recorded evidence=") != std::string::npos;
+        research_trace_comparison = research_trace_comparison ||
+            trace.stage == common_runtime_trace_stage::research &&
+            trace.detail.find("research sources compared comparison=") != std::string::npos;
     }
     if (!runtime_result.error.empty() || !runtime_result.research_result || !runtime_result.research_result->complete ||
             runtime_result.response != "researched-answer" ||
@@ -394,6 +411,8 @@ int main() {
             executor.received_prompt.find("Evidence with provenance:") == std::string::npos ||
             !research_started || !research_completed || !research_trace ||
             !research_trace_context || !research_trace_completed ||
+            !research_trace_task || !research_trace_source ||
+            !research_trace_evidence || !research_trace_comparison ||
             !research_task_started || !research_task_completed || !research_sources_compared || tools.calls != 4 ||
             runtime_result.research_result->established_claim_ids.empty() ||
             runtime_result.research_result->sources.size() != 2 ||

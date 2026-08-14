@@ -118,6 +118,13 @@ reported as complete. This complements the deliberate tool smoke: it tests
 research coverage, provenance and continuation without depending on a model's
 query decomposition or formatting.
 
+When agent tracing is enabled, the research stage also records bounded
+lifecycle entries for gap/task/iteration transitions, source and evidence
+registration, source comparisons, checkpoints, completion and failure. Trace
+entries carry IDs and counts only; raw resource contents and CSV rows remain
+outside tracing. This is intended to make model-based Qwen/Phi runs diagnosable
+without changing the research contracts or adding a second event channel.
+
 The following research capabilities remain intentionally incomplete:
 
 - model-driven gap decomposition and query reformulation;

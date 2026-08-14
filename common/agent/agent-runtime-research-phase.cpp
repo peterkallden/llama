@@ -33,7 +33,34 @@ common_agent_research_lifecycle_sink make_common_agent_research_lifecycle_sink(
         if (!event.gap_id.empty()) detail += " gap=" + event.gap_id;
         if (!event.task_id.empty()) detail += " task=" + event.task_id;
         if (event.iteration > 0) detail += " iteration=" + std::to_string(event.iteration);
-        context.emit_event(type, std::move(detail));
+        context.emit_event(type, detail);
+
+        common_runtime_trace_kind trace_kind = common_runtime_trace_kind::recorded;
+        switch (event.type) {
+            case common_agent_research_lifecycle_event_type::gap_opened:
+            case common_agent_research_lifecycle_event_type::task_started:
+                trace_kind = common_runtime_trace_kind::started;
+                break;
+            case common_agent_research_lifecycle_event_type::task_completed:
+                trace_kind = common_runtime_trace_kind::completed;
+                break;
+            case common_agent_research_lifecycle_event_type::task_failed:
+                trace_kind = common_runtime_trace_kind::failed;
+                break;
+            case common_agent_research_lifecycle_event_type::task_scheduled:
+            case common_agent_research_lifecycle_event_type::sources_compared:
+                trace_kind = common_runtime_trace_kind::decided;
+                break;
+            case common_agent_research_lifecycle_event_type::iteration_completed:
+                trace_kind = common_runtime_trace_kind::recorded;
+                break;
+        }
+        context.emit_trace(
+            common_runtime_trace_stage::research,
+            trace_kind,
+            detail,
+            context.request.plan_id.value_or(""),
+            event.task_id.empty() ? event.gap_id : event.task_id);
     };
 }
 
@@ -101,11 +128,33 @@ bool run_common_agent_research_phase(
         context.emit_event(
             common_agent_event_type::research_source_recorded,
             "research source recorded: " + source.source_id);
+        context.emit_trace(
+            common_runtime_trace_stage::research,
+            common_runtime_trace_kind::recorded,
+            "research source recorded source=" + source.source_id,
+            context.request.plan_id.value_or(""),
+            source.source_id);
     }
     for (const auto & evidence : context.research_workspace->evidence) {
         context.emit_event(
             common_agent_event_type::research_evidence_recorded,
             "research evidence recorded: " + evidence.evidence_id);
+        context.emit_trace(
+            common_runtime_trace_stage::research,
+            common_runtime_trace_kind::recorded,
+            "research evidence recorded evidence=" + evidence.evidence_id +
+                " source=" + evidence.source_id,
+            context.request.plan_id.value_or(""),
+            evidence.evidence_id);
+    }
+    for (const auto & comparison : context.research_workspace->comparisons) {
+        context.emit_trace(
+            common_runtime_trace_stage::research,
+            common_runtime_trace_kind::decided,
+            "research sources compared comparison=" + comparison.comparison_id +
+                " sources=" + std::to_string(comparison.source_ids.size()),
+            context.request.plan_id.value_or(""),
+            comparison.comparison_id);
     }
 
     if (!context.error.empty() || !research_result.complete) {
