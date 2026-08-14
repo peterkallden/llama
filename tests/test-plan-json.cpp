@@ -132,5 +132,27 @@ int main() {
     const auto step_context = common_plan_render_step_context(context_plan, context_plan.steps.back());
     assert(step_context.find("matching file found") != std::string::npos);
     assert(step_context.find("unrelated result") == std::string::npos);
+
+    std::string normalized_document_arguments;
+    assert(common_plan_normalize_tool_arguments_json(
+        "document.table",
+        R"({"table_name":"Budget summary","resource":"agent-resource://turn/t/document.json"})",
+        normalized_document_arguments,
+        error));
+    const auto normalized_document = nlohmann::json::parse(normalized_document_arguments, nullptr, false);
+    assert(normalized_document.is_object());
+    assert(normalized_document.value("table", std::string()) == "Budget summary");
+    assert(!normalized_document.contains("table_name"));
+    std::string normalized_document_again;
+    assert(common_plan_normalize_tool_arguments_json(
+        "document.table", normalized_document_arguments, normalized_document_again, error));
+    assert(same_json_object(normalized_document_arguments, normalized_document_again));
+
+    const auto proposal_schema = nlohmann::json::parse(common_plan_proposal_json_schema(), nullptr, false);
+    assert(proposal_schema.is_object());
+    const auto step_schema = proposal_schema["properties"]["steps"]["items"];
+    assert(step_schema["properties"]["tool"].value("type", std::string()) == "string");
+    assert(step_schema["properties"]["args"].value("type", std::string()) == "object");
+    assert(!step_schema["properties"]["tool"].contains("properties"));
     return 0;
 }

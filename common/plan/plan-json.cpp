@@ -95,6 +95,11 @@ json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     else if (arguments.contains("tool") && arguments["tool"].is_string() && arguments["tool"].get<std::string>() == tool_name) {
         arguments.erase("tool");
     }
+    if (tool_name == "document.table" && arguments.contains("table_name") &&
+            !arguments.contains("table") && arguments["table_name"].is_string()) {
+        arguments["table"] = arguments["table_name"];
+        arguments.erase("table_name");
+    }
     if (tool_name != "calculator" || !arguments.is_object() || arguments.contains("expression") ||
         !arguments.contains("operation") || !arguments["operation"].is_string() ||
         !arguments.contains("operands") || !arguments["operands"].is_array() || arguments["operands"].size() != 2) return arguments;
@@ -295,7 +300,7 @@ std::string common_plan_proposal_json_schema() {
                 {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
                 {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final", "final_response"}}}},
                 {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}},
-                {"tool", {{"type", "object"}, {"additionalProperties", false}, {"required", {"name"}}, {"properties", {{"name", {{"type", "string"}, {"maxLength", 256}}}, {"arguments", {{"type", "object"}}}, {"args", {{"type", "object"}}}}}}},
+                {"tool", {{"type", "string"}, {"maxLength", 256}}},
                 {"args", {{"type", "object"}}}
             }}}}}}
         }}
