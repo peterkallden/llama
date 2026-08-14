@@ -109,6 +109,15 @@ carry the associated `plan_id` and turn-local workspace id, so the existing
 session/daemon host can carry the research lifecycle without a separate
 progress channel.
 
+`llama-agent-research-csv-ctest` is the model-free resource-backed research
+smoke. It reads bounded UTF-8 CSV fixtures through a host-owned
+`resource_read` seam, retains both resource references in research evidence,
+creates a deterministic source comparison, checkpoints and reloads the same
+workspace, and verifies that incomplete coverage is deferred rather than
+reported as complete. This complements the deliberate tool smoke: it tests
+research coverage, provenance and continuation without depending on a model's
+query decomposition or formatting.
+
 The following research capabilities remain intentionally incomplete:
 
 - model-driven gap decomposition and query reformulation;

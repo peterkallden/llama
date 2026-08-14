@@ -130,6 +130,7 @@ reported as not complete below, not as model-backed pass coverage.
 - [ ] Isolated Docker/Kubernetes DOCX processing is verified
 - [ ] Derived-resource cache reuse is verified
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
+- [x] Model-free research CSV smoke verifies bounded resource reads, two-source provenance, comparison, checkpoint reload, and deferred incomplete coverage
 - [ ] Full inference continuation and context compaction are verified
 
 The resource chunking implementation is intentionally narrower than general

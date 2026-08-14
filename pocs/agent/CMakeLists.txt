@@ -861,6 +861,16 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-research-csv-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-research-csv-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-dataset-importer-smoke)
 add_executable(${TARGET}
     smoke/data/agent-dataset-importer-smoke.cpp
@@ -1096,6 +1106,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-pdf-page-image-local-e2e-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
+    llama-agent-research-csv-smoke
     llama-agent-daemon
 )
 if (LLAMA_MEMORY_COZO)
@@ -1187,6 +1198,12 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-research-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-research-runtime-smoke>)
     set_property(TEST llama-agent-research-runtime-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-research-csv-ctest
+        COMMAND $<TARGET_FILE:llama-agent-research-csv-smoke>)
+    set_property(TEST llama-agent-research-csv-ctest PROPERTY LABELS agent)
+    set_tests_properties(llama-agent-research-csv-ctest PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_test(NAME llama-agent-inference-ctest
         COMMAND $<TARGET_FILE:llama-agent-inference-smoke>)
