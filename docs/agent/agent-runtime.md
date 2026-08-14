@@ -549,6 +549,40 @@ gets the minimum repair/reflection pass, while deliberate and research may
 spend their larger review budgets on the same context. Static chat without a
 tool call has no repair pass.
 
+### Bounded tool-family navigation
+
+The runtime also has a small operation-local navigation contract for deliberate
+and research execution. It describes the current position inside the
+host-owned tool tree without creating a second scheduler or plan store:
+
+```text
+plan step
+  -> tool family
+    -> concrete tool
+      -> observation
+  -> next tool in the family, or return to the plan step
+```
+
+The family is derived from the canonical tool name before the first dot. For
+example, `statistics.describe` and `statistics.value_counts` belong to the
+`statistics` family, while an undotted tool such as `calculator` belongs to the
+bounded `utility` family. The current resource tools are intentionally still
+in the `utility` family until their names are migrated to a namespaced form.
+
+The navigation context is turn/operation-local and carries operation, plan and
+step identities, current family and tool, an optional asynchronous operation
+ID, required evidence IDs and completed evidence IDs. It does not own
+queueing, persistence or tool execution. The existing session lane and
+pending-operation contract remain authoritative for asynchronous work.
+
+After a successful tool result, the host either keeps the context inside the
+family when required evidence is incomplete, or marks it ready to return to
+the owning plan step. A failed tool blocks the navigation context. Deliberate
+and research use the same contract; research normally supplies stricter
+evidence requirements, while deliberate may return after a bounded decision
+observation. Returning to the plan is explicit and cannot be performed while
+required evidence is missing.
+
 ## Tool naming convention
 
 New tool names use dotted namespaces so related operations are visible as one
