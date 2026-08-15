@@ -3287,6 +3287,13 @@ request: its purpose, goal, success criteria, constraints, assumptions, and
 step contributions describe the execution boundary that selection must
 respect.
 
+The model-facing selection projection is covered by the inference smoke as a
+`why + how` contract: the current request supplies the why, while each bounded
+candidate supplies its purpose, goal, success criteria, constraints,
+assumptions, and reusable step contributions. The selector may use that view
+to rank a suitable how, but the host still owns eligibility, scope,
+capabilities, and instantiation.
+
 The model-facing selector projection is derived from that same persisted plan:
 it includes purpose, goal, success criteria, constraints, assumptions, and
 bounded step contributions in addition to the short description. This keeps

@@ -589,9 +589,16 @@ static void test_selection_generation_metadata() {
     assert(selected.generation);
     assert(selected.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
 
-    std::vector<common_blueprint_candidate> candidates = {
-        {"repo-change", "bootstrap:repo-change", "Repository change workflow"},
+    common_blueprint_candidate repository_candidate{
+        "repo-change", "bootstrap:repo-change", "Repository change workflow",
+        "Safely modify a repository while preserving intended behavior.",
+        "Implement and verify the requested repository change.",
+        "The requested change is implemented and relevant checks pass.",
     };
+    repository_candidate.constraints.push_back({"scope", "Use only host-approved workspace operations.", true});
+    repository_candidate.assumptions.push_back({"workspace", "A controlled repository workspace is available.", 0.9f, true, {}});
+    repository_candidate.contributions = {"inspect current state", "apply a bounded change", "verify the result"};
+    std::vector<common_blueprint_candidate> candidates = {repository_candidate};
     auto selector = make_llama_cli_blueprint_selector(inference, make_agent_generation_config(options));
     const auto blueprint = selector->select_result(request, candidates, error);
     assert(error.empty());
@@ -599,6 +606,13 @@ static void test_selection_generation_metadata() {
     assert(blueprint.logical_id && *blueprint.logical_id == "repo-change");
     assert(blueprint.generation);
     assert(blueprint.generation->decoded_tokens == 0);
+    const auto & blueprint_prompt = inference.seen[1].messages[1].content;
+    assert(blueprint_prompt.find("purpose: Safely modify a repository") != std::string::npos);
+    assert(blueprint_prompt.find("goal: Implement and verify") != std::string::npos);
+    assert(blueprint_prompt.find("success criteria: The requested change") != std::string::npos);
+    assert(blueprint_prompt.find("constraint: Use only host-approved") != std::string::npos);
+    assert(blueprint_prompt.find("assumption: A controlled repository") != std::string::npos);
+    assert(blueprint_prompt.find("contribution: inspect current state") != std::string::npos);
 
     common_plan_in_memory_store store;
     assert(store.open("", error));
