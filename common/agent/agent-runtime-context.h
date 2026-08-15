@@ -36,6 +36,12 @@ struct common_agent_runtime_turn_context {
     std::function<common_agent_deliberation_policy(
             const common_agent_deliberation_policy &,
             common_agent_thinking_mode)> policy_after_escalation;
+
+    // The outer plan remains the durable source of truth. Research writes a
+    // bounded completion observation into it; the workspace remains turn
+    // scoped and owns the acquisition details.
+    common_plan_store * plan_store = nullptr;
+    common_plan_state * outer_plan = nullptr;
 };
 
 bool run_common_agent_research_phase(

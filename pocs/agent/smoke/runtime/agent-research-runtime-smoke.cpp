@@ -423,6 +423,20 @@ int main() {
         std::fprintf(stderr, "research agent runtime integration failed: %s\n", runtime_result.error.c_str());
         return 1;
     }
+    const auto bridged_plan = plan_store.get(runtime_result.plan_id.value_or(""), error);
+    bool research_completion_observation = false;
+    if (bridged_plan) {
+        for (const auto & observation : bridged_plan->observations) {
+            research_completion_observation = research_completion_observation ||
+                observation.source == "research_workspace" &&
+                observation.id.find("research:completion:") == 0 &&
+                observation.evidence_ids.size() == runtime_result.research_result->evidence.size();
+        }
+    }
+    if (!error.empty() || !research_completion_observation) {
+        std::fprintf(stderr, "research completion was not bridged to the outer plan: %s\n", error.c_str());
+        return 1;
+    }
     std::printf("research_agent_runtime=ok response=%s\n", runtime_result.response.c_str());
 
     common_plan_in_memory_store late_research_plan_store;

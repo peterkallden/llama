@@ -2,6 +2,81 @@
 
 #include "research/research-workspace-factory.h"
 
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+
+namespace {
+
+bool bridge_research_result_to_plan(
+        common_agent_runtime_turn_context & context,
+        const common_agent_research_result & research_result) {
+    if (context.plan_store == nullptr || context.outer_plan == nullptr ||
+            context.outer_plan->id.empty()) {
+        context.error = "research completion requires the active outer plan";
+        return false;
+    }
+
+    const std::string observation_id =
+        "research:completion:" + research_result.workspace_id;
+    if (std::find_if(
+            context.outer_plan->observations.begin(),
+            context.outer_plan->observations.end(),
+            [&](const auto & observation) { return observation.id == observation_id; }) !=
+            context.outer_plan->observations.end()) {
+        return true;
+    }
+
+    common_plan_observation observation;
+    observation.id = observation_id;
+    observation.source = "research_workspace";
+    std::ostringstream summary;
+    summary << "Research workspace completed with coverage="
+            << std::fixed << std::setprecision(3) << research_result.coverage.objective_coverage
+            << ", sources=" << research_result.sources.size()
+            << ", evidence=" << research_result.evidence.size()
+            << ", comparisons=" << research_result.comparisons.size();
+    observation.summary = summary.str();
+    observation.confidence = static_cast<float>(std::clamp(
+        research_result.coverage.evidence_quality, 0.0, 1.0));
+    for (const auto & evidence : research_result.evidence) {
+        if (observation.evidence_ids.size() >= 32) break;
+        observation.evidence_ids.push_back(evidence.evidence_id);
+        for (const auto & source : research_result.sources) {
+            if (source.source_id != evidence.source_id || !source.resource_ref) continue;
+            if (std::find_if(
+                    observation.resource_refs.begin(), observation.resource_refs.end(),
+                    [&](const auto & ref) { return ref.uri == source.resource_ref->uri; }) ==
+                    observation.resource_refs.end() && observation.resource_refs.size() < 32) {
+                observation.resource_refs.push_back(*source.resource_ref);
+            }
+            break;
+        }
+    }
+
+    common_plan_operation operation;
+    operation.kind = common_plan_operation_kind::record_observation;
+    operation.plan_id = context.outer_plan->id;
+    operation.expected_version = context.outer_plan->version;
+    operation.reason_summary = "research workspace completion evidence";
+    operation.evidence_ids = observation.evidence_ids;
+    operation.observation = std::move(observation);
+    if (!context.plan_store->apply(operation, *context.outer_plan, context.error)) return false;
+
+    context.emit_event(
+        common_agent_event_type::plan_updated,
+        "research completion bridged to outer plan evidence");
+    context.emit_trace(
+        common_runtime_trace_stage::observation,
+        common_runtime_trace_kind::recorded,
+        "research completion bridged to outer plan evidence",
+        context.outer_plan->id,
+        observation_id);
+    return true;
+}
+
+} // namespace
+
 common_agent_research_lifecycle_sink make_common_agent_research_lifecycle_sink(
         common_agent_runtime_turn_context & context) {
     return [&context](const common_agent_research_lifecycle_event & event) {
@@ -183,5 +258,9 @@ bool run_common_agent_research_phase(
         {},
         context.research_workspace->workspace_id);
     context.research_synthesis_context = research_result.synthesis_context;
+    if (!bridge_research_result_to_plan(context, research_result)) {
+        context.result.error = context.error;
+        return false;
+    }
     return true;
 }
