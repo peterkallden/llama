@@ -120,11 +120,11 @@ int main() {
 
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto inner_join = json::parse(output);
-    TEST_ASSERT(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 4 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));
+    TEST_ASSERT(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 5 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));
 
     TEST_ASSERT(store.execute("data.join", R"({"left":"orders","right":"customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
     auto join = json::parse(output);
-    TEST_ASSERT(join["row_count"] == 3 && join["scan_mode"] == "native_bounded" && join["scanned_rows"] == 4 && join["scan_truncated"] == false && join["rows"][0].contains("name"));
+    TEST_ASSERT(join["row_count"] == 4 && join["scan_mode"] == "native_bounded" && join["scanned_rows"] == 5 && join["scan_truncated"] == false && join["rows"][0].contains("name"));
     bool found_unmatched = false;
     for (const auto & row : join["rows"]) if (row.value("customer_id", 0) == 11) found_unmatched = !row.contains("name");
     TEST_ASSERT(found_unmatched);
@@ -138,7 +138,7 @@ int main() {
 
     TEST_ASSERT(store.execute("data.filter", R"({"dataset":"orders","conditions":[{"field":"region","operator":"=","value":"north"}],"materialize":true,"result_dataset":"dataset://derived/north-orders"})", output, error));
     const auto materialized = json::parse(output);
-    TEST_ASSERT(materialized["materialized"] == true && materialized["dataset"] == "dataset://derived/north-orders" && materialized["rows"] == 2);
+    TEST_ASSERT(materialized["materialized"] == true && materialized["dataset"] == "dataset://derived/north-orders" && materialized["rows"] == 3);
     common_agent_dataset_descriptor derived;
     TEST_ASSERT(store.get_dataset_descriptor("dataset://derived/north-orders", derived, error));
     TEST_ASSERT(derived.lineage.parent_dataset_uris.size() == 1 && derived.lineage.parent_dataset_uris[0] == "orders" &&

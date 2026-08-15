@@ -53,7 +53,9 @@ int main() {
     const std::string rendered = common_agent_render_input_resource_context(
         {{chunk_ref, "resource_chunk", true}}, 2048);
     if (rendered.find("chunk_index=1") == std::string::npos ||
-            rendered.find("parent_uri=" + descriptor.uri) == std::string::npos ||
+            rendered.find("id=r1") == std::string::npos ||
+            rendered.find("byte_offset=28") == std::string::npos ||
+            rendered.find("byte_length=32") == std::string::npos ||
             rendered.find("resource_read") == std::string::npos) {
         std::fprintf(stderr, "chunk input view did not expose bounded read metadata\n");
         return 1;

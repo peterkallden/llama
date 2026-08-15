@@ -51,7 +51,8 @@ int main() {
     assert(factory_workspace.sources.back().kind == common_agent_research_source_kind::memory);
     assert(factory_workspace.sources.back().memory_id == memory_hit.memory.id);
     const auto input_context = common_agent_render_input_resource_context(factory_request.input_resources);
-    assert(input_context.find("agent-resource://factory-turn/upload-1") != std::string::npos);
+    assert(input_context.find("id=r1") != std::string::npos);
+    assert(input_context.find("agent-resource://factory-turn/upload-1") == std::string::npos);
     common_agent_research_controller factory_controller;
     const auto input_action = factory_controller.begin(factory_workspace, factory_error);
     assert(input_action.kind == common_agent_research_action_kind::schedule_task);

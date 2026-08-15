@@ -100,7 +100,7 @@ External catalog tools (exposure is policy-controlled):
   diagnostics.format, diagnostics.include_graph
   dataset.list, dataset.inspect, dataset.schema, dataset.sample, dataset.validate
   data.query, data.filter, data.aggregate, data.join, data.transform
-  statistics.describe, statistics.outliers
+  statistics.describe, statistics.outliers, statistics.value_counts
   artifact.export
   resource_read
   web_search, web_fetch

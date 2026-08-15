@@ -147,7 +147,8 @@ int main() {
         std::string("{\"resource\":\"") + document.uri + "\",\"table\":\" budget   SUMMARY \"}",
     }, error);
     if (!selected.ok) return fail("document.table returned an invalid result");
-    if (selected.content_json.find("dataset://import/0/Budget summary") == std::string::npos)
+    if (selected.content_json.find("\"dataset\":\"dataset://import/") == std::string::npos ||
+            selected.content_json.find("/0/Budget summary") == std::string::npos)
         return fail("document.table omitted the dataset reference");
     if (data.descriptor.origin.kind != "document_table")
         return fail("dataset origin kind was not preserved");
