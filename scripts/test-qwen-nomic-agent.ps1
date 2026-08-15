@@ -125,6 +125,12 @@ $resolvedBuildDir = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
 }
 $memoryExePath = Join-Path $resolvedBuildDir "bin\Release\llama-memory.exe"
 $agentExePath = Join-Path $resolvedBuildDir "bin\Release\llama-agent.exe"
+if (-not (Test-Path -LiteralPath $memoryExePath)) {
+    $memoryExePath = Join-Path $resolvedBuildDir "bin\llama-memory.exe"
+}
+if (-not (Test-Path -LiteralPath $agentExePath)) {
+    $agentExePath = Join-Path $resolvedBuildDir "bin\llama-agent.exe"
+}
 $workDir = if ([System.IO.Path]::IsPathRooted($WorkSubdir)) {
     [System.IO.Path]::GetFullPath($WorkSubdir)
 } else {
