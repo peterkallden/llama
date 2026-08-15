@@ -617,6 +617,55 @@ gets the minimum repair/reflection pass, while deliberate and research may
 spend their larger review budgets on the same context. Static chat without a
 tool call has no repair pass.
 
+### Retry and repair ownership
+
+Retry is an orchestration decision, not a model-selected tool action. The
+runtime first classifies the failure, records the bounded failure observation,
+and decides whether the current operation may be retried. A model or reflection
+engine may propose a semantic correction, but it cannot grant itself another
+attempt, change the active tool profile, bypass policy, or mark the failed step
+complete.
+
+The ownership and retry boundaries are:
+
+| Situation | Owner of the retry decision | What may be retried | Model responsibility |
+| --- | --- | --- | --- |
+| Tool validation, missing arguments, or ambiguous tool name | Common runtime | The same plan step after host normalization or a bounded reflection repair | Propose corrected arguments or a valid candidate when deterministic resolution is insufficient |
+| Tool execution failure in deliberate mode | Common runtime and its bounded reflection pass | The failed plan step after `reset_step`, `replace_step`, or an equivalent validated operation | Explain or correct the semantic intent; it does not execute the retry |
+| Transient research acquisition failure | Research controller/runner | The same logical research task with a new attempt number, only when the host result is `retryable=true` and budget remains | No acquisition retry decision and no second acquisition plan |
+| Permanent research acquisition failure | Research controller | Nothing; the gap becomes `blocked` | May later interpret the incomplete result, but cannot present it as complete evidence |
+| Model output stopped by length or invalid structured output | Inference driver and bounded regeneration helper | The incomplete generation from a safe structural boundary | Regenerate the bounded object or continuation slice when requested by the host |
+| Context pressure during an operation | Runtime/controller | A new internal inference slice of the same operation and plan | Continue from the host checkpoint; it does not create a new external command |
+| Research answer verification requests more evidence | Research verifier/controller | One bounded reopen of the same turn-local research workspace | Reinterpret the updated evidence after the controller reopens the workspace |
+
+These paths share the same session lane and active operation. They must not
+create a second scheduler, a second plan, or an untracked background retry.
+Every retry is bounded by the applicable tool, reflection, research,
+continuation, or inference budget and remains observable in events and trace.
+The important distinction is between a retry of the same operation and a
+semantic repair: a retry repeats an approved operation, while a repair changes
+arguments, tool binding, or plan structure and therefore requires host
+normalization and validation before execution.
+
+For tool-backed plan steps, the runtime owns the final state transition:
+
+```text
+tool failure
+  -> host records failure and repair context
+  -> host blocks completion of the failed step
+  -> optional reflection proposes bounded correction
+  -> host validates and applies reset/replacement
+  -> host reruns the tool step
+  -> observation-backed completion, or bounded failure
+```
+
+`replace_step` is a complete replacement contract. Its validated tool call is
+used as supplied after normal host canonicalization; the failed call's old
+arguments are not merged into it. Partial argument repair is reserved for
+patch-shaped operations, where explicitly supplied fields are merged with the
+failed call before strict validation. This prevents an obsolete invalid field
+from surviving a deliberate replacement.
+
 ### Bounded tool-family navigation
 
 The runtime also has a small operation-local navigation contract for deliberate
@@ -656,15 +705,16 @@ tool-step completion also forwards the deterministic tool-observation ID to
 the existing plan-store completion operation, so `required_evidence` remains
 validated by `common_plan_policy` rather than by a parallel navigation rule.
 
-Tool repair is a partial argument patch, not a replacement argument object. If
-validation rejects a tool call, a repair that supplies only the corrected field
-is merged with the failed call's original arguments before the strict contract
-is validated again. For example, a repair containing
+Tool repair may be a partial argument patch or a complete replacement,
+depending on the plan operation. A patch that supplies only the corrected
+field is merged with the failed call's original arguments before the strict
+contract is validated again. For example, a patch containing
 `{"max_bytes":8192}` preserves the original resource identifier,
-representation, and offset. A tool-backed plan step cannot be completed from
-model prose or an arbitrary evidence identifier: completion must reference a
-host-recorded observation whose source is the same tool. This keeps resource
-research evidence separate from executable plan-step evidence.
+representation, and offset. A `replace_step` instead supplies a complete new
+step and does not inherit obsolete arguments. A tool-backed plan step cannot
+be completed from model prose or an arbitrary evidence identifier: completion
+must reference a host-recorded observation whose source is the same tool. This
+keeps resource research evidence separate from executable plan-step evidence.
 
 ## Tool naming convention
 
