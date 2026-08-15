@@ -8,6 +8,10 @@ param(
     [ValidateSet("reflective", "deliberate", "research")]
     [string]$ThinkingMode = "research",
     [uint32]$InferenceStepTimeoutMs = 60000,
+    [ValidateRange(1, 8)]
+    [int]$MaxToolRounds = 4,
+    [ValidateRange(128, 2048)]
+    [int]$NPredict = 256,
     [switch]$Build
 )
 
@@ -111,14 +115,14 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "--agent-profile", "research", "--tool-profile", "research",
     "--thinking-mode", $ThinkingMode, "--max-reflection-rounds", "1",
     "--max-research-iterations", "1", "--agent-plan", "auto",
-    "--max-plan-revisions", "1", "--max-tool-rounds", "1",
+    "--max-plan-revisions", "1", "--max-tool-rounds", $MaxToolRounds.ToString(),
     "--resource-blob-backend", "fs", "--resource-blob-root", $resourceRoot,
     "--resource-metadata-backend", "in-memory",
     "--resource", $document, "--resource-mime-type", "application/json",
     "--memory-project", "qwen-nomic-document-table", "--plan-scope", "project",
     "--agent-trace", "--generation-trace", "--inference-step-timeout-ms", $InferenceStepTimeoutMs,
     "--plan-show-summary", "--prompt", $prompt,
-    "-n", "256", "--context-size", "2048", "--threads", "4", "-ngl", "0")
+    "-n", $NPredict.ToString(), "--context-size", "2048", "--threads", "4", "-ngl", "0")
 
 Assert-LogContains $logPath @("document.tables", "document.table", "data.aggregate", "200")
 Assert-LogContains $logPath @(
