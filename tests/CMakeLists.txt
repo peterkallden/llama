@@ -348,6 +348,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp
+        test-plan-store.cpp
         test-reflection-json.cpp
         test-tool-adapters.cpp
         test-tool-catalog.cpp

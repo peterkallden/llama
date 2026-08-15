@@ -114,7 +114,24 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             if (!reset_transition(step->status)) return deny("illegal step reset");
         } else if (!transition(step->status, target)) return deny("illegal step state transition");
         if (target == common_plan_step_status::active) for (const auto & dep : step->depends_on) { const auto * d = find_step(plan, dep); if (!d || d->status != common_plan_step_status::completed) return deny("step has unmet dependency"); }
-        if (target == common_plan_step_status::completed && config.require_evidence_for_completion) for (const auto & id : step->required_evidence) if (std::find(op.evidence_ids.begin(), op.evidence_ids.end(), id) == op.evidence_ids.end()) return deny("required evidence is missing");
+        if (target == common_plan_step_status::completed && config.require_evidence_for_completion) {
+            for (const auto & id : step->required_evidence) {
+                if (std::find(op.evidence_ids.begin(), op.evidence_ids.end(), id) == op.evidence_ids.end()) return deny("required evidence is missing");
+            }
+            if (step->tool_call) {
+                bool observed = false;
+                for (const auto & evidence_id : op.evidence_ids) {
+                    for (const auto & observation : plan.observations) {
+                        if (observation.id == evidence_id && observation.source == step->tool_call->name) {
+                            observed = true;
+                            break;
+                        }
+                    }
+                    if (observed) break;
+                }
+                if (!observed) return deny("tool step requires a successful tool observation");
+            }
+        }
     }
     if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) return deny("mandatory steps remain incomplete"); }
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");

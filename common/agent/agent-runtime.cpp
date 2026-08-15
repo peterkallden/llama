@@ -276,6 +276,34 @@ static bool normalize_agent_tool_call(
     return call.arguments_json != original;
 }
 
+static bool merge_reflection_tool_repair_arguments(
+        const common_plan_state & plan,
+        common_plan_operation & operation,
+        std::string & error) {
+    if (!operation.step || !operation.step->tool_call) return false;
+
+    const common_plan_step * failed_base = nullptr;
+    for (auto it = plan.steps.rbegin(); it != plan.steps.rend(); ++it) {
+        if (it->status == common_plan_step_status::failed && it->tool_call &&
+                it->tool_call->name == operation.step->tool_call->name) {
+            failed_base = &*it;
+            break;
+        }
+    }
+    if (!failed_base) return false;
+
+    std::string merged;
+    if (!common_plan_merge_tool_arguments_json(
+            failed_base->tool_call->arguments_json,
+            operation.step->tool_call->arguments_json,
+            merged,
+            error)) {
+        return false;
+    }
+    operation.step->tool_call->arguments_json = std::move(merged);
+    return true;
+}
+
 static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
     const std::string base = "tool:" + step_id + ":" + tool_name;
     const std::string attempt_prefix = base + ":attempt:";
@@ -1348,6 +1376,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
             if ((op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) && op.step && op.step->tool_call) {
+                std::string repair_merge_error;
+                if (merge_reflection_tool_repair_arguments(plan, op, repair_merge_error)) {
+                    append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
+                        "reflection tool repair arguments merged with failed call", plan.id,
+                        op.step->id, op.step->tool_call->name);
+                }
                 std::string validation_error;
                 if (normalize_planned_tool_step(*op.step, true, validation_error)) {
                     append_event(result, request, {common_agent_event_type::tool_rejected,

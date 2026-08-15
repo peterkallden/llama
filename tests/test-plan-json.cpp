@@ -42,6 +42,24 @@ int main() {
     assert(repaired_actual["max_results"].is_number_integer());
     assert(repaired_actual["max_results"].get<int>() == 16);
 
+    common_plan_state evidence_plan;
+    std::vector<common_plan_operation> evidence_operations;
+    assert(common_plan_parse_proposal_json(
+        R"({"goal":"read","steps":[{"id":"read","title":"Read","objective":"Read evidence","required_evidence":["tool:read:repository.search"],"tool":"repository.search","args":{"query":"resource"}}]})",
+        evidence_plan, evidence_operations, error));
+    assert(evidence_operations.front().step->required_evidence == std::vector<std::string>{"tool:read:repository.search"});
+    std::string merged_arguments;
+    assert(common_plan_merge_tool_arguments_json(
+        R"({"id":"r1","representation":"text","offset":0,"max_bytes":1048576})",
+        R"({"max_bytes":8192})",
+        merged_arguments,
+        error));
+    const auto merged = nlohmann::json::parse(merged_arguments, nullptr, false);
+    assert(merged.value("id", std::string()) == "r1");
+    assert(merged.value("representation", std::string()) == "text");
+    assert(merged.value("offset", -1) == 0);
+    assert(merged.value("max_bytes", 0) == 8192);
+
     const auto wrapped_tool_arguments = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":{"name":"memory_search","arguments":{"query":"regression procedure","limit":"2"}}}}]})";
     assert(common_plan_parse_proposal_json(wrapped_tool_arguments, plan, operations, error));
     const auto wrapped_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);

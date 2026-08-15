@@ -208,7 +208,6 @@ bool parse_step(const json & source, const std::string & goal, const std::string
     if (source.contains("source_memory_ids") && !string_array(source["source_memory_ids"], step.source_memory_ids)) { error = "source_memory_ids must be a string array"; return false; }
     const bool has_tool = source.contains("tool");
     if (!parse_mode(source, has_tool, step.mode, error) || !parse_tool(source, step, error)) return false;
-    if (step.tool_call) step.required_evidence.clear();
     return true;
 }
 
@@ -328,6 +327,24 @@ bool common_plan_normalize_tool_arguments_json(
             error)) {
         return false;
     }
+    error.clear();
+    return true;
+}
+
+bool common_plan_merge_tool_arguments_json(
+        const std::string & base_json,
+        const std::string & patch_json,
+        std::string & merged_json,
+        std::string & error) {
+    const auto base = json::parse(base_json, nullptr, false);
+    const auto patch = json::parse(patch_json, nullptr, false);
+    if (!base.is_object() || !patch.is_object()) {
+        error = "tool argument repair patch requires JSON objects";
+        return false;
+    }
+    json merged = base;
+    for (const auto & item : patch.items()) merged[item.key()] = item.value();
+    merged_json = merged.dump();
     error.clear();
     return true;
 }

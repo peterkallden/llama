@@ -588,6 +588,16 @@ tool-step completion also forwards the deterministic tool-observation ID to
 the existing plan-store completion operation, so `required_evidence` remains
 validated by `common_plan_policy` rather than by a parallel navigation rule.
 
+Tool repair is a partial argument patch, not a replacement argument object. If
+validation rejects a tool call, a repair that supplies only the corrected field
+is merged with the failed call's original arguments before the strict contract
+is validated again. For example, a repair containing
+`{"max_bytes":8192}` preserves the original resource identifier,
+representation, and offset. A tool-backed plan step cannot be completed from
+model prose or an arbitrary evidence identifier: completion must reference a
+host-recorded observation whose source is the same tool. This keeps resource
+research evidence separate from executable plan-step evidence.
+
 ## Tool naming convention
 
 New tool names use dotted namespaces so related operations are visible as one

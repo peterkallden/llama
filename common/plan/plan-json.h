@@ -32,6 +32,13 @@ bool common_plan_normalize_tool_arguments_json(
     const std::string & arguments_json,
     std::string & normalized_json,
     std::string & error);
+// Merge a bounded repair patch into the previous tool arguments. The patch
+// must be an object; existing keys are preserved unless explicitly replaced.
+bool common_plan_merge_tool_arguments_json(
+    const std::string & base_json,
+    const std::string & patch_json,
+    std::string & merged_json,
+    std::string & error);
 bool common_plan_parse_proposal_json(
     const std::string & json_text,
     common_plan_state & plan,
