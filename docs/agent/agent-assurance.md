@@ -132,6 +132,7 @@ reported as not complete below, not as model-backed pass coverage.
 - [x] Research workspace checkpointing has been evaluated through the existing turn-owned workspace contract
 - [x] Model-free research CSV smoke verifies bounded resource reads, two-source provenance, comparison, checkpoint reload, and deferred incomplete coverage
 - [x] Completed research is bridged into the outer plan as bounded evidence with source/resource provenance
+- [x] Research-mode model acquisition steps are degraded before the normal scheduler can execute them
 - [x] Research tracing exposes bounded gap/task/iteration, source, evidence, comparison, checkpoint, completion, and failure transitions
 - [ ] Full inference continuation and context compaction are verified
 

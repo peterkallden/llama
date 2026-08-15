@@ -123,9 +123,15 @@ This boundary is being tightened incrementally. The current model-free CSV
 research smoke verifies that two local resources produce two `resource_read`
 calls and no alternative acquisition tool. Completed research is now also
 bridged into the outer plan as one bounded `research_workspace` observation
-carrying evidence IDs and resource references. A later runtime change will
-prevent model-planned acquisition steps from competing with this controller
-path.
+carrying evidence IDs and resource references.
+
+The runtime also applies the first acquisition ownership guard: in research
+mode, model-planned acquisition calls such as `resource_read`, `web_search`,
+`web_fetch`, repository search, memory retrieval and dataset acquisition are
+degraded to bounded reasoning steps before the normal plan scheduler can
+execute them. The controller retains the approved acquisition path. This is a
+runtime ownership guard, not a second tool profile; both paths remain subject
+to the same host-resolved authority.
 
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,
 source/evidence creation, provenance, answer verification and cancellation

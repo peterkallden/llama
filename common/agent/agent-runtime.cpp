@@ -276,6 +276,20 @@ static bool normalize_agent_tool_call(
     return call.arguments_json != original;
 }
 
+static bool is_research_acquisition_tool(const std::string & tool_name) {
+    return tool_name == "resource_read" ||
+        tool_name == "repository.search" ||
+        tool_name == "web_search" ||
+        tool_name == "web_fetch" ||
+        tool_name == "memory_get" ||
+        tool_name == "memory_search" ||
+        tool_name == "dataset.inspect" ||
+        tool_name == "dataset.schema" ||
+        tool_name == "dataset.sample" ||
+        tool_name == "data.query" ||
+        tool_name == "data.aggregate";
+}
+
 static bool merge_reflection_tool_repair_arguments(
         const common_plan_state & plan,
         common_plan_operation & operation,
@@ -552,6 +566,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             step.mode = common_plan_step_mode::reasoning;
             step.required_evidence.clear();
             detail = "registered tool execution is unavailable";
+            return true;
+        }
+        if (request.deliberation_policy.mode == common_agent_thinking_mode::research &&
+                is_research_acquisition_tool(call.name)) {
+            step.selected_tool.reset();
+            step.tool_call.reset();
+            step.mode = common_plan_step_mode::reasoning;
+            step.required_evidence.clear();
+            detail = "research acquisition is owned by the research controller";
             return true;
         }
         std::string validation_error;

@@ -35,6 +35,78 @@ public:
     mutable int calls = 0;
 };
 
+class acquisition_guard_tools final : public common_agent_tool_runtime {
+public:
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        if (call.name != "resource_read") {
+            error = "research guard smoke exposes only resource_read";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        ++calls;
+        common_runtime_resource_ref resource;
+        resource.uri = "agent-resource://guarded";
+        resource.name = "guarded.txt";
+        resource.mime_type = "text/plain";
+        resource.size_bytes = 16;
+        resource.scope = common_runtime_resource_scope::turn;
+        return common_tool_execution_result::success(
+            "controller-owned resource evidence",
+            "resource_read completed",
+            {resource});
+    }
+
+    mutable int calls = 0;
+};
+
+class acquisition_plan_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "research-acquisition-guard-plan";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        proposal.plan.status = common_plan_status::active;
+        common_plan_step acquisition{
+            "model-acquisition", "Model acquisition", "Read the supplied resource."};
+        acquisition.status = common_plan_step_status::active;
+        acquisition.mode = common_plan_step_mode::tool;
+        acquisition.selected_tool = "resource_read";
+        acquisition.tool_call = common_plan_tool_call{
+            "resource_read", R"({"uri":"agent-resource://guarded","max_bytes":32768})"};
+        common_plan_step answer{"answer", "Answer", "Return the researched answer"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {"model-acquisition"};
+        proposal.plan.steps = {acquisition, answer};
+        proposal.plan.active_step_id = acquisition.id;
+        return proposal;
+    }
+};
+
+class acquisition_plan_executor final : public common_action_executor {
+public:
+    std::string generate_reasoning(const common_agent_request &, const common_plan_state &,
+            const common_plan_step &, std::string & error) override {
+        error.clear();
+        return "controller-owned acquisition is complete";
+    }
+
+    std::string generate_draft(const common_agent_request &, const common_plan_state &,
+            const std::vector<std::string> &, std::string & error) override {
+        error.clear();
+        return "guarded-answer";
+    }
+};
+
 class smoke_planner final : public common_planner {
 public:
     std::string received_prompt;
@@ -438,6 +510,54 @@ int main() {
         return 1;
     }
     std::printf("research_agent_runtime=ok response=%s\n", runtime_result.response.c_str());
+
+    common_plan_in_memory_store acquisition_guard_plan_store;
+    if (!acquisition_guard_plan_store.open("", error)) return 1;
+    acquisition_plan_planner acquisition_guard_planner;
+    acquisition_plan_executor acquisition_guard_executor;
+    smoke_reflector acquisition_guard_reflector;
+    acquisition_guard_tools acquisition_guard_tool_runtime;
+    common_agent_runtime acquisition_guard_runtime(
+        acquisition_guard_plan_store,
+        acquisition_guard_planner,
+        acquisition_guard_executor,
+        acquisition_guard_reflector,
+        &acquisition_guard_tool_runtime);
+    auto acquisition_guard_request = request;
+    acquisition_guard_request.prompt = "Read the supplied resource and return the answer.";
+    acquisition_guard_request.turn_id = "research-acquisition-guard-turn";
+    acquisition_guard_request.input_resources.clear();
+    common_agent_input_resource guarded_input;
+    guarded_input.resource.uri = "agent-resource://guarded";
+    guarded_input.resource.name = "guarded.txt";
+    guarded_input.resource.mime_type = "text/plain";
+    guarded_input.resource.scope = common_runtime_resource_scope::turn;
+    guarded_input.role = "reference";
+    acquisition_guard_request.input_resources.push_back(guarded_input);
+    acquisition_guard_request.max_tool_batches = 1;
+    acquisition_guard_request.deliberation_policy.require_source_cross_check = false;
+    const auto acquisition_guard_result = acquisition_guard_runtime.run(acquisition_guard_request);
+    const auto guarded_plan = acquisition_guard_plan_store.get(
+        acquisition_guard_result.plan_id.value_or(""), error);
+    bool model_acquisition_was_degraded = false;
+    if (guarded_plan) {
+        for (const auto & step : guarded_plan->steps) {
+            model_acquisition_was_degraded = model_acquisition_was_degraded ||
+                step.id == "model-acquisition" &&
+                common_plan_step_effective_mode(step) == common_plan_step_mode::reasoning &&
+                !step.tool_call;
+        }
+    }
+    if (!error.empty() || !acquisition_guard_result.error.empty() ||
+            acquisition_guard_result.response != "guarded-answer" ||
+            acquisition_guard_tool_runtime.calls != 1 ||
+            !model_acquisition_was_degraded) {
+        std::fprintf(stderr, "research acquisition ownership guard failed: %s\n",
+            acquisition_guard_result.error.c_str());
+        return 1;
+    }
+    std::printf("research_acquisition_guard=ok controller_calls=%d\n",
+        acquisition_guard_tool_runtime.calls);
 
     common_plan_in_memory_store late_research_plan_store;
     if (!late_research_plan_store.open("", error)) return 1;
