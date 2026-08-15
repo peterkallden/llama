@@ -1421,6 +1421,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-tool-catalog
     test-tool-adapters
     test-tool-chat-bridge
+    test-tool-navigation
     test-agent-data-store-cozo
 )
 set(AGENT_TEST_PACK_AVAILABLE_TARGETS)
