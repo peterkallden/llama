@@ -195,12 +195,12 @@ int main() {
     retry_workspace.budget.max_iterations = 2;
     const auto retry_start = controller.begin(retry_workspace, error);
     assert(retry_start.kind == common_agent_research_action_kind::schedule_task);
-    const auto retry_action = controller.advance(retry_workspace, {
-        common_agent_research_event_type::task_failed,
-        retry_start.task_id,
-        retry_start.gap_id,
-        0,
-        {}}, error);
+    common_agent_research_event retry_event;
+    retry_event.type = common_agent_research_event_type::task_failed;
+    retry_event.task_id = retry_start.task_id;
+    retry_event.gap_id = retry_start.gap_id;
+    retry_event.retryable = true;
+    const auto retry_action = controller.advance(retry_workspace, retry_event, error);
     assert(retry_action.kind == common_agent_research_action_kind::schedule_task);
     assert(retry_action.task_id != retry_start.task_id);
     assert(retry_action.instruction != retry_start.instruction);
