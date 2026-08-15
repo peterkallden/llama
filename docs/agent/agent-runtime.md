@@ -1387,6 +1387,15 @@ dispatches tools. Legacy full proposal JSON remains accepted for persisted or
 older callers, but new model-facing planner prompts use the bounded compact
 projection.
 
+Future planner-output simplification remains backlog work. A possible later
+experiment is to let compact models emit a bounded line-oriented plan notation
+and normalize it back into the same strict planner JSON before validation. That
+must not introduce a second persisted plan format, a second execution path, or
+weaker handling for planner, reflection, memory, continuation, and tool
+arguments. Until that experiment is implemented and verified, all structured
+model outputs remain JSON and `common_plan_parse_proposal_json()` remains the
+single planner normalization boundary.
+
 The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
 resource reference, the host-resolved media type, the requested representation,
