@@ -322,6 +322,9 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--thinking-mode must be auto, reflective, deliberate, or research\n");
         return false;
     }
+    if (options.tool_profile.empty() && options.thinking_mode == "deliberate") {
+        options.tool_profile = "analysis";
+    }
     if (options.max_reflection_rounds < 0 || options.max_plan_revisions < 0) {
         std::fprintf(stderr, "deliberation limits must not be negative\n");
         return false;

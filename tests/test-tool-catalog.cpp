@@ -123,6 +123,23 @@ int main() {
     assert(read.size() == 9);
     for (const auto & definition : read) assert(definition.risk_class == common_tool_risk_class::local_read);
 
+    const auto analysis = catalog.load_profile("analysis", error);
+    assert(error.empty());
+    assert(analysis.size() > read.size());
+    assert(catalog.find_profile("analysis"));
+    bool analysis_has_dataset_schema = false;
+    bool analysis_has_document_tables = false;
+    bool analysis_has_web_fetch = false;
+    for (const auto & definition : analysis) {
+        analysis_has_dataset_schema = analysis_has_dataset_schema || definition.name == "dataset.schema";
+        analysis_has_document_tables = analysis_has_document_tables || definition.name == "document.tables";
+        analysis_has_web_fetch = analysis_has_web_fetch || definition.name == "web_fetch";
+        assert(!definition.requires_confirmation);
+        assert(definition.name != "memory_remember");
+        assert(definition.name != "development.build");
+    }
+    assert(analysis_has_dataset_schema && analysis_has_document_tables && analysis_has_web_fetch);
+
     common_tool_bootstrap_result second;
     assert(catalog.bootstrap("memory", second, error));
     assert(second.definitions_created.empty());

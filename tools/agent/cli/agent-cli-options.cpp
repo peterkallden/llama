@@ -31,7 +31,12 @@ bool resolve_agent_profile(args & a, std::string & error) {
         error = "--agent-profile must be default, learning, research, safe, or static";
         return false;
     }
-    if (!a.tool_profile_explicit) a.tool_profile = std::move(tool_profile);
+    if (!a.tool_profile_explicit) {
+        a.tool_profile = std::move(tool_profile);
+        if (a.thinking_mode_explicit && a.thinking_mode == "deliberate") {
+            a.tool_profile = "analysis";
+        }
+    }
     a.agent_runtime = a.agent_profile != "static";
     if (!a.thinking_mode_explicit) a.thinking_mode = std::move(thinking_mode);
     if (!a.memory_learn_explicit) a.memory_learn = std::move(memory_learn);
