@@ -78,6 +78,8 @@ override_dh_auto_configure:
 
 override_dh_auto_install:
 	dh_auto_install
+	@echo 'Installed files under debian/tmp before dh_install:'
+	find debian/tmp -maxdepth 6 -type f -print | sort
 	install -D -m 0644 $(COZO_LIBRARY) debian/tmp/usr/lib/libcozo_c.so
 
 override_dh_auto_build:
