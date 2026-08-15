@@ -1305,8 +1305,11 @@ use the canonical uri, so resource storage and provenance remain unchanged.
 Unknown handles, handles from another turn, and malformed handles fail closed.
 This is a bounded projection, not a second resource store or a persistent
 identifier namespace. The same model-facing convention is used by
-resource_inspect; other resource-domain tools may adopt it through the same
-normalization seam when their contracts are updated.
+resource_inspect, `document.tables`, and `document.table`; other
+resource-domain tools may adopt it through the same normalization seam when
+their contracts are updated. Document tools retain their strict `resource`
+property internally, but `r1`/`r2` handles are resolved to canonical resource
+URIs before the document representation binding is called.
 
 ### Compact tool notation
 
