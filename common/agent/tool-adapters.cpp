@@ -1240,6 +1240,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", std::move(err));
+                if (arguments.contains("resource")) {
+                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
+                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "inspect");
+                }
                 if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "inspect");
                 if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", "dataset.inspect requires dataset or path");
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.inspect.unavailable", std::move(err), "Dataset is unavailable.");
@@ -1250,6 +1254,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.schema.invalid_arguments", std::move(err));
+                if (arguments.contains("resource")) {
+                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
+                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "schema");
+                }
                 if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "schema");
                 if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.schema.invalid_arguments", "dataset.schema requires dataset or path");
                 std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.schema.unavailable", std::move(err), "Dataset is unavailable.");
@@ -1263,6 +1271,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.sample.invalid_arguments", std::move(err));
+                if (arguments.contains("resource")) {
+                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
+                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "sample");
+                }
                 if (arguments.contains("dataset")) {
                     const size_t rows = std::min<size_t>(arguments.value("rows", 20), 100);
                     json query = {{"dataset", arguments["dataset"]}, {"limit", rows}, {"max_result_rows", rows}, {"max_scan_rows", 10000}};

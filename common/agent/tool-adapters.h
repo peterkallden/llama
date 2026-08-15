@@ -46,6 +46,10 @@ struct common_native_tool_bindings {
     // details remain outside the model-facing adapter layer.
     std::function<common_tool_execution_result(const std::string &)> document_tables;
     std::function<common_tool_execution_result(const std::string &)> document_table;
+    // Optional host-owned resource-to-dataset materializer. It receives a
+    // validated resource URI and an inspection operation (inspect/schema/
+    // sample), then returns a bounded dataset descriptor/result.
+    std::function<common_tool_execution_result(const std::string &, const std::string &)> dataset_from_resource;
     // Optional host-owned semantic diagnostics provider. A runtime may back
     // this with clangd, an index, or another project-aware implementation.
     // The native adapters keep a bounded text fallback when it is absent.

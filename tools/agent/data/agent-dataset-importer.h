@@ -49,6 +49,15 @@ bool normalize_agent_pandoc_document_json(
         std::string & worksheet_json,
         std::string & error);
 
+// Converts a bounded CSV resource into the same worksheet envelope used by
+// spreadsheet and document-table import. The caller owns the byte bound;
+// this function does not create a second data representation.
+bool normalize_agent_csv_text(
+        const std::string & csv_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error);
+
 bool make_agent_document_table_catalog(
         const std::string & worksheet_json,
         common_agent_document_table_catalog & catalog,

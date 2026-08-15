@@ -189,6 +189,18 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
     } else if (tool_name == "resource_inspect") {
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
         if (normalized_arguments.contains("uri")) changed = true;
+    } else if (tool_name == "dataset.inspect" || tool_name == "dataset.schema" || tool_name == "dataset.sample") {
+        const bool resource_handle = arguments.contains("id") ||
+            (arguments.contains("resource") && arguments["resource"].is_string() &&
+                arguments["resource"].get<std::string>().rfind("r", 0) == 0);
+        if (resource_handle) {
+            if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+            if (normalized_arguments.contains("uri")) {
+                normalized_arguments["resource"] = normalized_arguments["uri"];
+                normalized_arguments.erase("uri");
+                changed = true;
+            }
+        }
     } else if (tool_name == "repository.list" || tool_name == "workspace.list") {
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }

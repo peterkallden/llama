@@ -498,6 +498,16 @@ binding; it does not require a repository root. Legacy file access remains
 repository-root scoped. The same binding rule applies when these tools are
 exposed through MCP.
 
+The same inspection tools may also receive an acquired resource handle through
+their `resource` field. The CLI host currently supports `text/csv`: it reads
+the bounded authoritative resource, normalizes it through the existing
+worksheet importer, stores rows and the descriptor in the configured data
+store, and returns the resulting dataset reference. The descriptor retains
+`source_resource_uri` and `source_representation=csv:dataset`. This is
+demand-driven materialization, not a second resource store. Other MIME types
+remain unavailable until they provide an equivalent host-owned importer; for
+example, document tables use the existing `document.table` path.
+
 Large dataset results stay external. Only bounded schemas, samples, summaries
 and dataset references enter the active model context. Resource chunking is
 reserved for semantic reading of representations; dataset operations are used

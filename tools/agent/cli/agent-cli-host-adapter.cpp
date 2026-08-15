@@ -359,6 +359,74 @@ bool resolve_agent_host_tool_selection(
             : selection.owned_data_store.get();
         if (bindings.data_store != nullptr && resource_store != nullptr) {
             const auto runtime = bindings.resource_runtime;
+            bindings.dataset_from_resource = [resource_store, runtime, data_store = bindings.data_store](
+                    const std::string & uri, const std::string & operation) {
+                std::string error;
+                agent_resource_descriptor resource;
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                if (!resource_store->stat(uri, authority, resource, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_unavailable", common_tool_failure_class::not_found, false,
+                        "The resource is unavailable as a dataset.", std::move(error));
+                }
+                if (common_normalize_resource_media_type(resource.mime_type) != "text/csv") {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_unsupported", common_tool_failure_class::validation, false,
+                        "Only CSV resources are currently materialized as datasets.",
+                        "resource MIME type is not text/csv");
+                }
+                std::string csv;
+                if (!resource_store->read_bytes(uri, authority, 128 * 1024 * 1024, csv, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_read_failed", common_tool_failure_class::execution, true,
+                        "The CSV resource could not be read.", std::move(error));
+                }
+                std::string worksheet_json;
+                if (!normalize_agent_csv_text(csv, resource.name, worksheet_json, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_invalid", common_tool_failure_class::validation, false,
+                        "The CSV resource could not be normalized.", std::move(error));
+                }
+                agent_dataset_import_request import;
+                import.source_resource_uri = resource.uri;
+                import.source_workbook_name = resource.name;
+                import.source_representation = "csv:dataset";
+                import.source_representation_uri = resource.uri;
+                import.import_processor_id = "csv-resource-import-v1";
+                import.import_processor_version = "1";
+                import.worksheet_json = std::move(worksheet_json);
+                std::vector<common_agent_dataset_descriptor> imported;
+                if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.materialization_failed", common_tool_failure_class::execution, false,
+                        "The CSV resource could not be materialized as a dataset.", std::move(error));
+                }
+                const auto & dataset = imported.front();
+                if (operation == "schema") {
+                    json columns = json::array();
+                    for (const auto & column : dataset.columns) columns.push_back({
+                        {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)},
+                        {"nullable", column.nullable}});
+                    return common_tool_execution_result::success(json({
+                        {"dataset", dataset.ref.uri}, {"source", dataset.ref.source_resource_uri},
+                        {"columns", columns}}).dump());
+                }
+                if (operation == "sample") {
+                    json query = {{"dataset", dataset.ref.uri}, {"limit", 20},
+                        {"max_scan_rows", 10000}, {"max_result_rows", 100}};
+                    std::string sample_json;
+                    if (!data_store->execute("data.query", query.dump(), sample_json, error)) {
+                        return common_tool_execution_result::failure(
+                            "tool.dataset.sample_failed", common_tool_failure_class::execution, false,
+                            "The CSV dataset sample could not be read.", std::move(error));
+                    }
+                    return common_tool_execution_result::success(std::move(sample_json));
+                }
+                return common_tool_execution_result::success(json({
+                    {"dataset", dataset.ref.uri}, {"name", dataset.ref.name},
+                    {"rows", dataset.ref.row_count}, {"columns", dataset.ref.column_count},
+                    {"source", dataset.ref.source_resource_uri}}).dump());
+            };
             auto read_document_json = [resource_store, runtime](
                     const std::string & uri, std::string & document_json,
                     agent_resource_descriptor & descriptor, std::string & read_error) {

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <sstream>
 
 using json = nlohmann::ordered_json;
 
@@ -92,6 +93,35 @@ bool read_size(const json & object, const char * key, size_t & value) {
     if (!object.contains(key) || !object[key].is_number_unsigned()) return false;
     value = object[key].get<size_t>();
     return true;
+}
+
+std::vector<std::string> csv_row(const std::string & line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool quoted = false;
+    for (size_t index = 0; index < line.size(); ++index) {
+        const char value = line[index];
+        if (value == '"') {
+            if (quoted && index + 1 < line.size() && line[index + 1] == '"') {
+                field += '"';
+                ++index;
+            } else quoted = !quoted;
+        } else if (value == ',' && !quoted) {
+            fields.push_back(field);
+            field.clear();
+        } else field += value;
+    }
+    fields.push_back(std::move(field));
+    return fields;
+}
+
+std::string stable_source_key(const std::string & value) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char character : value) {
+        hash ^= character;
+        hash *= 1099511628211ULL;
+    }
+    return std::to_string(hash);
 }
 
 } // namespace
@@ -188,6 +218,69 @@ bool normalize_agent_pandoc_document_json(
     return normalize_agent_pandoc_workbook_json(pandoc_json, worksheet_json, error);
 }
 
+bool normalize_agent_csv_text(
+        const std::string & csv_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error) {
+    std::istringstream input(csv_text);
+    std::string line;
+    if (!std::getline(input, line)) {
+        error = "CSV resource is empty";
+        return false;
+    }
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const auto names = csv_row(line);
+    if (names.empty() || names.size() > 512) {
+        error = "CSV header exceeds the bounded column limit";
+        return false;
+    }
+    std::vector<std::vector<std::string>> rows;
+    while (rows.size() < 1'000'000 && std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        rows.push_back(csv_row(line));
+    }
+    if (!input.eof() && rows.size() >= 1'000'000) {
+        error = "CSV resource exceeds the bounded row limit";
+        return false;
+    }
+    std::vector<common_agent_dataset_column_type> types(
+        names.size(), common_agent_dataset_column_type::null_);
+    for (const auto & row : rows) {
+        for (size_t index = 0; index < names.size() && index < row.size(); ++index) {
+            const auto type = inferred_type(row[index]);
+            if (type == common_agent_dataset_column_type::string) types[index] = type;
+            else if (types[index] == common_agent_dataset_column_type::null_) types[index] = type;
+            else if (types[index] != type) types[index] = common_agent_dataset_column_type::string;
+        }
+    }
+    json worksheet = {
+        {"name", dataset_name.empty() ? "CSV" : dataset_name},
+        {"index", 0}, {"table_index", 0},
+        {"node_id", "resource-node://csv/0"},
+        {"header_mode", "explicit"}, {"header_confidence", 1.0},
+        {"header_reason", "CSV supplied an explicit first-row header"},
+        {"columns", json::array()}, {"rows", json::array()}};
+    for (size_t index = 0; index < names.size(); ++index) {
+        worksheet["columns"].push_back({
+            {"name", names[index].empty() ? "column_" + std::to_string(index + 1) : names[index]},
+            {"type", common_agent_dataset_column_type_name(types[index])},
+            {"nullable", true}});
+    }
+    for (const auto & row : rows) {
+        json object = json::object();
+        for (size_t index = 0; index < names.size(); ++index) {
+            const std::string value = index < row.size() ? row[index] : std::string();
+            object[worksheet["columns"][index]["name"].get<std::string>()] =
+                typed_value(value, types[index]);
+        }
+        worksheet["rows"].push_back(std::move(object));
+    }
+    worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
+    error.clear();
+    return true;
+}
+
 bool make_agent_document_table_catalog(
         const std::string & worksheet_json,
         common_agent_document_table_catalog & catalog,
@@ -259,7 +352,8 @@ bool import_agent_worksheet_envelope(
             return false;
         }
         common_agent_dataset_descriptor descriptor;
-        descriptor.ref.uri = "dataset://import/" + std::to_string(imported.size()) + "/" + sheet_name;
+        descriptor.ref.uri = "dataset://import/" + stable_source_key(request.source_resource_uri) + "/" +
+            std::to_string(imported.size()) + "/" + sheet_name;
         descriptor.ref.name = sheet_name;
         descriptor.ref.row_count = worksheet["rows"].size();
         descriptor.ref.column_count = worksheet["columns"].size();

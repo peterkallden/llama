@@ -98,6 +98,29 @@ int main() {
     assert(imported[0].origin.kind == "document_table");
     assert(imported[0].origin.source_representation_uri == document_request.source_representation_uri);
 
+    std::string csv_normalized;
+    assert(normalize_agent_csv_text(
+        "city,population,active\nStockholm,1000000,true\nKiruna,18000,false\n",
+        "cities.csv", csv_normalized, error));
+    agent_dataset_import_request csv_request = request;
+    csv_request.source_resource_uri = "agent-resource://uploads/cities.csv";
+    csv_request.source_workbook_name = "cities.csv";
+    csv_request.source_representation = "csv:dataset";
+    csv_request.source_representation_uri = csv_request.source_resource_uri;
+    csv_request.import_processor_id = "csv-resource-import-v1";
+    csv_request.import_processor_version = "1";
+    csv_request.worksheet_json = csv_normalized;
+    csv_request.sheet_name.reset();
+    csv_request.limits.max_rows = 100;
+    assert(import_agent_worksheet_envelope(store, csv_request, imported, error));
+    assert(imported.size() == 1);
+    assert(imported[0].ref.source_resource_uri == csv_request.source_resource_uri);
+    assert(imported[0].ref.source_representation == "csv:dataset");
+    assert(imported[0].columns.size() == 3 &&
+           imported[0].columns[0].type == common_agent_dataset_column_type::string &&
+           imported[0].columns[1].type == common_agent_dataset_column_type::integer &&
+           imported[0].columns[2].type == common_agent_dataset_column_type::boolean);
+
     request.sheet_name = "Customers";
     request.limits.max_rows = 100;
     assert(import_agent_worksheet_envelope(store, request, imported, error));
