@@ -18,7 +18,7 @@ bool resolve_agent_profile(args & a, std::string & error) {
     std::string thinking_mode;
     std::string memory_learn;
     if (a.agent_profile == "default") {
-        tool_profile = "memory"; thinking_mode = "reflective"; memory_learn = "off";
+        tool_profile = "memory"; thinking_mode = "reflective"; memory_learn = "post-turn";
     } else if (a.agent_profile == "learning") {
         tool_profile = "memory"; thinking_mode = "reflective"; memory_learn = "post-turn";
     } else if (a.agent_profile == "research") {
@@ -37,9 +37,20 @@ bool resolve_agent_profile(args & a, std::string & error) {
             a.tool_profile = "analysis";
         }
     }
-    a.agent_runtime = a.agent_profile != "static";
     if (!a.thinking_mode_explicit) a.thinking_mode = std::move(thinking_mode);
-    if (!a.memory_learn_explicit) a.memory_learn = std::move(memory_learn);
+    a.agent_runtime = a.agent_profile != "static";
+    if (!a.memory_learn_explicit) {
+        // Learning follows the resolved mode, but safety and static profiles
+        // remain opt-in. Research is also opt-in because its normal output is
+        // turn-local evidence rather than a reusable execution procedure.
+        if (a.agent_profile == "safe" || a.agent_profile == "static" || a.thinking_mode == "research") {
+            a.memory_learn = "off";
+        } else if (a.thinking_mode == "reflective" || a.thinking_mode == "deliberate") {
+            a.memory_learn = "post-turn";
+        } else {
+            a.memory_learn = std::move(memory_learn);
+        }
+    }
     error.clear();
     return true;
 }

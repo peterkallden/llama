@@ -399,7 +399,7 @@ Useful overrides are:
 | Area | Flags |
 | --- | --- |
 | model | `--model`, optional `--embedding-model`, `--n-predict`, `--n-gpu-layers` |
-| runtime | `--default-mode`, `--thinking-mode`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-plan`, `--agent-blueprint`, `--agent-trace` |
+| runtime | `--default-mode`, `--thinking-mode`, `--memory-learn`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-plan`, `--agent-blueprint`, `--agent-trace` |
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db`, `--data-backend`, `--data-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |

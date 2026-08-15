@@ -343,6 +343,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
+        test-agent-loop.cpp
         test-agent-tool-rounds.cpp
         test-memory-learning.cpp
         test-memory-policy.cpp

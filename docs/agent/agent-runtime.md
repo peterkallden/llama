@@ -2983,6 +2983,22 @@ existing evidence, provenance, scope, and memory-learning policy. The first
 payload is never treated as a candidate and is not concatenated with the retry;
 if validation still fails, no candidate is proposed.
 
+Memory learning is a separate policy switch from the thinking mode. For the
+normal CLI agent profile, reflective and deliberate turns default to
+`--memory-learn post-turn`; an explicit `--memory-learn off` always disables
+the path. Research defaults to `off`, because its normal durable output is
+turn-local evidence and synthesis rather than a reusable procedure. A research
+turn may opt in explicitly with `--memory-learn post-turn`. The `safe` and
+`static` profiles remain off by default as well.
+
+This default only enables the bounded post-turn candidate attempt. It does not
+grant the model permission to write memory directly: the completed-plan gate,
+evidence/provenance checks, scope and conflict policy, duplicate handling, and
+the separate verified-use requirement for procedure promotion still apply.
+The same rule applies when deliberate or research is selected through an
+explicit thinking-mode override: the resolved mode controls the default, while
+an explicit `--memory-learn` value wins.
+
 The retry mechanics are shared through a small `common/agent` helper. The
 planner, reflection engine, and memory candidate extractor still own their
 separate prompts, schemas, and parsers; the helper only enforces the common

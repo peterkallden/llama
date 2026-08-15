@@ -1863,6 +1863,42 @@ static void test_agent_runtime_gets_turn_identity_for_project_scope() {
     assert(options.memory_turn.rfind("implicit-", 0) == 0);
 }
 
+static void test_memory_learning_profile_defaults() {
+    std::string error;
+
+    args reflective = make_test_args();
+    reflective.agent_runtime = true;
+    assert(prepare_agent_cli_args(reflective, error));
+    assert(error.empty() && reflective.thinking_mode == "reflective" && reflective.memory_learn == "post-turn");
+
+    args deliberate = make_test_args();
+    deliberate.agent_runtime = true;
+    deliberate.thinking_mode = "deliberate";
+    deliberate.thinking_mode_explicit = true;
+    assert(prepare_agent_cli_args(deliberate, error));
+    assert(error.empty() && deliberate.thinking_mode == "deliberate" && deliberate.memory_learn == "post-turn");
+
+    args research = make_test_args();
+    research.agent_runtime = true;
+    research.agent_profile = "research";
+    research.agent_profile_explicit = true;
+    assert(prepare_agent_cli_args(research, error));
+    assert(error.empty() && research.thinking_mode == "research" && research.memory_learn == "off");
+
+    args research_learning = research;
+    research_learning.memory_learn = "post-turn";
+    research_learning.memory_learn_explicit = true;
+    assert(prepare_agent_cli_args(research_learning, error));
+    assert(error.empty() && research_learning.memory_learn == "post-turn");
+
+    args disabled = make_test_args();
+    disabled.agent_runtime = true;
+    disabled.memory_learn = "off";
+    disabled.memory_learn_explicit = true;
+    assert(prepare_agent_cli_args(disabled, error));
+    assert(error.empty() && disabled.memory_learn == "off");
+}
+
 static void test_runtime_session_reuse() {
     common_agent_runtime_session session;
     auto * fake_model = reinterpret_cast<llama_model *>(0x1);
@@ -1962,6 +1998,8 @@ static bool run_named_test(const std::string & name) {
     } else if (name == "cli-runtime-host-adapter-chat") {
         test_cli_runtime_host_adapter_chat_inputs();
         test_agent_runtime_gets_turn_identity_for_project_scope();
+    } else if (name == "memory-learning-profile-defaults") {
+        test_memory_learning_profile_defaults();
     } else if (name == "runtime-session-reuse") {
         test_runtime_session_reuse();
     } else {
@@ -2004,6 +2042,7 @@ int main(int argc, char ** argv) {
         "runtime-resident-runtime-builder",
         "runtime-resident-agent-host-builder",
         "cli-runtime-host-adapter-chat",
+        "memory-learning-profile-defaults",
         "runtime-session-reuse",
     };
     for (const char * name : tests) {

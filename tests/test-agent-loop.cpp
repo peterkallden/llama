@@ -6,6 +6,7 @@
 #include "plan/plan-goal.h"
 #include "test-tool-runtime-registry-adapter.h"
 
+#include <algorithm>
 #include <cassert>
 
 class planner final : public common_planner {
@@ -311,7 +312,9 @@ int main() {
     request.plan_id = "turn-1";
     const auto resumed = runtime.run(request);
     assert(resumed.error.empty() && resumed.plan_id && *resumed.plan_id == "turn-1");
-    assert(p.calls == 1 && !resumed.events.empty() && resumed.events.front().detail == "existing plan resumed");
+    assert(p.calls == 1 && std::any_of(resumed.events.begin(), resumed.events.end(), [](const auto & event) {
+        return event.detail == "existing plan resumed";
+    }));
 
     common_memory_in_memory_store memories;
     assert(memories.open("", error));
@@ -388,7 +391,7 @@ int main() {
     failure_request.namespace_id = "tenant-a";
     failure_request.plan_scope = common_plan_scope::session;
     const auto failed_tool_run = failure_runtime.run(failure_request);
-    assert(failed_tool_run.error.empty() && failed_tool_run.response == "draft");
+    assert(failed_tool_run.error == "final synthesis is blocked by an unrepaired failed tool step: lookup" && failed_tool_run.response.empty());
     assert(failed_tool_run.learning_signals.size() == 1);
     const auto & failure_signal = failed_tool_run.learning_signals.front();
     assert(failure_signal.type == common_learning_signal_type::tool_failure);
