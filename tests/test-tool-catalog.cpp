@@ -122,6 +122,16 @@ int main() {
     assert(compact_read.find("representation?:text|bytes") != std::string::npos);
     assert(compact_read.find("max_bytes?:integer[1..32768]") != std::string::npos);
     assert(compact_read.find("returns:") != std::string::npos);
+    const auto aggregate_compact = common_render_compact_tool_description(
+        data_aggregate->name,
+        data_aggregate->description,
+        data_aggregate->input_schema_json,
+        data_aggregate->result_schema_json,
+        compact_error);
+    assert(compact_error.empty());
+    assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
+    assert(aggregate_compact.find("function:count|sum|avg|min|max") != std::string::npos);
+    assert(aggregate_compact.find("column?:string") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 

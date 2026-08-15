@@ -9,7 +9,7 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-std::string scalar_type(const json & schema) {
+std::string scalar_type(const json & schema, size_t depth = 0) {
     if (schema.contains("x-agent-type") && schema["x-agent-type"].is_string()) {
         return schema["x-agent-type"].get<std::string>();
     }
@@ -25,7 +25,7 @@ std::string scalar_type(const json & schema) {
     }
     const auto type = schema.value("type", std::string("value"));
     if (type == "array") {
-        return scalar_type(schema.value("items", json::object())) + "[]";
+        return scalar_type(schema.value("items", json::object()), depth + 1) + "[]";
     }
     if (type == "integer" || type == "number") {
         std::string result = type;
@@ -38,7 +38,25 @@ std::string scalar_type(const json & schema) {
         }
         return result;
     }
-    if (type == "object") return "object";
+    if (type == "object") {
+        const auto properties = schema.value("properties", json::object());
+        if (depth >= 2 || !properties.is_object() || properties.empty()) return "object";
+        std::set<std::string> required;
+        for (const auto & value : schema.value("required", json::array())) {
+            if (value.is_string()) required.insert(value.get<std::string>());
+        }
+        std::ostringstream nested;
+        nested << '{';
+        size_t count = 0;
+        for (auto it = properties.begin(); it != properties.end() && count < 8; ++it, ++count) {
+            if (count) nested << "; ";
+            nested << it.key() << (required.count(it.key()) == 0 ? "?" : "")
+                << ':' << scalar_type(it.value(), depth + 1);
+        }
+        if (properties.size() > count) nested << "; ...";
+        nested << '}';
+        return nested.str();
+    }
     return type;
 }
 
