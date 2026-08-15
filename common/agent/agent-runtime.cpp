@@ -1040,6 +1040,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::failed,
                     "validation_error=" + validation_error + " args=" + tool_argument_keys(tool_call->arguments_json),
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::started,
+                    "repair_required failure_code=tool.invalid_arguments retryable=false",
+                    plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
             const auto execution = tools->execute(*tool_call);
@@ -1086,6 +1089,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     "failure_code=" + execution.failure_code + " " + execution.safe_summary +
                         tool_trace_diagnostic(execution.raw_diagnostic) +
                         tool_argument_resource_ref(tool_call->arguments_json),
+                    plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::started,
+                    "repair_required failure_code=" + failure.code +
+                        " retryable=" + std::string(failure.retryable ? "true" : "false"),
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
@@ -1417,7 +1424,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         std::vector<std::string> applied_reflection_work_step_ids;
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
-            if ((op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step) && op.step && op.step->tool_call) {
+            if (op.kind == common_plan_operation_kind::add_step && op.step && op.step->tool_call) {
                 std::string repair_merge_error;
                 if (merge_reflection_tool_repair_arguments(plan, op, repair_merge_error)) {
                     append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
@@ -1441,6 +1448,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (std::find(reflection_work_step_ids.begin(), reflection_work_step_ids.end(), applied_step_id) != reflection_work_step_ids.end() &&
                     applied_step_id != active_final_step_id.value_or(std::string())) {
                 applied_reflection_work_step_ids.push_back(applied_step_id);
+                append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::updated,
+                    "repair_scheduled step=" + applied_step_id,
+                    plan.id, applied_step_id);
             }
         }
         if (!applied_reflection_work_step_ids.empty() && active_final_step_id) {
