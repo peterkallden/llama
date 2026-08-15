@@ -168,9 +168,7 @@ jobs:
             -DLLAMA_BUILD_UI=OFF \
             -DLLAMA_USE_PREBUILT_UI=OFF \
             -DLLAMA_TOOLS_INSTALL=OFF \
-            -DLLAMA_MEMORY=ON \
             -DLLAMA_MEMORY_COZO=ON \
-            -DLLAMA_PLAN=ON \
             -DLLAMA_PLAN_COZO=ON \
             -DLLAMA_AGENT_RUNTIME=ON \
             -DLLAMA_AGENT_TOOLS_CLANG=ON \
@@ -223,7 +221,9 @@ jobs:
           test -f "$package_dir/bin/llama-agent-daemon"
           test -f "$package_dir/bin/llama-agent-mcp-stdio-server"
           test -x "$package_dir/bin/llama-agent-config-bootstrap"
-          test -f "$package_dir/lib/libllama-agent-poc.so"
+          test -f "$package_dir/lib/libllama-agent-core.so"
+          test -f "$package_dir/lib/libllama-agent-memory.so"
+          test -f "$package_dir/lib/libllama-agent-plan.so"
           test -f "$package_dir/lib/libllama-agent-mcp-core.so"
           test -f "$package_dir/lib/libllama-agent-mcp-server.so"
           test -f "$package_dir/lib/libllama-agent-runtime-support.so"

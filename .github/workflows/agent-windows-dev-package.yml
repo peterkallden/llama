@@ -92,8 +92,8 @@ jobs:
             '-DLLAMA_AGENT_PACKAGE_CPACK=ON',
             '-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF',
             '-DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF',
-            '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY=ON -DLLAMA_MEMORY_COZO=ON',
-            '-DLLAMA_PLAN=ON -DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
+            '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY_COZO=ON',
+            '-DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
             '-DLLAMA_AGENT_TOOLS_CLANG=ON -DLLAMA_SUBPROCESS=ON',
             '-DCPACK_PACKAGE_NAME=llama-agent-cpu-windows-x64-dev',
             "-DCPACK_PACKAGE_VERSION=0.0.0.$env:GITHUB_RUN_NUMBER",
@@ -125,6 +125,9 @@ jobs:
             'bin\llama-agent.exe',
             'bin\llama-agent-daemon.exe',
             'bin\llama-agent-mcp-stdio-server.exe',
+            'bin\llama-agent-core.dll',
+            'bin\llama-agent-memory.dll',
+            'bin\llama-agent-plan.dll',
             'bin\llama-agent-config-bootstrap.ps1',
             'share\llama-agent\examples\agent-config.example.json'
           )

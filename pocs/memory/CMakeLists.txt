@@ -80,12 +80,12 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${TARGET} PRIVATE llama-agent-memory llama-common llama ${CMAKE_THREAD_LIBS_INIT})
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_AGENT_RUNTIME)
     target_link_libraries(${TARGET} PRIVATE
-        llama-agent-poc
+        llama-agent-core
         llama-agent-runtime-support
         server-context
     )

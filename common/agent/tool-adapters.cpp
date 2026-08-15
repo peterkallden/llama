@@ -813,7 +813,7 @@ bool winhttp_fetch_text(const std::string & url, const common_http_url & parts, 
     const auto path = utf8_to_wide(parts.path);
     if (host.empty() || path.empty()) { error = "URL is not valid UTF-8"; return false; }
 
-    HINTERNET session = WinHttpOpen(L"llama-agent-poc/1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    HINTERNET session = WinHttpOpen(L"llama-agent/1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { error = "WinHTTP session failed: " + winhttp_error(GetLastError()); return false; }
     const auto close_session = [&] { WinHttpCloseHandle(session); };
@@ -881,7 +881,7 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
         cli.set_read_timeout(10);
         cli.set_write_timeout(10);
         cli.set_follow_location(true);
-        cli.set_default_headers({{"User-Agent", "llama-agent-poc/1"}, {"Accept", "text/html, text/plain;q=0.9, application/xhtml+xml;q=0.8"}});
+        cli.set_default_headers({{"User-Agent", "llama-agent/1"}, {"Accept", "text/html, text/plain;q=0.9, application/xhtml+xml;q=0.8"}});
 
         std::string body;
         body.reserve(std::min<size_t>(max_bytes, 65536));

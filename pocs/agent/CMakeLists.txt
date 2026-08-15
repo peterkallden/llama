@@ -100,10 +100,10 @@ target_compile_definitions(llama-agent-runtime-support
 )
 target_link_libraries(llama-agent-runtime-support
     PUBLIC
-        llama-memory
+        llama-agent-memory
         llama-common
         llama
-        llama-agent-poc
+        llama-agent-core
         server-context
         Threads::Threads
     PRIVATE
@@ -210,7 +210,9 @@ endif()
 # binaries into the runtime package.
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     set(AGENT_PACKAGE_LIBRARY_TARGETS
-        llama-agent-poc
+        llama-agent-memory
+        llama-agent-plan
+        llama-agent-core
         llama-agent-mcp-core
         llama-agent-mcp-server
         llama-agent-runtime-support
@@ -362,7 +364,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-poc
+    llama-agent-core
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
@@ -374,7 +376,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-poc
+    llama-agent-core
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
@@ -709,7 +711,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-deliberate-runtime-smoke)
@@ -719,7 +721,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-research-runtime-smoke)
@@ -729,7 +731,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-resource-store-smoke)
@@ -858,7 +860,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-research-csv-smoke)
@@ -868,7 +870,7 @@ add_executable(${TARGET}
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-poc)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-dataset-importer-smoke)

@@ -140,12 +140,21 @@ option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_SUBPROCESS "llama-common: use subprocess, required by server tools and server router mode" ${LLAMA_SUBPROCESS_DEFAULT})
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
 
-option(LLAMA_MEMORY      "llama: build native memory PoC support" OFF)
-option(LLAMA_MEMORY_COZO "llama-memory: build optional CozoDB backend" OFF)
-option(LLAMA_PLAN "llama: build native dynamic plan PoC support" OFF)
-option(LLAMA_PLAN_COZO "llama-plan: build optional CozoDB backend" OFF)
+option(LLAMA_MEMORY      "llama: build native memory support" OFF)
+option(LLAMA_MEMORY_COZO "llama-agent-memory: build optional CozoDB backend" OFF)
+option(LLAMA_PLAN "llama: build native dynamic plan support" OFF)
+option(LLAMA_PLAN_COZO "llama-agent-plan: build optional CozoDB backend" OFF)
 option(LLAMA_AGENT_RUNTIME "llama: build the bounded agent runtime" OFF)
 option(LLAMA_AGENT_TOOLS_CLANG "llama-agent: enable clang/clangd semantic tool support" OFF)
+
+# The agent runtime is defined in terms of persistent memory and planning.
+# Keep the lower-level options for standalone consumers, but make a complete
+# agent build self-contained instead of requiring three switches in every
+# workflow and package recipe.
+if (LLAMA_AGENT_RUNTIME)
+    set(LLAMA_MEMORY ON CACHE BOOL "llama: build native memory support" FORCE)
+    set(LLAMA_PLAN ON CACHE BOOL "llama: build native dynamic plan support" FORCE)
+endif()
 
 if (LLAMA_AGENT_TOOLS_CLANG)
     find_program(LLAMA_AGENT_CLANG_EXECUTABLE NAMES clang clang.exe)

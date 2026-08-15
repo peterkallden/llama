@@ -78,9 +78,7 @@ cmake -S . -B build-agent-windows `
   -DBUILD_TESTING=ON `
   -DLLAMA_TESTS_INSTALL=OFF `
   -DLLAMA_AGENT_RUNTIME=ON `
-  -DLLAMA_MEMORY=ON `
   -DLLAMA_MEMORY_COZO=ON `
-  -DLLAMA_PLAN=ON `
   -DLLAMA_PLAN_COZO=ON `
   -DLLAMA_AGENT_TOOLS_CLANG=ON `
   -DLLAMA_BUILD_SERVER=ON `
@@ -90,6 +88,10 @@ cmake -S . -B build-agent-windows `
   -DLLAMA_AGENT_CLANG_EXECUTABLE="PATH_TO_CLANG\\clang.exe" `
   -DLLAMA_AGENT_CLANGD_EXECUTABLE="PATH_TO_CLANGD\\clangd.exe"
 ```
+
+`LLAMA_AGENT_RUNTIME=ON` automatically enables the agent memory and planning
+libraries. The lower-level `LLAMA_MEMORY` and `LLAMA_PLAN` options remain
+available for standalone builds, but are not needed in an agent configuration.
 
 Build with one worker on MSVC. The agent tree is intentionally serial here:
 Cozo-enabled Debug builds can exhaust the MSVC compiler heap when several large
@@ -175,9 +177,7 @@ cmake -S . -B build-agent-linux -G Ninja \
   -DLLAMA_BUILD_UI=OFF \
   -DLLAMA_USE_PREBUILT_UI=OFF \
   -DLLAMA_TOOLS_INSTALL=OFF \
-  -DLLAMA_MEMORY=ON \
   -DLLAMA_MEMORY_COZO=ON \
-  -DLLAMA_PLAN=ON \
   -DLLAMA_PLAN_COZO=ON \
   -DLLAMA_AGENT_RUNTIME=ON \
   -DLLAMA_AGENT_TOOLS_CLANG=ON \
@@ -196,6 +196,10 @@ The repository also contains a native Debian source package under
 with the package flags, and then invokes CMake directly to build the
 `llama-agent-build-pack` target. The explicit CMake invocation is required
 because `--target` is a CMake build option, not a `dh_auto_build` option.
+
+Agent builds automatically enable the memory and planning libraries through
+`LLAMA_AGENT_RUNTIME=ON`; only the optional Cozo backend switches need to be
+specified explicitly.
 
 The package uses Cozo-backed stores by default, so provide the Cozo C API
 header and shared library explicitly:

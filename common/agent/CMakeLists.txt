@@ -1,8 +1,9 @@
-set(TARGET llama-agent-poc)
+set(TARGET llama-agent-core)
 add_library(${TARGET} agent-bootstrap.cpp agent-bootstrap.h agent-package-json.cpp agent-package-json.h agent-prepared-generation.cpp agent-prepared-generation.h blueprint-selector.cpp blueprint-selector.h dataset-contracts.cpp dataset-contracts.h deliberation-policy.cpp deliberation-policy.h agent-runtime-context.h agent-runtime-reflection-phase.cpp agent-runtime-research-phase.cpp agent-runtime.cpp agent-runtime.h runtime-json-contracts.cpp runtime-json-contracts.h memory-learning.cpp memory-learning.h reflection-json.cpp reflection-json.h schema-contract.cpp schema-contract.h sandbox-docker-runtime.cpp sandbox-docker-runtime.h sandbox-kubernetes-runtime.cpp sandbox-kubernetes-runtime.h tool-adapters.cpp tool-adapters.h tool-catalog.cpp tool-catalog.h tool-chat-bridge.cpp tool-chat-bridge.h tool-registry.cpp tool-registry.h tool-result-contracts.cpp tool-result-contracts.h tool-schema-compact.cpp tool-schema-compact.h tool-navigation.cpp tool-navigation.h research/research-contract.h research/research-workspace.cpp research/research-workspace.h research/research-workspace-factory.cpp research/research-workspace-factory.h research/research-controller.cpp research/research-controller.h research/research-runner.cpp research/research-runner.h)
+add_library(llama-agent-poc ALIAS ${TARGET})
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
-target_link_libraries(${TARGET} PUBLIC llama-plan llama-memory)
+target_link_libraries(${TARGET} PUBLIC llama-agent-plan llama-agent-memory)
 target_link_libraries(${TARGET} PRIVATE cpp-httplib)
 if (LLAMA_AGENT_TOOLS_CLANG)
     target_compile_definitions(${TARGET} PRIVATE LLAMA_AGENT_TOOLS_USE_CLANG=1)
@@ -34,7 +35,7 @@ if (LLAMA_MEMORY_COZO)
     )
     target_compile_features(llama-agent-storage-cozo PUBLIC cxx_std_17)
     target_link_libraries(llama-agent-storage-cozo
-        PUBLIC llama-agent-poc
+        PUBLIC llama-agent-core
         PRIVATE Threads::Threads
     )
     llama_link_cozo(llama-agent-storage-cozo)

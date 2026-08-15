@@ -3451,7 +3451,8 @@ The dependency direction is intentionally one-way:
 
 ```text
 common/*
-    -> llama-agent-poc
+    -> llama-agent-core
+    -> llama-agent-memory / llama-agent-plan
     -> llama-agent-runtime-support
     -> CLI, daemon, MCP, and smoke targets
 ```

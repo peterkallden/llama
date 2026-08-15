@@ -1,4 +1,4 @@
-set(TARGET llama-memory)
+set(TARGET llama-agent-memory)
 
 add_library(${TARGET}
     ../agent/agent-contract.h
@@ -17,6 +17,7 @@ add_library(${TARGET}
     memory-store.h
     memory-types.h
 )
+add_library(llama-memory ALIAS ${TARGET})
 
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
