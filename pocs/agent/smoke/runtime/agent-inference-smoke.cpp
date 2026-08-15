@@ -431,6 +431,10 @@ static void test_runtime_generation_metadata() {
     assert(!proposal.plan.id.empty());
     assert(proposal.generation);
     assert(proposal.generation->status == common_agent_generation_status::completed);
+    assert(inference.seen[0].messages.size() == 2);
+    assert(inference.seen[0].messages[0].content.find("required: goal:string; steps:object[]") != std::string::npos);
+    assert(inference.seen[0].messages[0].content.find("steps: step[]") != std::string::npos);
+    assert(inference.seen[0].messages[0].content.find("Each step needs only") != std::string::npos);
 
     auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
     common_plan_state plan;

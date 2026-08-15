@@ -172,5 +172,13 @@ int main() {
     assert(step_schema["properties"]["tool"].value("type", std::string()) == "string");
     assert(step_schema["properties"]["args"].value("type", std::string()) == "object");
     assert(!step_schema["properties"]["tool"].contains("properties"));
+    std::string compact_schema_error;
+    const auto compact_schema = common_render_compact_plan_schema(
+        common_plan_proposal_json_schema(), compact_schema_error);
+    assert(compact_schema_error.empty());
+    assert(compact_schema.find("required: goal:string; steps:object[]") != std::string::npos);
+    assert(compact_schema.find("steps: step[]") != std::string::npos);
+    assert(compact_schema.find("step fields:") != std::string::npos);
+    assert(compact_schema.find("tool?:string") != std::string::npos);
     return 0;
 }

@@ -12,6 +12,40 @@ namespace {
 json normalize_tool_arguments(const std::string & tool_name, json arguments);
 json normalize_safe_integer_arguments(json arguments);
 
+std::string compact_schema_type(const json & schema) {
+    if (schema.contains("enum") && schema["enum"].is_array()) {
+        std::string result;
+        for (const auto & value : schema["enum"]) {
+            if (!result.empty()) result += '|';
+            result += value.is_string() ? value.get<std::string>() : value.dump();
+        }
+        return result;
+    }
+    const auto type = schema.value("type", std::string("value"));
+    if (type == "array") {
+        return compact_schema_type(schema.value("items", json::object())) + "[]";
+    }
+    if (type == "object") return "object";
+    return type;
+}
+
+std::string compact_schema_fields(const json & schema) {
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return {};
+    std::set<std::string> required;
+    for (const auto & value : schema.value("required", json::array())) {
+        if (value.is_string()) required.insert(value.get<std::string>());
+    }
+    std::string result;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (!result.empty()) result += "; ";
+        result += it.key();
+        if (!required.count(it.key())) result += '?';
+        result += ':' + compact_schema_type(it.value());
+    }
+    return result;
+}
+
 json parse_tool_arguments_json(const std::string & text) {
     auto parsed = json::parse(text, nullptr, false);
     if (!parsed.is_discarded()) return parsed;
@@ -329,6 +363,55 @@ bool common_plan_normalize_tool_arguments_json(
     }
     error.clear();
     return true;
+}
+
+std::string common_render_compact_plan_schema(
+        const std::string & schema_json,
+        std::string & error) {
+    error.clear();
+    const auto schema = json::parse(schema_json, nullptr, false);
+    if (schema.is_discarded() || !schema.is_object() ||
+            schema.value("type", std::string()) != "object") {
+        error = "plan schema is not a JSON object schema";
+        return {};
+    }
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object() || !properties.contains("steps") ||
+            !properties["steps"].is_object()) {
+        error = "plan schema is missing steps";
+        return {};
+    }
+    const auto step_schema = properties["steps"].value("items", json::object());
+    if (!step_schema.is_object()) {
+        error = "plan schema steps are missing an item schema";
+        return {};
+    }
+    std::string required;
+    for (const auto & value : schema.value("required", json::array())) {
+        if (!value.is_string()) continue;
+        if (!required.empty()) required += "; ";
+        required += value.get<std::string>() + ':' +
+            compact_schema_type(properties.value(value.get<std::string>(), json::object()));
+    }
+    std::string optional;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (it.key() == "steps") continue;
+        bool is_required = false;
+        for (const auto & value : schema.value("required", json::array())) {
+            if (value.is_string() && value.get<std::string>() == it.key()) {
+                is_required = true;
+                break;
+            }
+        }
+        if (is_required) continue;
+        if (!optional.empty()) optional += "; ";
+        optional += it.key() + '?' + ':' + compact_schema_type(it.value());
+    }
+    std::string result = "plan\nrequired: " + required +
+        "\noptional: " + (optional.empty() ? "none" : optional) +
+        "\nsteps: step[]" +
+        "\nstep fields: " + compact_schema_fields(step_schema);
+    return result;
 }
 
 bool common_plan_merge_tool_arguments_json(

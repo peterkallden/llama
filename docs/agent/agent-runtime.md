@@ -1367,6 +1367,26 @@ their original JSON schemas remain available as the parameters contract.
 This keeps the presentation small for compact models without weakening the
 runtime or MCP validation boundary.
 
+Planner prompts use the same boundary for plans. The strict
+`common_plan_proposal_json_schema()` remains the source of truth for the
+planner grammar and `common_plan_parse_proposal_json()` remains the only
+normalization/execution entry point. A bounded projection generated from that
+schema is shown alongside the compact tool descriptions, for example:
+
+    plan
+    required: goal:string; steps:object[]
+    optional: purpose?:string; success_criteria?:string; next_action?:string
+    steps: step[]
+    step fields: id?:string; title?:string; objective?:string; contribution?:string; mode?:tool|reasoning|final|final_response; after?:string[]; tool?:string; args?:object
+
+The model still returns one JSON object with `goal` and `steps`. This notation
+is a generated prompt projection, not a second persisted plan format. The
+host supplies step IDs and dependencies when omitted, normalizes tool
+arguments, validates the strict contract, resolves handles and only then
+dispatches tools. Legacy full proposal JSON remains accepted for persisted or
+older callers, but new model-facing planner prompts use the bounded compact
+projection.
+
 The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
 resource reference, the host-resolved media type, the requested representation,
