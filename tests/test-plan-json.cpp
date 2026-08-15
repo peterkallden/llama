@@ -96,6 +96,29 @@ int main() {
     assert(operations[3].step->id == "answer");
     assert(operations[3].step->depends_on == std::vector<std::string>({"step_1", "step_2", "step_3"}));
 
+    // Simple model plans do not own internal IDs or dependencies. A malformed
+    // self-dependency from a small model is ignored at this boundary, while
+    // the host creates the sequential chain and resolves $previous.
+    const auto simple_dataflow = R"({"goal":"read and aggregate","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget summary"},"as":"table"},{"tool":"data.aggregate","args":{"dataset":"$previous.dataset","measures":[{"function":"sum","column":"amount"}]},"after":["step_2"]}]})";
+    assert(common_plan_parse_proposal_json(simple_dataflow, plan, operations, error));
+    assert(operations[0].step->id == "step_1");
+    assert(operations[1].step->id == "step_2");
+    assert(operations[1].step->depends_on == std::vector<std::string>{"step_1"});
+    const auto simple_binding = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
+    assert(simple_binding["dataset"].value("$from_step", "") == "step_1");
+    assert(simple_binding["dataset"].value("$json_pointer", "") == "/dataset");
+
+    // Semantic aliases are model-facing only; the canonical plan retains the
+    // same host-owned step IDs and supports a later multi-input join.
+    const auto aliased_dataflow = R"({"goal":"join tables","steps":[{"as":"budget","tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"as":"forecast","tool":"document.table","args":{"resource":"r1","table":"Forecast"}},{"tool":"data.join","args":{"left":"$budget.dataset","right":"$forecast.dataset"}}]})";
+    assert(common_plan_parse_proposal_json(aliased_dataflow, plan, operations, error));
+    assert(operations[0].step->id == "step_1");
+    assert(operations[1].step->id == "step_2");
+    assert(operations[2].step->id == "step_3");
+    const auto join_args = nlohmann::json::parse(operations[2].step->tool_call->arguments_json, nullptr, false);
+    assert(join_args["left"].value("$from_step", "") == "step_1");
+    assert(join_args["right"].value("$from_step", "") == "step_2");
+
     // The prior full proposal format remains accepted for persisted or older callers.
     const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
@@ -207,5 +230,7 @@ int main() {
     assert(compact_schema.find("steps: step[]") != std::string::npos);
     assert(compact_schema.find("step fields:") != std::string::npos);
     assert(compact_schema.find("tool?:string") != std::string::npos);
+    assert(compact_schema.find("host assigns step IDs") != std::string::npos);
+    assert(compact_schema.find("$previous.field") != std::string::npos);
     return 0;
 }

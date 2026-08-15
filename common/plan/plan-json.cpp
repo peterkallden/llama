@@ -4,6 +4,7 @@
 #include <cctype>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <map>
 
 using json = nlohmann::ordered_json;
 
@@ -40,18 +41,26 @@ bool model_output_binding(const std::string & value, json & binding) {
     return true;
 }
 
-void normalize_model_output_bindings(json & value) {
+void normalize_model_output_bindings(json & value, const std::map<std::string, std::string> * aliases = nullptr) {
     if (value.is_array()) {
-        for (auto & item : value) normalize_model_output_bindings(item);
+        for (auto & item : value) normalize_model_output_bindings(item, aliases);
         return;
     }
     if (!value.is_object()) return;
     for (auto it = value.begin(); it != value.end(); ++it) {
         if (it.value().is_string()) {
             json binding;
-            if (model_output_binding(it.value().get<std::string>(), binding)) it.value() = std::move(binding);
+            const auto & shorthand = it.value().get_ref<const std::string &>();
+            if (model_output_binding(shorthand, binding)) {
+                if (aliases != nullptr) {
+                    const auto from_step = binding.value("$from_step", std::string());
+                    const auto alias = aliases->find(from_step);
+                    if (alias != aliases->end()) binding["$from_step"] = alias->second;
+                }
+                it.value() = std::move(binding);
+            }
         } else {
-            normalize_model_output_bindings(it.value());
+            normalize_model_output_bindings(it.value(), aliases);
         }
     }
 }
@@ -71,23 +80,6 @@ std::string compact_schema_type(const json & schema) {
     }
     if (type == "object") return "object";
     return type;
-}
-
-std::string compact_schema_fields(const json & schema) {
-    const auto properties = schema.value("properties", json::object());
-    if (!properties.is_object()) return {};
-    std::set<std::string> required;
-    for (const auto & value : schema.value("required", json::array())) {
-        if (value.is_string()) required.insert(value.get<std::string>());
-    }
-    std::string result;
-    for (auto it = properties.begin(); it != properties.end(); ++it) {
-        if (!result.empty()) result += "; ";
-        result += it.key();
-        if (!required.count(it.key())) result += '?';
-        result += ':' + compact_schema_type(it.value());
-    }
-    return result;
 }
 
 json parse_tool_arguments_json(const std::string & text) {
@@ -217,10 +209,6 @@ bool normalize_dependencies(const json & source, std::vector<std::string> & depe
     return false;
 }
 
-bool has_explicit_dependencies(const json & source) {
-    return source.contains("after") || source.contains("depends_on");
-}
-
 bool parse_mode(const json & source, bool has_tool, common_plan_step_mode & mode, std::string & error) {
     const auto value = source.value("mode", has_tool ? std::string("tool") : std::string("final_response"));
     if (value == "tool") mode = common_plan_step_mode::tool;
@@ -231,7 +219,8 @@ bool parse_mode(const json & source, bool has_tool, common_plan_step_mode & mode
     return true;
 }
 
-bool parse_tool(const json & source, common_plan_step & step, std::string & error) {
+bool parse_tool(const json & source, common_plan_step & step, std::string & error,
+        const std::map<std::string, std::string> * aliases = nullptr) {
     if (!source.contains("tool")) return true;
     const auto & tool = source["tool"];
     std::string name;
@@ -248,7 +237,7 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
     // The model-facing shorthand $step.output is only syntax sugar. Store
     // the existing strict binding object in the plan IR so execution keeps
     // one binding path and one materialization policy.
-    normalize_model_output_bindings(arguments);
+    normalize_model_output_bindings(arguments, aliases);
 
     common_plan_tool_arguments_contract contract;
     if (!parse_tool_arguments_contract(name, std::move(arguments), contract, error)) {
@@ -269,7 +258,9 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
     return true;
 }
 
-bool parse_step(const json & source, const std::string & goal, const std::string & fallback_id, common_plan_step & step, std::string & error) {
+bool parse_step(const json & source, const std::string & goal, const std::string & fallback_id, common_plan_step & step, std::string & error,
+        const std::map<std::string, std::string> * aliases = nullptr,
+        bool host_owned_dependencies = false) {
     if (!source.is_object()) { error = "step must be an object"; return false; }
     if (source.contains("id")) {
         if (!source["id"].is_string() || source["id"].get<std::string>().empty()) { error = "step requires a non-empty id"; return false; }
@@ -286,11 +277,12 @@ bool parse_step(const json & source, const std::string & goal, const std::string
     step.objective = source.value("objective", goal);
     if (source.contains("contribution") && !source["contribution"].is_string()) { error = "step contribution must be a string"; return false; }
     step.intended_contribution = source.value("contribution", step.objective);
-    if (!normalize_dependencies(source, step.depends_on, error)) return false;
+    if (host_owned_dependencies) step.depends_on.clear();
+    else if (!normalize_dependencies(source, step.depends_on, error)) return false;
     if (source.contains("required_evidence") && !string_array(source["required_evidence"], step.required_evidence)) { error = "required_evidence must be a string array"; return false; }
     if (source.contains("source_memory_ids") && !string_array(source["source_memory_ids"], step.source_memory_ids)) { error = "source_memory_ids must be a string array"; return false; }
     const bool has_tool = source.contains("tool");
-    if (!parse_mode(source, has_tool, step.mode, error) || !parse_tool(source, step, error)) return false;
+    if (!parse_mode(source, has_tool, step.mode, error) || !parse_tool(source, step, error, aliases)) return false;
     return true;
 }
 
@@ -312,16 +304,39 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     plan.next_action = input.value("next_action", "execute plan");
     bool has_final = false;
     std::set<std::string> seen_step_ids;
+    std::map<std::string, std::string> aliases;
+    bool host_owned_dependencies = true;
+    for (const auto & source : input["steps"]) {
+        if (source.is_object() && source.contains("id")) {
+            host_owned_dependencies = false;
+            break;
+        }
+    }
     size_t generated_index = 1;
     for (const auto & source : input["steps"]) {
-        const std::string fallback_id = source.is_object() && source.contains("id") ? std::string() : next_generated_step_id(generated_index, seen_step_ids);
+        const std::string fallback_id = host_owned_dependencies || (source.is_object() && !source.contains("id"))
+            ? next_generated_step_id(generated_index, seen_step_ids) : std::string();
+        std::map<std::string, std::string> binding_aliases = aliases;
+        if (!operations.empty() && operations.back().step) binding_aliases["previous"] = operations.back().step->id;
         common_plan_step step;
-        if (!parse_step(source, plan.goal, fallback_id, step, error)) return false;
+        if (!parse_step(source, plan.goal, fallback_id, step, error, &binding_aliases, host_owned_dependencies)) return false;
         if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
         if (step.id == fallback_id) ++generated_index;
-        if (step.depends_on.empty() && !operations.empty() && !has_explicit_dependencies(source)) {
+        if ((host_owned_dependencies || step.depends_on.empty()) && !operations.empty()) {
             const auto & previous = operations.back();
             if (previous.step) step.depends_on = {previous.step->id};
+        }
+        if (source.is_object() && source.contains("as")) {
+            if (!source["as"].is_string() || source["as"].get<std::string>().empty() || source["as"].get<std::string>().size() > 64) {
+                error = "step alias must be a non-empty string of at most 64 characters";
+                return false;
+            }
+            const auto alias = source["as"].get<std::string>();
+            if (alias == "previous" || aliases.count(alias) || seen_step_ids.count(alias)) {
+                error = "duplicate or reserved step alias";
+                return false;
+            }
+            aliases[alias] = step.id;
         }
         has_final = has_final || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
         common_plan_operation operation;
@@ -379,9 +394,9 @@ std::string common_plan_proposal_json_schema() {
             {"purpose", {{"type", "string"}, {"maxLength", 256}}}, {"goal", {{"type", "string"}, {"maxLength", 256}}},
             {"success_criteria", {{"type", "string"}, {"maxLength", 256}}}, {"next_action", {{"type", "string"}, {"maxLength", 256}}},
             {"steps", {{"type", "array"}, {"minItems", 1}, {"maxItems", 5}, {"items", {{"type", "object"}, {"additionalProperties", false}, {"properties", {
-                {"id", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
+                {"id", {{"type", "string"}, {"maxLength", 64}}}, {"as", {{"type", "string"}, {"maxLength", 64}}}, {"title", {{"type", "string"}, {"maxLength", 128}}}, {"objective", {{"type", "string"}, {"maxLength", 256}}}, {"contribution", {{"type", "string"}, {"maxLength", 256}}},
                 {"mode", {{"type", "string"}, {"enum", {"tool", "reasoning", "final", "final_response"}}}},
-                {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                {"after", {{"type", "array"}, {"items", {{"type", "string"}}}}}, {"depends_on", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                 {"tool", {{"type", "string"}, {"maxLength", 256}}},
                 {"args", {{"type", "object"}}}
             }}}}}}
@@ -459,7 +474,9 @@ std::string common_render_compact_plan_schema(
     std::string result = "plan\nrequired: " + required +
         "\noptional: " + (optional.empty() ? "none" : optional) +
         "\nsteps: step[]" +
-        "\nstep fields: " + compact_schema_fields(step_schema);
+        "\nstep fields: tool?:string; args?:object; as?:string; mode?:string" +
+        "\nstep order: host assigns step IDs and sequential dependencies when id/after/depends_on are omitted" +
+        "\noutput binding: use $previous.field or $alias.field; host resolves both to typed step bindings";
     return result;
 }
 

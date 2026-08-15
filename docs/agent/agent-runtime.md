@@ -1444,15 +1444,62 @@ schema is shown alongside the compact tool descriptions, for example:
     required: goal:string; steps:object[]
     optional: purpose?:string; success_criteria?:string; next_action?:string
     steps: step[]
-    step fields: id?:string; title?:string; objective?:string; contribution?:string; mode?:tool|reasoning|final|final_response; after?:string[]; tool?:string; args?:object
+    step fields: tool?:string; args?:object; as?:string; mode?:string
+    step order: host assigns step IDs and sequential dependencies when id/after/depends_on are omitted
+    output binding: use $previous.field or $alias.field; host resolves both to typed step bindings
 
 The model still returns one JSON object with `goal` and `steps`. This notation
-is a generated prompt projection, not a second persisted plan format. The
-host supplies step IDs and dependencies when omitted, normalizes tool
-arguments, validates the strict contract, resolves handles and only then
-dispatches tools. Legacy full proposal JSON remains accepted for persisted or
-older callers, but new model-facing planner prompts use the bounded compact
- projection.
+is a generated prompt projection, not a second persisted plan format. In the
+simple model-facing form, the model describes the ordered work only:
+
+```json
+{
+  "goal": "sum the budget table",
+  "steps": [
+    {
+      "tool": "document.table",
+      "args": {"resource": "r1", "table": "Budget summary"},
+      "as": "budget"
+    },
+    {
+      "tool": "data.aggregate",
+      "args": {
+        "dataset": "$previous.dataset",
+        "measures": [{"function": "sum", "column": "amount"}]
+      }
+    }
+  ]
+}
+```
+
+The host turns this into `step_1` and `step_2`, makes `step_2` depend on
+`step_1`, and adds the native final synthesis step. A malformed model-supplied
+`id`, `after`, or `depends_on` is therefore not needed in simple mode and does
+not replace the host-owned sequential chain. Explicit IDs and dependencies
+remain accepted for older callers and advanced plans that genuinely need a
+DAG; they are not required in the model-facing contract.
+
+`$previous.field` means the immediately preceding logical step in a simple
+ordered plan. For a non-linear plan, the model can give completed branches a
+bounded semantic alias with `as`, for example `budget` and `forecast`, and
+refer to `$budget.dataset` and `$forecast.dataset` from a later join. Aliases
+are only parser-time names; the persisted plan still contains host-generated
+step IDs. Unknown, duplicate, reserved, or ambiguous aliases fail closed.
+
+Both shorthand forms are canonicalized to the existing strict binding IR:
+
+```text
+$previous.dataset
+        -> {"$from_step":"step_1", "$json_pointer":"/dataset"}
+$budget.dataset
+        -> {"$from_step":"step_1", "$json_pointer":"/dataset"}
+```
+
+The host then validates the typed result and materializes the authoritative
+handle only after the source step completes. This keeps one plan parser, one
+dependency representation, one binding/materialization path, and one
+execution scheduler. It also keeps retry attempts attached to the same
+host-owned logical step rather than creating new model-visible steps.
 
 ### Typed step-output bindings
 
@@ -1508,14 +1555,12 @@ as `resource_ref`, `table_ref`, and `dataset_ref`. The labels are included in
 the compact model description, while the strict JSON schemas and host-side
 binding/materialization remain authoritative for validation and execution.
 
-Future planner-output simplification remains backlog work. A possible later
-experiment is to let compact models emit a bounded line-oriented plan notation
-and normalize it back into the same strict planner JSON before validation. That
-must not introduce a second persisted plan format, a second execution path, or
-weaker handling for planner, reflection, memory, continuation, and tool
-arguments. Until that experiment is implemented and verified, all structured
-model outputs remain JSON and `common_plan_parse_proposal_json()` remains the
-single planner normalization boundary.
+Future planner-output simplification remains bounded to this same
+normalization boundary. A later experiment may render the compact description
+in line-oriented notation, but structured model output remains JSON and
+`common_plan_parse_proposal_json()` remains the single planner normalization
+boundary. No alternate persisted plan format, execution path, or scheduler
+should be introduced.
 
 The shared resource contract now also defines the first generic processing
 boundary for future non-native representations. A processor receives a source
