@@ -1388,7 +1388,61 @@ host supplies step IDs and dependencies when omitted, normalizes tool
 arguments, validates the strict contract, resolves handles and only then
 dispatches tools. Legacy full proposal JSON remains accepted for persisted or
 older callers, but new model-facing planner prompts use the bounded compact
-projection.
+ projection.
+
+### Typed step-output bindings
+
+Resource handles and dataset handles are different model-facing values. A
+short handle such as `r1` identifies a turn-scoped resource, while `d1`
+identifies a dataset produced or exposed by a previous step. They are not
+interchangeable, even when both are represented as JSON strings in a tool
+argument.
+
+The planner may express a dependency using the bounded shorthand
+`$step_id.output_name`:
+
+```json
+{
+  "id": "aggregate",
+  "after": ["table"],
+  "tool": "data.aggregate",
+  "args": {
+    "dataset": "$table.dataset",
+    "measures": [{"function": "sum", "column": "amount"}]
+  }
+}
+```
+
+The planner parser immediately canonicalizes that shorthand to the existing
+strict binding representation:
+
+```json
+{
+  "dataset": {
+    "$from_step": "table",
+    "$json_pointer": "/dataset"
+  }
+}
+```
+
+At execution time the binding is resolved only after the source step is
+completed and its JSON observation contains the referenced field. For
+example, `document.table` may return `{ "dataset": "d1" }`, after which the
+host dispatches `data.aggregate` with `{ "dataset": "d1" }`. The model does
+not need to copy an authoritative dataset URI.
+
+The runtime also supports one deliberately narrow convenience rule: when a
+step has exactly one completed dependency, that dependency exposes exactly
+one `dataset` result, and the consumer is a known dataset/statistics tool, an
+omitted `dataset` argument is wired to that result. Multiple dependencies,
+missing observations, incompatible outputs, and ambiguous dataflow fail
+closed. This is typed automatic wiring, not a general `previous_result`
+variable.
+
+The tool catalog marks relevant inputs and outputs with semantic labels such
+as `resource_ref`, `table_ref`, and `dataset_ref`. The labels are included in
+the compact model description, while the strict JSON schemas and host-side
+binding/materialization remain authoritative for validation and execution.
 
 Future planner-output simplification remains backlog work. A possible later
 experiment is to let compact models emit a bounded line-oriented plan notation

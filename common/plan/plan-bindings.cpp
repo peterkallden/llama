@@ -16,6 +16,34 @@ const common_plan_observation * find_step_observation(const common_plan_state & 
     return nullptr;
 }
 
+bool accepts_implicit_dataset(const std::string & tool_name) {
+    return tool_name == "dataset.inspect" || tool_name == "dataset.schema" ||
+        tool_name == "dataset.sample" || tool_name == "dataset.validate" ||
+        tool_name == "data.query" || tool_name == "data.filter" ||
+        tool_name == "data.aggregate" || tool_name == "data.transform" ||
+        tool_name == "statistics.describe" || tool_name == "statistics.outliers" ||
+        tool_name == "statistics.value_counts";
+}
+
+void add_unambiguous_dataset_binding(
+        const common_plan_state & plan,
+        const common_plan_step & step,
+        nlohmann::ordered_json & arguments) {
+    if (arguments.contains("dataset") || step.depends_on.size() != 1 ||
+            !step.tool_call || !accepts_implicit_dataset(step.tool_call->name)) return;
+    const auto * source_step = find_step(plan, step.depends_on.front());
+    if (!source_step || source_step->status != common_plan_step_status::completed) return;
+    const auto * observation = find_step_observation(plan, source_step->id);
+    if (!observation) return;
+    const auto source = nlohmann::ordered_json::parse(observation->summary, nullptr, false);
+    if (!source.is_object() || !source.contains("dataset") || !source["dataset"].is_string() ||
+            source["dataset"].get<std::string>().empty()) return;
+    arguments["dataset"] = nlohmann::ordered_json{
+        {"$from_step", source_step->id},
+        {"$json_pointer", "/dataset"},
+    };
+}
+
 bool resolve_value(
         const common_plan_state & plan,
         nlohmann::ordered_json & value,
@@ -73,6 +101,10 @@ bool common_plan_materialize_tool_arguments_contract(
         error = "tool arguments must be a JSON object";
         return false;
     }
+    // Safe typed autowiring: one completed predecessor with one compatible
+    // dataset output may fill one omitted dataset input. Ambiguous or missing
+    // dataflow remains an ordinary validation failure.
+    add_unambiguous_dataset_binding(plan, step, materialized_contract.value);
     if (!resolve_value(plan, materialized_contract.value, 0, error)) {
         return false;
     }

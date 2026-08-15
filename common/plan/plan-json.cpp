@@ -12,6 +12,50 @@ namespace {
 json normalize_tool_arguments(const std::string & tool_name, json arguments);
 json normalize_safe_integer_arguments(json arguments);
 
+bool model_output_binding(const std::string & value, json & binding) {
+    if (value.size() < 5 || value.front() != '$') return false;
+    const auto separator = value.find('.', 1);
+    if (separator == std::string::npos || separator == 1 || separator + 1 >= value.size()) return false;
+    const auto valid_identifier = [](const std::string & part) {
+        return !part.empty() && std::all_of(part.begin(), part.end(), [](unsigned char ch) {
+            return std::isalnum(ch) != 0 || ch == '_' || ch == '-';
+        });
+    };
+    const std::string step_id = value.substr(1, separator - 1);
+    const std::string field_path = value.substr(separator + 1);
+    std::string pointer = "/";
+    size_t begin = 0;
+    while (begin < field_path.size()) {
+        const size_t end = field_path.find('.', begin);
+        const std::string field = field_path.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (!valid_identifier(field)) return false;
+        if (pointer.size() > 256 - field.size() - 1) return false;
+        if (pointer.size() > 1) pointer += '/';
+        pointer += field;
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    if (!valid_identifier(step_id) || pointer.size() <= 1) return false;
+    binding = json{{"$from_step", step_id}, {"$json_pointer", pointer}};
+    return true;
+}
+
+void normalize_model_output_bindings(json & value) {
+    if (value.is_array()) {
+        for (auto & item : value) normalize_model_output_bindings(item);
+        return;
+    }
+    if (!value.is_object()) return;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        if (it.value().is_string()) {
+            json binding;
+            if (model_output_binding(it.value().get<std::string>(), binding)) it.value() = std::move(binding);
+        } else {
+            normalize_model_output_bindings(it.value());
+        }
+    }
+}
+
 std::string compact_schema_type(const json & schema) {
     if (schema.contains("enum") && schema["enum"].is_array()) {
         std::string result;
@@ -200,6 +244,11 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
         else if (tool.contains("arguments_json") && tool["arguments_json"].is_string()) arguments = parse_tool_arguments_json(tool["arguments_json"].get<std::string>());
     } else { error = "invalid step tool payload"; return false; }
     if (source.contains("args")) arguments = source["args"];
+
+    // The model-facing shorthand $step.output is only syntax sugar. Store
+    // the existing strict binding object in the plan IR so execution keeps
+    // one binding path and one materialization policy.
+    normalize_model_output_bindings(arguments);
 
     common_plan_tool_arguments_contract contract;
     if (!parse_tool_arguments_contract(name, std::move(arguments), contract, error)) {

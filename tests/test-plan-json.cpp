@@ -27,6 +27,13 @@ int main() {
     assert(operations[1].step->depends_on == std::vector<std::string>{"search"});
     assert(common_plan_step_effective_mode(*operations[2].step) == common_plan_step_mode::final_response);
 
+    const auto shorthand_binding = R"({"goal":"aggregate a document table","steps":[{"id":"table","tool":"document.table","args":{"resource":"r1","table":"Budget summary"}},{"id":"sum","after":["table"],"tool":"data.aggregate","args":{"dataset":"$table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(common_plan_parse_proposal_json(shorthand_binding, plan, operations, error));
+    const auto shorthand_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
+    assert(shorthand_args["dataset"].is_object());
+    assert(shorthand_args["dataset"].value("$from_step", "") == "table");
+    assert(shorthand_args["dataset"].value("$json_pointer", "") == "/dataset");
+
     const auto normalized = R"({"goal":"calculate","steps":[{"id":"calculate","tool":"calculator","args":{"operation":"multiply","operands":[{"value":17},{"value":23}]}}]})";
     assert(common_plan_parse_proposal_json(normalized, plan, operations, error));
     assert(operations.size() == 2); // native final synthesis
@@ -126,6 +133,26 @@ int main() {
         materialized_arguments_json,
         error));
     assert(same_json_object(materialized_arguments_json, R"({"path":"pocs/agent/agent-runtime-host.cpp"})"));
+
+    common_plan_step table_result{"table", "Table", "Resolve table"};
+    table_result.status = common_plan_step_status::completed;
+    materialize_plan.steps.push_back(table_result);
+    common_plan_observation table_observation{
+        "tool:table:1", "document.table", R"({"dataset":"d1","name":"Budget summary"})", 1.0f, {}, {}, 0};
+    materialize_plan.observations.push_back(table_observation);
+    common_plan_step aggregate_step{"aggregate", "Aggregate", "Sum amount"};
+    aggregate_step.depends_on = {"table"};
+    aggregate_step.tool_call = common_plan_tool_call{
+        "data.aggregate",
+        R"({"measures":[{"function":"sum","column":"amount"}]})",
+    };
+    assert(common_plan_materialize_tool_arguments(
+        materialize_plan,
+        aggregate_step,
+        aggregate_step.tool_call->arguments_json,
+        materialized_arguments_json,
+        error));
+    assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d1");
 
     common_plan_state context_plan;
     context_plan.goal = "Use only relevant evidence";

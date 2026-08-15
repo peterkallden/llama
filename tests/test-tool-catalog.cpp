@@ -67,8 +67,15 @@ int main() {
     assert(document_tables && document_table && data_aggregate && value_counts);
     const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
     const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
+    const auto document_tables_input = nlohmann::json::parse(document_tables->input_schema_json);
+    const auto document_table_input = nlohmann::json::parse(document_table->input_schema_json);
+    const auto aggregate_input = nlohmann::json::parse(data_aggregate->input_schema_json);
     const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
     assert(document_tables_result["required"].size() == 3);
+    assert(document_tables_input["properties"]["resource"].value("x-agent-type", "") == "resource_ref");
+    assert(document_table_input["properties"]["resource"].value("x-agent-type", "") == "resource_ref");
+    assert(document_table_input["properties"]["node_id"].value("x-agent-type", "") == "table_ref");
+    assert(aggregate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     const auto value_counts_schema = nlohmann::json::parse(value_counts->input_schema_json);
