@@ -591,7 +591,11 @@ offers the effective tool view, so reflection can select a valid alternative
 without expanding host authority. The context is emitted through the normal
 agent event stream as `tool_repair_context_created` and is retained with the
 tool-failure observation. A repair pass may correct selection or arguments,
-but it cannot change the profile, capability set, policy or backend.
+but it cannot change the profile, capability set, policy or backend. A failed
+tool-backed step is not evidence of completion: the runtime blocks final
+synthesis until the step has been reset/replaced and successfully rerun. If
+reflection accepts the draft without scheduling such a repair, the turn fails
+bounded rather than presenting the draft as a verified answer.
 
 This makes repair a bounded normalization and validation path, not a second
 tool-discovery protocol. The model is used only when deterministic matching is

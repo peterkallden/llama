@@ -768,11 +768,32 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return true;
     };
 
+    const auto block_unrepaired_tool_failure = [&]() -> bool {
+        for (const auto & step : plan.steps) {
+            if (step.status == common_plan_step_status::failed &&
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::tool) {
+                result.error = "final synthesis is blocked by an unrepaired failed tool step: " + step.id;
+                error = result.error;
+                append_trace(result, common_runtime_trace_stage::response,
+                    common_runtime_trace_kind::failed,
+                    "final response blocked until failed tool step is repaired and rerun",
+                    plan.id, step.id, step.selected_tool.value_or(std::string()));
+                return true;
+            }
+        }
+        return false;
+    };
+
     const auto complete_active_synthesis_step = [&]() -> bool {
         if (!plan.active_step_id) return true;
         common_plan_step * active = nullptr;
         for (auto & step : plan.steps) if (step.id == *plan.active_step_id) { active = &step; break; }
         if (!active || active->status != common_plan_step_status::active || common_plan_step_effective_mode(*active) != common_plan_step_mode::final_response) return true;
+
+        // A final response cannot turn a failed tool-backed step into
+        // evidence.  Reflection must reset/replace and rerun the failed step
+        // before synthesis is allowed to complete.
+        if (block_unrepaired_tool_failure()) return false;
 
         // A bounded resource slice is an intermediate inference result.  The
         // resource driver records that slice after this runtime returns and
@@ -1255,6 +1276,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
         if (!request.enable_reflection || iteration >= request.max_reflection_rounds) {
+            if (block_unrepaired_tool_failure()) break;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
             result.limit_reached = request.enable_reflection;
@@ -1464,6 +1486,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (!reflection_escalation_denied &&
                 !reflection_requested_escalation &&
                 (reflection.ready_to_answer || reflection.decision == common_reflection_decision::accept)) {
+            if (block_unrepaired_tool_failure()) break;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
             append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,

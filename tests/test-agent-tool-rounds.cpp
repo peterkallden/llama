@@ -110,6 +110,7 @@ int main() {
             step.selected_tool = tool_name;
             step.tool_call = common_plan_tool_call{tool_name, args};
             common_plan_step answer{"answer", "Answer", "Return a bounded result"};
+            answer.mode = common_plan_step_mode::final_response;
             answer.depends_on = {"repair"};
             proposal.plan.steps = {step, answer};
             proposal.plan.active_step_id = step.id;
@@ -156,18 +157,24 @@ int main() {
         repair_request.max_reflection_rounds = 1;
         repair_request.max_tool_batches = 1;
         const auto repair_result = repair_runtime.run(repair_request);
-        assert(repair_result.error.empty());
+        // An accepting reflector without a repair operation must not allow a
+        // final response to hide the failed tool-backed step.
+        assert(!repair_result.error.empty());
+        assert(repair_result.error.find("unrepaired failed tool step") != std::string::npos);
         bool repair_event = false;
         bool repair_arguments_trace = false;
+        bool blocked_final_response = false;
         for (const auto & event : repair_result.events) repair_event = repair_event || event.type == common_agent_event_type::tool_repair_context_created;
         for (const auto & trace : repair_result.trace) {
             repair_arguments_trace = repair_arguments_trace || trace.detail.find("model_args=") != std::string::npos;
+            blocked_final_response = blocked_final_response || trace.detail.find("final response blocked until failed tool step is repaired and rerun") != std::string::npos;
             if (args.find("secret") != std::string::npos && trace.detail.find("model_args=") != std::string::npos) {
                 assert(trace.detail.find("<redacted>") != std::string::npos);
                 assert(trace.detail.find("do-not-log") == std::string::npos);
             }
         }
         assert(repair_event);
+        assert(blocked_final_response);
         if (args.find("secret") != std::string::npos) assert(repair_arguments_trace);
     };
 

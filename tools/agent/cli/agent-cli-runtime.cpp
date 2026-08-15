@@ -424,6 +424,8 @@ public:
         system.role = "system";
         system.content = "Return only JSON matching the supplied schema. "
             "Review factual grounding, completeness and whether tool availability was represented honestly. "
+            "If a tool-backed plan step failed, never accept the draft while that step remains failed: "
+            "return revise and reset/replace/activate a repair step so the tool is rerun and produces evidence. "
             "When another dependency-ready plan step should run, return decision revise and use compact repair fields: complete, activate, next_action and add_steps. "
             "Prefer reset, activate and complete for existing steps; use add_steps mainly for reasoning or synthesis follow-up. "
             "Only add a new tool step when all required tool arguments are known from the current plan evidence. "
