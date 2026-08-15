@@ -128,6 +128,30 @@ int main() {
 
     normalized = nlohmann::ordered_json();
     changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        document_request,
+        "document.tables",
+        nlohmann::ordered_json::object({{"resource", "r1"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        document_request,
+        "document.table",
+        nlohmann::ordered_json::object({{"resource", "r1"}, {"table", "Budget summary"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
     document_request.input_resources.front().resource.name = "document-table-model.json";
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         document_request,

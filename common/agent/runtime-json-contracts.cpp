@@ -1,5 +1,6 @@
 #include "agent/runtime-json-contracts.h"
 
+#include <algorithm>
 #include <cctype>
 #include <regex>
 
@@ -205,6 +206,30 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }
     } else if (tool_name == "document.tables" || tool_name == "document.table") {
+        // Document tools use the resource_ref-shaped `resource` property in
+        // their strict schema, but model-facing calls may contain the same
+        // current-turn handle used by resource_read, for example `r1`.
+        // Resolve that handle before the document binding attempts a store
+        // lookup; otherwise the literal handle is incorrectly treated as a
+        // canonical URI and the representation appears to be unavailable.
+        const auto is_resource_handle = [](const json & value) {
+            if (!value.is_string()) return false;
+            const auto handle = value.get<std::string>();
+            return handle.size() >= 2 && handle.front() == 'r' &&
+                std::all_of(handle.begin() + 1, handle.end(),
+                    [](const char character) { return std::isdigit(static_cast<unsigned char>(character)); });
+        };
+        const bool resource_handle = arguments.contains("id") ||
+            (arguments.contains("resource") && is_resource_handle(arguments["resource"])) ||
+            arguments.contains("resource_id");
+        if (resource_handle) {
+            if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+            if (normalized_arguments.contains("uri")) {
+                normalized_arguments["resource"] = normalized_arguments["uri"];
+                normalized_arguments.erase("uri");
+                changed = true;
+            }
+        }
         if (normalized_arguments.contains("resource") &&
                 normalized_arguments["resource"].is_string()) {
             const std::string supplied_resource = normalized_arguments["resource"].get<std::string>();
