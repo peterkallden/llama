@@ -81,8 +81,19 @@ $memoryDb = Join-Path $workDir "memory.cozo"
 $planDb = Join-Path $workDir "plan.cozo"
 $ordersPath = if ($OrdersCsv) { (Resolve-Path -LiteralPath $OrdersCsv).Path } else { Join-Path $datasetsDir "orders.csv" }
 $customersPath = if ($CustomersCsv) { (Resolve-Path -LiteralPath $CustomersCsv).Path } else { Join-Path $datasetsDir "customers.csv" }
-$agentExe = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent.exe"
-$seedExe = Join-Path $repoRoot "$BuildDir\bin\$Configuration\llama-agent-data-store-cozo-seed.exe"
+$buildRoot = if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    [System.IO.Path]::GetFullPath($BuildDir)
+} else {
+    Join-Path $repoRoot $BuildDir
+}
+$agentExe = Join-Path $buildRoot "bin\$Configuration\llama-agent.exe"
+$seedExe = Join-Path $buildRoot "bin\$Configuration\llama-agent-data-store-cozo-seed.exe"
+if (-not (Test-Path -LiteralPath $agentExe)) {
+    $agentExe = Join-Path $buildRoot "bin\llama-agent.exe"
+}
+if (-not (Test-Path -LiteralPath $seedExe)) {
+    $seedExe = Join-Path $buildRoot "bin\llama-agent-data-store-cozo-seed.exe"
+}
 $seedLog = Join-Path $workDir "01-seed.log"
 $agentLog = Join-Path $workDir "02-agent-data.log"
 
