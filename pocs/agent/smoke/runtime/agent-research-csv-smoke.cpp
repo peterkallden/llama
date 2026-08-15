@@ -56,6 +56,7 @@ public:
 
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         ++calls;
+        call_names.push_back(call.name);
         const auto & source = sources[std::min<size_t>(calls - 1, sources.size() - 1)];
         common_runtime_resource_ref resource;
         resource.uri = source.uri;
@@ -72,6 +73,7 @@ public:
     }
 
     mutable size_t calls = 0;
+    mutable std::vector<std::string> call_names;
     mutable std::string last_requested_uri;
 
 private:
@@ -149,6 +151,10 @@ int main() {
             workspace.comparisons.size() != 1 || result.coverage.answered_gaps != 1 ||
             result.coverage.source_diversity != 1.0) {
         std::fprintf(stderr, "CSV research completion failed: %s\n", error.c_str());
+        return 1;
+    }
+    if (tools.call_names != std::vector<std::string>{"resource_read", "resource_read"}) {
+        std::fprintf(stderr, "CSV research selected a non-local acquisition tool\n");
         return 1;
     }
     if (result.synthesis_context.find("TAB6695_sv.csv") == std::string::npos ||

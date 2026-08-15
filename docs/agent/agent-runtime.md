@@ -101,6 +101,30 @@ passes that plan identity into the research workspace and emits the
 workspace/controller concern rather than expanding the plan into individual
 research tasks.
 
+The ownership boundary is deliberately narrow. The outer plan owns the
+research objective, the required contribution and the eventual interpretation
+or synthesis. The research controller owns source acquisition, research task
+ordering, acquisition-tool selection, retries, source comparison and evidence
+coverage. A model-generated research plan must therefore describe what must be
+known, not independently create a second acquisition workflow. The controller
+uses the same host-resolved tool authority as the rest of the runtime; it may
+select only an approved acquisition capability and may not expand the active
+tool profile.
+
+The first deterministic acquisition path is source-driven. When an unused
+user-supplied resource is available, the controller schedules `resource_read`
+with host-owned resource identity and bounds. It does not fall through to
+`web_search` merely because the model mentioned the web. Source comparison and
+coverage transitions remain controller state transitions, not additional model
+tools or research tasks. The model receives the bounded evidence and synthesis
+context after acquisition has completed.
+
+This boundary is being tightened incrementally. The current model-free CSV
+research smoke verifies that two local resources produce two `resource_read`
+calls and no alternative acquisition tool. A later runtime change will prevent
+model-planned acquisition steps from competing with this controller path and
+will bridge research completion into an explicit outer-plan observation.
+
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,
 source/evidence creation, provenance, answer verification and cancellation
 without network access. The common runtime emits structured research events
