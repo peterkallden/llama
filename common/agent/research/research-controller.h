@@ -32,6 +32,9 @@ struct common_agent_research_event {
     double gap_confidence = 0.0;
     std::string assessment_summary;
     common_agent_research_assessment assessment;
+    bool retryable = false;
+    std::string failure_code;
+    std::string failure_summary;
 };
 
 enum class common_agent_research_action_kind {

@@ -105,17 +105,30 @@ bool common_agent_research_runtime_adapter::execute(
     event.task_id = action.task_id;
     event.gap_id = action.gap_id;
 
+    std::string last_failure_code;
+    std::string last_failure_summary;
+    bool last_failure_retryable = false;
+    bool executed_failure = false;
     for (const auto & tool_name : action.preferred_tools) {
         common_agent_tool_call call;
         if (!build_call(tool_name, action.instruction, workspace, call)) continue;
         std::string validation_error;
-        if (!tools.validate(call, validation_error)) continue;
+        if (!tools.validate(call, validation_error)) {
+            if (!executed_failure) {
+                last_failure_code = "tool.invalid_arguments";
+                last_failure_summary = validation_error;
+                last_failure_retryable = false;
+            }
+            continue;
+        }
 
         const auto result = tools.execute(call);
         if (!result.ok) {
-            event.type = common_agent_research_event_type::task_failed;
-            error.clear();
-            return true;
+            executed_failure = true;
+            last_failure_code = result.failure_code;
+            last_failure_summary = result.safe_summary;
+            last_failure_retryable = result.retryable;
+            continue;
         }
 
         const std::string existing_source_id = existing_source_id_for_resource(
@@ -238,6 +251,12 @@ bool common_agent_research_runtime_adapter::execute(
     }
 
     event.type = common_agent_research_event_type::task_failed;
+    event.retryable = last_failure_retryable;
+    event.failure_code = (!executed_failure && last_failure_code.empty())
+        ? "research.acquisition_failed" : last_failure_code;
+    event.failure_summary = last_failure_summary.empty()
+        ? "All host-approved acquisition tools failed."
+        : last_failure_summary;
     error.clear();
     return true;
 }
@@ -292,8 +311,15 @@ common_agent_research_result common_agent_research_runner::run(
             result.complete = false;
             return result;
         }
+        bool retry = false;
+        for (const auto & task : workspace.tasks) {
+            if (task.task_id == action.task_id) {
+                retry = task.attempt > 0;
+                break;
+            }
+        }
         emit_lifecycle({common_agent_research_lifecycle_event_type::task_scheduled,
-            action.gap_id, action.task_id, iterations});
+            action.gap_id, action.task_id, iterations, retry});
         emit_lifecycle({common_agent_research_lifecycle_event_type::task_started,
             action.gap_id, action.task_id, iterations});
         common_agent_research_event event;

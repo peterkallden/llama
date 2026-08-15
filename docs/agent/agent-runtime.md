@@ -125,6 +125,16 @@ calls and no alternative acquisition tool. Completed research is now also
 bridged into the outer plan as one bounded `research_workspace` observation
 carrying evidence IDs and resource references.
 
+Research acquisition repair is controller-owned as well. A failed acquisition
+event carries a bounded failure code, safe summary and retryable classification.
+The controller retries the same logical task only when the host tool result says
+the failure is retryable and the task attempt budget remains; the retry is a new
+attempt of that task, not a second model-owned acquisition plan. Validation,
+policy, permanent-not-found and other non-retryable failures transition the gap
+to `blocked` without another acquisition call. This keeps transient recovery in
+the existing research runner/controller lane while leaving semantic correction
+and final synthesis to the outer runtime.
+
 The runtime also applies the first acquisition ownership guard: in research
 mode, model-planned acquisition calls such as `resource_read`, `web_search`,
 `web_fetch`, repository search, memory retrieval and dataset acquisition are

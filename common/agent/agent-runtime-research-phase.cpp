@@ -108,6 +108,7 @@ common_agent_research_lifecycle_sink make_common_agent_research_lifecycle_sink(
         if (!event.gap_id.empty()) detail += " gap=" + event.gap_id;
         if (!event.task_id.empty()) detail += " task=" + event.task_id;
         if (event.iteration > 0) detail += " iteration=" + std::to_string(event.iteration);
+        if (event.retry) detail += " retry=true";
         context.emit_event(type, detail);
 
         common_runtime_trace_kind trace_kind = common_runtime_trace_kind::recorded;

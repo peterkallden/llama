@@ -327,7 +327,8 @@ common_agent_research_action common_agent_research_controller::advance(
                 workspace, task->task_id, task_target, error)) {
             return complete_action(common_agent_research_stop_reason::policy_blocked);
         }
-        if (event.type == common_agent_research_event_type::task_failed && task->attempt + 1 < task->max_attempts) {
+        if (event.type == common_agent_research_event_type::task_failed &&
+                event.retryable && task->attempt + 1 < task->max_attempts) {
             if (!common_agent_research_transition_gap(
                     workspace, gap->gap_id,
                     common_agent_research_gap_status::open, error)) {

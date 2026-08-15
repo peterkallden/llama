@@ -205,6 +205,7 @@ struct common_agent_research_lifecycle_event {
     std::string gap_id;
     std::string task_id;
     int iteration = 0;
+    bool retry = false;
 };
 
 using common_agent_research_lifecycle_sink =

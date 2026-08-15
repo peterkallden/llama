@@ -35,6 +35,48 @@ public:
     mutable int calls = 0;
 };
 
+class retryable_research_tools final : public common_agent_tool_runtime {
+public:
+    explicit retryable_research_tools(bool retryable_failure)
+        : retryable_failure(retryable_failure) {}
+
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        if (call.name != "repository.search") {
+            error = "retry smoke exposes only repository.search";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    common_tool_execution_result execute(const common_agent_tool_call &) const override {
+        ++calls;
+        if (calls == 1) {
+            return common_tool_execution_result::failure(
+                "tool.repository.search.transient",
+                common_tool_failure_class::network,
+                retryable_failure,
+                "The repository search backend is temporarily unavailable.",
+                "transient repository search failure");
+        }
+        common_runtime_resource_ref resource;
+        resource.uri = "agent-resource://research-retry/evidence";
+        resource.name = "retry-evidence.json";
+        resource.mime_type = "application/json";
+        resource.scope = common_runtime_resource_scope::turn;
+        return common_tool_execution_result::success(
+            "{\"matches\":[{\"path\":\"common/agent\",\"line\":1}]}",
+            "retryable research acquisition succeeded",
+            {resource});
+    }
+
+    bool retryable_failure = false;
+    mutable int calls = 0;
+};
+
 class acquisition_guard_tools final : public common_agent_tool_runtime {
 public:
     bool is_read_only(const std::string &) const override { return true; }
@@ -324,6 +366,85 @@ int main() {
     }
     std::printf("research_runtime=ok gaps=%d sources=%zu evidence=%zu\n",
         result.coverage.answered_gaps, workspace.sources.size(), workspace.evidence.size());
+
+    auto make_retry_workspace = [&error] (const char * id) {
+        common_agent_research_workspace retry_workspace;
+        retry_workspace.workspace_id = id;
+        retry_workspace.request_id = std::string(id) + "-request";
+        retry_workspace.turn_id = std::string(id) + "-turn";
+        retry_workspace.session_id = "research-smoke-session";
+        retry_workspace.scope.namespace_id = "research-smoke";
+        retry_workspace.scope.session_id = retry_workspace.session_id;
+        retry_workspace.objective.objective_id = std::string(id) + "-objective";
+        retry_workspace.objective.question = "Acquire one bounded research source";
+        retry_workspace.budget.max_iterations = 3;
+        retry_workspace.budget.max_tool_calls = 3;
+        common_agent_research_add_gap(
+            retry_workspace,
+            {"retry-gap", "Acquire one source", "retry smoke", "one successful source", 1},
+            error);
+        return retry_workspace;
+    };
+
+    common_agent_research_workspace retry_workspace = make_retry_workspace("research-retryable");
+    retryable_research_tools retry_tools(true);
+    common_agent_research_runtime_adapter retry_adapter(retry_tools);
+    std::vector<common_agent_research_lifecycle_event> retry_events;
+    const auto retry_result = runner.run(
+        retry_workspace, retry_adapter, error,
+        std::function<bool()>(), std::function<common_agent_research_stop_reason()>(),
+        [&](const common_agent_research_lifecycle_event & event) { retry_events.push_back(event); });
+    bool retry_scheduled = false;
+    bool retry_failed = false;
+    bool retry_completed = false;
+    for (const auto & event : retry_events) {
+        retry_scheduled = retry_scheduled ||
+            event.type == common_agent_research_lifecycle_event_type::task_scheduled && event.retry;
+        retry_failed = retry_failed ||
+            event.type == common_agent_research_lifecycle_event_type::task_failed;
+        retry_completed = retry_completed ||
+            event.type == common_agent_research_lifecycle_event_type::task_completed;
+    }
+    if (!error.empty() || !retry_result.complete || retry_tools.calls != 2 ||
+            retry_workspace.tool_calls != 2 || retry_workspace.tasks.size() != 2 ||
+            retry_workspace.tasks[0].status != common_agent_research_task_status::failed ||
+            retry_workspace.tasks[1].status != common_agent_research_task_status::completed ||
+            retry_workspace.tasks[1].attempt != 1 || !retry_scheduled || !retry_failed ||
+            !retry_completed) {
+        std::fprintf(stderr,
+            "research retryable failure orchestration failed: %s complete=%d calls=%d tool_calls=%d tasks=%zu scheduled=%d failed=%d completed=%d gap=%d\n",
+            error.c_str(), retry_result.complete ? 1 : 0, retry_tools.calls,
+            retry_workspace.tool_calls, retry_workspace.tasks.size(), retry_scheduled ? 1 : 0,
+            retry_failed ? 1 : 0, retry_completed ? 1 : 0,
+            retry_workspace.gaps.front().status == common_agent_research_gap_status::sufficiently_answered ? 1 : 0);
+        return 1;
+    }
+    std::printf("research_retryable_failure=ok attempts=%zu\n", retry_workspace.tasks.size());
+
+    common_agent_research_workspace permanent_failure_workspace =
+        make_retry_workspace("research-permanent-failure");
+    retryable_research_tools permanent_failure_tools(false);
+    common_agent_research_runtime_adapter permanent_failure_adapter(permanent_failure_tools);
+    std::vector<common_agent_research_lifecycle_event> permanent_failure_events;
+    const auto permanent_failure_result = runner.run(
+        permanent_failure_workspace, permanent_failure_adapter, error,
+        std::function<bool()>(), std::function<common_agent_research_stop_reason()>(),
+        [&](const common_agent_research_lifecycle_event & event) {
+            permanent_failure_events.push_back(event);
+        });
+    bool permanent_failure_retry_scheduled = false;
+    for (const auto & event : permanent_failure_events) {
+        permanent_failure_retry_scheduled = permanent_failure_retry_scheduled || event.retry;
+    }
+    if (!error.empty() || permanent_failure_result.complete || permanent_failure_tools.calls != 1 ||
+            permanent_failure_workspace.tool_calls != 1 || permanent_failure_workspace.tasks.size() != 1 ||
+            permanent_failure_workspace.tasks.front().status != common_agent_research_task_status::failed ||
+            permanent_failure_workspace.gaps.front().status != common_agent_research_gap_status::blocked ||
+            permanent_failure_retry_scheduled) {
+        std::fprintf(stderr, "research nonretryable failure orchestration failed: %s\n", error.c_str());
+        return 1;
+    }
+    std::printf("research_nonretryable_failure=ok calls=%d\n", permanent_failure_tools.calls);
 
     const auto research_checkpoint = make_common_agent_research_workspace_checkpoint(
         workspace, 3, error);
