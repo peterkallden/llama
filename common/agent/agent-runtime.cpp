@@ -282,12 +282,7 @@ static bool is_research_acquisition_tool(const std::string & tool_name) {
         tool_name == "web_search" ||
         tool_name == "web_fetch" ||
         tool_name == "memory_get" ||
-        tool_name == "memory_search" ||
-        tool_name == "dataset.inspect" ||
-        tool_name == "dataset.schema" ||
-        tool_name == "dataset.sample" ||
-        tool_name == "data.query" ||
-        tool_name == "data.aggregate";
+        tool_name == "memory_search";
 }
 
 static bool merge_reflection_tool_repair_arguments(

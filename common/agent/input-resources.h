@@ -30,6 +30,18 @@ inline std::string common_agent_render_input_resource_context(
         if (!resource.mime_type.empty()) out << " mime_type=" << common_agent_escape_input_resource_text(resource.mime_type);
         if (!resource.metadata.content_summary.empty()) out << " summary=" << common_agent_escape_input_resource_text(resource.metadata.content_summary);
         if (!resource.metadata.usage_hint.empty()) out << " usage=" << common_agent_escape_input_resource_text(resource.metadata.usage_hint);
+        // Acquisition identity and inspection choice are separate. Advertise
+        // bounded host seams without claiming that a dataset or document
+        // representation has already been materialized.
+        if (resource.mime_type == "text/csv" || resource.mime_type == "text/tab-separated-values") {
+            out << " inspection=resource_inspect,dataset.schema,dataset.sample,statistics.describe,statistics.value_counts";
+        } else if (resource.mime_type == "text/html" ||
+                resource.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                resource.mime_type == "application/epub+zip") {
+            out << " inspection=resource_inspect,document.tables,resource_read";
+        } else {
+            out << " inspection=resource_inspect,resource_read";
+        }
         if (!resource.lineage.parent_uri.empty()) {
             out << " chunk_index=" << resource.lineage.chunk_index
                 << " chunk_count=" << resource.lineage.chunk_count

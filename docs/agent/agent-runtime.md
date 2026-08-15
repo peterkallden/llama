@@ -133,6 +133,17 @@ execute them. The controller retains the approved acquisition path. This is a
 runtime ownership guard, not a second tool profile; both paths remain subject
 to the same host-resolved authority.
 
+Inspection is a separate responsibility. After acquisition, the model may
+choose an applicable host-approved inspection or analysis operation, such as
+`resource_inspect`, `dataset.schema`, `dataset.sample`, `statistics.describe`
+or `statistics.value_counts`, when the corresponding representation or dataset
+reference is available. These operations are not acquisition substitutes: a
+successful `resource_read` establishes bounded source evidence but does not
+imply that a tabular schema, document outline or dataset has already been
+materialized. The model-facing resource catalog advertises possible bounded
+inspection seams by MIME type; the host still validates the final reference,
+scope and representation.
+
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,
 source/evidence creation, provenance, answer verification and cancellation
 without network access. The common runtime emits structured research events
