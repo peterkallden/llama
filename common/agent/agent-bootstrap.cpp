@@ -25,6 +25,7 @@ common_plan_step step(const char * id, const char * title, const char * objectiv
 common_agent_bootstrap_blueprint repo_change_blueprint() {
     common_agent_bootstrap_blueprint plan;
     plan.id = "repository-change";
+    plan.purpose = "Safely modify a repository while preserving intended behavior.";
     plan.goal = "Implement a scoped repository change safely";
     plan.success_criteria = "The requested change is implemented and verified by relevant tests.";
     plan.steps = {
@@ -36,6 +37,7 @@ common_agent_bootstrap_blueprint repo_change_blueprint() {
     };
     plan.constraints.push_back({"minimal-scope", "Keep the change within the requested scope.", true});
     plan.constraints.push_back({"evidence", "Do not claim verification without test or inspection evidence.", true});
+    plan.assumptions.push_back({"workspace", "A controlled repository workspace is available.", 0.9f, true, {}});
     plan.next_action = "orient";
     return plan;
 }
@@ -43,6 +45,7 @@ common_agent_bootstrap_blueprint repo_change_blueprint() {
 common_agent_bootstrap_blueprint agent_regression_blueprint() {
     common_agent_bootstrap_blueprint plan;
     plan.id = "agent-regression";
+    plan.purpose = "Diagnose and correct an agent behavior regression while preserving trust boundaries.";
     plan.goal = "Diagnose and correct an agent behavior regression";
     plan.success_criteria = "The regression is reproduced, isolated, fixed, and protected by a focused test.";
     plan.steps = {
@@ -53,6 +56,7 @@ common_agent_bootstrap_blueprint agent_regression_blueprint() {
         step("answer", "Answer", "Report the verified diagnosis and correction.", {"regress"}, common_plan_step_mode::final_response),
     };
     plan.constraints.push_back({"trust-boundary", "Do not broaden model authority while correcting the regression.", true});
+    plan.assumptions.push_back({"reproducible", "A bounded regression scenario can be reproduced or inspected.", 0.8f, true, {}});
     plan.next_action = "reproduce";
     return plan;
 }

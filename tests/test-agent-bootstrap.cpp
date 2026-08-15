@@ -69,6 +69,8 @@ int main() {
     assert(error.empty() && bootstrap_procedures.size() == first.installed_memory_ids.size());
     const auto blueprint = plans.get(first.installed_blueprint_ids.front(), error);
     assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
+    assert(blueprint->purpose == "Safely modify a repository while preserving intended behavior.");
+    assert(blueprint->constraints.size() == 2 && blueprint->assumptions.size() == 1);
     assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);
 
     common_plan_state instance;
