@@ -39,7 +39,7 @@ common_agent_generation_request make_agent_cli_generation_request(
         std::string json_schema,
         std::vector<common_chat_tool> tools,
         common_chat_tool_choice tool_choice) {
-    return common_agent_make_generation_request(
+    auto generation = common_agent_make_generation_request(
         purpose,
         make_agent_cli_generation_trace_id(request, purpose),
         common_agent_scope_from_request(request),
@@ -48,4 +48,9 @@ common_agent_generation_request make_agent_cli_generation_request(
         std::move(json_schema),
         std::move(tools),
         tool_choice);
+    generation.input_resources.reserve(request.input_resources.size());
+    for (const auto & input : request.input_resources) {
+        generation.input_resources.push_back({input.resource, input.role, input.required});
+    }
+    return generation;
 }

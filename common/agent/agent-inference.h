@@ -3,6 +3,7 @@
 #include "agent/agent-generation.h"
 #include "agent/agent-scope.h"
 #include "chat.h"
+#include "resource/resource-contract.h"
 
 #include <cstdint>
 #include <optional>
@@ -51,6 +52,15 @@ struct common_agent_generation_options {
     std::optional<int64_t> t_max_predict_ms;
 };
 
+// Resource identity crossing the orchestration/inference boundary. Bytes and
+// derived representations remain host-owned; inference receives references
+// until a backend explicitly resolves them.
+struct common_agent_generation_resource {
+    common_runtime_resource_ref resource;
+    std::string role = "reference";
+    bool required = false;
+};
+
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(
         common_agent_generation_options options,
         int n_predict) {
@@ -67,6 +77,7 @@ struct common_agent_generation_request {
     common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
     common_agent_generation_options options;
     std::string json_schema;
+    std::vector<common_agent_generation_resource> input_resources;
 };
 
 inline common_agent_generation_request common_agent_make_generation_request(

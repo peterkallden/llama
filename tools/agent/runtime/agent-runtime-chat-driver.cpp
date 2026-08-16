@@ -31,7 +31,7 @@ common_agent_generation_request make_generation_request(
         const common_agent_generation_options & options,
         const std::vector<common_chat_tool> & tools,
         common_chat_tool_choice tool_choice) {
-    return common_agent_make_generation_request(
+    auto generation = common_agent_make_generation_request(
         purpose,
         make_generation_trace_id(request, purpose),
         common_agent_scope_from_request(request),
@@ -40,6 +40,11 @@ common_agent_generation_request make_generation_request(
         {},
         tools,
         tool_choice);
+    generation.input_resources.reserve(request.input_resources.size());
+    for (const auto & input : request.input_resources) {
+        generation.input_resources.push_back({input.resource, input.role, input.required});
+    }
+    return generation;
 }
 
 bool parse_assistant_message(

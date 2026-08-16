@@ -288,7 +288,7 @@ static void test_generation_contract_helpers() {
     scope.session_id = "session-42";
 
     common_chat_msg user{"user", "Hello"};
-    const auto request = common_agent_make_generation_request(
+    auto request = common_agent_make_generation_request(
         common_agent_generation_purpose::draft,
         std::string("trace-1"),
         scope,
@@ -307,6 +307,17 @@ static void test_generation_contract_helpers() {
     assert(request.options.t_max_prompt_ms && *request.options.t_max_prompt_ms == 1500);
     assert(request.options.t_max_predict_ms && *request.options.t_max_predict_ms == 2500);
     assert(request.json_schema == R"({"type":"object"})");
+
+    common_agent_generation_resource resource;
+    resource.resource.uri = "agent-resource://turn/turn-7/image.png";
+    resource.resource.mime_type = "image/png";
+    resource.role = "user_attachment";
+    resource.required = true;
+    request.input_resources.push_back(std::move(resource));
+    assert(request.input_resources.size() == 1);
+    assert(request.input_resources[0].resource.uri == "agent-resource://turn/turn-7/image.png");
+    assert(request.input_resources[0].role == "user_attachment");
+    assert(request.input_resources[0].required);
 }
 
 static void test_cli_scope_helpers() {
