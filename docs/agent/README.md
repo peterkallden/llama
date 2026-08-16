@@ -40,6 +40,22 @@ evidence-based milestone record is maintained in
 - [Debian development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
 - [Windows development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)
   are dated workflow artifacts for testing non-master development branches.
+- [Container images](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
+  are published to GitHub Container Registry. Pull a release image with:
+
+  ```bash
+  docker pull ghcr.io/peterkallden/llama/llama-agent:cpu-amd64-latest
+  docker pull ghcr.io/peterkallden/llama/llama-agent:cuda-amd64-latest
+  docker pull ghcr.io/peterkallden/llama/llama-agent:vulkan-amd64-latest
+  ```
+
+  The development CPU image is published separately:
+
+  ```bash
+  docker pull ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
+  ```
+
+  Podman uses the same image names; replace `docker pull` with `podman pull`.
 
 ## Quick start
 
