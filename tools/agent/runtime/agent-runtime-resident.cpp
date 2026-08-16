@@ -32,6 +32,7 @@ common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
     turn_request.scope.memory_scope = config.memory_scope;
     turn_request.scope.plan_scope = config.plan_scope;
     turn_request.inference_options.model = config.model;
+    turn_request.inference_options.mmproj = config.mmproj;
     turn_request.inference_options.n_predict = config.n_predict;
     turn_request.inference_options.n_gpu_layers = config.n_gpu_layers;
     turn_request.inference_options.fit_params = config.fit_params;

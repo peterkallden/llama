@@ -160,6 +160,25 @@ int main() {
         return 1;
     }
 
+    agent_host_config multimodal_config;
+    const nlohmann::ordered_json multimodal_json = {
+        {"model", {
+            {"path", "models/qwen2-vl.gguf"},
+            {"mmproj", "models/qwen2-vl-mmproj.gguf"},
+        }},
+    };
+    if (!parse_agent_host_config_json(multimodal_json, multimodal_config, error) ||
+            multimodal_config.model_path != "models/qwen2-vl.gguf" ||
+            multimodal_config.mmproj_path != "models/qwen2-vl-mmproj.gguf") {
+        std::fprintf(stderr, "multimodal model configuration was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto multimodal_serialized = agent_host_config_to_json(multimodal_config);
+    if (multimodal_serialized["model"]["mmproj"] != "models/qwen2-vl-mmproj.gguf") {
+        std::fprintf(stderr, "multimodal model configuration was not serialized\n");
+        return 1;
+    }
+
     agent_host_config invalid_processor_config;
     const nlohmann::ordered_json invalid_policy_config = {
         {"resources", {

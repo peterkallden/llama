@@ -136,6 +136,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.config_path = value;
         } else if (std::strcmp(argv[i], "--model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.model = value;
+        } else if (std::strcmp(argv[i], "--mmproj") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.mmproj = value;
         } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.embedding_model = value;
         } else if (std::strcmp(argv[i], "--backend") == 0) {

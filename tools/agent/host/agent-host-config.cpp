@@ -275,6 +275,7 @@ bool parse_agent_host_config_json(
         const auto & model = parsed["model"];
         read_optional(model, "backend", config.model_backend);
         read_optional(model, "path", config.model_path);
+        read_optional(model, "mmproj", config.mmproj_path);
         read_optional(model, "embedding_model", config.embedding_model);
     }
 
@@ -752,6 +753,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"model", {
             {"backend", config.model_backend},
             {"path", config.model_path},
+            {"mmproj", config.mmproj_path},
             {"embedding_model", config.embedding_model},
         }},
         {"runtime", {
@@ -1271,6 +1273,7 @@ void apply_agent_host_config_to_daemon_options(
         const agent_host_config & config,
         daemon_options & options) {
     options.model = config.model_path;
+    options.mmproj = config.mmproj_path;
     options.embedding_model = config.embedding_model;
     options.default_mode = config.default_mode;
     options.thinking_mode = config.thinking_mode;
@@ -1363,6 +1366,7 @@ void apply_agent_host_config_to_args(
         const agent_host_config & config,
         args & options) {
     options.model = config.model_path;
+    options.mmproj = config.mmproj_path;
     options.embedding_model = config.embedding_model;
     options.backend = config.memory_backend;
     options.memory_db = config.memory_db;

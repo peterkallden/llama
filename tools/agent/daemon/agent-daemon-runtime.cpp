@@ -163,7 +163,7 @@ common_agent_orchestration_config make_daemon_orchestration_config(const daemon_
 
 common_agent_runtime_resident_request_config make_resident_request_config(
         const daemon_options & options) {
-    return {
+    common_agent_runtime_resident_request_config config{
         "",
         "",
         "",
@@ -179,6 +179,8 @@ common_agent_runtime_resident_request_config make_resident_request_config(
         options.n_threads,
         static_cast<size_t>(std::max(0, options.context_size)),
     };
+    config.mmproj = options.mmproj;
+    return config;
 }
 
 common_memory_query make_daemon_memory_query(

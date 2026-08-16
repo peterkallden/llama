@@ -20,6 +20,12 @@ enum class agent_inference_backend {
     server_context,
 };
 
+struct common_agent_inference_capabilities {
+    bool text = true;
+    bool image = false;
+    bool audio = false;
+};
+
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend);
 
 struct common_agent_generation_config {
@@ -37,6 +43,7 @@ struct common_agent_inference_options {
     bool fit_params = true;
     int n_threads = 2;
     size_t context_size_tokens = 0;
+    std::string mmproj;
 };
 
 struct common_agent_runtime_config {
@@ -69,6 +76,7 @@ common_agent_runtime_config make_agent_runtime_config(
 
 struct common_agent_inference_session {
     agent_inference_backend backend = agent_inference_backend::cli;
+    common_agent_inference_capabilities capabilities;
     std::shared_ptr<void> keepalive;
     llama_model * model = nullptr;
     const common_chat_templates * templates = nullptr;

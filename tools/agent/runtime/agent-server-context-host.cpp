@@ -55,6 +55,7 @@ common_agent_server_context_load_key make_agent_server_context_load_key(
         options.model,
         options.n_gpu_layers,
         options.fit_params,
+        options.mmproj,
     };
 }
 
@@ -81,6 +82,7 @@ common_params make_agent_server_context_params(
         const common_agent_server_context_host_config & config) {
     common_params params = {};
     params.model.path = config.context_key.load_key.model;
+    params.mmproj.path = config.context_key.load_key.mmproj;
     params.n_predict = -1;
     params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
     params.fit_params = config.context_key.load_key.fit_params;
@@ -127,6 +129,18 @@ bool common_agent_server_context_host::start(
         }
         if (!std::filesystem::is_regular_file(model_path, ec)) {
             error = "resident server_context model is not a regular file: " + config.context_key.load_key.model;
+            return false;
+        }
+    }
+    if (!config.context_key.load_key.mmproj.empty()) {
+        std::error_code ec;
+        const std::filesystem::path mmproj_path(config.context_key.load_key.mmproj);
+        if (!std::filesystem::exists(mmproj_path, ec)) {
+            error = "resident server_context mmproj does not exist: " + config.context_key.load_key.mmproj;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(mmproj_path, ec)) {
+            error = "resident server_context mmproj is not a regular file: " + config.context_key.load_key.mmproj;
             return false;
         }
     }
@@ -178,6 +192,8 @@ bool common_agent_server_context_host::build_inference_session(
     session = {};
     session.backend = agent_inference_backend::server_context;
     auto meta = instance->server->get_meta();
+    session.capabilities.image = meta.chat_params.allow_image;
+    session.capabilities.audio = meta.chat_params.allow_audio;
     session.templates = meta.chat_params.tmpls.get();
     session.inference = make_server_context_agent_inference(
         *instance->server,

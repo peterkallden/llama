@@ -41,4 +41,5 @@ struct common_agent_runtime_resident_request_config {
     common_plan_scope plan_scope = common_plan_scope::turn;
     int n_threads = 2;
     size_t context_size_tokens = 0;
+    std::string mmproj;
 };

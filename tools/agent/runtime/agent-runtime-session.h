@@ -16,6 +16,7 @@ struct common_agent_model_load_key {
     std::string model;
     int n_gpu_layers = 0;
     bool fit_params = true;
+    std::string mmproj;
 };
 
 struct common_agent_inference_context_key {

@@ -26,6 +26,7 @@
 struct daemon_options {
     std::string config_path;
     std::string model;
+    std::string mmproj;
     std::string embedding_model;
     std::string backend = "auto";
     std::string memory_db;

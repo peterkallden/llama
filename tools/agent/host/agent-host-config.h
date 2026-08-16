@@ -25,6 +25,7 @@ struct agent_host_config {
 
     std::string model_backend = "server-context";
     std::string model_path;
+    std::string mmproj_path;
     std::string embedding_model;
 
     int runtime_context_size = 0;

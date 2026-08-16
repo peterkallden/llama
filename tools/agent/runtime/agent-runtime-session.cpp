@@ -13,6 +13,7 @@ common_agent_model_load_key make_agent_model_load_key(
         options.model,
         options.n_gpu_layers,
         options.fit_params,
+        options.mmproj,
     };
 }
 
@@ -29,6 +30,7 @@ bool common_agent_model_load_key_match(
         const common_agent_model_load_key & lhs,
         const common_agent_model_load_key & rhs) {
     return lhs.model == rhs.model &&
+        lhs.mmproj == rhs.mmproj &&
         lhs.n_gpu_layers == rhs.n_gpu_layers &&
         lhs.fit_params == rhs.fit_params;
 }
@@ -152,6 +154,10 @@ bool initialize_agent_runtime_session(
     }
 
     if (backend == agent_inference_backend::cli) {
+        if (!options.mmproj.empty()) {
+            error = "CLI inference backend does not support mmproj yet; use server-context";
+            return false;
+        }
         if (!session.loaded_model.loaded) {
             llama_model_params model_params = llama_model_default_params();
             model_params.n_gpu_layers = options.n_gpu_layers;

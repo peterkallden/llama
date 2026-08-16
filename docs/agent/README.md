@@ -88,6 +88,9 @@ remote MCP providers, status/readiness, and Docker usage.
 - **Memory, plans, and resources** — persistent Cozo-backed stores and a
   resource boundary for turn inputs, generated artifacts, and resource
   references.
+- **Multimodal runtime** — staged native image/audio support through the
+  server-context backend, with host-owned resource resolution and OCR/page-
+  image fallback. See [Agent multimodal runtime](agent-multimodal.md).
 - **Daemon and protocols** — foreground JSONL administration, TCP and Unix
   transports, inbound MCP, readiness/status reporting, and systemd examples.
 - **Sandbox workspaces** — controlled Docker/Kubernetes execution and artifact

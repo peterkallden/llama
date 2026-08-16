@@ -27,6 +27,7 @@ struct args {
     std::string relation;
     std::string to;
     std::string model;
+    std::string mmproj;
     std::string embedding_model;
     std::string prompt;
     std::string memory_scope = "session";
