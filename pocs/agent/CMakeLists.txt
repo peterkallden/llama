@@ -1056,6 +1056,11 @@ endforeach()
 
 set(AGENT_RUNTIME_TARGETS
     llama-agent-cli
+    llama-agent-mcp-stdio-server
+    llama-agent-daemon
+)
+
+set(AGENT_TEST_BUILD_TARGETS
     llama-agent-cli-document-table-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
@@ -1074,7 +1079,6 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-mcp-http-inbound-dispatcher-smoke
     llama-agent-mcp-http-vertical-smoke
     llama-agent-mcp-agent-tools-smoke
-    llama-agent-mcp-stdio-server
     llama-agent-cli-mcp-selection-smoke
     llama-agent-cli-run-mcp-smoke
     llama-agent-daemon-dispatcher-smoke
@@ -1109,10 +1113,9 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-research-csv-smoke
-    llama-agent-daemon
 )
 if (LLAMA_MEMORY_COZO)
-    list(APPEND AGENT_RUNTIME_TARGETS llama-agent-data-manipulation-smoke)
+    list(APPEND AGENT_TEST_BUILD_TARGETS llama-agent-data-manipulation-smoke)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -1434,8 +1437,12 @@ foreach(TARGET ${AGENT_TEST_PACK_CTEST_TARGETS})
 endforeach()
 
 add_custom_target(llama-agent-build-pack
-    DEPENDS ${AGENT_RUNTIME_TARGETS} ${AGENT_TEST_PACK_AVAILABLE_TARGETS}
+    DEPENDS ${AGENT_RUNTIME_TARGETS}
 )
+
+if (BUILD_TESTING)
+    add_dependencies(llama-agent-build-pack ${AGENT_TEST_BUILD_TARGETS} ${AGENT_TEST_PACK_AVAILABLE_TARGETS})
+endif()
 
 add_custom_target(llama-agent-ctest-pack
     DEPENDS llama-agent-build-pack

@@ -202,7 +202,8 @@ Agent builds automatically enable the memory and planning libraries through
 specified explicitly.
 
 The package uses Cozo-backed stores by default, so provide the Cozo C API
-header and shared library explicitly:
+header and shared library explicitly. Debian backend selection is controlled
+through `LLAMA_AGENT_BACKEND`; the default is portable CPU-only output:
 
 ```bash
 sudo apt-get update
@@ -212,19 +213,25 @@ sudo apt-get install --yes \
 
 export COZO_INCLUDE_DIR=/path/to/cozo/cozo-lib-c
 export COZO_LIBRARY=/path/to/libcozo_c.so
+export LLAMA_AGENT_BACKEND=cpu
 dpkg-buildpackage -us -uc -b
 ```
 
-CPU is always enabled. CUDA and Vulkan are detected independently from the
-available development toolchains. Use explicit overrides when a downstream
-build needs a fixed configuration:
+`LLAMA_AGENT_BACKEND` accepts `cpu`, `cuda`, `vulkan`, or `auto`. CPU is always
+included; the selected backend adds CUDA or Vulkan support. Use explicit
+backend selection for release packages so builds are reproducible:
 
 ```bash
-LLAMA_AGENT_CUDA=off \
-LLAMA_AGENT_VULKAN=on \
+LLAMA_AGENT_BACKEND=cuda \
 LLAMA_AGENT_NATIVE=off \
 dpkg-buildpackage -us -uc -b
 ```
+
+`auto` detects the available CUDA and Vulkan development toolchains and is
+intended mainly for local builds. The current Debian/Ubuntu workflow selects
+`LLAMA_AGENT_BACKEND=cpu`; CUDA and Vulkan package variants will be added
+separately. The installed runtime paths are identical across variants, so the
+variants are mutually exclusive at the Debian package level.
 
 `LLAMA_AGENT_NATIVE` defaults to `off` to keep Debian binaries portable. A
 downstream maintainer building for a controlled host can set it to `on`. The
@@ -265,8 +272,12 @@ when Cozo support is enabled.
 
 ### Docker sandbox
 
-Docker Desktop must be running and the Docker CLI must be able to reach the
-Docker engine:
+The Docker-compatible sandbox backend can use either Docker or Podman. Docker
+is the default; select another executable through the environment when running
+the Linux smoke. Podman is daemonless for direct `run` commands, so no Podman
+service is required.
+
+For Docker:
 
 ```powershell
 docker info
@@ -279,6 +290,19 @@ ctest --test-dir build-agent-windows `
 
 The Docker smoke uses the configured sandbox image and verifies command
 execution plus artifact materialization inside the sandbox workspace.
+
+For rootless Podman on Linux:
+
+```bash
+podman info
+LLAMA_AGENT_SANDBOX_EXECUTABLE=podman \
+  ctest --test-dir build-agent-linux \
+    -L sandbox-docker --output-on-failure
+```
+
+The backend remains named `docker` in the agent contract; only the host-owned
+container executable changes. The executable can also be set in generated
+configuration with `--sandbox-executable podman`.
 
 ### Kubernetes sandbox
 

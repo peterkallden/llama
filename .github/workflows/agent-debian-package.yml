@@ -26,6 +26,8 @@ concurrency:
 
 env:
   COZO_VERSION: '0.7.6'
+  LLAMA_AGENT_BACKEND: cpu
+  LLAMA_AGENT_NATIVE: off
 
 jobs:
   package:
@@ -97,6 +99,7 @@ jobs:
             "package=llama-agent" \
             "source_branch=${{ github.event.workflow_run.head_branch || inputs.source_ref }}" \
             "commit_sha=$(git rev-parse HEAD)" \
+            "backend=$LLAMA_AGENT_BACKEND" \
             "cozo_version=$COZO_VERSION" \
             "workflow_run_id=${GITHUB_RUN_ID}" \
             "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <string>
 
 int main() {
     const auto root = std::filesystem::temp_directory_path() / "llama-agent-docker-smoke";
@@ -10,7 +11,11 @@ int main() {
     std::filesystem::create_directories(root / "writable");
     std::filesystem::create_directories(root / "artifacts");
 
-    common_agent_sandbox_docker_runtime runtime({"docker", "alpine:3.20"});
+    const char * configured_executable = std::getenv("LLAMA_AGENT_SANDBOX_EXECUTABLE");
+    const std::string executable = configured_executable != nullptr && *configured_executable != '\0'
+        ? configured_executable
+        : "docker";
+    common_agent_sandbox_docker_runtime runtime({executable, "alpine:3.20"});
     common_agent_sandbox_request request;
     request.operation_id = "docker-smoke-1";
     request.execution_class = "readonly-analysis";

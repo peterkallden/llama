@@ -33,6 +33,7 @@ Workspace roots and execution classes belong in host configuration:
   "sandbox": {
     "backend": "docker",
     "docker": {
+      "executable": "docker",
       "default_image": "llama-agent-dev:latest"
     },
     "workspace": {
@@ -71,14 +72,16 @@ override this host-owned selection. A value of zero is invalid for CPU,
 timeout and output limits; zero means no configured limit only for memory and
 process count.
 
-The Docker backend runs each operation as an ephemeral container with a
+The Docker-compatible backend runs each operation as an ephemeral container with a
 read-only root filesystem, no network by default, bounded resource limits,
-and only the host-created workspace mounts. The `none` backend remains useful
+and only the host-created workspace mounts. Its executable defaults to `docker`;
+Podman can be selected as a host-owned compatible executable without changing
+the backend contract. The `none` backend remains useful
 for hosts that only want validation: the host omits sandbox-backed tools from
 the effective tool view, while direct sandbox execution returns
 `sandbox.backend_unavailable` instead of falling back to an unsandboxed
 process. Broader network scopes are
-rejected by the Docker backend until explicit allowlists are implemented.
+rejected by the Docker-compatible backend until explicit allowlists are implemented.
 
 ## Kubernetes backend
 

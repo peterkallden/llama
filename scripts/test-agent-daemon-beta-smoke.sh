@@ -4,6 +4,7 @@ set -euo pipefail
 BUILD_DIR="${LLAMA_AGENT_BUILD_DIR:-build-agent}"
 CONFIGURATION="${LLAMA_AGENT_CONFIGURATION:-RelWithDebInfo}"
 CHAT_MODEL="${LLAMA_AGENT_CHAT_MODEL:-}"
+SANDBOX_EXECUTABLE="${LLAMA_AGENT_SANDBOX_EXECUTABLE:-}"
 TIMEOUT_SECONDS=120
 INCLUDE_CTEST=0
 KEEP_LOGS=0
@@ -12,6 +13,7 @@ usage() {
     echo "usage: $0 [--build-dir DIR] [--configuration CONFIG] [--include-ctest] [--keep-logs]"
     echo "       defaults: LLAMA_AGENT_BUILD_DIR=build-agent, LLAMA_AGENT_CONFIGURATION=RelWithDebInfo"
     echo "       optional model-backed foreground smoke: LLAMA_AGENT_CHAT_MODEL=PATH"
+    echo "       optional container smoke executable: LLAMA_AGENT_SANDBOX_EXECUTABLE=docker|podman"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -27,6 +29,13 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -n "$SANDBOX_EXECUTABLE" ]]; then
+    command -v "$SANDBOX_EXECUTABLE" >/dev/null 2>&1 || {
+        echo "Configured sandbox executable not found: $SANDBOX_EXECUTABLE" >&2
+        exit 1
+    }
+    export LLAMA_AGENT_SANDBOX_EXECUTABLE="$SANDBOX_EXECUTABLE"
+fi
 if [[ "$BUILD_DIR" = /* ]]; then BUILD_ROOT="$BUILD_DIR"; else BUILD_ROOT="$REPO_ROOT/$BUILD_DIR"; fi
 resolve_executable() {
     local target="$1"

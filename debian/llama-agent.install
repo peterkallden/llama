@@ -3,4 +3,5 @@ usr/bin/llama-agent-mcp-stdio-server usr/bin
 usr/bin/llama-agent-daemon usr/sbin
 usr/bin/llama-agent-config-bootstrap usr/sbin
 usr/lib/*.so* usr/lib
+usr/lib/*/*.so* usr/lib
 usr/share/llama-agent/examples/* usr/share/doc/llama-agent/examples

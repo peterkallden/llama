@@ -4,31 +4,26 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 COZO_INCLUDE_DIR ?=
 COZO_LIBRARY ?=
-LLAMA_AGENT_CUDA ?= auto
-LLAMA_AGENT_VULKAN ?= auto
+LLAMA_AGENT_BACKEND ?= cpu
 LLAMA_AGENT_NATIVE ?= off
 
 CUDA_TOOLKIT_AVAILABLE := $(if $(shell command -v nvcc 2>/dev/null),ON,OFF)
 VULKAN_DEVELOPMENT_AVAILABLE := $(if $(shell pkg-config --exists vulkan 2>/dev/null && echo yes),ON,OFF)
 
-ifeq ($(LLAMA_AGENT_CUDA),auto)
-GGML_CUDA_FLAG := $(CUDA_TOOLKIT_AVAILABLE)
-else ifeq ($(LLAMA_AGENT_CUDA),on)
-GGML_CUDA_FLAG := ON
-else ifeq ($(LLAMA_AGENT_CUDA),off)
+ifeq ($(LLAMA_AGENT_BACKEND),cpu)
 GGML_CUDA_FLAG := OFF
-else
-$(error LLAMA_AGENT_CUDA must be auto, on, or off)
-endif
-
-ifeq ($(LLAMA_AGENT_VULKAN),auto)
-GGML_VULKAN_FLAG := $(VULKAN_DEVELOPMENT_AVAILABLE)
-else ifeq ($(LLAMA_AGENT_VULKAN),on)
-GGML_VULKAN_FLAG := ON
-else ifeq ($(LLAMA_AGENT_VULKAN),off)
 GGML_VULKAN_FLAG := OFF
+else ifeq ($(LLAMA_AGENT_BACKEND),cuda)
+GGML_CUDA_FLAG := ON
+GGML_VULKAN_FLAG := OFF
+else ifeq ($(LLAMA_AGENT_BACKEND),vulkan)
+GGML_CUDA_FLAG := OFF
+GGML_VULKAN_FLAG := ON
+else ifeq ($(LLAMA_AGENT_BACKEND),auto)
+GGML_CUDA_FLAG := $(CUDA_TOOLKIT_AVAILABLE)
+GGML_VULKAN_FLAG := $(VULKAN_DEVELOPMENT_AVAILABLE)
 else
-$(error LLAMA_AGENT_VULKAN must be auto, on, or off)
+$(error LLAMA_AGENT_BACKEND must be cpu, cuda, vulkan, or auto)
 endif
 
 ifeq ($(LLAMA_AGENT_NATIVE),on)
@@ -75,7 +70,7 @@ override_dh_auto_configure:
 		-DCOZO_LIBRARY=$(COZO_LIBRARY)
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp
+	DESTDIR=$(CURDIR)/debian/tmp cmake --install debian/build --config RelWithDebInfo
 	@echo 'Installed files under debian/tmp before dh_install:'
 	find debian/tmp -maxdepth 6 -type f -print | sort
 	install -D -m 0644 $(COZO_LIBRARY) debian/tmp/usr/lib/libcozo_c.so
