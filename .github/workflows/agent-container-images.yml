@@ -1,10 +1,10 @@
-name: Agent Docker images
+name: Agent container images
 
 on:
   workflow_run:
     workflows:
-      - Agent development package
-      - Agent release
+      - Agent development package (.tar.gz)
+      - Agent release packages
     types:
       - completed
   workflow_dispatch:
@@ -38,10 +38,10 @@ concurrency:
 
 jobs:
   build-dev:
-    name: Build and publish dev CPU image
+    name: Build and publish development image
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Agent development package' &&
+       github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
        github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
@@ -135,7 +135,7 @@ jobs:
     name: Build and publish ${{ matrix.backend }} release image
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Agent release' &&
+       github.event.workflow_run.name == 'Agent release packages' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.image_channel == 'release')
     runs-on: ubuntu-24.04

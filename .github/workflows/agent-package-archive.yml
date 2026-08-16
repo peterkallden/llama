@@ -1,9 +1,9 @@
-name: Agent development package
+name: Agent development package (.tar.gz)
 
 on:
   workflow_run:
     workflows:
-      - Agent CI (Linux)
+      - Agent verification (Linux)
     types:
       - completed
     branches:
@@ -29,12 +29,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-development-package-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+  group: agent-development-archive-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
   cancel-in-progress: true
 
 jobs:
   package:
-    name: Package verified development build
+    name: Build verified Linux archive
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event != 'pull_request' &&
@@ -149,7 +149,7 @@ jobs:
           echo "Timed out waiting 45 minutes for verification workflows for $COMMIT_SHA" >&2
           exit 1
 
-      - name: Download tested agent package
+      - name: Download verified Linux staging package
         env:
           GH_TOKEN: ${{ github.token }}
           CI_RUN_ID: ${{ steps.verification.outputs.ci_run_id }}
@@ -159,7 +159,7 @@ jobs:
           rm -rf package-source
           gh run download "$CI_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --name llama-agent-dev-linux-package \
+            --name llama-agent-dev-linux-staging \
             --dir package-source
           test -f package-source/bin/llama-agent
           test -f package-source/bin/llama-agent-daemon

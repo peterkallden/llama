@@ -1,4 +1,4 @@
-name: Agent dynamic analysis
+name: Agent verification (sanitizers)
 
 on:
   workflow_dispatch:
@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   linux-asan-ubsan:
-    name: Linux ASan and UBSan
+    name: Analyze build on Linux with ASan/UBSan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -125,7 +125,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: agent-dynamic-analysis-diagnostics
+          name: agent-analysis-diagnostics
           path: |
             build-agent-asan/Testing/**
             build-agent-asan/CMakeCache.txt

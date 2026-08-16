@@ -1,9 +1,9 @@
-name: Agent development package (Debian, Ubuntu)
+name: Agent development package (Debian/Ubuntu)
 
 on:
   workflow_run:
     workflows:
-      - Agent development package
+      - Agent development package (.tar.gz)
     types:
       - completed
     branches:
@@ -31,7 +31,7 @@ env:
 
 jobs:
   package:
-    name: Package Debian/Ubuntu development build
+    name: Build Debian/Ubuntu package
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event != 'pull_request' &&

@@ -1,4 +1,4 @@
-name: Agent release
+name: Agent release packages
 
 on:
   push:
@@ -32,7 +32,7 @@ env:
 
 jobs:
   build-release:
-    name: Build ${{ matrix.backend }} agent release
+    name: Build ${{ matrix.backend }} release package
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -253,7 +253,7 @@ jobs:
           retention-days: 30
 
   publish-release:
-    name: Publish verified agent release
+    name: Publish verified release packages
     needs: build-release
     runs-on: ubuntu-24.04
     timeout-minutes: 15

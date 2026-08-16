@@ -1,4 +1,4 @@
-name: Agent CI (Linux)
+name: Agent verification (Linux)
 
 on:
   workflow_dispatch:
@@ -56,7 +56,7 @@ permissions:
 
 jobs:
   agent-linux:
-    name: Agent contracts, Cozo and Kubernetes sandbox
+    name: Verify agent on Linux
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -172,10 +172,10 @@ jobs:
           test -f agent-package/lib/libllama-agent-runtime-support.so
           test -f agent-package/lib/libllama-agent-storage-cozo.so
 
-      - name: Upload agent package
+      - name: Upload Linux staging package
         uses: actions/upload-artifact@v6
         with:
-          name: llama-agent-dev-linux-package
+          name: llama-agent-dev-linux-staging
           path: agent-package/**
           if-no-files-found: error
           retention-days: 14

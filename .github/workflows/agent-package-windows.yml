@@ -3,7 +3,7 @@ name: Agent development package (Windows)
 on:
   workflow_run:
     workflows:
-      - Agent development package
+      - Agent development package (.tar.gz)
     types:
       - completed
     branches:
@@ -16,7 +16,7 @@ on:
         default: feature/llama-agent
 
 concurrency:
-  group: agent-windows-dev-${{ github.ref }}
+  group: agent-windows-development-package-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -28,10 +28,10 @@ env:
 
 jobs:
   package-cpu:
-    name: Package Windows CPU dev build
+    name: Build Windows CPU package
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Agent development package' &&
+       github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
        github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
