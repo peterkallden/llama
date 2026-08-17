@@ -455,7 +455,8 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[0].messages.size() == 2);
     assert(inference.seen[0].messages[0].content.find("required: goal:string; steps:object[]") != std::string::npos);
     assert(inference.seen[0].messages[0].content.find("steps: step[]") != std::string::npos);
-    assert(inference.seen[0].messages[0].content.find("Each step needs only") != std::string::npos);
+    assert(inference.seen[0].messages[0].content.find(
+        "Each step normally contains only {tool?,args?,as?,mode?}") != std::string::npos);
 
     auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
     common_plan_state plan;
