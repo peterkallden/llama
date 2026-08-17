@@ -63,19 +63,35 @@ int main() {
     const auto * document_tables = catalog.find_definition("document.tables");
     const auto * document_table = catalog.find_definition("document.table");
     const auto * data_aggregate = catalog.find_definition("data.aggregate");
+    const auto * dataset_validate = catalog.find_definition("dataset.validate");
+    const auto * artifact_export = catalog.find_definition("artifact.export");
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
-    assert(document_tables && document_table && data_aggregate && value_counts);
+    assert(document_tables && document_table && data_aggregate && dataset_validate && artifact_export && value_counts);
     const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
     const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
     const auto document_tables_input = nlohmann::json::parse(document_tables->input_schema_json);
     const auto document_table_input = nlohmann::json::parse(document_table->input_schema_json);
     const auto aggregate_input = nlohmann::json::parse(data_aggregate->input_schema_json);
+    const auto document_table_model_input = nlohmann::json::parse(document_table->model_input_schema_json);
+    const auto aggregate_model_input = nlohmann::json::parse(data_aggregate->model_input_schema_json);
     const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
+    const auto validate_input = nlohmann::json::parse(dataset_validate->input_schema_json);
+    const auto validate_model_input = nlohmann::json::parse(dataset_validate->model_input_schema_json);
+    const auto export_model_input = nlohmann::json::parse(artifact_export->model_input_schema_json);
     assert(document_tables_result["required"].size() == 3);
     assert(document_tables_input["properties"]["resource"].value("x-agent-type", "") == "resource_ref");
     assert(document_table_input["properties"]["resource"].value("x-agent-type", "") == "resource_ref");
     assert(document_table_input["properties"]["node_id"].value("x-agent-type", "") == "table_ref");
     assert(aggregate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(validate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(validate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(export_model_input["properties"]["source_dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(!aggregate_model_input["properties"].contains("materialize"));
+    assert(!aggregate_model_input["properties"].contains("result_dataset"));
+    assert(validate_model_input["required"].size() == 1);
+    assert(validate_model_input["required"][0] == "rules");
+    assert(document_table_model_input["properties"].contains("table"));
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     const auto value_counts_schema = nlohmann::json::parse(value_counts->input_schema_json);
@@ -125,13 +141,15 @@ int main() {
     const auto aggregate_compact = common_render_compact_tool_description(
         data_aggregate->name,
         data_aggregate->description,
-        data_aggregate->input_schema_json,
+        data_aggregate->model_input_schema_json,
         data_aggregate->result_schema_json,
         compact_error);
     assert(compact_error.empty());
     assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
     assert(aggregate_compact.find("function:count|sum|avg|min|max") != std::string::npos);
     assert(aggregate_compact.find("column?:string") != std::string::npos);
+    assert(aggregate_compact.find("materialize") == std::string::npos);
+    assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 

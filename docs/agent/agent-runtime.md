@@ -1499,6 +1499,15 @@ The model-facing rules are:
 - tool profiles and runtime policy determine which tools the model may see and
   use.
 
+The normal planner generation path uses a model-facing schema containing only
+`goal`, ordered `steps`, `tool`, `args`, optional `as`, and optional `mode`.
+The parser still accepts explicit IDs and dependencies for persisted or
+advanced DAG callers, but the model is not asked to generate those fields.
+Unknown `$name.field` references fail during plan parsing unless `name` is
+`previous`, a declared earlier alias, or an explicitly named advanced step.
+This prevents an omitted alias from being misreported later as a missing
+completed source step.
+
 If the host can fill in, derive, name, bound or validate a value
 deterministically, the model should normally not have to produce it. Internal
 step IDs, dependency arrays, JSON pointers, runtime handles and execution
@@ -1531,11 +1540,20 @@ semantics describe how operations are connected. The strict schemas and
 host-owned plan IR remain authoritative; this compact surface is a bounded
 projection for model guidance.
 
-Planner prompts use the same boundary for plans. The strict
-`common_plan_proposal_json_schema()` remains the source of truth for the
-planner grammar and `common_plan_parse_proposal_json()` remains the only
-normalization/execution entry point. A bounded projection generated from that
-schema is shown alongside the compact tool descriptions, for example:
+Planner prompts use the same boundary for plans. The
+`common_plan_model_facing_json_schema()` projection constrains normal model
+generation, while `common_plan_parse_proposal_json()` remains the single
+normalization/execution entry point and continues to accept the richer
+legacy/advanced form. Tool definitions may likewise provide a reduced
+`model_input_schema_json`; host-only fields such as materialization controls,
+result-dataset allocation and scan limits stay in the execution schema.
+That same split now covers dataset-oriented inspection, validation,
+aggregation, statistics and export flows: the model sees typed semantic
+inputs such as `dataset`, `rules`, `group_by`, `column` or
+`source_dataset`, while the host retains execution-only switches and
+canonical materialization details.
+A bounded projection is shown alongside the compact tool descriptions, for
+example:
 
     plan
     required: goal:string; steps:object[]

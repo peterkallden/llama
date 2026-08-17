@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 struct common_plan_tool_arguments_contract {
     nlohmann::ordered_json value;
@@ -12,6 +13,11 @@ struct common_plan_tool_arguments_contract {
 
 // Schema is intended for existing llama.cpp JSON-schema-to-grammar helpers.
 std::string common_plan_proposal_json_schema();
+// Model-facing planner schema. This is a bounded projection used for model
+// generation; the parser continues to accept the richer legacy/advanced plan
+// form and stores one host-owned plan representation.
+std::string common_plan_model_facing_json_schema(
+        const std::vector<std::string> & allowed_tools = {});
 // Bounded model-facing projection of the strict planner schema. The model
 // still returns JSON; this only removes schema/protocol noise from the prompt.
 std::string common_render_compact_plan_schema(

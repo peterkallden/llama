@@ -119,6 +119,10 @@ int main() {
     assert(join_args["left"].value("$from_step", "") == "step_1");
     assert(join_args["right"].value("$from_step", "") == "step_2");
 
+    const auto unknown_alias = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(!common_plan_parse_proposal_json(unknown_alias, plan, operations, error));
+    assert(error.find("unknown model output alias 'table'") != std::string::npos);
+
     // The prior full proposal format remains accepted for persisted or older callers.
     const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
@@ -132,6 +136,14 @@ int main() {
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
     assert(common_plan_proposal_json_schema().find(R"("required":["id"])") == std::string::npos);
     assert(common_plan_proposal_json_schema().find("oneOf") == std::string::npos);
+    const auto model_schema = nlohmann::json::parse(
+        common_plan_model_facing_json_schema({"document.table", "data.aggregate"}), nullptr, false);
+    assert(model_schema.is_object());
+    const auto model_step_schema = model_schema["properties"]["steps"]["items"];
+    assert(model_step_schema["properties"].contains("as"));
+    assert(!model_step_schema["properties"].contains("id"));
+    assert(!model_step_schema["properties"].contains("depends_on"));
+    assert(model_step_schema["properties"]["tool"]["enum"].size() == 2);
 
     common_plan_state materialize_plan;
     common_plan_step completed_search{"search", "Search", "Find evidence"};

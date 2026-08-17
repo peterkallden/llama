@@ -110,7 +110,7 @@ std::string render_returns(const std::string & schema_json) {
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         if (!first) out << ", ";
         first = false;
-        out << it.key();
+        out << it.key() << ':' << scalar_type(it.value());
     }
     return out.str();
 }
