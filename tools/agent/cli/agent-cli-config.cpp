@@ -17,7 +17,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--max-tool-rounds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
         "         [--inference-step-timeout-ms N] [--generation-trace]\n"
-        "         [--agent-inference-backend cli|server-context]\n"
+        "         [--agent-inference-backend cli|server-context] [--mmproj PATH]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
         "         [--resource-metadata-backend auto|in-memory|cozo] [--resource-metadata-db PATH]\n"
@@ -147,6 +147,8 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             const char * v = need_value(argv[i]); if (!v) return false; out.memory_learn_min_reuse = std::stof(v);
         } else if (strcmp(argv[i], "--agent-inference-backend") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.agent_inference_backend = v;
+        } else if (strcmp(argv[i], "--mmproj") == 0) {
+            const char * v = need_value(argv[i]); if (!v) return false; out.mmproj = v;
         } else if (strcmp(argv[i], "--tool-profile") == 0) {
             const char * v = need_value(argv[i]); if (!v) return false; out.tool_profile = v; out.tool_profile_explicit = true;
         } else if (strcmp(argv[i], "--mcp-tool-command") == 0) {
