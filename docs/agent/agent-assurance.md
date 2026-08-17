@@ -1040,15 +1040,20 @@ previous result when the branch or test configuration changes.
 - Branch: `kallden/agent-multimodal`. This checkpoint deliberately excludes
   native multimodal model execution; no image/audio projector was available
   in the local model directory.
-- Core agent CTest: 57/57 passed with Cozo enabled from
-  `build-agent-packaging -L agent`.
-- Agent POC CTest/smoke suite: 38/39 passed from
-  `build-agent-packaging/pocs/agent`. The 37 functional agent tests and the
-  Kubernetes contract smoke passed. The only failure was the Docker-labeled
-  sandbox smoke: the default Docker process was unavailable, and the Podman
-  retry was blocked by the Codex environment's read-only
-  `/run/user/1000/libpod` path. This is an environment limitation, not an
-  agent assertion failure.
+- Deterministic CTest results, reported without double-counting:
+  - Core agent contracts from `tests/`: **20/20 passed**.
+  - Model-free runtime/resource/MCP/daemon POC tests from
+    `pocs/agent/smoke/`: **37/37 passed**.
+  - Kubernetes sandbox backend: **1/1 passed**.
+  - Docker/Podman sandbox backend: **0/1 passed**. Docker was unavailable;
+    the Podman retry was blocked by the Codex environment's read-only
+    `/run/user/1000/libpod` path. This is an environment limitation, not an
+    agent assertion failure.
+  - Unique agent CTest total: **58/59 passed**, **1 failed**, with the one
+    failure isolated to the Docker/Podman backend. The root command
+    `ctest --test-dir build-agent-packaging -L 'agent|sandbox-docker|sandbox-kubernetes'`
+    discovers all 59 unique tests. The earlier `57` and `39` counts are
+    overlapping views of this same inventory, not additive suites.
 - Model-backed Qwen/Nomic tests that passed on CPU (`-ngl 0`): basic agent
   chat, resource synthesis, resident server-context reuse, and daemon
   lifecycle/runtime reuse. The Nomic embedding model loaded and produced
@@ -1065,3 +1070,7 @@ previous result when the branch or test configuration changes.
 - The data and document-table runs used `--agent-trace`; the document-table
   run also used `--generation-trace`. Their retained logs are under `/tmp`
   and should be used for follow-up model/planner diagnostics.
+- The model-backed results are reported separately from deterministic CTest:
+  basic chat, resource synthesis, resident server-context reuse, and daemon
+  lifecycle passed; data research and document-table planning failed at the
+  source-step binding boundary. Native multimodal execution was not run.

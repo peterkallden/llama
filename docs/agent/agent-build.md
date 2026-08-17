@@ -19,10 +19,40 @@ Use the following profiles for local development:
 | Linux RelWithDebInfo | CI-compatible agent build with Cozo and Kubernetes support |
 | Linux or Windows Release | Packaging and release verification |
 
-The agent tests are intentionally split into separate groups. Contract tests
-are deterministic and do not require a model. Sandbox tests require an
-external Docker or Kubernetes runtime. End-to-end tests require a model and
-additional runtime configuration.
+The agent verification is layered by dependency and failure mode. The layers
+are related, but they are not all independent CTest suites:
+
+| Layer | Source | Character | Model required |
+| --- | --- | --- | --- |
+| Core agent contracts | `tests/` | deterministic C++ contracts for loops, planning, memory, bootstrap, and Cozo | No |
+| Agent runtime smokes | `pocs/agent/smoke/` | model-free runtime, CLI/MCP, daemon, resource, data, and processor behavior | No |
+| Sandbox backends | `pocs/agent/smoke/` | Docker/Podman and Kubernetes process/backend checks | No, external runtime required |
+| Model-backed text flows | `scripts/test-qwen-*.sh` | Qwen chat, planning, resource synthesis, tools, Cozo, and Nomic embeddings | Qwen/Nomic |
+| Multimodal flows | `scripts/test-agent-multimodal-smoke.sh` | capability-gated native image/audio and OCR fallback | multimodal model/projector |
+
+The root CTest project aggregates the core contracts and the 37 POC tests
+labelled `agent`. Therefore `ctest --test-dir BUILD -L agent` is not a
+different implementation of the POC tests: it runs the 20 core agent tests
+plus those 37 POC tests. The two sandbox backend tests deliberately use the
+separate `sandbox-docker` and `sandbox-kubernetes` labels.
+
+For the complete unique agent CTest set, use one root invocation:
+
+```bash
+ctest --test-dir build-agent-packaging \
+  -L 'agent|sandbox-docker|sandbox-kubernetes' \
+  --output-on-failure
+```
+
+This discovers 59 unique tests: 20 core contracts, 37 model-free POC tests,
+and two sandbox backend tests. Running CTest directly in
+`build-agent-packaging/pocs/agent` is useful for isolating the 39 POC tests,
+but it repeats the 37 POC tests already included by the root `agent` label.
+
+Model-backed shell smokes and multimodal smokes are intentionally outside
+CTest. They have model availability, inference quality, projector capability,
+and longer timeout behavior that should be reported separately from
+deterministic CTest results.
 
 ## Windows prerequisites
 
