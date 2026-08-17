@@ -13,6 +13,8 @@
 #include <vector>
 
 class agent_resource_store;
+struct agent_resource_processing_binding_request;
+class agent_resource_processing_provider;
 
 enum class common_runtime_resource_scope {
     turn,
@@ -262,6 +264,8 @@ struct agent_resource_read_authority {
 
 struct agent_resource_runtime {
     agent_resource_store * store = nullptr;
+    std::function<std::shared_ptr<agent_resource_processing_provider>(
+        const agent_resource_processing_binding_request &)> processing_provider_factory;
     std::string namespace_id = "local";
     std::string session_id = "default";
     std::string project_id;

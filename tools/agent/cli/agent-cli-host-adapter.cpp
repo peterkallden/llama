@@ -551,6 +551,8 @@ bool resolve_agent_host_tool_selection(
         std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
         if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
+                request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("odt.text") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
@@ -879,6 +881,9 @@ bool resolve_agent_host_tool_selection(
                     std::move(host), std::move(processors), std::move(registry), std::move(service));
             };
         }
+
+        selection.tooling.resource_runtime.processing_provider_factory =
+            bindings.resource_processing_provider_factory;
 
         native_provider = std::make_unique<native_agent_tool_provider>(
             tool_catalog,

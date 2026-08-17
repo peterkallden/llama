@@ -166,8 +166,11 @@ public:
             server_context & server,
             const common_params & params_base,
             const std::vector<llama_logit_bias> & logit_bias_eog,
-            const common_chat_templates * templates)
-        : server(server), params_base(params_base), logit_bias_eog(logit_bias_eog), templates(templates) {}
+            const common_chat_templates * templates,
+            bool supports_image,
+            bool supports_audio)
+        : server(server), params_base(params_base), logit_bias_eog(logit_bias_eog), templates(templates),
+          supports_image(supports_image), supports_audio(supports_audio) {}
 
     bool generate(
             const common_agent_generation_request & request,
@@ -203,9 +206,39 @@ public:
                 if (!is_image && !is_audio) {
                     continue;
                 }
+                const bool native_supported = is_image
+                    ? supports_image
+                    : supports_audio;
+                if (!native_supported) {
+                    if (is_image && resource.read_text_fallback) {
+                        std::string text;
+                        std::string fallback_error;
+                        const size_t max_text_bytes = resource.resource.size_bytes > 0
+                            ? resource.resource.size_bytes
+                            : 16 * 1024 * 1024;
+                        if (resource.read_text_fallback(max_text_bytes, text, fallback_error)) {
+                            task.cli_prompt += "\n[Extracted image text]\n" + text;
+                            continue;
+                        }
+                        if (resource.required) {
+                            result.error_message = "image text fallback failed for " + resource.resource.uri;
+                            if (!fallback_error.empty()) {
+                                result.error_message += ": " + fallback_error;
+                            }
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (resource.required) {
+                        result.error_message = (is_image ? "required image" : "required audio") +
+                            std::string(" resource is unsupported by the loaded model: ") + resource.resource.uri;
+                        return false;
+                    }
+                    continue;
+                }
                 if (!resource.read_bytes) {
                     if (resource.required) {
-                        result.error_message = "required image resource has no host resolver: " + resource.resource.uri;
+                        result.error_message = "required media resource has no host resolver: " + resource.resource.uri;
                         return false;
                     }
                     continue;
@@ -320,6 +353,8 @@ private:
     common_params params_base;
     std::vector<llama_logit_bias> logit_bias_eog;
     const common_chat_templates * templates;
+    bool supports_image = false;
+    bool supports_audio = false;
 };
 
 } // namespace
@@ -328,6 +363,9 @@ std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
     const common_params & params_base,
     const std::vector<llama_logit_bias> & logit_bias_eog,
-    const common_chat_templates * templates) {
-    return std::make_unique<server_context_agent_inference>(server, params_base, logit_bias_eog, templates);
+    const common_chat_templates * templates,
+    bool supports_image,
+    bool supports_audio) {
+    return std::make_unique<server_context_agent_inference>(
+        server, params_base, logit_bias_eog, templates, supports_image, supports_audio);
 }

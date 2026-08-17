@@ -18,4 +18,6 @@ std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     server_context & server,
     const common_params & params_base,
     const std::vector<llama_logit_bias> & logit_bias_eog,
-    const common_chat_templates * templates);
+    const common_chat_templates * templates,
+    bool supports_image,
+    bool supports_audio);

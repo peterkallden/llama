@@ -199,7 +199,9 @@ bool common_agent_server_context_host::build_inference_session(
         *instance->server,
         instance->params,
         meta.logit_bias_eog,
-        session.templates);
+        session.templates,
+        session.capabilities.image,
+        session.capabilities.audio);
     if (server_context_host_trace_enabled()) {
         std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit\n");
         std::fflush(stderr);

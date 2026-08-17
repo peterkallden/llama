@@ -37,6 +37,13 @@ same generation contract to the server-context adapter. Existing OCR/page-
 image processors remain the fallback path for models without native image
 support.
 
+For an image without native vision capability, the server-context adapter now
+asks the host-owned processing provider for a `text` representation. With the
+`ocr.tesseract` policy enabled, `image/*` resources resolve through the
+existing Tesseract processor and the derived text is added to the text prompt.
+Native vision remains preferred. Audio has no equivalent OCR fallback and is
+reported as unsupported/not-run unless the model natively supports audio.
+
 The existing text path remains unchanged and is the compatibility baseline for
 models such as Qwen text-only checkpoints. Model-backed Qwen verification will
 continue to exercise that baseline; multimodal cases must be marked not-run

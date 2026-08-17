@@ -72,6 +72,12 @@
         "image": "registry.example/pdf-worker@sha256:replace-me",
         "expected_version": "mupdf-1.26"
       },
+      "ocr.tesseract": {
+        "execution": "sandbox_required",
+        "backend": "auto",
+        "executable": "tesseract",
+        "expected_version": "tesseract 5.x"
+      },
       "xlsx.workbook": {
         "execution": "local_preferred",
         "backend": "auto",

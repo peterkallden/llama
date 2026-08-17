@@ -215,9 +215,10 @@ it does not own resource metadata, persistence or permissions. Upstream
 Native `image/*` and `audio/*` resources use this path when the loaded
 server-context model supports the corresponding capability. Text-only models,
 including the Qwen text model used for compatibility verification, continue
-through the existing text path. Unsupported media can use the existing
-host-owned OCR or page-image processors as a fallback; those processors remain
-outside the model and are selected by resource policy.
+through the existing text path. If native image capability is absent, the
+host-owned processing provider may materialize a `text` representation through
+the configured `ocr.tesseract` MIME-based policy. Native vision remains
+preferred; audio has no equivalent OCR fallback.
 
 This keeps multimodality as one vertical extension of the existing resource,
 runtime and inference contracts rather than introducing a second media store or

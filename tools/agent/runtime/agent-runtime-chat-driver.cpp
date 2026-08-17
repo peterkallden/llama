@@ -1,6 +1,7 @@
 #include "agent-runtime-chat-driver.h"
 
 #include "../tooling/agent-tool-provider.h"
+#include "tools/agent/resource/agent-resource-processing-service.h"
 #include "agent/tool-chat-bridge.h"
 
 #include <ctime>
@@ -51,10 +52,42 @@ common_agent_generation_request make_generation_request(
             const auto authority = make_agent_resource_read_authority(
                 execution_tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
             const auto uri = input.resource.uri;
+            const auto mime_type = input.resource.mime_type;
+            const auto processing_factory = execution_tooling.resource_runtime.processing_provider_factory;
             resource.read_bytes = [store, authority, uri](
                     size_t max_bytes, std::string & out, std::string & error) {
                 return store->read_bytes(uri, authority, max_bytes, out, error);
             };
+            if (processing_factory) {
+                resource.read_text_fallback = [store, authority, uri, mime_type, processing_factory](
+                        size_t max_bytes, std::string & out, std::string & error) {
+                    agent_resource_processing_binding_request binding;
+                    binding.source_uri = uri;
+                    binding.operation_id = "multimodal-fallback/" + uri;
+                    binding.authority = authority;
+                    binding.media_type.declared_type = mime_type;
+                    binding.target_representation = "text";
+                    binding.target_media_type = "text/plain";
+                    const auto provider = processing_factory(binding);
+                    if (!provider) {
+                        error = "no configured text fallback processor";
+                        return false;
+                    }
+                    const auto processed = provider->process(binding);
+                    if (!processed.success || processed.resources.empty()) {
+                        error = processed.safe_summary.empty()
+                            ? "text fallback processor failed"
+                            : processed.safe_summary;
+                        return false;
+                    }
+                    return store->read_text(
+                        processed.resources.front().uri,
+                        authority,
+                        max_bytes,
+                        out,
+                        error);
+                };
+            }
         }
         generation.input_resources.push_back(std::move(resource));
     }

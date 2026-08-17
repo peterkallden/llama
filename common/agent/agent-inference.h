@@ -61,6 +61,9 @@ struct common_agent_generation_resource {
     std::string role = "reference";
     bool required = false;
     std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_bytes;
+    // Optional host-owned fallback for image text extraction when native
+    // multimodal inference is unavailable.
+    std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_text_fallback;
 };
 
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(
