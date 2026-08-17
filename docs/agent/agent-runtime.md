@@ -1473,6 +1473,64 @@ their original JSON schemas remain available as the parameters contract.
 This keeps the presentation small for compact models without weakening the
 runtime or MCP validation boundary.
 
+### Model-facing planning semantics
+
+The planning surface follows one explicit design principle:
+
+> **Semantic intent comes from the model; execution identity and orchestration
+> come from the host.**
+
+The model-facing plan is a small typed dataflow language. It describes which
+semantic operations should happen and how their meaningful outputs feed later
+operations. It does not describe the host's execution bookkeeping.
+
+The model-facing rules are:
+
+- plans are ordered by default, while the host may parallelize independent
+  steps when that is safe;
+- the host assigns internal step IDs and derives dependencies;
+- `$previous.field` consumes a typed output from the previous logical step;
+- `as: name` introduces a semantic alias only when a non-linear plan needs to
+  refer to an earlier result later;
+- tools declare the typed outputs that are useful for chaining;
+- the host validates resource, dataset, table and scalar reference types;
+- bindings are converted to canonical `$from_step`/`$json_pointer` values and
+  materialized only after the producing step is completed;
+- tool profiles and runtime policy determine which tools the model may see and
+  use.
+
+If the host can fill in, derive, name, bound or validate a value
+deterministically, the model should normally not have to produce it. Internal
+step IDs, dependency arrays, JSON pointers, runtime handles and execution
+state therefore remain host-owned IR rather than model-facing schema.
+
+The intended compact flow is:
+
+```text
+Model-facing plan
+    -> semantic validation
+    -> host assigns step IDs and dependencies
+    -> host converts $previous/$alias references
+    -> canonical bindings
+    -> execution after source completion
+```
+
+For example:
+
+```text
+document.table(resource=r1, table="Budget summary")
+    -> dataset: dataset_ref
+
+data.aggregate(dataset=$previous.dataset, function=sum, column=amount)
+    -> result: scalar
+```
+
+This keeps the model-facing plan and tool descriptions symmetrical: tool
+semantics describe what an operation consumes and produces, while plan
+semantics describe how operations are connected. The strict schemas and
+host-owned plan IR remain authoritative; this compact surface is a bounded
+projection for model guidance.
+
 Planner prompts use the same boundary for plans. The strict
 `common_plan_proposal_json_schema()` remains the source of truth for the
 planner grammar and `common_plan_parse_proposal_json()` remains the only
