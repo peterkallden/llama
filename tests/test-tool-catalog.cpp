@@ -97,6 +97,9 @@ int main() {
     assert(validate_model_input["required"].size() == 1);
     assert(validate_model_input["required"][0] == "rules");
     assert(document_table_model_input["properties"].contains("table"));
+    assert(document_table_model_input["required"].size() == 2);
+    assert(!document_table_model_input["properties"].contains("node_id"));
+    assert(!document_table_model_input["properties"].contains("table_index"));
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(dataset_schema_result["properties"].contains("columns"));

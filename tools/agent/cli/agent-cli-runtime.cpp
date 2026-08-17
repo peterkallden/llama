@@ -221,7 +221,7 @@ public:
             "Each step normally contains only {tool?,args?,as?,mode?}; do not emit id, after, or depends_on. "
             "Use the canonical form tool:'tool.name' with args:{...}; args is an ordinary JSON object, never a JSON encoded string. "
             "Use tool only when it is one of the registered tools. For calculator use args:{expression:'17 * 23'}; for time_now use args:{}. "
-            "Steps chain after the previous step by default. Use as:'name' only when a later step must refer to that earlier result; then use values such as args:{dataset:\"$name.dataset\"}. Otherwise use $previous.dataset. The host canonicalizes these references to the strict $from_step/$json_pointer binding. Do not invent placeholder values such as resolved table or previous_result. Resource handles (r1) and dataset results (d1) are different types. "
+            "Steps chain after the previous step by default. Use as:'name' only when a later step must refer to that earlier result; then use values such as args:{dataset:\"$name.dataset\"}. A bare name such as \"table\" is a literal, not an alias. Otherwise use $previous.dataset. The host canonicalizes these references to the strict $from_step/$json_pointer binding. Do not invent placeholder values such as resolved table or previous_result. Resource handles (r1) and dataset results (d1) are different types. "
             "A tool step has mode tool. A reasoning step has mode reasoning. The runtime adds the final answer step automatically, so do not emit one unless you need a custom final dependency shape. "
             "The runtime supplies IDs, titles, objectives, empty evidence lists, operation metadata, and safe defaults. Keep values under twelve words.";
         common_chat_msg user;
