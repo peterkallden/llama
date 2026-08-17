@@ -63,10 +63,12 @@ int main() {
     const auto * document_tables = catalog.find_definition("document.tables");
     const auto * document_table = catalog.find_definition("document.table");
     const auto * data_aggregate = catalog.find_definition("data.aggregate");
+    const auto * dataset_schema = catalog.find_definition("dataset.schema");
+    const auto * dataset_sample = catalog.find_definition("dataset.sample");
     const auto * dataset_validate = catalog.find_definition("dataset.validate");
     const auto * artifact_export = catalog.find_definition("artifact.export");
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
-    assert(document_tables && document_table && data_aggregate && dataset_validate && artifact_export && value_counts);
+    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && value_counts);
     const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
     const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
     const auto document_tables_input = nlohmann::json::parse(document_tables->input_schema_json);
@@ -75,6 +77,9 @@ int main() {
     const auto document_table_model_input = nlohmann::json::parse(document_table->model_input_schema_json);
     const auto aggregate_model_input = nlohmann::json::parse(data_aggregate->model_input_schema_json);
     const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
+    const auto dataset_schema_result = nlohmann::json::parse(dataset_schema->result_schema_json);
+    const auto dataset_sample_result = nlohmann::json::parse(dataset_sample->result_schema_json);
+    const auto dataset_validate_result = nlohmann::json::parse(dataset_validate->result_schema_json);
     const auto validate_input = nlohmann::json::parse(dataset_validate->input_schema_json);
     const auto validate_model_input = nlohmann::json::parse(dataset_validate->model_input_schema_json);
     const auto export_model_input = nlohmann::json::parse(artifact_export->model_input_schema_json);
@@ -94,6 +99,9 @@ int main() {
     assert(document_table_model_input["properties"].contains("table"));
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(dataset_schema_result["properties"].contains("columns"));
+    assert(dataset_sample_result["properties"].contains("rows"));
+    assert(dataset_validate_result["properties"]["valid"].value("type", "") == "boolean");
     const auto value_counts_schema = nlohmann::json::parse(value_counts->input_schema_json);
     assert(value_counts_schema["required"].size() == 2);
     assert(value_counts_schema["properties"]["limit"].value("maximum", 0) == 1000);

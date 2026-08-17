@@ -324,6 +324,15 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
     }
     size_t generated_index = 1;
     for (const auto & source : input["steps"]) {
+        // The normal model-facing form describes work for the host to run.
+        // Final synthesis is host-owned, so an empty/default-final step is
+        // never a useful model proposal. Reasoning remains an explicit
+        // model-facing step when it is requested with mode: reasoning.
+        if (host_owned_dependencies && source.is_object() && !source.contains("tool") &&
+                source.value("mode", std::string("final_response")) != "reasoning") {
+            error = "model plan steps require a tool or explicit mode: reasoning; final synthesis is host-owned";
+            return false;
+        }
         const std::string fallback_id = host_owned_dependencies || (source.is_object() && !source.contains("id"))
             ? next_generated_step_id(generated_index, seen_step_ids) : std::string();
         std::map<std::string, std::string> binding_aliases = aliases;

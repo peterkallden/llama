@@ -1486,8 +1486,12 @@ operations. It does not describe the host's execution bookkeeping.
 
 The model-facing rules are:
 
-- plans are ordered by default, while the host may parallelize independent
-  steps when that is safe;
+- the simple model-facing form is sequential by default; the host assigns a
+  dependency on the preceding step;
+- the internal plan scheduler and event/queue machinery can represent and
+  advance independent ready steps, but parallel execution currently requires
+  an explicitly constructed DAG or a future host optimization that can prove
+  the dependencies safely;
 - the host assigns internal step IDs and derives dependencies;
 - `$previous.field` consumes a typed output from the previous logical step;
 - `as: name` introduces a semantic alias only when a non-linear plan needs to
@@ -1561,6 +1565,7 @@ example:
     steps: step[]
     step fields: tool?:string; args?:object; as?:string; mode?:string
     step order: host assigns step IDs and sequential dependencies when id/after/depends_on are omitted
+    scheduling: the resulting simple chain is sequential; independent-step parallelism belongs to advanced DAGs or a future host optimization
     output binding: use $previous.field or $alias.field; host resolves both to typed step bindings
 
 The model still returns one JSON object with `goal` and `steps`. This notation
@@ -1615,6 +1620,20 @@ handle only after the source step completes. This keeps one plan parser, one
 dependency representation, one binding/materialization path, and one
 execution scheduler. It also keeps retry attempts attached to the same
 host-owned logical step rather than creating new model-visible steps.
+
+The model-facing result contracts are part of the same boundary. Dataset and
+analysis tools expose the bounded fields that can be chained, for example
+`dataset.schema -> columns`, `dataset.sample -> rows`,
+`dataset.validate -> valid, violations`, and query/transform operations expose
+their bounded `rows` and optional `dataset` result. The host-owned execution
+schema may still contain additional policy and materialization fields, but
+those fields are not needed to understand the dataflow.
+
+Normal model plans must contain a tool step or an explicit `mode: reasoning`
+step. Final synthesis is host-owned and is added by the host when the model
+has not supplied one. An empty/default-final model step is rejected at the
+plan boundary so a malformed proposal cannot become an accidental terminal
+step.
 
 ### Typed step-output bindings
 

@@ -128,6 +128,8 @@ int main() {
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{}]})", plan, operations, error));
+    assert(error.find("final synthesis is host-owned") != std::string::npos);
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository.search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
     assert(error == "duplicate step id");
