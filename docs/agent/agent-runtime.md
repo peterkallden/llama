@@ -3693,6 +3693,25 @@ For example:
 pwsh -File scripts/test-qwen-nomic-agent.ps1 -ThinkingMode deliberate
 ```
 
+Linux has matching Bash entry points for the first model-backed slices. They use
+`LLAMA_AGENT_BUILD_DIR`, `LLAMA_AGENT_MODEL`, and
+`LLAMA_AGENT_EMBEDDING_MODEL` instead of PowerShell parameters. Missing models
+return `77` (`not-run`), while an available model run is fail-closed:
+
+```bash
+export LD_LIBRARY_PATH=/opt/cozo/0.7.6/lib:build-agent-packaging/bin
+scripts/test-qwen-nomic-agent.sh
+scripts/test-qwen-resource-synthesis.sh
+scripts/test-agent-server-context-smoke.sh
+```
+
+The first two scripts cover the Qwen text-only agent and bounded resource
+synthesis. The third exercises the resident server-context path through
+`llama-agent-resident-smoke`, including runtime reuse across two turns. These
+are model-backed diagnostics, not replacements for the deterministic CTest
+gate; the remaining data/document-table and daemon-integration PowerShell
+scenarios are still separate follow-up Linux ports.
+
 The CSV join/sum scenario is intentionally a separate integration slice. It
 must seed the two CSV inputs into the configured data-store scope before a
 model-backed research turn can exercise `data.join` and `data.aggregate`.

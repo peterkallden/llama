@@ -367,6 +367,22 @@ The matching Linux entry point is
 reported separately from model-free tests because they depend on model
 availability, prompt behavior, runtime duration, and host resources.
 
+For the focused Linux model-backed checks, use the Bash scripts below. They
+share the same model environment and return `77` when a required model is not
+available:
+
+```bash
+export LLAMA_AGENT_MODEL=/home/prbm/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
+export LLAMA_AGENT_EMBEDDING_MODEL=/home/prbm/models/nomic-embed-text-v1.5.Q4_K_M.gguf
+scripts/test-qwen-nomic-agent.sh
+scripts/test-qwen-resource-synthesis.sh
+scripts/test-agent-server-context-smoke.sh
+```
+
+Set `LLAMA_AGENT_BUILD=1` to build `llama-agent` before a script runs. These
+scripts are intentionally outside the fast CTest gate because they depend on
+model output and local CPU/memory capacity.
+
 For daemon configuration and request examples, see
 [Agent daemon usage](agent-daemon-usage.md). For the full runtime behavior and
 protocol contracts, see [Agent runtime](agent-runtime.md).
