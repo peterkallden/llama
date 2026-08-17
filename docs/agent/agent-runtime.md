@@ -3703,6 +3703,9 @@ export LD_LIBRARY_PATH=/opt/cozo/0.7.6/lib:build-agent-packaging/bin
 scripts/test-qwen-nomic-agent.sh
 scripts/test-qwen-resource-synthesis.sh
 scripts/test-agent-server-context-smoke.sh
+scripts/test-qwen-nomic-agent-data.sh
+scripts/test-qwen-nomic-document-table.sh
+scripts/test-agent-daemon-integration.sh
 ```
 
 The first two scripts cover the Qwen text-only agent and bounded resource
@@ -3710,7 +3713,11 @@ synthesis. The third exercises the resident server-context path through
 `llama-agent-resident-smoke`, including runtime reuse across two turns. These
 are model-backed diagnostics, not replacements for the deterministic CTest
 gate; the remaining data/document-table and daemon-integration PowerShell
-scenarios are still separate follow-up Linux ports.
+scenarios now have Linux ports as well. Data and document-table remain
+fail-closed model diagnostics: if Qwen does not select the required tools, the
+script fails and records that model-planning gap rather than treating a prose
+answer as tool coverage. The daemon integration port exercises the JSONL ready
+event stream, chat lifecycle, runtime reuse, and status contract.
 
 The CSV join/sum scenario is intentionally a separate integration slice. It
 must seed the two CSV inputs into the configured data-store scope before a

@@ -16,7 +16,7 @@ agent_smoke_prepare_workdir() {
 agent_smoke_run_logged() {
     local log_path="$1"; shift
     echo "running: $*"
-    set +e; "$@" >"$log_path" 2>&1; local status=$?; set -e
+    set +e; timeout --foreground "${LLAMA_AGENT_TIMEOUT_SECONDS:-180}" "$@" >"$log_path" 2>&1; local status=$?; set -e
     cat "$log_path"
     if [[ $status -ne 0 ]]; then echo "model smoke failed: exit=${status}; log=${log_path}" >&2; return "$status"; fi
 }

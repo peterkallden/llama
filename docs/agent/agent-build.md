@@ -377,6 +377,9 @@ export LLAMA_AGENT_EMBEDDING_MODEL=/home/prbm/models/nomic-embed-text-v1.5.Q4_K_
 scripts/test-qwen-nomic-agent.sh
 scripts/test-qwen-resource-synthesis.sh
 scripts/test-agent-server-context-smoke.sh
+scripts/test-qwen-nomic-agent-data.sh
+scripts/test-qwen-nomic-document-table.sh
+scripts/test-agent-daemon-integration.sh
 ```
 
 Set `LLAMA_AGENT_BUILD=1` to build `llama-agent` before a script runs. These
