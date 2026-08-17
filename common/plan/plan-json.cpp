@@ -13,10 +13,13 @@ namespace {
 json normalize_tool_arguments(const std::string & tool_name, json arguments);
 json normalize_safe_integer_arguments(json arguments);
 
-bool model_output_binding(const std::string & value, json & binding) {
-    if (value.size() < 5 || value.front() != '$') return false;
+enum class model_binding_parse_result { literal, binding, invalid };
+
+model_binding_parse_result model_output_binding(const std::string & value, json & binding) {
+    if (value.empty() || value.front() != '$') return model_binding_parse_result::literal;
+    if (value.size() < 5) return model_binding_parse_result::invalid;
     const auto separator = value.find('.', 1);
-    if (separator == std::string::npos || separator == 1 || separator + 1 >= value.size()) return false;
+    if (separator == std::string::npos || separator == 1 || separator + 1 >= value.size()) return model_binding_parse_result::invalid;
     const auto valid_identifier = [](const std::string & part) {
         return !part.empty() && std::all_of(part.begin(), part.end(), [](unsigned char ch) {
             return std::isalnum(ch) != 0 || ch == '_' || ch == '-';
@@ -29,25 +32,26 @@ bool model_output_binding(const std::string & value, json & binding) {
     while (begin < field_path.size()) {
         const size_t end = field_path.find('.', begin);
         const std::string field = field_path.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
-        if (!valid_identifier(field)) return false;
-        if (pointer.size() > 256 - field.size() - 1) return false;
+        if (!valid_identifier(field)) return model_binding_parse_result::invalid;
+        if (pointer.size() > 256 - field.size() - 1) return model_binding_parse_result::invalid;
         if (pointer.size() > 1) pointer += '/';
         pointer += field;
         if (end == std::string::npos) break;
         begin = end + 1;
     }
-    if (!valid_identifier(step_id) || pointer.size() <= 1) return false;
+    if (!valid_identifier(step_id) || pointer.size() <= 1) return model_binding_parse_result::invalid;
     binding = json{{"$from_step", step_id}, {"$json_pointer", pointer}};
-    return true;
+    return model_binding_parse_result::binding;
 }
 
 bool normalize_model_output_bindings(
         json & value,
         const std::map<std::string, std::string> * aliases,
-        std::string & error) {
+        std::string & error,
+        bool strict_model_references) {
     if (value.is_array()) {
         for (auto & item : value) {
-            if (!normalize_model_output_bindings(item, aliases, error)) return false;
+            if (!normalize_model_output_bindings(item, aliases, error, strict_model_references)) return false;
         }
         return true;
     }
@@ -56,12 +60,30 @@ bool normalize_model_output_bindings(
         if (it.value().is_string()) {
             json binding;
             const auto & shorthand = it.value().get_ref<const std::string &>();
-            if (model_output_binding(shorthand, binding)) {
+            const auto parsed = model_output_binding(shorthand, binding);
+            if (parsed == model_binding_parse_result::invalid && strict_model_references) {
+                error = "plan.binding.invalid_syntax: '" + shorthand +
+                    "' is not a valid model reference; expected '$previous.field' or '$alias.field'";
+                return false;
+            }
+            if (parsed == model_binding_parse_result::literal && strict_model_references && aliases != nullptr) {
+                for (const auto & alias : *aliases) {
+                    const std::string prefix = alias.first + ".";
+                    if (shorthand.rfind(prefix, 0) == 0 && shorthand.size() > prefix.size()) {
+                        error = "plan.binding.alias_used_as_literal: '" + shorthand +
+                            "' looks like a reference to alias '" + alias.first +
+                            "'; use '$" + shorthand + "'";
+                        return false;
+                    }
+                }
+            }
+            if (parsed == model_binding_parse_result::binding) {
                 if (aliases != nullptr) {
                     const auto from_step = binding.value("$from_step", std::string());
                     const auto alias = aliases->find(from_step);
                     if (alias == aliases->end()) {
-                        error = "unknown model output alias '" + from_step + "'; use $previous.field or declare as: '" + from_step + "'";
+                        error = "plan.binding.unknown_alias: reference '$" + from_step +
+                            "' uses an alias that has not been declared; use $previous.field or declare as: '" + from_step + "'";
                         return false;
                     }
                     binding["$from_step"] = alias->second;
@@ -69,7 +91,7 @@ bool normalize_model_output_bindings(
                 it.value() = std::move(binding);
             }
         } else {
-            if (!normalize_model_output_bindings(it.value(), aliases, error)) return false;
+            if (!normalize_model_output_bindings(it.value(), aliases, error, strict_model_references)) return false;
         }
     }
     return true;
@@ -230,7 +252,8 @@ bool parse_mode(const json & source, bool has_tool, common_plan_step_mode & mode
 }
 
 bool parse_tool(const json & source, common_plan_step & step, std::string & error,
-        const std::map<std::string, std::string> * aliases = nullptr) {
+        const std::map<std::string, std::string> * aliases = nullptr,
+        bool strict_model_references = false) {
     if (!source.contains("tool")) return true;
     const auto & tool = source["tool"];
     std::string name;
@@ -247,7 +270,7 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
     // The model-facing shorthand $step.output is only syntax sugar. Store
     // the existing strict binding object in the plan IR so execution keeps
     // one binding path and one materialization policy.
-    if (!normalize_model_output_bindings(arguments, aliases, error)) return false;
+    if (!normalize_model_output_bindings(arguments, aliases, error, strict_model_references)) return false;
 
     common_plan_tool_arguments_contract contract;
     if (!parse_tool_arguments_contract(name, std::move(arguments), contract, error)) {
@@ -270,7 +293,8 @@ bool parse_tool(const json & source, common_plan_step & step, std::string & erro
 
 bool parse_step(const json & source, const std::string & goal, const std::string & fallback_id, common_plan_step & step, std::string & error,
         const std::map<std::string, std::string> * aliases = nullptr,
-        bool host_owned_dependencies = false) {
+        bool host_owned_dependencies = false,
+        bool strict_model_references = false) {
     if (!source.is_object()) { error = "step must be an object"; return false; }
     if (source.contains("id")) {
         if (!source["id"].is_string() || source["id"].get<std::string>().empty()) { error = "step requires a non-empty id"; return false; }
@@ -292,7 +316,8 @@ bool parse_step(const json & source, const std::string & goal, const std::string
     if (source.contains("required_evidence") && !string_array(source["required_evidence"], step.required_evidence)) { error = "required_evidence must be a string array"; return false; }
     if (source.contains("source_memory_ids") && !string_array(source["source_memory_ids"], step.source_memory_ids)) { error = "source_memory_ids must be a string array"; return false; }
     const bool has_tool = source.contains("tool");
-    if (!parse_mode(source, has_tool, step.mode, error) || !parse_tool(source, step, error, aliases)) return false;
+    if (!parse_mode(source, has_tool, step.mode, error) ||
+            !parse_tool(source, step, error, aliases, strict_model_references)) return false;
     return true;
 }
 
@@ -341,7 +366,8 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
             for (const auto & known_id : seen_step_ids) binding_aliases.emplace(known_id, known_id);
         }
         common_plan_step step;
-        if (!parse_step(source, plan.goal, fallback_id, step, error, &binding_aliases, host_owned_dependencies)) return false;
+        if (!parse_step(source, plan.goal, fallback_id, step, error, &binding_aliases,
+                host_owned_dependencies, host_owned_dependencies)) return false;
         if (!seen_step_ids.insert(step.id).second) { error = "duplicate step id"; return false; }
         if (step.id == fallback_id) ++generated_index;
         if ((host_owned_dependencies || step.depends_on.empty()) && !operations.empty()) {

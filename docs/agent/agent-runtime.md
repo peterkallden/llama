@@ -1503,6 +1503,29 @@ The model-facing rules are:
 - tool profiles and runtime policy determine which tools the model may see and
   use.
 
+Model references form a reserved namespace in the compact model-facing plan.
+In a binding-capable argument, a string beginning with `$` is an attempted
+reference, not a literal fallback. It must match the bounded grammar
+`$previous.field` or `$alias.field`; array indexes, arbitrary expressions,
+missing fields and malformed forms fail at the plan boundary with a
+`plan.binding.invalid_syntax` diagnostic. Ordinary string arguments remain
+ordinary text, so values such as `$100` in a user message are not bindings.
+
+Alias lookup is a compile-time check. A reference such as `$budget.dataset`
+must name an alias declared by an earlier step. Unknown aliases fail with a
+`plan.binding.unknown_alias` diagnostic before tool execution rather than
+allowing a fabricated source step to reach the runtime scheduler. The runtime
+still repeats source-step, observation and completion checks as defence in
+depth.
+
+Literal values are never implicitly rewritten because an alias has the same
+spelling. If a step declares `as: table`, then `"table"` remains the literal
+string `table`; a binding must be written as `$table.dataset`. A future
+diagnostic can identify the common near-miss `"table.dataset"` as
+`plan.binding.alias_used_as_literal` and suggest `$table.dataset`, without
+changing the value silently. A literal that only happens to equal the alias
+name remains valid.
+
 The normal planner generation path uses a model-facing schema containing only
 `goal`, ordered `steps`, `tool`, `args`, optional `as`, and optional `mode`.
 The parser still accepts explicit IDs and dependencies for persisted or

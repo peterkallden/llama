@@ -121,7 +121,24 @@ int main() {
 
     const auto unknown_alias = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(!common_plan_parse_proposal_json(unknown_alias, plan, operations, error));
-    assert(error.find("unknown model output alias 'table'") != std::string::npos);
+    assert(error.find("plan.binding.unknown_alias") != std::string::npos);
+
+    const auto invalid_reference = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$tables[0].dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(!common_plan_parse_proposal_json(invalid_reference, plan, operations, error));
+    assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
+
+    const auto invalid_reference_shape = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$table","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(!common_plan_parse_proposal_json(invalid_reference_shape, plan, operations, error));
+    assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
+
+    const auto literal_alias_name = R"({"goal":"use a literal","steps":[{"tool":"document.table","args":{"resource":"r1","table":"table"},"as":"table"}]})";
+    assert(common_plan_parse_proposal_json(literal_alias_name, plan, operations, error));
+    const auto literal_args = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
+    assert(literal_args.value("table", std::string()) == "table");
+
+    const auto missing_reference_prefix = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"},"as":"table"},{"tool":"data.aggregate","args":{"dataset":"table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(!common_plan_parse_proposal_json(missing_reference_prefix, plan, operations, error));
+    assert(error.find("plan.binding.alias_used_as_literal") != std::string::npos);
 
     // The prior full proposal format remains accepted for persisted or older callers.
     const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
