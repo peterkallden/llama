@@ -29,15 +29,22 @@ loaded model metadata. The CLI backend remains text-only for now. Supplying
 ignoring the projector; native multimodal execution therefore has one clear
 backend seam.
 
-## Scope of the first sweep
+## Current staged scope
 
-This sweep establishes configuration, session identity, and capability
-contracts. It does not yet attach agent resources to inference messages. That
-is the next sweep: resource references will be resolved by the host and passed
-to the server-context adapter, with existing OCR/page-image processors kept as
-fallbacks for models without native image support.
+Configuration, session identity, capability contracts, and host-owned resource
+resolution are implemented. Image and audio references are passed through the
+same generation contract to the server-context adapter. Existing OCR/page-
+image processors remain the fallback path for models without native image
+support.
 
 The existing text path remains unchanged and is the compatibility baseline for
 models such as Qwen text-only checkpoints. Model-backed Qwen verification will
 continue to exercise that baseline; multimodal cases must be marked not-run
 when the selected model has no projector or image capability.
+
+The model-backed fixture set includes `cats.jpg`, `scb-cpi.png`, and
+`sample-speech.mp3`. The native smoke executes image cases and an audio case;
+an image-only projector reports the audio case as `not-run`, while malformed
+or incorrectly resolved audio remains a failure. The resource CTest contract
+also carries image and audio references together, so audio does not introduce
+a second resource or generation path.

@@ -7,6 +7,9 @@ These fixtures are used by model-backed multimodal and OCR/fallback smokes.
 - `scb-cpi.png` — SCB CPI statistics image; native multimodal models should
   describe the chart/text, while OCR fallback can validate the textual
   representation.
+- `sample-speech.mp3` — small MP3 speech fixture sourced from the existing
+  upstream MTMD test asset; audio-capable models should identify speech or
+  sound content.
 
 Expected capability-aware results:
 
@@ -15,6 +18,9 @@ Expected capability-aware results:
 | Native image support | pass | pass |
 | Text-only model with OCR fallback | not-run for visual understanding | pass |
 | Text-only model without fallback | not-run | not-run |
+
+Audio is evaluated separately: native audio capability is required for
+`sample-speech.mp3`; text-only or image-only models report `not-run`, not fail.
 
 Missing capability is an expected `not-run`/skip condition, not a failed test.
 

@@ -314,10 +314,20 @@ static void test_generation_contract_helpers() {
     resource.role = "user_attachment";
     resource.required = true;
     request.input_resources.push_back(std::move(resource));
-    assert(request.input_resources.size() == 1);
+    common_agent_generation_resource audio_resource;
+    audio_resource.resource.uri = "agent-resource://turn/turn-7/audio.mp3";
+    audio_resource.resource.mime_type = "audio/mpeg";
+    audio_resource.role = "user_attachment";
+    audio_resource.required = false;
+    request.input_resources.push_back(std::move(audio_resource));
+    assert(request.input_resources.size() == 2);
     assert(request.input_resources[0].resource.uri == "agent-resource://turn/turn-7/image.png");
     assert(request.input_resources[0].role == "user_attachment");
     assert(request.input_resources[0].required);
+    assert(request.input_resources[1].resource.uri == "agent-resource://turn/turn-7/audio.mp3");
+    assert(request.input_resources[1].resource.mime_type == "audio/mpeg");
+    assert(request.input_resources[1].role == "user_attachment");
+    assert(!request.input_resources[1].required);
 }
 
 static void test_cli_scope_helpers() {
