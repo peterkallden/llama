@@ -750,14 +750,13 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const auto resource_authority = make_agent_resource_read_authority(
-        {
-            resource_store.get(),
-            options.memory_namespace,
-            options.memory_session,
-            options.memory_project,
-            options.memory_turn.empty() ? "mcp-turn" : options.memory_turn,
-        });
+    agent_resource_runtime resource_runtime;
+    resource_runtime.store = resource_store.get();
+    resource_runtime.namespace_id = options.memory_namespace;
+    resource_runtime.session_id = options.memory_session;
+    resource_runtime.project_id = options.memory_project;
+    resource_runtime.turn_id = options.memory_turn.empty() ? "mcp-turn" : options.memory_turn;
+    const auto resource_authority = make_agent_resource_read_authority(resource_runtime);
 
     agent_mcp_server_tool_registry registry;
     if (!register_resolved_profile_tools(
