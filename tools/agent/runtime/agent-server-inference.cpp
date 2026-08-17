@@ -196,6 +196,35 @@ public:
             task.id = reader.get_new_id();
             task.cli = true;
             task.cli_prompt = prepared.prompt;
+            for (const auto & resource : request.input_resources) {
+                const auto mime_type = common_normalize_resource_media_type(resource.resource.mime_type);
+                const bool is_image = mime_type.rfind("image/", 0) == 0;
+                const bool is_audio = mime_type.rfind("audio/", 0) == 0;
+                if (!is_image && !is_audio) {
+                    continue;
+                }
+                if (!resource.read_bytes) {
+                    if (resource.required) {
+                        result.error_message = "required image resource has no host resolver: " + resource.resource.uri;
+                        return false;
+                    }
+                    continue;
+                }
+                std::string bytes;
+                std::string read_error;
+                const size_t max_bytes = resource.resource.size_bytes > 0
+                    ? resource.resource.size_bytes
+                    : 64 * 1024 * 1024;
+                if (!resource.read_bytes(max_bytes, bytes, read_error)) {
+                    result.error_message = "failed to read image resource " + resource.resource.uri;
+                    if (!read_error.empty()) {
+                        result.error_message += ": " + read_error;
+                    }
+                    return false;
+                }
+                task.cli_prompt += "\n" + std::string(get_media_marker());
+                task.cli_files.emplace_back(bytes.begin(), bytes.end());
+            }
             task.params = make_server_task_params_from_prepared_generation(
                 params_base,
                 request,

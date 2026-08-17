@@ -188,6 +188,42 @@ All mode budgets are host-resolved. A user or caller may request a mode and
 bounded limits, but host policy remains the upper bound for reflection rounds,
 plan revisions, tool rounds, research iterations, tokens, and time.
 
+## Multimodal inference boundary
+
+Multimodal support follows the same host-owned runtime boundary. The agent
+runtime carries resource identity, MIME type, role and requiredness through the
+generation contract; it does not make the model choose a filesystem path or a
+storage backend.
+
+```text
+agent request
+    -> input resource reference (URI/MIME/role)
+    -> generation request
+    -> host-owned resource resolver
+    -> temporary bytes in server_task::cli_files
+    -> upstream media marker + mtmd processing
+    -> model generation
+```
+
+The resolver reads bytes through the existing `agent_resource_store` and
+host-derived read authority. The server-context adapter owns only the
+operation-scoped `raw_buffer` values needed by upstream `process_mtmd_prompt`;
+it does not own resource metadata, persistence or permissions. Upstream
+`server_task::cli_files`, `process_mtmd_prompt`, `mtmd_context` and
+`common_params.mmproj` remain unchanged.
+
+Native `image/*` and `audio/*` resources use this path when the loaded
+server-context model supports the corresponding capability. Text-only models,
+including the Qwen text model used for compatibility verification, continue
+through the existing text path. Unsupported media can use the existing
+host-owned OCR or page-image processors as a fallback; those processors remain
+outside the model and are selected by resource policy.
+
+This keeps multimodality as one vertical extension of the existing resource,
+runtime and inference contracts rather than introducing a second media store or
+a parallel agent execution path. See [Agent multimodal runtime](agent-multimodal.md)
+for the staged implementation status.
+
 ## Host-owned tool profiles and capabilities
 
 Tool authority is resolved by the host before a turn starts. The host selects

@@ -6,6 +6,7 @@
 #include "resource/resource-contract.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -59,6 +60,7 @@ struct common_agent_generation_resource {
     common_runtime_resource_ref resource;
     std::string role = "reference";
     bool required = false;
+    std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_bytes;
 };
 
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(

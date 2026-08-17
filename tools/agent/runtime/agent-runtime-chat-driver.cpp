@@ -3,6 +3,8 @@
 #include "../tooling/agent-tool-provider.h"
 #include "agent/tool-chat-bridge.h"
 
+#include <ctime>
+
 namespace {
 
 std::string make_generation_trace_id(
@@ -30,7 +32,8 @@ common_agent_generation_request make_generation_request(
         const std::vector<common_chat_msg> & messages,
         const common_agent_generation_options & options,
         const std::vector<common_chat_tool> & tools,
-        common_chat_tool_choice tool_choice) {
+        common_chat_tool_choice tool_choice,
+        const common_agent_runtime_tooling & execution_tooling) {
     auto generation = common_agent_make_generation_request(
         purpose,
         make_generation_trace_id(request, purpose),
@@ -42,7 +45,18 @@ common_agent_generation_request make_generation_request(
         tool_choice);
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
-        generation.input_resources.push_back({input.resource, input.role, input.required});
+        common_agent_generation_resource resource{input.resource, input.role, input.required};
+        if (execution_tooling.resource_runtime.store != nullptr) {
+            auto * store = execution_tooling.resource_runtime.store;
+            const auto authority = make_agent_resource_read_authority(
+                execution_tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+            const auto uri = input.resource.uri;
+            resource.read_bytes = [store, authority, uri](
+                    size_t max_bytes, std::string & out, std::string & error) {
+                return store->read_bytes(uri, authority, max_bytes, out, error);
+            };
+        }
+        generation.input_resources.push_back(std::move(resource));
     }
     return generation;
 }
@@ -140,7 +154,8 @@ bool run_agent_chat_runtime(
         messages,
         execution.generation_options,
         available_tools,
-        initial_tool_choice));
+        initial_tool_choice,
+        execution.tooling));
     result.total_decoded_tokens = generation_result.decoded_tokens;
     result.response_decoded_tokens = generation_result.decoded_tokens;
     result.response_generation_status = generation_result.status;
@@ -172,7 +187,8 @@ bool run_agent_chat_runtime(
             messages,
             execution.generation_options,
             available_tools,
-            initial_tool_choice));
+            initial_tool_choice,
+            execution.tooling));
         result.total_decoded_tokens += generation_result.decoded_tokens;
         result.response_decoded_tokens = generation_result.decoded_tokens;
         result.response_generation_status = generation_result.status;
@@ -209,7 +225,8 @@ bool run_agent_chat_runtime(
             messages,
             execution.generation_options,
             next_tools,
-            allow_another_tool_round && !next_tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE));
+            allow_another_tool_round && !next_tools.empty() ? COMMON_CHAT_TOOL_CHOICE_AUTO : COMMON_CHAT_TOOL_CHOICE_NONE,
+            execution.tooling));
         result.total_decoded_tokens += generation_result.decoded_tokens;
         result.response_decoded_tokens = generation_result.decoded_tokens;
         result.response_generation_status = generation_result.status;
