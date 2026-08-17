@@ -1034,3 +1034,34 @@ previous result when the branch or test configuration changes.
   server diagnostics, and termination of a hanging server within its request
   deadline.
 - Registered inventory: 64 total CTest cases, with 20 under the `agent` label.
+
+### 2026-08-17 - Linux agent and Qwen/Nomic compatibility checkpoint
+
+- Branch: `kallden/agent-multimodal`. This checkpoint deliberately excludes
+  native multimodal model execution; no image/audio projector was available
+  in the local model directory.
+- Core agent CTest: 57/57 passed with Cozo enabled from
+  `build-agent-packaging -L agent`.
+- Agent POC CTest/smoke suite: 38/39 passed from
+  `build-agent-packaging/pocs/agent`. The 37 functional agent tests and the
+  Kubernetes contract smoke passed. The only failure was the Docker-labeled
+  sandbox smoke: the default Docker process was unavailable, and the Podman
+  retry was blocked by the Codex environment's read-only
+  `/run/user/1000/libpod` path. This is an environment limitation, not an
+  agent assertion failure.
+- Model-backed Qwen/Nomic tests that passed on CPU (`-ngl 0`): basic agent
+  chat, resource synthesis, resident server-context reuse, and daemon
+  lifecycle/runtime reuse. The Nomic embedding model loaded and produced
+  768-dimensional embeddings.
+- Qwen/Nomic data-research smoke: failed after model execution reached the
+  agent runtime with `tool argument binding requires a completed source step`.
+  Cozo seeding passed (`3` orders and `2` customers), but the model-generated
+  plan did not produce a completed source step for the dependent tool call.
+- Qwen/Nomic document-table smoke: failed with the same source-step binding
+  error. The trace showed a complete model plan, including
+  `document.tables`, `document.table`, and `data.aggregate`, followed by an
+  inappropriate extra `web_search` step. This is a model/planning behavior
+  issue exposed by the smoke, not a document parser or CTest contract failure.
+- The data and document-table runs used `--agent-trace`; the document-table
+  run also used `--generation-trace`. Their retained logs are under `/tmp`
+  and should be used for follow-up model/planner diagnostics.
