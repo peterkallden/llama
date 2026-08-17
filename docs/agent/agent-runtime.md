@@ -222,7 +222,9 @@ outside the model and are selected by resource policy.
 This keeps multimodality as one vertical extension of the existing resource,
 runtime and inference contracts rather than introducing a second media store or
 a parallel agent execution path. See [Agent multimodal runtime](agent-multimodal.md)
-for the staged implementation status.
+for the staged implementation status. Representative model-backed fixtures
+live under `pocs/agent/smoke/data/fixtures/multimodal/`; the fixture README
+defines the expected pass versus capability-based not-run outcomes.
 
 ## Host-owned tool profiles and capabilities
 
