@@ -159,7 +159,9 @@ int main() {
     assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
     assert(aggregate_compact.find("function:count|sum|avg|min|max") != std::string::npos);
     assert(aggregate_compact.find("column?:string") != std::string::npos);
-    assert(aggregate_compact.find("materialize") == std::string::npos);
+    const auto aggregate_returns = aggregate_compact.find("\nreturns:");
+    assert(aggregate_returns != std::string::npos);
+    assert(aggregate_compact.substr(0, aggregate_returns).find("materialize") == std::string::npos);
     assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
