@@ -6,7 +6,7 @@
 [![Agent development package (Debian/Ubuntu)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
 [![Agent development package (Windows)](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)
 [![Agent container images](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml)
-[![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
+[![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=llama-agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
 
 `llama-agent` is a resident agent runtime built on llama.cpp. It provides
 host-controlled tools and capabilities, persistent memory and planning,
@@ -25,7 +25,7 @@ distribution readiness:
 | [Agent development package (.tar.gz)](../../.github/workflows/agent-package-archive.yml) | Verified development archive from the Linux staging package |
 | [Agent development package (Debian/Ubuntu)](../../.github/workflows/agent-package-debian.yml) | Native Ubuntu/Debian package after the verified development archive |
 | [Agent development package (Windows)](../../.github/workflows/agent-package-windows.yml) | Windows CPU dev ZIP/MSI after Windows package tests and staging validation |
-| [Agent release packages](../../.github/workflows/agent-release.yml) | Versioned CPU, CUDA, and Vulkan packages from `agent-v*` tags |
+| [Agent release packages](../../.github/workflows/agent-release.yml) | Versioned Linux CPU/CUDA/Vulkan tar.gz and Debian packages plus Windows CPU/CUDA/Vulkan ZIP/MSI from `llama-agent-v*` tags |
 | [Agent container images](../../.github/workflows/agent-container-images.yml) | Development image from the `.tar.gz` package and backend images from releases |
 
 Workflow badges show the latest workflow result for the selected ref. The
@@ -35,7 +35,34 @@ evidence-based milestone record is maintained in
 ## Distribution
 
 - [Agent releases](https://github.com/peterkallden/llama/releases) contain
-  versioned CPU, CUDA, and Vulkan packages published from `agent-v*` tags.
+  versioned CPU, CUDA, and Vulkan packages published from `llama-agent-v*` tags.
+  Each release contains one Debian package for each backend:
+
+  ```text
+  llama-agent-cpu_<version>_amd64.deb
+  llama-agent-cuda_<version>_amd64.deb
+  llama-agent-vulkan_<version>_amd64.deb
+  ```
+
+  Windows releases contain matching backend artifacts:
+
+  ```text
+  llama-agent-cpu-windows-x64-<version>.zip
+  llama-agent-cpu-windows-x64-<version>.msi
+  llama-agent-cuda13-windows-x64-<version>.zip
+  llama-agent-cuda13-windows-x64-<version>.msi
+  llama-agent-vulkan1.4-windows-x64-<version>.zip
+  llama-agent-vulkan1.4-windows-x64-<version>.msi
+  ```
+
+  Windows artifact names use the short backend labels `cuda13` and `vulkan1.4`;
+  the exact toolkit/SDK versions (`13.3` and `1.4.357.0`) are recorded in the
+  release manifest.
+
+  The Debian package names are `llama-agent-cpu`, `llama-agent-cuda`, and
+  `llama-agent-vulkan`; they conflict with one another so only one backend is
+  installed. Release metadata records the agent version, CI build number,
+  upstream llama.cpp build, commit, and backend.
 - [Development `.tar.gz` packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml)
 - [Debian development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
 - [Windows development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)

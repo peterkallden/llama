@@ -3,17 +3,17 @@ name: Agent release packages
 on:
   push:
     tags:
-      - agent-v*
+      - llama-agent-v*
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag, for example agent-v0.1.0
+        description: Release tag, for example llama-agent-v0.1.0
         required: true
         type: string
       source_ref:
-        description: Branch or commit to build
+        description: Master branch or commit in the master history to build
         required: true
-        default: feature/llama-agent
+        default: master
         type: string
 
 permissions:
@@ -48,6 +48,17 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.source_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify release source is on master history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin master --no-tags
+          git merge-base --is-ancestor HEAD origin/master || {
+            echo 'Release source must be an ancestor of origin/master' >&2
+            exit 1
+          }
 
       - name: Install common build dependencies
         shell: bash
@@ -206,11 +217,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" == agent-v* ]] || {
-            echo "Release tag must use the agent-v* format" >&2
+          [[ "$RELEASE_TAG" == llama-agent-v* ]] || {
+            echo "Release tag must use the llama-agent-v* format" >&2
             exit 1
           }
-          release_version="${RELEASE_TAG#agent-}"
+          release_version="${RELEASE_TAG#llama-agent-v}"
+          upstream_build="$(git describe --tags --match 'b[0-9]*' --abbrev=0 2>/dev/null || printf '%s' unknown)"
+          agent_version="${release_version}"
+          agent_build="${GITHUB_RUN_NUMBER}"
+          package_version="${agent_version}+build.${agent_build}.llama.${upstream_build}"
+          artifact_version="${agent_version}-build${agent_build}-llama-${upstream_build}"
 
           package_dir="agent-package-$BACKEND"
           rm -rf "$package_dir"
@@ -234,11 +250,15 @@ jobs:
             "backend=$BACKEND" \
             "source_ref=$SOURCE_REF" \
             "commit_sha=$(git rev-parse HEAD)" \
+            "agent_version=$agent_version" \
+            "agent_build=$agent_build" \
+            "upstream_build=$upstream_build" \
+            "package_version=$package_version" \
             "cozo_version=$COZO_VERSION" \
             "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$package_dir/AGENT-RELEASE-MANIFEST.txt"
 
-          archive="llama-agent-${release_version}-${BACKEND}-linux-x64.tar.gz"
+          archive="llama-agent-${artifact_version}-${BACKEND}-linux-x64.tar.gz"
           tar -czf "$archive" -C "$package_dir" .
           sha256sum "$archive" > "${archive}.sha256"
 
@@ -247,14 +267,441 @@ jobs:
         with:
           name: llama-agent-release-${{ matrix.backend }}
           path: |
-            llama-agent-v*-${{ matrix.backend }}-linux-x64.tar.gz
-            llama-agent-v*-${{ matrix.backend }}-linux-x64.tar.gz.sha256
+            llama-agent-*-${{ matrix.backend }}-linux-x64.tar.gz
+            llama-agent-*-${{ matrix.backend }}-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  build-debian-release:
+    name: Build Debian ${{ matrix.backend }} release package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - cpu
+          - cuda
+          - vulkan
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify release source is on master history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin master --no-tags
+          git merge-base --is-ancestor HEAD origin/master || {
+            echo 'Release source must be an ancestor of origin/master' >&2
+            exit 1
+          }
+
+      - name: Install common Debian build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            clang \
+            clangd \
+            cmake \
+            curl \
+            debhelper-compat \
+            dpkg-dev \
+            git \
+            libssl-dev \
+            ninja-build \
+            pkg-config \
+            zlib1g-dev
+
+      - name: Install CUDA build dependencies
+        if: matrix.backend == 'cuda'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+            --output "$RUNNER_TEMP/cuda-keyring.deb"
+          sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
+          nvcc --version
+
+      - name: Install Vulkan build dependencies
+        if: matrix.backend == 'vulkan'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends libvulkan-dev
+          pkg-config --modversion vulkan
+
+      - name: Provision Cozo C API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cozo_root="$RUNNER_TEMP/cozo-${COZO_VERSION}"
+          cozo_lib="$RUNNER_TEMP/libcozo_c-${COZO_VERSION}.so"
+          git clone --depth 1 --branch "v${COZO_VERSION}" \
+            https://github.com/cozodb/cozo.git "$cozo_root"
+          curl --fail --location --retry 3 \
+            "https://github.com/cozodb/cozo/releases/download/v${COZO_VERSION}/libcozo_c-${COZO_VERSION}-x86_64-unknown-linux-gnu.so.gz" \
+            | gzip -d > "$cozo_lib"
+          test -s "$cozo_root/cozo-lib-c/cozo_c.h"
+          test -s "$cozo_lib"
+          {
+            echo "COZO_INCLUDE_DIR=$cozo_root/cozo-lib-c"
+            echo "COZO_LIBRARY=$cozo_lib"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare release metadata
+        id: metadata
+        env:
+          BACKEND: ${{ matrix.backend }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" == llama-agent-v* ]] || {
+            echo "Release tag must use the llama-agent-v* format" >&2
+            exit 1
+          }
+          agent_version="${RELEASE_TAG#llama-agent-v}"
+          agent_build="${GITHUB_RUN_NUMBER}"
+          upstream_build="$(git describe --tags --match 'b[0-9]*' --abbrev=0 2>/dev/null || printf '%s' unknown)"
+          package_version="${agent_version}+build.${agent_build}.llama.${upstream_build}"
+          artifact_version="${agent_version}-build${agent_build}-llama-${upstream_build}"
+          package_name="llama-agent-${BACKEND}"
+          {
+            echo "agent_version=$agent_version"
+            echo "agent_build=$agent_build"
+            echo "upstream_build=$upstream_build"
+            echo "package_version=$package_version"
+            echo "artifact_version=$artifact_version"
+            echo "package_name=$package_name"
+          } >> "$GITHUB_OUTPUT"
+
+          python3 - "$package_version" "$RELEASE_TAG" "$BACKEND" "$package_name" <<'PY'
+          from pathlib import Path
+          import sys
+
+          version, tag, backend, package_name = sys.argv[1:]
+          changelog = Path("debian/changelog")
+          existing = changelog.read_text()
+          entry = (
+              f"llama-agent ({version}-1) stable; urgency=medium\n\n"
+              f"  * Release {tag} with the {backend} backend.\n\n"
+              " -- Peter Kallden <kallden.peter@gmail.com>  "
+              "Thu, 01 Jan 1970 00:00:00 +0000\n\n"
+          )
+          changelog.write_text(entry + existing)
+
+          control = Path("debian/control")
+          text = control.read_text()
+          other_packages = [
+              f"llama-agent-{candidate}"
+              for candidate in ("cpu", "cuda", "vulkan")
+              if candidate != backend
+          ]
+          replacement = (
+              f"Package: {package_name}\n"
+              "Provides: llama-agent-backend\n"
+              f"Conflicts: {', '.join(other_packages)}\n"
+              f"Replaces: {', '.join(other_packages)}"
+          )
+          marker = "Package: llama-agent\n"
+          if text.count(marker) != 1:
+              raise SystemExit("expected exactly one generic Debian package stanza")
+          control.write_text(text.replace(marker, replacement + "\n", 1))
+
+          for suffix in ("install", "docs", "postinst", "prerm", "service", "tmpfiles"):
+              source = Path(f"debian/llama-agent.{suffix}")
+              target = Path(f"debian/{package_name}.{suffix}")
+              target.write_text(source.read_text())
+              source.unlink()
+          PY
+
+      - name: Build Debian package
+        env:
+          BACKEND: ${{ matrix.backend }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.package_version }}
+          ARTIFACT_VERSION: ${{ steps.metadata.outputs.artifact_version }}
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLAMA_AGENT_BACKEND="$BACKEND" \
+            LLAMA_AGENT_NATIVE=off \
+            dpkg-buildpackage -us -uc -b
+          raw_package="$(find .. -maxdepth 1 -type f -name "${PACKAGE_NAME}_*.deb" -print -quit)"
+          test -n "$raw_package"
+          test "$(dpkg-deb -f "$raw_package" Package)" = "$PACKAGE_NAME"
+          test "$(dpkg-deb -f "$raw_package" Version)" = "${PACKAGE_VERSION}-1"
+          mkdir -p debian-release-artifacts
+          package="debian-release-artifacts/${PACKAGE_NAME}_${PACKAGE_VERSION}-1_amd64.deb"
+          cp "$raw_package" "$package"
+          dpkg-deb --contents "$package" | grep -F 'usr/sbin/llama-agent-daemon'
+          dpkg-deb --contents "$package" | grep -F 'usr/share/doc/llama-agent/examples/'
+          sha256sum "$package" > "${package}.sha256"
+          printf '%s\n' \
+            "package=${PACKAGE_NAME}" \
+            "version=${PACKAGE_VERSION}-1" \
+            "backend=${BACKEND}" \
+            "release_tag=${{ inputs.release_tag || github.ref_name }}" \
+            "source_ref=${{ inputs.source_ref || github.ref }}" \
+            "commit_sha=$(git rev-parse HEAD)" \
+            "agent_version=${{ steps.metadata.outputs.agent_version }}" \
+            "agent_build=${{ steps.metadata.outputs.agent_build }}" \
+            "upstream_build=${{ steps.metadata.outputs.upstream_build }}" \
+            "cozo_version=$COZO_VERSION" \
+            "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > debian-release-artifacts/AGENT-DEBIAN-RELEASE-MANIFEST.txt
+
+      - name: Upload Debian backend package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-release-debian-${{ matrix.backend }}
+          path: debian-release-artifacts/**
+          if-no-files-found: error
+          retention-days: 30
+
+  build-windows-release:
+    name: Build Windows ${{ matrix.backend }} release package
+    runs-on: windows-2022
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - cpu
+          - cuda
+          - vulkan
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify release source is on master history
+        shell: pwsh
+        run: |
+          git fetch origin master --no-tags
+          $isAncestor = git merge-base --is-ancestor HEAD origin/master
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Release source must be an ancestor of origin/master'
+          }
+
+      - name: Provision Cozo C API
+        shell: pwsh
+        run: |
+          $cozoRoot = Join-Path $env:RUNNER_TEMP "cozo-$env:COZO_VERSION"
+          git clone --depth 1 --branch "v$env:COZO_VERSION" `
+            https://github.com/cozodb/cozo.git $cozoRoot
+          $cozoArchive = Join-Path $cozoRoot "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip"
+          gh release download "v$env:COZO_VERSION" `
+            --repo cozodb/cozo `
+            --pattern "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip" `
+            --dir $cozoRoot
+          if (-not (Test-Path $cozoArchive)) {
+            throw "Cozo library archive was not downloaded: $cozoArchive"
+          }
+          Expand-Archive -LiteralPath $cozoArchive -DestinationPath $cozoRoot -Force
+          $cozoLibrary = Get-ChildItem -Path $cozoRoot `
+            -Filter "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib" `
+            -File -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not (Test-Path (Join-Path $cozoRoot 'cozo-lib-c\cozo_c.h'))) {
+            throw 'Cozo header was not provisioned'
+          }
+          if ([string]::IsNullOrWhiteSpace($cozoLibrary) -or -not (Test-Path -LiteralPath $cozoLibrary)) {
+            throw "Cozo library was not provisioned: $cozoLibrary"
+          }
+          "COZO_INCLUDE_DIR=$cozoRoot\cozo-lib-c" | Out-File $env:GITHUB_ENV -Append
+          "COZO_LIBRARY=$cozoLibrary" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Install CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        shell: pwsh
+        run: |
+          $vulkanVersion = '1.4.357.0'
+          $installer = Join-Path $env:RUNNER_TEMP 'VulkanSDK-Installer.exe'
+          $url = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/vulkansdk-windows-X64-$vulkanVersion.exe"
+          curl.exe --fail --location --retry 3 --output $installer $url
+          & $installer --accept-licenses --default-answer --confirm-command install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VULKAN_SDK=C:\VulkanSDK\$vulkanVersion" | Out-File $env:GITHUB_ENV -Append
+          "C:\VulkanSDK\$vulkanVersion\bin" | Out-File $env:GITHUB_PATH -Append
+
+      - name: Prepare release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $releaseTag = '${{ inputs.release_tag || github.ref_name }}'
+          if (-not $releaseTag.StartsWith('llama-agent-v')) {
+            throw 'Release tag must use the llama-agent-v* format'
+          }
+          $agentVersion = $releaseTag.Substring('llama-agent-v'.Length)
+          $agentBuild = $env:GITHUB_RUN_NUMBER
+          $upstreamBuild = (git describe --tags --match 'b[0-9]*' --abbrev=0 2>$null)
+          if ([string]::IsNullOrWhiteSpace($upstreamBuild)) { $upstreamBuild = 'unknown' }
+          $packageVersion = "$agentVersion+build.$agentBuild.llama.$upstreamBuild"
+          $artifactVersion = "$agentVersion-build$agentBuild-llama-$upstreamBuild"
+          $backendVersion = switch ('${{ matrix.backend }}') {
+            'cpu' { '' }
+            'cuda' { '13' }
+            'vulkan' { '1.4' }
+            default { throw 'Unsupported Windows release backend' }
+          }
+          $backendExactVersion = switch ('${{ matrix.backend }}') {
+            'cpu' { 'native' }
+            'cuda' { '13.3' }
+            'vulkan' { '1.4.357.0' }
+            default { throw 'Unsupported Windows release backend' }
+          }
+          $backendLabel = if ($backendVersion) {
+            "${{ matrix.backend }}$backendVersion"
+          } else {
+            '${{ matrix.backend }}'
+          }
+          $packageName = "llama-agent-$backendLabel-windows-x64-$artifactVersion"
+          @(
+            "agent_version=$agentVersion"
+            "agent_build=$agentBuild"
+            "upstream_build=$upstreamBuild"
+            "package_version=$packageVersion"
+            "artifact_version=$artifactVersion"
+            "backend=${{ matrix.backend }}"
+            "backend_version=$backendExactVersion"
+            "backend_label=$backendLabel"
+            "package_name=$packageName"
+          ) | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Configure Windows release build and CPack
+        shell: pwsh
+        run: |
+          $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat'
+          if (-not (Test-Path $vsDevCmd)) {
+            $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+          }
+          if (-not (Test-Path $vsDevCmd)) {
+            throw 'Visual Studio x64 developer environment was not found'
+          }
+          $backendFlags = switch ('${{ matrix.backend }}') {
+            'cpu' { '-DGGML_CPU=ON -DGGML_CUDA=OFF -DGGML_VULKAN=OFF' }
+            'cuda' { '-DGGML_CPU=ON -DGGML_CUDA=ON -DGGML_VULKAN=OFF -DGGML_CUDA_CUB_3DOT2=ON' }
+            'vulkan' { '-DGGML_CPU=ON -DGGML_CUDA=OFF -DGGML_VULKAN=ON' }
+            default { throw 'Unsupported Windows release backend' }
+          }
+          $configure = @(
+            'cmake -S . -B build-agent-windows-release -G "Visual Studio 17 2022" -A x64',
+            '-DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF -DBUILD_TESTING=OFF',
+            '-DLLAMA_TESTS_INSTALL=OFF -DLLAMA_AGENT_PACKAGE_INSTALL=ON',
+            '-DLLAMA_AGENT_PACKAGE_CPACK=ON',
+            '-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF',
+            '-DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF',
+            '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY_COZO=ON',
+            '-DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
+            '-DLLAMA_AGENT_TOOLS_CLANG=ON -DLLAMA_SUBPROCESS=ON',
+            $backendFlags,
+            "-DCPACK_PACKAGE_NAME=${{ steps.metadata.outputs.package_name }}",
+            "-DCPACK_PACKAGE_VERSION=${{ steps.metadata.outputs.agent_version }}",
+            "-DCPACK_PACKAGE_FILE_NAME=${{ steps.metadata.outputs.package_name }}",
+            "-DCOZO_INCLUDE_DIR=\"$env:COZO_INCLUDE_DIR\"",
+            "-DCOZO_LIBRARY=\"$env:COZO_LIBRARY\"",
+            '-DLLAMA_AGENT_CLANG_EXECUTABLE=clang.exe -DLLAMA_AGENT_CLANGD_EXECUTABLE=clangd.exe'
+          ) -join ' '
+          $command = "call `"$vsDevCmd`" x64 && $configure"
+          cmd.exe /d /c $command
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows release package target
+        shell: pwsh
+        run: |
+          cmake --build build-agent-windows-release --config Release --parallel 3 --target llama-agent-build-pack
+
+      - name: Install and smoke-test Windows release staging tree
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force package-root -ErrorAction SilentlyContinue
+          cmake --install build-agent-windows-release --config Release --prefix package-root
+          $required = @(
+            'bin\llama-agent.exe',
+            'bin\llama-agent-daemon.exe',
+            'bin\llama-agent-mcp-stdio-server.exe',
+            'bin\llama-agent-core.dll',
+            'bin\llama-agent-memory.dll',
+            'bin\llama-agent-plan.dll',
+            'bin\llama-agent-config-bootstrap.ps1',
+            'share\llama-agent\examples\agent-config.example.json'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path (Join-Path 'package-root' $path))) {
+              throw "Missing installed agent file: $path"
+            }
+          }
+          $configSmoke = Join-Path $env:RUNNER_TEMP 'llama-agent-config-bootstrap-release.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path $configSmoke)) { throw 'Windows release config smoke did not produce output' }
+
+      - name: Create Windows release ZIP and MSI
+        shell: pwsh
+        run: |
+          $packageName = '${{ steps.metadata.outputs.package_name }}'
+          7z a -tzip "$packageName.zip" .\package-root\*
+          cpack --config build-agent-windows-release\CPackConfig.cmake -G WIX -C Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $msi = Get-Item -LiteralPath "$packageName.msi" -ErrorAction SilentlyContinue
+          if (-not $msi) { throw 'CPack did not produce the Windows release MSI' }
+          @(
+            "release_tag=${{ inputs.release_tag || github.ref_name }}"
+            "backend=${{ matrix.backend }}"
+            "backend_version=${{ steps.metadata.outputs.backend_version }}"
+            "backend_label=${{ steps.metadata.outputs.backend_label }}"
+            "package=$packageName"
+            "agent_version=${{ steps.metadata.outputs.agent_version }}"
+            "agent_build=${{ steps.metadata.outputs.agent_build }}"
+            "upstream_build=${{ steps.metadata.outputs.upstream_build }}"
+            "commit_sha=$(git rev-parse HEAD)"
+            "cozo_version=$env:COZO_VERSION"
+            "created_at=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+          ) | Set-Content AGENT-WINDOWS-RELEASE-MANIFEST.txt
+          Get-FileHash "$packageName.zip","$packageName.msi" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content SHA256SUMS
+
+      - name: Upload Windows release package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-release-windows-${{ matrix.backend }}
+          path: |
+            llama-agent-${{ steps.metadata.outputs.backend_label }}-windows-x64-*.zip
+            llama-agent-${{ steps.metadata.outputs.backend_label }}-windows-x64-*.msi
+            AGENT-WINDOWS-RELEASE-MANIFEST.txt
+            SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 
   publish-release:
     name: Publish verified release packages
-    needs: build-release
+    needs:
+      - build-release
+      - build-debian-release
+      - build-windows-release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -268,7 +715,7 @@ jobs:
 
       - name: Create combined checksums
         working-directory: artifacts
-        run: sha256sum *.tar.gz > SHA256SUMS
+        run: sha256sum *.tar.gz *.deb *.zip *.msi > SHA256SUMS
 
       - name: Publish GitHub Release
         env:

@@ -4014,13 +4014,15 @@ These are short-lived integration artifacts, not versioned releases; stable
 release packages remain a separate, manually tagged release process.
 
 The manual/tagged release workflow is `.github/workflows/agent-release.yml`.
-It accepts `agent-v*` tags, or can be started manually with an explicit release
+It accepts `llama-agent-v*` tags, or can be started manually with an explicit release
 tag and source ref. The workflow performs a clean Linux Cozo build, runs the
 `agent` CTest label, installs the relocatable package, includes the complete
 configuration and daemon/MCP examples, writes release provenance, generates a
-SHA-256 checksum, and publishes the archive as a GitHub Release. This is
+SHA-256 checksum, and publishes the Linux archives, Debian backend packages,
+and Windows CPU/CUDA/Vulkan ZIP/MSI as one GitHub Release. The Windows job also performs a
+staging-tree smoke check after installation. This is
 intentionally separate from the automatic development artifacts: development
-packages are short-lived integration snapshots, while an `agent-v*` release is an
+packages are short-lived integration snapshots, while a `llama-agent-v*` release is an
 explicit versioned distribution decision.
 
 The current `agent` label is the authoritative model-free agent CTest slice;

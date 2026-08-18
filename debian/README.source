@@ -14,13 +14,22 @@ Pass the Cozo paths through the build environment, for example:
     COZO_LIBRARY=/path/to/libcozo_c.so \
     dpkg-buildpackage -us -uc -b
 
-CUDA and Vulkan are selected independently when their development toolchains
-are present. Override the detection when a downstream build needs a fixed
-backend set:
+The backend is selected explicitly with `LLAMA_AGENT_BACKEND`. Supported
+values are `cpu`, `cuda`, `vulkan`, and `auto`. Release builds use an explicit
+backend so that the package never silently changes GPU support because of the
+builder's installed toolchains:
 
-    LLAMA_AGENT_CUDA=off LLAMA_AGENT_VULKAN=on \
+    LLAMA_AGENT_BACKEND=vulkan \
     LLAMA_AGENT_NATIVE=off \
     dpkg-buildpackage -us -uc -b
+
+For a local development build, `auto` enables CUDA and/or Vulkan when their
+development toolchains are available. CPU, CUDA, and Vulkan release packages
+use mutually exclusive Debian package names: `llama-agent-cpu`,
+`llama-agent-cuda`, and `llama-agent-vulkan`. Each provides the virtual
+capability `llama-agent-backend` and conflicts with the other backend packages.
+The development package keeps the unqualified `llama-agent` name as the CPU
+default.
 
 `LLAMA_AGENT_NATIVE` defaults to `off` so binaries from a Debian archive or
 PPA remain portable. A downstream maintainer building for a controlled host
