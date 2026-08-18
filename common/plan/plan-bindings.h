@@ -10,6 +10,7 @@
 struct common_plan_tool_field_contract {
     std::string name;
     std::string semantic_type;
+    bool required = false;
 };
 
 struct common_plan_tool_dataflow_contract {
@@ -20,6 +21,10 @@ struct common_plan_tool_dataflow_contract {
 
 using common_plan_tool_dataflow_contract_resolver = std::function<bool(
     const std::string &, common_plan_tool_dataflow_contract &, std::string &)>;
+
+bool common_plan_semantic_types_compatible(
+    const std::string & source_type,
+    const std::string & target_type);
 
 bool common_plan_dataflow_contract_from_schemas(
     const std::string & tool_name,

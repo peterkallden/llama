@@ -99,6 +99,14 @@ std::vector<common_tool_definition> builtin_definitions() {
             }
         }
     };
+    const auto set_model_result_schema = [&](const char * name, const char * schema) {
+        for (auto & definition : definitions) {
+            if (definition.name == name) {
+                definition.model_result_schema_json = schema;
+                return;
+            }
+        }
+    };
     set_model_schema("document.tables", R"({"type":"object","additionalProperties":false,"required":["resource"],"properties":{"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"max_results":{"type":"integer","minimum":1,"maximum":64}}})");
     // The model-facing view selects a table by its semantic name. Stable
     // node IDs and numeric indexes remain available only to advanced host
@@ -117,6 +125,22 @@ std::vector<common_tool_definition> builtin_definitions() {
     set_model_schema("statistics.outliers", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"columns":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":128}},"column":{"type":"string","minLength":1,"maxLength":128},"group_by":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":128}},"method":{"type":"string","enum":["iqr"]},"multiplier":{"type":"number","minimum":0.1,"maximum":10.0}}})");
     set_model_schema("statistics.value_counts", R"({"type":"object","additionalProperties":false,"required":["column"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"column":{"type":"string","minLength":1,"maxLength":128},"limit":{"type":"integer","minimum":1,"maximum":1000}}})");
     set_model_schema("artifact.export", R"({"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":256},"content":{"type":"string","maxLength":65536},"mime_type":{"type":"string","maxLength":128},"source_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"format":{"type":"string","enum":["csv"]}},"anyOf":[{"required":["name","content"]},{"required":["source_dataset"]}]})");
+    // Keep execution/result schemas authoritative while presenting only
+    // useful chaining and evidence fields to the model.
+    set_model_result_schema("document.tables", R"({"type":"object","properties":{"resource":{"type":"string","x-agent-type":"resource_ref"},"tables":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("document.table", R"({"type":"object","properties":{"name":{"type":"string"},"dataset":{"type":"string","x-agent-type":"dataset_ref"},"source_resource":{"type":"string","x-agent-type":"resource_ref"}}})");
+    set_model_result_schema("dataset.inspect", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"resource":{"type":"string","x-agent-type":"resource_ref"},"name":{"type":"string"},"rows":{"type":"integer"},"columns":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.schema", R"({"type":"object","properties":{"columns":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.sample", R"({"type":"object","properties":{"columns":{"type":"array","items":{"type":"string"}},"rows":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.validate", R"({"type":"object","properties":{"valid":{"type":"boolean"},"violations":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("data.query", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})");
+    set_model_result_schema("data.filter", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})");
+    set_model_result_schema("data.aggregate", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})");
+    set_model_result_schema("data.join", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})");
+    set_model_result_schema("data.transform", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})");
+    set_model_result_schema("statistics.describe", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"rows":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("statistics.outliers", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"rows":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("statistics.value_counts", R"({"type":"object","properties":{"column":{"type":"string"},"values":{"type":"array","items":{"type":"object"}},"distinct_count":{"type":"integer"},"null_count":{"type":"integer"}}})");
     return definitions;
 }
 

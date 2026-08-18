@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <set>
+
 namespace {
 
 const common_plan_step * find_step(const common_plan_state & plan, const std::string & id) {
@@ -55,7 +57,7 @@ bool validate_explicit_binding_types(
         const auto field_name = pointer.substr(1, end == std::string::npos ? std::string::npos : end - 1);
         const auto * output = find_field(source.outputs, field_name);
         if (!output || input.semantic_type.empty() || output->semantic_type.empty()) continue;
-        if (input.semantic_type != output->semantic_type) {
+        if (!common_plan_semantic_types_compatible(output->semantic_type, input.semantic_type)) {
             error = "plan.binding.incompatible_types: '" + field_name + "' has type " +
                 output->semantic_type + ", but '" + input.name + "' requires " + input.semantic_type;
             return false;
@@ -64,36 +66,53 @@ bool validate_explicit_binding_types(
     return true;
 }
 
-void add_unambiguous_dataset_binding(
+bool add_unambiguous_typed_binding(
         const common_plan_state & plan,
         const common_plan_step & step,
         nlohmann::ordered_json & arguments,
         const common_plan_tool_dataflow_contract & target,
-        const common_plan_tool_dataflow_contract_resolver & resolver) {
-    if (!resolver || step.depends_on.size() != 1 || !step.tool_call) return;
+        const common_plan_tool_dataflow_contract_resolver & resolver,
+        std::string & error) {
+    if (!resolver || step.depends_on.size() != 1 || !step.tool_call) return false;
     const auto * source_step = find_step(plan, step.depends_on.front());
-    if (!source_step || source_step->status != common_plan_step_status::completed) return;
+    if (!source_step || source_step->status != common_plan_step_status::completed) return false;
     const auto * observation = find_step_observation(plan, source_step->id);
-    if (!observation) return;
+    if (!observation) return false;
     common_plan_tool_dataflow_contract source_contract;
     std::string contract_error;
-    if (!resolver(source_step->tool_call ? source_step->tool_call->name : std::string(), source_contract, contract_error)) return;
+    if (!resolver(source_step->tool_call ? source_step->tool_call->name : std::string(), source_contract, contract_error)) return false;
 
     struct candidate { std::string input; std::string output; };
     std::vector<candidate> candidates;
     for (const auto & input : target.inputs) {
         if (arguments.contains(input.name) || input.semantic_type.empty()) continue;
         for (const auto & output : source_contract.outputs) {
-            if (output.semantic_type == input.semantic_type && observation_has_field(*observation, output.name)) {
+            if (common_plan_semantic_types_compatible(output.semantic_type, input.semantic_type) &&
+                    observation_has_field(*observation, output.name)) {
                 candidates.push_back({input.name, output.name});
             }
         }
     }
-    if (candidates.size() != 1) return;
+    if (candidates.size() != 1) {
+        if (candidates.size() > 1) {
+            bool required_ambiguity = false;
+            for (const auto & candidate : candidates) {
+                const auto * input = find_field(target.inputs, candidate.input);
+                required_ambiguity = required_ambiguity || (input != nullptr && input->required);
+            }
+            if (required_ambiguity) {
+                error = "plan.binding.ambiguous_autowire: tool '" + step.tool_call->name +
+                    "' has multiple unresolved inputs compatible with completed outputs; explicit bindings are required";
+                return false;
+            }
+        }
+        return false;
+    }
     arguments[candidates.front().input] = nlohmann::ordered_json{
         {"$from_step", source_step->id},
         {"$json_pointer", "/" + candidates.front().output},
     };
+    return true;
 }
 
 bool resolve_value(
@@ -141,6 +160,12 @@ bool resolve_value(
 
 } // namespace
 
+bool common_plan_semantic_types_compatible(
+        const std::string & source_type,
+        const std::string & target_type) {
+    return !source_type.empty() && !target_type.empty() && source_type == target_type;
+}
+
 bool common_plan_materialize_tool_arguments_contract(
         const common_plan_state & plan,
         const common_plan_step & step,
@@ -159,8 +184,10 @@ bool common_plan_materialize_tool_arguments_contract(
             dataflow_resolver(step.tool_call->name, target, error)) {
         if (!validate_explicit_binding_types(
                 plan, materialized_contract.value, target, dataflow_resolver, error)) return false;
-        add_unambiguous_dataset_binding(
-            plan, step, materialized_contract.value, target, dataflow_resolver);
+        if (!add_unambiguous_typed_binding(
+                plan, step, materialized_contract.value, target, dataflow_resolver, error)) {
+            if (!error.empty()) return false;
+        }
     }
     if (!resolve_value(plan, materialized_contract.value, 0, error)) {
         return false;
@@ -235,11 +262,15 @@ bool common_plan_dataflow_contract_from_schemas(
     const auto collect = [](const json & schema, std::vector<common_plan_tool_field_contract> & fields) {
         const auto properties = schema.value("properties", json::object());
         if (!properties.is_object()) return;
+        std::set<std::string> required;
+        for (const auto & item : schema.value("required", json::array())) {
+            if (item.is_string()) required.insert(item.get<std::string>());
+        }
         for (const auto & item : properties.items()) {
             const auto & property = item.value();
             if (!property.is_object() || !property.contains("x-agent-type") ||
                     !property["x-agent-type"].is_string()) continue;
-            fields.push_back({item.key(), property["x-agent-type"].get<std::string>()});
+            fields.push_back({item.key(), property["x-agent-type"].get<std::string>(), required.count(item.key()) != 0});
         }
     };
     collect(input, contract.inputs);

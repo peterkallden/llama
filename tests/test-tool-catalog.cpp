@@ -77,6 +77,7 @@ int main() {
     const auto document_table_model_input = nlohmann::json::parse(document_table->model_input_schema_json);
     const auto aggregate_model_input = nlohmann::json::parse(data_aggregate->model_input_schema_json);
     const auto aggregate_result = nlohmann::json::parse(data_aggregate->result_schema_json);
+    const auto aggregate_model_result = nlohmann::json::parse(data_aggregate->model_result_schema_json);
     const auto dataset_schema_result = nlohmann::json::parse(dataset_schema->result_schema_json);
     const auto dataset_sample_result = nlohmann::json::parse(dataset_sample->result_schema_json);
     const auto dataset_validate_result = nlohmann::json::parse(dataset_validate->result_schema_json);
@@ -102,6 +103,9 @@ int main() {
     assert(!document_table_model_input["properties"].contains("table_index"));
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_result["properties"].contains("materialized"));
+    assert(!aggregate_model_result["properties"].contains("materialized"));
+    assert(!aggregate_model_result["properties"].contains("scan_truncated"));
     assert(dataset_schema_result["properties"].contains("columns"));
     assert(dataset_sample_result["properties"].contains("rows"));
     assert(dataset_validate_result["properties"]["valid"].value("type", "") == "boolean");
@@ -153,7 +157,9 @@ int main() {
         data_aggregate->name,
         data_aggregate->description,
         data_aggregate->model_input_schema_json,
-        data_aggregate->result_schema_json,
+        data_aggregate->model_result_schema_json.empty()
+            ? data_aggregate->result_schema_json
+            : data_aggregate->model_result_schema_json,
         compact_error);
     assert(compact_error.empty());
     assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
@@ -162,6 +168,8 @@ int main() {
     const auto aggregate_returns = aggregate_compact.find("\nreturns:");
     assert(aggregate_returns != std::string::npos);
     assert(aggregate_compact.substr(0, aggregate_returns).find("materialize") == std::string::npos);
+    assert(aggregate_compact.find("materialized") == std::string::npos);
+    assert(aggregate_compact.find("scan_truncated") == std::string::npos);
     assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);

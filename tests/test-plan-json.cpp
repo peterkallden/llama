@@ -272,21 +272,20 @@ int main() {
         if (tool_name == "data.join") {
             return common_plan_dataflow_contract_from_schemas(
                 tool_name,
-                R"({"type":"object","properties":{"left":{"type":"string","x-agent-type":"dataset_ref"},"right":{"type":"string","x-agent-type":"dataset_ref"}}})",
+                R"({"type":"object","properties":{"left":{"type":"string","x-agent-type":"dataset_ref"},"right":{"type":"string","x-agent-type":"dataset_ref"}},"required":["left","right"]})",
                 R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})",
                 contract, contract_error);
         }
         return dataflow_resolver(tool_name, contract, contract_error);
     };
-    assert(common_plan_materialize_tool_arguments(
+    assert(!common_plan_materialize_tool_arguments(
         materialize_plan,
         ambiguous_target,
         ambiguous_target.tool_call->arguments_json,
         materialized_arguments_json,
         error,
         join_resolver));
-    const auto ambiguous_arguments = nlohmann::json::parse(materialized_arguments_json);
-    assert(!ambiguous_arguments.contains("left") && !ambiguous_arguments.contains("right"));
+    assert(error.find("plan.binding.ambiguous_autowire") != std::string::npos);
 
     common_plan_state context_plan;
     context_plan.goal = "Use only relevant evidence";

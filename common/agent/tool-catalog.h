@@ -20,6 +20,9 @@ struct common_tool_definition {
     // host-facing and may use canonical resource URIs after normalization.
     std::string model_input_schema_json;
     std::string result_schema_json;
+    // Optional model-facing result projection. Host execution and dataflow
+    // always use result_schema_json; this only limits what the model sees.
+    std::string model_result_schema_json;
     std::string executor_id;
     std::vector<std::string> capabilities;
     common_tool_risk_class risk_class = common_tool_risk_class::local_read;
@@ -91,4 +94,3 @@ bool resolve_common_tool_profile_snapshot(
     std::string & error);
 
 const char * common_tool_risk_class_name(common_tool_risk_class value);
-

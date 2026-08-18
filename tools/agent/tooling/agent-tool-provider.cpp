@@ -1,4 +1,5 @@
 #include "agent-tool-provider.h"
+#include "plan/plan-bindings.h"
 #include "agent-tool-result-json-contracts.h"
 
 #include "agent/tool-registry.h"
@@ -255,6 +256,20 @@ public:
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    bool describe_tool_dataflow(
+            const std::string & name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & error) const override {
+        const auto it = definitions.find(name);
+        if (it == definitions.end()) { error.clear(); return false; }
+        return common_plan_dataflow_contract_from_schemas(
+            it->second.name,
+            it->second.input_schema_json,
+            it->second.result_schema_json,
+            contract,
+            error);
     }
 
     bool exposes_tool(const std::string & name) const override {
@@ -806,6 +821,14 @@ public:
         return chat_tool_list;
     }
 
+    bool describe_tool_dataflow(
+            const std::string & name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & error) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->describe_tool_dataflow(name, contract, error);
+    }
+
     bool exposes_tool(const std::string & name) const override {
         return tool_owners.find(name) != tool_owners.end();
     }
@@ -965,7 +988,9 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             definition.model_input_schema_json.empty()
                 ? definition.input_schema_json
                 : definition.model_input_schema_json,
-            definition.result_schema_json,
+            definition.model_result_schema_json.empty()
+                ? definition.result_schema_json
+                : definition.model_result_schema_json,
             compact_error);
         if (!compact_error.empty()) {
             error = compact_error;
@@ -977,7 +1002,9 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             definition.model_input_schema_json.empty()
                 ? definition.input_schema_json
                 : definition.model_input_schema_json,
-            definition.result_schema_json,
+            definition.model_result_schema_json.empty()
+                ? definition.result_schema_json
+                : definition.model_result_schema_json,
         });
         resolved_definitions.emplace(definition.name, definition);
     }

@@ -18,7 +18,7 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
             definition.name,
             definition.description,
             definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
-            definition.result_schema_json,
+            definition.model_result_schema_json.empty() ? definition.result_schema_json : definition.model_result_schema_json,
             compact_error);
         if (!compact_error.empty()) {
             error = compact_error;
@@ -26,7 +26,7 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
         }
         tools.push_back({definition.name, model_description,
             definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
-            definition.result_schema_json});
+            definition.model_result_schema_json.empty() ? definition.result_schema_json : definition.model_result_schema_json});
     }
     error.clear();
     return true;

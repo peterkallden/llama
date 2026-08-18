@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+struct common_plan_tool_dataflow_contract;
+
 struct agent_tool_context {
     std::string request_id;
     std::string turn_id;
@@ -88,6 +90,8 @@ public:
     virtual ~agent_tool_view() = default;
 
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
+    virtual bool describe_tool_dataflow(
+        const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
     virtual bool exposes_tool(const std::string & name) const = 0;
     virtual bool is_read_only(const std::string & name) const = 0;
     virtual bool is_policy_gated(const std::string & name) const = 0;

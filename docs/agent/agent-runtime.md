@@ -1445,7 +1445,7 @@ such as:
     data.aggregate
     Aggregate dataset values.
     args: dataset:dataset_ref; measures:measure[]; group_by?:column[]
-    returns: rows, dataset
+    returns: rows:object[], dataset:dataset_ref
 
 The renderer currently handles bounded object schemas, required and optional
 properties, scalar types, arrays, enums, defaults, numeric limits, semantic
@@ -1461,6 +1461,15 @@ The model-facing and host-facing paths are deliberately separate:
         -> safe alias/default normalization
         -> strict schema validation
         -> host canonicalization and execution
+
+The same separation applies to results. A tool may provide a
+`model_result_schema_json` projection alongside `result_schema_json`. The
+full result schema remains authoritative for execution, typed dataflow and
+binding validation; the model projection only exposes outputs useful for
+chaining or evidence. If no result projection is supplied, the full result
+schema is used as the model fallback. This keeps fields such as materialization
+flags, scan limits and truncation diagnostics out of the ordinary planner view
+without hiding them from the host or runtime diagnostics.
 
 For example:
 
