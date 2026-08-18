@@ -89,6 +89,9 @@ jobs:
           sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+          echo "CUDA_HOME=/usr/local/cuda" >> "$GITHUB_ENV"
+          export PATH="/usr/local/cuda/bin:$PATH"
           nvcc --version
 
       - name: Install Vulkan SDK
@@ -331,6 +334,9 @@ jobs:
           sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
+          echo "CUDA_HOME=/usr/local/cuda" >> "$GITHUB_ENV"
+          export PATH="/usr/local/cuda/bin:$PATH"
           nvcc --version
 
       - name: Install Vulkan build dependencies
@@ -338,7 +344,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y --no-install-recommends libvulkan-dev
+          sudo apt-get install -y --no-install-recommends glslc libvulkan-dev
           pkg-config --modversion vulkan
 
       - name: Provision Cozo C API
@@ -619,8 +625,8 @@ jobs:
             "-DCPACK_PACKAGE_NAME=${{ steps.metadata.outputs.package_name }}",
             "-DCPACK_PACKAGE_VERSION=${{ steps.metadata.outputs.agent_version }}",
             "-DCPACK_PACKAGE_FILE_NAME=${{ steps.metadata.outputs.package_name }}",
-            "-DCOZO_INCLUDE_DIR=\"$env:COZO_INCLUDE_DIR\"",
-            "-DCOZO_LIBRARY=\"$env:COZO_LIBRARY\"",
+            "-DCOZO_INCLUDE_DIR=`\"$env:COZO_INCLUDE_DIR`\"",
+            "-DCOZO_LIBRARY=`\"$env:COZO_LIBRARY`\"",
             '-DLLAMA_AGENT_CLANG_EXECUTABLE=clang.exe -DLLAMA_AGENT_CLANGD_EXECUTABLE=clangd.exe'
           ) -join ' '
           $command = "call `"$vsDevCmd`" x64 && $configure"
