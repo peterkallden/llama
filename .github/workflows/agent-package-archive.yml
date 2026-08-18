@@ -117,7 +117,7 @@ jobs:
 
           for attempt in $(seq 1 180); do
             ci_run="$(find_run agent-ci.yml)"
-            sanitizer_run="$(find_run agent-dynamic-analysis.yml)"
+            sanitizer_run="$(find_run agent-analysis.yml)"
 
             if [[ -n "$ci_run" && -n "$sanitizer_run" ]]; then
               ci_status="$(jq -r '.status' <<< "$ci_run")"
