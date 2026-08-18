@@ -7,6 +7,7 @@
 #include <memory>
 
 class common_memory_post_turn_learner;
+struct common_plan_tool_dataflow_contract;
 
 struct common_agent_tool_repair_context {
     std::string tool_name;
@@ -25,6 +26,11 @@ public:
     virtual ~common_agent_tool_runtime() = default;
     virtual bool is_read_only(const std::string & tool_name) const = 0;
     virtual bool is_policy_gated(const std::string & tool_name) const = 0;
+    // Optional typed input/output metadata used by the plan binding seam.
+    // Runtime implementations without result contracts simply return false;
+    // they remain usable, but are never selected for implicit dataflow.
+    virtual bool describe_tool_dataflow(
+            const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
     // Tool availability is distinct from read/write policy. The default keeps
     // older runtime implementations source-compatible; provider-backed
     // runtimes override it with the immutable resolved tool view.

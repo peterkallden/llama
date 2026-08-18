@@ -1,4 +1,5 @@
 #include "agent-tool-runtime-adapter.h"
+#include "plan/plan-bindings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -67,6 +68,19 @@ public:
 
     bool is_policy_gated(const std::string & tool_name) const override {
         return tool_view.is_policy_gated(tool_name);
+    }
+
+    bool describe_tool_dataflow(
+            const std::string & tool_name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & error) const override {
+        for (const auto & tool : tool_view.chat_tools()) {
+            if (tool.name != tool_name) continue;
+            return common_plan_dataflow_contract_from_schemas(
+                tool.name, tool.parameters, tool.result_schema, contract, error);
+        }
+        error.clear();
+        return false;
     }
 
     bool is_available(const std::string & tool_name) const override {

@@ -1,5 +1,7 @@
 #include "plan/plan-bindings.h"
 
+#include <nlohmann/json.hpp>
+
 namespace {
 
 const common_plan_step * find_step(const common_plan_state & plan, const std::string & id) {
@@ -16,31 +18,81 @@ const common_plan_observation * find_step_observation(const common_plan_state & 
     return nullptr;
 }
 
-bool accepts_implicit_dataset(const std::string & tool_name) {
-    return tool_name == "dataset.inspect" || tool_name == "dataset.schema" ||
-        tool_name == "dataset.sample" || tool_name == "dataset.validate" ||
-        tool_name == "data.query" || tool_name == "data.filter" ||
-        tool_name == "data.aggregate" || tool_name == "data.transform" ||
-        tool_name == "statistics.describe" || tool_name == "statistics.outliers" ||
-        tool_name == "statistics.value_counts";
+using json = nlohmann::ordered_json;
+
+const common_plan_tool_field_contract * find_field(
+        const std::vector<common_plan_tool_field_contract> & fields,
+        const std::string & name) {
+    for (const auto & field : fields) if (field.name == name) return &field;
+    return nullptr;
+}
+
+bool observation_has_field(const common_plan_observation & observation, const std::string & field) {
+    const auto value = json::parse(observation.summary, nullptr, false);
+    return value.is_object() && value.contains(field) && !value[field].is_null();
+}
+
+bool validate_explicit_binding_types(
+        const common_plan_state & plan,
+        const json & arguments,
+        const common_plan_tool_dataflow_contract & target,
+        const common_plan_tool_dataflow_contract_resolver & resolver,
+        std::string & error) {
+    if (!resolver) return true;
+    for (const auto & input : target.inputs) {
+        if (!arguments.contains(input.name) || !arguments[input.name].is_object()) continue;
+        const auto & value = arguments[input.name];
+        if (!value.contains("$from_step") || !value["$from_step"].is_string() ||
+                !value.contains("$json_pointer") || !value["$json_pointer"].is_string()) continue;
+        const auto * source_step = find_step(plan, value["$from_step"].get<std::string>());
+        if (!source_step || !source_step->tool_call) continue;
+        common_plan_tool_dataflow_contract source;
+        std::string contract_error;
+        if (!resolver(source_step->tool_call->name, source, contract_error)) continue;
+        const auto pointer = value["$json_pointer"].get<std::string>();
+        if (pointer.size() < 2 || pointer.front() != '/') continue;
+        const auto end = pointer.find('/', 1);
+        const auto field_name = pointer.substr(1, end == std::string::npos ? std::string::npos : end - 1);
+        const auto * output = find_field(source.outputs, field_name);
+        if (!output || input.semantic_type.empty() || output->semantic_type.empty()) continue;
+        if (input.semantic_type != output->semantic_type) {
+            error = "plan.binding.incompatible_types: '" + field_name + "' has type " +
+                output->semantic_type + ", but '" + input.name + "' requires " + input.semantic_type;
+            return false;
+        }
+    }
+    return true;
 }
 
 void add_unambiguous_dataset_binding(
         const common_plan_state & plan,
         const common_plan_step & step,
-        nlohmann::ordered_json & arguments) {
-    if (arguments.contains("dataset") || step.depends_on.size() != 1 ||
-            !step.tool_call || !accepts_implicit_dataset(step.tool_call->name)) return;
+        nlohmann::ordered_json & arguments,
+        const common_plan_tool_dataflow_contract & target,
+        const common_plan_tool_dataflow_contract_resolver & resolver) {
+    if (!resolver || step.depends_on.size() != 1 || !step.tool_call) return;
     const auto * source_step = find_step(plan, step.depends_on.front());
     if (!source_step || source_step->status != common_plan_step_status::completed) return;
     const auto * observation = find_step_observation(plan, source_step->id);
     if (!observation) return;
-    const auto source = nlohmann::ordered_json::parse(observation->summary, nullptr, false);
-    if (!source.is_object() || !source.contains("dataset") || !source["dataset"].is_string() ||
-            source["dataset"].get<std::string>().empty()) return;
-    arguments["dataset"] = nlohmann::ordered_json{
+    common_plan_tool_dataflow_contract source_contract;
+    std::string contract_error;
+    if (!resolver(source_step->tool_call ? source_step->tool_call->name : std::string(), source_contract, contract_error)) return;
+
+    struct candidate { std::string input; std::string output; };
+    std::vector<candidate> candidates;
+    for (const auto & input : target.inputs) {
+        if (arguments.contains(input.name) || input.semantic_type.empty()) continue;
+        for (const auto & output : source_contract.outputs) {
+            if (output.semantic_type == input.semantic_type && observation_has_field(*observation, output.name)) {
+                candidates.push_back({input.name, output.name});
+            }
+        }
+    }
+    if (candidates.size() != 1) return;
+    arguments[candidates.front().input] = nlohmann::ordered_json{
         {"$from_step", source_step->id},
-        {"$json_pointer", "/dataset"},
+        {"$json_pointer", "/" + candidates.front().output},
     };
 }
 
@@ -94,17 +146,22 @@ bool common_plan_materialize_tool_arguments_contract(
         const common_plan_step & step,
         const common_plan_tool_arguments_contract & contract,
         common_plan_tool_arguments_contract & materialized_contract,
-        std::string & error) {
+        std::string & error,
+        const common_plan_tool_dataflow_contract_resolver & dataflow_resolver) {
     (void) step;
     materialized_contract = contract;
     if (!materialized_contract.value.is_object()) {
         error = "tool arguments must be a JSON object";
         return false;
     }
-    // Safe typed autowiring: one completed predecessor with one compatible
-    // dataset output may fill one omitted dataset input. Ambiguous or missing
-    // dataflow remains an ordinary validation failure.
-    add_unambiguous_dataset_binding(plan, step, materialized_contract.value);
+    common_plan_tool_dataflow_contract target;
+    if (dataflow_resolver && step.tool_call &&
+            dataflow_resolver(step.tool_call->name, target, error)) {
+        if (!validate_explicit_binding_types(
+                plan, materialized_contract.value, target, dataflow_resolver, error)) return false;
+        add_unambiguous_dataset_binding(
+            plan, step, materialized_contract.value, target, dataflow_resolver);
+    }
     if (!resolve_value(plan, materialized_contract.value, 0, error)) {
         return false;
     }
@@ -117,7 +174,8 @@ bool common_plan_materialize_tool_arguments(
         const common_plan_step & step,
         const std::string & arguments_json,
         std::string & materialized_arguments_json,
-        std::string & error) {
+        std::string & error,
+        const common_plan_tool_dataflow_contract_resolver & dataflow_resolver) {
     if (arguments_json.size() > 4096) {
         error = "tool arguments are too large to materialize";
         return false;
@@ -139,7 +197,8 @@ bool common_plan_materialize_tool_arguments(
             step,
             contract,
             materialized_contract,
-            error)) {
+            error,
+            dataflow_resolver)) {
         return false;
     }
 
@@ -155,6 +214,36 @@ bool common_plan_materialize_tool_arguments(
         error = "materialized tool arguments are too large";
         return false;
     }
+    error.clear();
+    return true;
+}
+
+bool common_plan_dataflow_contract_from_schemas(
+        const std::string & tool_name,
+        const std::string & input_schema_json,
+        const std::string & result_schema_json,
+        common_plan_tool_dataflow_contract & contract,
+        std::string & error) {
+    const auto input = json::parse(input_schema_json, nullptr, false);
+    const auto result = json::parse(result_schema_json, nullptr, false);
+    if (!input.is_object() || !result.is_object()) {
+        error = "tool dataflow contract requires object input and result schemas";
+        return false;
+    }
+    contract = {};
+    contract.tool_name = tool_name;
+    const auto collect = [](const json & schema, std::vector<common_plan_tool_field_contract> & fields) {
+        const auto properties = schema.value("properties", json::object());
+        if (!properties.is_object()) return;
+        for (const auto & item : properties.items()) {
+            const auto & property = item.value();
+            if (!property.is_object() || !property.contains("x-agent-type") ||
+                    !property["x-agent-type"].is_string()) continue;
+            fields.push_back({item.key(), property["x-agent-type"].get<std::string>()});
+        }
+    };
+    collect(input, contract.inputs);
+    collect(result, contract.outputs);
     error.clear();
     return true;
 }

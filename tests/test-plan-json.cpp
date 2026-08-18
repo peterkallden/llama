@@ -190,6 +190,7 @@ int main() {
 
     common_plan_step table_result{"table", "Table", "Resolve table"};
     table_result.status = common_plan_step_status::completed;
+    table_result.tool_call = common_plan_tool_call{"document.table", "{}"};
     materialize_plan.steps.push_back(table_result);
     common_plan_observation table_observation{
         "tool:table:1", "document.table", R"({"dataset":"d1","name":"Budget summary"})", 1.0f, {}, {}, 0};
@@ -200,13 +201,92 @@ int main() {
         "data.aggregate",
         R"({"measures":[{"function":"sum","column":"amount"}]})",
     };
+    const auto dataflow_resolver = [](const std::string & tool_name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & contract_error) {
+        if (tool_name == "document.table") {
+            return common_plan_dataflow_contract_from_schemas(
+                tool_name,
+                R"({"type":"object","properties":{"resource":{"type":"string","x-agent-type":"resource_ref"}}})",
+                R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})",
+                contract, contract_error);
+        }
+        if (tool_name == "data.aggregate") {
+            return common_plan_dataflow_contract_from_schemas(
+                tool_name,
+                R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}},"required":["dataset"]})",
+                R"({"type":"object","properties":{"rows":{"type":"array"},"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})",
+                contract, contract_error);
+        }
+        contract_error.clear();
+        return false;
+    };
     assert(common_plan_materialize_tool_arguments(
         materialize_plan,
         aggregate_step,
         aggregate_step.tool_call->arguments_json,
         materialized_arguments_json,
-        error));
+        error,
+        dataflow_resolver));
     assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d1");
+
+    common_plan_step mismatch_source{"mismatch-source", "Source", "Produce a resource"};
+    mismatch_source.status = common_plan_step_status::completed;
+    mismatch_source.tool_call = common_plan_tool_call{"resource.producer", "{}"};
+    materialize_plan.steps.push_back(mismatch_source);
+    materialize_plan.observations.push_back({
+        "tool:mismatch-source:1", "resource.producer", R"({"resource":"r1"})", 1.0f, {}, {}, 0});
+    common_plan_step mismatch_target{"mismatch-target", "Target", "Consume a dataset"};
+    mismatch_target.depends_on = {"mismatch-source"};
+    mismatch_target.tool_call = common_plan_tool_call{
+        "data.aggregate",
+        R"({"dataset":{"$from_step":"mismatch-source","$json_pointer":"/resource"}})"};
+    const auto mismatch_resolver = [dataflow_resolver](const std::string & tool_name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & contract_error) {
+        if (tool_name == "resource.producer") {
+            return common_plan_dataflow_contract_from_schemas(
+                tool_name,
+                R"({"type":"object"})",
+                R"({"type":"object","properties":{"resource":{"type":"string","x-agent-type":"resource_ref"}}})",
+                contract, contract_error);
+        }
+        return dataflow_resolver(tool_name, contract, contract_error);
+    };
+    assert(!common_plan_materialize_tool_arguments(
+        materialize_plan,
+        mismatch_target,
+        mismatch_target.tool_call->arguments_json,
+        materialized_arguments_json,
+        error,
+        mismatch_resolver));
+    assert(error.find("plan.binding.incompatible_types") != std::string::npos);
+
+    common_plan_step ambiguous_target{"ambiguous", "Join", "Join two datasets"};
+    ambiguous_target.depends_on = {"table"};
+    ambiguous_target.tool_call = common_plan_tool_call{
+        "data.join", R"({"on":[{"left":"id","right":"id"}]})"};
+    const auto join_resolver = [dataflow_resolver](const std::string & tool_name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & contract_error) {
+        if (tool_name == "data.join") {
+            return common_plan_dataflow_contract_from_schemas(
+                tool_name,
+                R"({"type":"object","properties":{"left":{"type":"string","x-agent-type":"dataset_ref"},"right":{"type":"string","x-agent-type":"dataset_ref"}}})",
+                R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})",
+                contract, contract_error);
+        }
+        return dataflow_resolver(tool_name, contract, contract_error);
+    };
+    assert(common_plan_materialize_tool_arguments(
+        materialize_plan,
+        ambiguous_target,
+        ambiguous_target.tool_call->arguments_json,
+        materialized_arguments_json,
+        error,
+        join_resolver));
+    const auto ambiguous_arguments = nlohmann::json::parse(materialized_arguments_json);
+    assert(!ambiguous_arguments.contains("left") && !ambiguous_arguments.contains("right"));
 
     common_plan_state context_plan;
     context_plan.goal = "Use only relevant evidence";

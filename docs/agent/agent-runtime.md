@@ -1699,13 +1699,26 @@ example, `document.table` may return `{ "dataset": "d1" }`, after which the
 host dispatches `data.aggregate` with `{ "dataset": "d1" }`. The model does
 not need to copy an authoritative dataset URI.
 
-The runtime also supports one deliberately narrow convenience rule: when a
-step has exactly one completed dependency, that dependency exposes exactly
-one `dataset` result, and the consumer is a known dataset/statistics tool, an
-omitted `dataset` argument is wired to that result. Multiple dependencies,
-missing observations, incompatible outputs, and ambiguous dataflow fail
-closed. This is typed automatic wiring, not a general `previous_result`
-variable.
+The runtime also supports one deliberately conservative convenience rule:
+when a step has exactly one completed dependency, the producer and consumer
+tool contracts expose exactly one compatible semantic input/output edge, and
+the output is present in the completed observation, the host may insert the
+canonical binding. The resolver uses `x-agent-type` metadata from the tool
+input/result schemas; it does not maintain a list of dataset tool names.
+Multiple dependencies, missing contracts, missing observations, incompatible
+types, or ambiguous edges fail closed. For example, a single `dataset_ref`
+output can feed a missing `dataset_ref` input, while two `dataset_ref` outputs
+cannot be guessed as the `left` and `right` inputs of a join. This is typed
+automatic wiring, not a general `previous_result` variable.
+
+Explicit model bindings are checked against the same producer/consumer
+contracts when both sides expose a known semantic type. A known mismatch such
+as `resource_ref -> dataset_ref` is rejected before tool execution; missing
+metadata remains conservative and does not enable implicit wiring. The
+scheduler and event queue still own readiness and completion. Binding
+materialization runs at the execution boundary after a dependency has reached
+`completed`, so autowiring does not bypass plan events or introduce a second
+scheduler.
 
 The tool catalog marks relevant inputs and outputs with semantic labels such
 as `resource_ref`, `table_ref`, and `dataset_ref`. The labels are included in

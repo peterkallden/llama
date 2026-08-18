@@ -910,7 +910,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::tool && !executed_step_ids.count(step.id)) {
                 if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
                 tool_call = common_agent_tool_call{step.tool_call->name, step.tool_call->arguments_json};
-                if (!common_plan_materialize_tool_arguments(plan, step, tool_call->arguments_json, tool_call->arguments_json, error)) { append_event(result, request, {common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "tool argument binding failed: " + error; return result; }
+                const common_plan_tool_dataflow_contract_resolver dataflow_resolver =
+                    tools ? [this](const std::string & tool_name,
+                            common_plan_tool_dataflow_contract & contract,
+                            std::string & contract_error) {
+                        return tools->describe_tool_dataflow(tool_name, contract, contract_error);
+                    } : common_plan_tool_dataflow_contract_resolver{};
+                if (!common_plan_materialize_tool_arguments(
+                        plan, step, tool_call->arguments_json, tool_call->arguments_json,
+                        error, dataflow_resolver)) { append_event(result, request, {common_agent_event_type::tool_rejected, error, {}, plan.id}); result.error = "tool argument binding failed: " + error; return result; }
                 tool_step_id = step.id;
                 break;
             }
