@@ -87,6 +87,11 @@ std::string render_object(const json & schema, std::string & error) {
         return {};
     }
 
+    std::set<std::string> autowire_fields;
+    for (const auto & value : schema.value("x-agent-autowire-fields", json::array())) {
+        if (value.is_string()) autowire_fields.insert(value.get<std::string>());
+    }
+
     std::ostringstream out;
     bool first = true;
     for (auto it = properties.begin(); it != properties.end(); ++it) {
@@ -95,6 +100,7 @@ std::string render_object(const json & schema, std::string & error) {
         out << it.key() << (required.count(it.key()) == 0 ? "?" : "")
             << ':' << scalar_type(it.value());
         if (it.value().contains("default")) out << '=' << it.value()["default"].dump();
+        if (autowire_fields.count(it.key())) out << " [may be inferred]";
     }
     return out.str();
 }

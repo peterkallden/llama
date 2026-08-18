@@ -33,6 +33,11 @@ struct common_tool_definition {
     std::string policy_json = "{}";
 };
 
+// Model-facing schemas are projections of the host contract. An empty
+// projection deliberately falls back to the corresponding full schema.
+std::string common_tool_model_input_schema(const common_tool_definition & definition);
+std::string common_tool_model_result_schema(const common_tool_definition & definition);
+
 struct common_tool_profile_member {
     std::string tool_name;
     uint32_t tool_version = 1;

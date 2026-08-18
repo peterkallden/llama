@@ -17,16 +17,16 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
         const auto model_description = common_render_compact_tool_description(
             definition.name,
             definition.description,
-            definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
-            definition.model_result_schema_json.empty() ? definition.result_schema_json : definition.model_result_schema_json,
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition),
             compact_error);
         if (!compact_error.empty()) {
             error = compact_error;
             return false;
         }
         tools.push_back({definition.name, model_description,
-            definition.model_input_schema_json.empty() ? definition.input_schema_json : definition.model_input_schema_json,
-            definition.model_result_schema_json.empty() ? definition.result_schema_json : definition.model_result_schema_json});
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition)});
     }
     error.clear();
     return true;

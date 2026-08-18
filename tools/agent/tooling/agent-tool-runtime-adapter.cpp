@@ -111,40 +111,7 @@ public:
     common_agent_tool_repair_context make_repair_context(
             const common_agent_tool_call & call,
             const std::string & validation_error) const override {
-        common_agent_tool_repair_context result;
-        result.tool_name = call.name;
-        result.validation_error = validation_error;
-        for (const auto & tool : tool_view.chat_tools()) {
-            result.available_tools.push_back(tool.name);
-            if (tool.name != call.name || !result.arguments_skeleton.empty()) continue;
-            const auto schema = json::parse(tool.parameters, nullptr, false);
-            if (!schema.is_object() || !schema.contains("properties") || !schema["properties"].is_object()) continue;
-            json skeleton = json::object();
-            std::vector<std::string> required;
-            if (schema.contains("required") && schema["required"].is_array()) {
-                for (const auto & item : schema["required"]) {
-                    if (item.is_string()) required.push_back(item.get<std::string>());
-                }
-            }
-            size_t count = 0;
-            for (const auto & name : required) {
-                if (count++ >= 24 || !schema["properties"].contains(name)) break;
-                const auto & property = schema["properties"][name];
-                if (property.contains("default")) skeleton[name] = property["default"];
-                else if (property.contains("minimum") &&
-                        (property.value("type", "") == "integer" || property.value("type", "") == "number")) {
-                    skeleton[name] = property["minimum"];
-                }
-                else if (property.value("type", "") == "string") skeleton[name] = "";
-                else if (property.value("type", "") == "integer" || property.value("type", "") == "number") skeleton[name] = 0;
-                else if (property.value("type", "") == "boolean") skeleton[name] = false;
-                else if (property.value("type", "") == "array") skeleton[name] = json::array();
-                else skeleton[name] = json::object();
-            }
-            result.arguments_skeleton = skeleton.dump();
-        }
-        std::sort(result.available_tools.begin(), result.available_tools.end());
-        return result;
+        return tool_view.make_repair_context(call.name, call.arguments_json, validation_error);
     }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {

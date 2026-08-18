@@ -1471,6 +1471,19 @@ schema is used as the model fallback. This keeps fields such as materialization
 flags, scan limits and truncation diagnostics out of the ordinary planner view
 without hiding them from the host or runtime diagnostics.
 
+Model input projections may mark fields with the schema extension
+`x-agent-autowire-fields`. These fields remain host-required when execution
+needs them, but the compact model contract renders them as `may be inferred`.
+That statement is deliberately conditional: the planner may omit the field
+only when the current plan has exactly one compatible completed predecessor;
+zero candidates leave the input unresolved and multiple candidates require an
+explicit `$previous.field` or `$alias.field` reference. The host contract and
+repair diagnostics continue to use the full input schema.
+
+Native repair diagnostics use the full host input schema even when the model
+view hides host-owned controls or an autowire-capable input. Providers without
+a full host schema retain their model-schema fallback.
+
 For example:
 
     model JSON:       {"id":"r1","representation":"text"}

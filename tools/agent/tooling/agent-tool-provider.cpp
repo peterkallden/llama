@@ -1,6 +1,7 @@
 #include "agent-tool-provider.h"
 #include "plan/plan-bindings.h"
 #include "agent-tool-result-json-contracts.h"
+#include "agent/agent-runtime.h"
 
 #include "agent/tool-registry.h"
 #include "agent/schema-contract.h"
@@ -17,6 +18,36 @@
 using json = nlohmann::ordered_json;
 
 namespace {
+
+void fill_repair_skeleton(
+        common_agent_tool_repair_context & result,
+        const std::string & schema_json) {
+    const auto schema = json::parse(schema_json, nullptr, false);
+    if (!schema.is_object() || !schema.contains("properties") || !schema["properties"].is_object()) return;
+    json skeleton = json::object();
+    std::vector<std::string> required;
+    if (schema.contains("required") && schema["required"].is_array()) {
+        for (const auto & item : schema["required"]) {
+            if (item.is_string()) required.push_back(item.get<std::string>());
+        }
+    }
+    size_t count = 0;
+    for (const auto & name : required) {
+        if (count++ >= 24 || !schema["properties"].contains(name)) break;
+        const auto & property = schema["properties"][name];
+        if (property.contains("default")) skeleton[name] = property["default"];
+        else if (property.contains("minimum") &&
+                (property.value("type", "") == "integer" || property.value("type", "") == "number")) {
+            skeleton[name] = property["minimum"];
+        }
+        else if (property.value("type", "") == "string") skeleton[name] = "";
+        else if (property.value("type", "") == "integer" || property.value("type", "") == "number") skeleton[name] = 0;
+        else if (property.value("type", "") == "boolean") skeleton[name] = false;
+        else if (property.value("type", "") == "array") skeleton[name] = json::array();
+        else skeleton[name] = json::object();
+    }
+    result.arguments_skeleton = skeleton.dump();
+}
 
 size_t effective_result_limit(
         const agent_tool_context & context,
@@ -270,6 +301,20 @@ public:
             it->second.result_schema_json,
             contract,
             error);
+    }
+
+    common_agent_tool_repair_context make_repair_context(
+            const std::string & name,
+            const std::string &,
+            const std::string & validation_error) const override {
+        common_agent_tool_repair_context result;
+        result.tool_name = name;
+        result.validation_error = validation_error;
+        for (const auto & tool : chat_tool_list) result.available_tools.push_back(tool.name);
+        const auto it = definitions.find(name);
+        if (it != definitions.end()) fill_repair_skeleton(result, it->second.input_schema_json);
+        std::sort(result.available_tools.begin(), result.available_tools.end());
+        return result;
     }
 
     bool exposes_tool(const std::string & name) const override {
@@ -829,6 +874,18 @@ public:
         return view != nullptr && view->describe_tool_dataflow(name, contract, error);
     }
 
+    common_agent_tool_repair_context make_repair_context(
+            const std::string & name,
+            const std::string & arguments_json,
+            const std::string & validation_error) const override {
+        const auto * view = find_owner(name);
+        if (view != nullptr) return view->make_repair_context(name, arguments_json, validation_error);
+        common_agent_tool_repair_context result;
+        result.tool_name = name;
+        result.validation_error = validation_error;
+        return result;
+    }
+
     bool exposes_tool(const std::string & name) const override {
         return tool_owners.find(name) != tool_owners.end();
     }
@@ -935,6 +992,21 @@ private:
 
 } // namespace
 
+common_agent_tool_repair_context agent_tool_view::make_repair_context(
+        const std::string & name,
+        const std::string &,
+        const std::string & validation_error) const {
+    common_agent_tool_repair_context result;
+    result.tool_name = name;
+    result.validation_error = validation_error;
+    for (const auto & tool : chat_tools()) {
+        result.available_tools.push_back(tool.name);
+        if (tool.name == name) fill_repair_skeleton(result, tool.parameters);
+    }
+    std::sort(result.available_tools.begin(), result.available_tools.end());
+    return result;
+}
+
 native_agent_tool_provider::native_agent_tool_provider(
         const common_tool_catalog & catalog,
         binding_factory make_bindings)
@@ -985,12 +1057,8 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         const auto model_description = common_render_compact_tool_description(
             definition.name,
             definition.description,
-            definition.model_input_schema_json.empty()
-                ? definition.input_schema_json
-                : definition.model_input_schema_json,
-            definition.model_result_schema_json.empty()
-                ? definition.result_schema_json
-                : definition.model_result_schema_json,
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition),
             compact_error);
         if (!compact_error.empty()) {
             error = compact_error;
@@ -999,12 +1067,8 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         chat_tools.push_back({
             definition.name,
             model_description,
-            definition.model_input_schema_json.empty()
-                ? definition.input_schema_json
-                : definition.model_input_schema_json,
-            definition.model_result_schema_json.empty()
-                ? definition.result_schema_json
-                : definition.model_result_schema_json,
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition),
         });
         resolved_definitions.emplace(definition.name, definition);
     }

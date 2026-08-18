@@ -90,6 +90,7 @@ int main() {
     assert(document_table_input["properties"]["node_id"].value("x-agent-type", "") == "table_ref");
     assert(aggregate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_model_input["x-agent-autowire-fields"][0] == "dataset");
     assert(validate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(validate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(export_model_input["properties"]["source_dataset"].value("x-agent-type", "") == "dataset_ref");
@@ -156,13 +157,12 @@ int main() {
     const auto aggregate_compact = common_render_compact_tool_description(
         data_aggregate->name,
         data_aggregate->description,
-        data_aggregate->model_input_schema_json,
-        data_aggregate->model_result_schema_json.empty()
-            ? data_aggregate->result_schema_json
-            : data_aggregate->model_result_schema_json,
+        common_tool_model_input_schema(*data_aggregate),
+        common_tool_model_result_schema(*data_aggregate),
         compact_error);
     assert(compact_error.empty());
     assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
+    assert(aggregate_compact.find("dataset:dataset_ref [may be inferred]") != std::string::npos);
     assert(aggregate_compact.find("function:count|sum|avg|min|max") != std::string::npos);
     assert(aggregate_compact.find("column?:string") != std::string::npos);
     const auto aggregate_returns = aggregate_compact.find("\nreturns:");

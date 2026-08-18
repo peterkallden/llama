@@ -21,6 +21,7 @@
 #include <vector>
 
 struct common_plan_tool_dataflow_contract;
+struct common_agent_tool_repair_context;
 
 struct agent_tool_context {
     std::string request_id;
@@ -92,6 +93,8 @@ public:
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
     virtual bool describe_tool_dataflow(
         const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
+    virtual common_agent_tool_repair_context make_repair_context(
+        const std::string &, const std::string &, const std::string &) const;
     virtual bool exposes_tool(const std::string & name) const = 0;
     virtual bool is_read_only(const std::string & name) const = 0;
     virtual bool is_policy_gated(const std::string & name) const = 0;
