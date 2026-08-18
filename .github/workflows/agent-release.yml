@@ -538,6 +538,11 @@ jobs:
         with:
           cuda_version: '13.3'
 
+      - name: Install Ninja for CUDA generator
+        if: matrix.backend == 'cuda'
+        shell: pwsh
+        run: choco install ninja --yes
+
       - name: Install Vulkan SDK
         if: matrix.backend == 'vulkan'
         shell: pwsh
@@ -611,8 +616,13 @@ jobs:
             'vulkan' { '-DGGML_CPU=ON -DGGML_CUDA=OFF -DGGML_VULKAN=ON' }
             default { throw 'Unsupported Windows release backend' }
           }
+          $generatorArguments = if ('${{ matrix.backend }}' -eq 'cuda') {
+            '-G "Ninja Multi-Config"'
+          } else {
+            '-G "Visual Studio 17 2022" -A x64'
+          }
           $configure = @(
-            'cmake -S . -B build-agent-windows-release -G "Visual Studio 17 2022" -A x64',
+            "cmake -S . -B build-agent-windows-release $generatorArguments",
             '-DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF -DBUILD_TESTING=OFF',
             '-DLLAMA_TESTS_INSTALL=OFF -DLLAMA_AGENT_PACKAGE_INSTALL=ON',
             '-DLLAMA_AGENT_PACKAGE_CPACK=ON',
