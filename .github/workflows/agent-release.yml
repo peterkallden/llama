@@ -344,7 +344,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y --no-install-recommends glslc libvulkan-dev
+          sudo apt-get install -y --no-install-recommends \
+            glslang-tools \
+            glslc \
+            libvulkan-dev \
+            spirv-headers
           pkg-config --modversion vulkan
 
       - name: Provision Cozo C API
@@ -646,7 +650,16 @@ jobs:
       - name: Build Windows release package target
         shell: pwsh
         run: |
-          cmake --build build-agent-windows-release --config Release --parallel 3 --target llama-agent-build-pack
+          $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat'
+          if (-not (Test-Path $vsDevCmd)) {
+            $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+          }
+          if (-not (Test-Path $vsDevCmd)) {
+            throw 'Visual Studio x64 developer environment was not found'
+          }
+          $command = "call `"$vsDevCmd`" x64 && cmake --build build-agent-windows-release --config Release --parallel 3 --target llama-agent-build-pack"
+          cmd.exe /d /c $command
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install and smoke-test Windows release staging tree
         shell: pwsh
