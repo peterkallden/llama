@@ -1998,6 +1998,12 @@ The active execution-policy fields are representation-independent:
         "image": "registry.example/pdf-worker@sha256:replace-me",
         "expected_version": "mupdf-1.26"
       },
+      "ocr.tesseract": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "tesseract",
+        "expected_version": "tesseract 5.x"
+      },
       "docx.text": {
         "execution": "local_preferred",
         "backend": "auto",
@@ -2048,17 +2054,19 @@ operation-scoped assembly covers the CLI, daemon and MCP host seams for the
 configured PDF page-image and Tesseract processor families; general automatic
 backend resolution for all future processors remains open.
 
-When `docx.text`, `odt.text`, `html.text` or `xlsx.workbook` is configured, the same operation-scoped host assembly can
-install the local Pandoc processor without adding a model-visible `pandoc`
-tool. `local_preferred` with `backend=auto` uses the configured executable or
-host `PATH`; `local_required` fails closed if Pandoc cannot be started. Docker
-and Kubernetes execution for these Pandoc directions use the same isolated worker image and
-existing execution-provider contracts. The worker command remains the
-host-typed `pandoc` invocation; the model does not select an executable. The
-Pandoc sandbox paths are architecturally implemented, while live Docker and
-Kubernetes execution remain environment-dependent assurance runs. Adding a
-different worker image should reuse the same processor and execution-provider
-contracts rather than add a DOCX-specific queue or scheduler.
+When `pdf.page_image`, `ocr.tesseract`, `docx.text`, `odt.text`, `html.text` or
+`xlsx.workbook` is configured, the same operation-scoped host assembly can
+install a local processor without adding a model-visible external tool.
+`local_preferred` with `backend=auto` uses the configured executable or host
+`PATH`; `local_required` fails closed if the processor cannot be started. Docker
+and Kubernetes execution for these processor directions use the same isolated
+worker images and existing execution-provider contracts. The worker command
+remains the host-typed processor invocation; the model does not select an executable. The
+sandbox paths remain the default deployment choice, while local execution is
+intended for explicitly trusted hosts or a deliberately self-contained agent
+container. Adding a different worker image should reuse the same processor and
+execution-provider contracts rather than add a processor-specific queue or
+scheduler.
 
 The parameterized model-free E2E can be invoked as follows:
 
