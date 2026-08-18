@@ -625,8 +625,8 @@ jobs:
             "-DCPACK_PACKAGE_NAME=${{ steps.metadata.outputs.package_name }}",
             "-DCPACK_PACKAGE_VERSION=${{ steps.metadata.outputs.agent_version }}",
             "-DCPACK_PACKAGE_FILE_NAME=${{ steps.metadata.outputs.package_name }}",
-            "-DCOZO_INCLUDE_DIR=`\"$env:COZO_INCLUDE_DIR`\"",
-            "-DCOZO_LIBRARY=`\"$env:COZO_LIBRARY`\"",
+            "-DCOZO_INCLUDE_DIR=`"$env:COZO_INCLUDE_DIR`"",
+            "-DCOZO_LIBRARY=`"$env:COZO_LIBRARY`"",
             '-DLLAMA_AGENT_CLANG_EXECUTABLE=clang.exe -DLLAMA_AGENT_CLANGD_EXECUTABLE=clangd.exe'
           ) -join ' '
           $command = "call `"$vsDevCmd`" x64 && $configure"
