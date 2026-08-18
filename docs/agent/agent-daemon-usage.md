@@ -170,12 +170,14 @@ tag, so they do not overwrite the feature image:
 
 ```text
 ghcr.io/peterkallden/llama/llama-agent:cpu-amd64-latest
-ghcr.io/peterkallden/llama/llama-agent:cuda-amd64-latest
-ghcr.io/peterkallden/llama/llama-agent:vulkan-amd64-latest
+ghcr.io/peterkallden/llama/llama-agent:cuda13-amd64-latest
+ghcr.io/peterkallden/llama/llama-agent:vulkan1.4-amd64-latest
 ```
 
-Versioned release tags use the release version, for example
-`cpu-amd64-v0.1.0`. The CUDA image supplies the CUDA runtime libraries; the
+Versioned release tags use the backend label and release identity, for example
+`cpu-amd64-0.4.0-build17-llama-b6321`,
+`cuda13-amd64-0.4.0-build17-llama-b6321`, or
+`vulkan1.4-amd64-0.4.0-build17-llama-b6321`. The CUDA image supplies the CUDA runtime libraries; the
 CUDA driver remains a host requirement. The Vulkan image supplies the Vulkan
 loader, while the host remains responsible for the device driver and device
 access.

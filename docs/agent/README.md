@@ -72,8 +72,8 @@ evidence-based milestone record is maintained in
 
   ```bash
   docker pull ghcr.io/peterkallden/llama/llama-agent:cpu-amd64-latest
-  docker pull ghcr.io/peterkallden/llama/llama-agent:cuda-amd64-latest
-  docker pull ghcr.io/peterkallden/llama/llama-agent:vulkan-amd64-latest
+  docker pull ghcr.io/peterkallden/llama/llama-agent:cuda13-amd64-latest
+  docker pull ghcr.io/peterkallden/llama/llama-agent:vulkan1.4-amd64-latest
   ```
 
   The development CPU image is published separately:
@@ -83,6 +83,10 @@ evidence-based milestone record is maintained in
   ```
 
   Podman uses the same image names; replace `docker pull` with `podman pull`.
+
+  The release image labels use the short backend labels `cuda13` and
+  `vulkan1.4`. The exact build versions are recorded in the image metadata:
+  CUDA 13.3 and Vulkan SDK 1.4.357.0.
 
 ## Quick start
 

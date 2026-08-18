@@ -145,10 +145,16 @@ jobs:
       matrix:
         include:
           - backend: cpu
+            backend_label: cpu
+            backend_version: native
             base_image: ubuntu:24.04
           - backend: cuda
+            backend_label: cuda13
+            backend_version: 13.3
             base_image: nvidia/cuda:13.3.0-runtime-ubuntu24.04
           - backend: vulkan
+            backend_label: vulkan1.4
+            backend_version: 1.4.357.0
             base_image: ubuntu:24.04
     steps:
       - name: Check out image definition
@@ -210,8 +216,8 @@ jobs:
           image_repo="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<< "$REPOSITORY")/llama-agent"
           {
             echo "tags<<TAGS"
-            echo "$image_repo:${BACKEND}-amd64-latest"
-            echo "$image_repo:${BACKEND}-amd64-${{ steps.package.outputs.release_version }}"
+            echo "$image_repo:${{ matrix.backend_label }}-amd64-latest"
+            echo "$image_repo:${{ matrix.backend_label }}-amd64-${{ steps.package.outputs.release_version }}"
             echo "TAGS"
           } >> "$GITHUB_OUTPUT"
 
@@ -232,5 +238,9 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
             org.opencontainers.image.version=${{ steps.package.outputs.release_version }}
+            org.opencontainers.image.base.name=${{ matrix.base_image }}
+            io.llama-agent.backend=${{ matrix.backend }}
+            io.llama-agent.backend.version=${{ matrix.backend_version }}
+            io.llama-agent.backend.label=${{ matrix.backend_label }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
