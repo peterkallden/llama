@@ -4,6 +4,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 COZO_INCLUDE_DIR ?=
 COZO_LIBRARY ?=
+COZO_LIBRARY_BASENAME := $(notdir $(COZO_LIBRARY))
 LLAMA_AGENT_BACKEND ?= cpu
 LLAMA_AGENT_NATIVE ?= off
 
@@ -73,7 +74,10 @@ override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/tmp cmake --install debian/build --config RelWithDebInfo
 	@echo 'Installed files under debian/tmp before dh_install:'
 	find debian/tmp -maxdepth 6 -type f -print | sort
-	install -D -m 0644 $(COZO_LIBRARY) debian/tmp/usr/lib/libcozo_c.so
+	install -D -m 0644 $(COZO_LIBRARY) debian/tmp/usr/lib/$(COZO_LIBRARY_BASENAME)
+	if [ "$(COZO_LIBRARY_BASENAME)" != libcozo_c.so ]; then \
+		ln -sf $(COZO_LIBRARY_BASENAME) debian/tmp/usr/lib/libcozo_c.so; \
+	fi
 
 override_dh_auto_build:
 	cmake --build debian/build --target llama-agent-build-pack --parallel
