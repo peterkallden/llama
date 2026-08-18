@@ -6,6 +6,7 @@
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
 #include "tools/agent/resource/processors/agent-tesseract-ocr-processor.h"
 #include "tools/agent/resource/processors/agent-xlsx-workbook-json-processor.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -659,77 +660,23 @@ bool resolve_agent_host_tool_selection(
                     bound_resource_store_for_processors,
                     sandbox_backend](const agent_resource_processing_binding_request & binding)
                     -> std::shared_ptr<agent_resource_processing_provider> {
-                const auto page_policy = processor_policies.find("pdf.page_image");
-                const auto ocr_policy = processor_policies.find("ocr.tesseract");
-                const auto docx_policy = processor_policies.find("docx.text");
-                const auto odt_policy = processor_policies.find("odt.text");
-                const auto html_policy = processor_policies.find("html.text");
-                const auto xlsx_policy = processor_policies.find("xlsx.workbook");
-                const bool has_page_policy = page_policy != processor_policies.end();
-                const bool has_ocr_policy = ocr_policy != processor_policies.end();
-                const bool has_pandoc_policy = docx_policy != processor_policies.end() ||
-                    odt_policy != processor_policies.end() || html_policy != processor_policies.end();
-                const bool has_xlsx_policy = xlsx_policy != processor_policies.end();
-                if (!has_page_policy && !has_ocr_policy && !has_pandoc_policy && !has_xlsx_policy) {
-                    return std::shared_ptr<agent_resource_processing_provider>();
-                }
                 const auto source_type = common_normalize_resource_media_type(
                     !binding.media_type.resolved_type.empty()
                         ? binding.media_type.resolved_type
                         : binding.media_type.declared_type);
-                const auto selected_pandoc_policy =
-                    source_type == "application/vnd.oasis.opendocument.text" && odt_policy != processor_policies.end()
-                        ? &odt_policy->second
-                        : source_type == "text/html" && html_policy != processor_policies.end()
-                            ? &html_policy->second
-                            : (source_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-                               source_type.empty()) && docx_policy != processor_policies.end()
-                                ? &docx_policy->second : nullptr;
-                const bool has_selected_pandoc_policy = selected_pandoc_policy != nullptr;
-                const auto selected_xlsx_policy = source_type ==
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
-                    has_xlsx_policy ? &xlsx_policy->second : nullptr;
-                const bool has_selected_xlsx_policy = selected_xlsx_policy != nullptr;
-                const auto wants_sandbox = [&sandbox_backend](const agent_resource_processor_execution_policy & policy) {
-                    return (policy.execution == "sandbox_preferred" || policy.execution == "sandbox_required") &&
-                        (policy.backend == "auto" || policy.backend == sandbox_backend);
-                };
-                const bool wants_pandoc_local = has_selected_pandoc_policy &&
-                    (selected_pandoc_policy->execution == "local_preferred" ||
-                     selected_pandoc_policy->execution == "local_required") &&
-                    (selected_pandoc_policy->backend == "auto" ||
-                     selected_pandoc_policy->backend == "local");
-                const bool wants_pandoc_sandbox = has_selected_pandoc_policy &&
-                    (selected_pandoc_policy->execution == "sandbox_preferred" ||
-                     selected_pandoc_policy->execution == "sandbox_required") &&
-                     (selected_pandoc_policy->backend == "auto" ||
-                     selected_pandoc_policy->backend == sandbox_backend);
-                const bool wants_xlsx_local = has_selected_xlsx_policy &&
-                    (selected_xlsx_policy->execution == "local_preferred" ||
-                     selected_xlsx_policy->execution == "local_required") &&
-                    (selected_xlsx_policy->backend == "auto" ||
-                     selected_xlsx_policy->backend == "local");
-                const bool wants_xlsx_sandbox = has_selected_xlsx_policy &&
-                    (selected_xlsx_policy->execution == "sandbox_preferred" ||
-                     selected_xlsx_policy->execution == "sandbox_required") &&
-                    (selected_xlsx_policy->backend == "auto" ||
-                     selected_xlsx_policy->backend == sandbox_backend);
-                const bool wants_page_local = has_page_policy &&
-                    (page_policy->second.execution == "local_preferred" ||
-                     page_policy->second.execution == "local_required") &&
-                    (page_policy->second.backend == "auto" ||
-                     page_policy->second.backend == "local");
-                const bool wants_page_sandbox = has_page_policy && wants_sandbox(page_policy->second);
-                const bool wants_ocr_local = has_ocr_policy &&
-                    (ocr_policy->second.execution == "local_preferred" ||
-                     ocr_policy->second.execution == "local_required") &&
-                    (ocr_policy->second.backend == "auto" ||
-                     ocr_policy->second.backend == "local");
-                const bool wants_ocr_sandbox = has_ocr_policy && wants_sandbox(ocr_policy->second);
-                if ((!has_page_policy || (!wants_page_local && !wants_page_sandbox)) &&
-                        (!has_ocr_policy || (!wants_ocr_local && !wants_ocr_sandbox)) &&
-                        (!has_selected_pandoc_policy || (!wants_pandoc_local && !wants_pandoc_sandbox)) &&
-                        (!has_selected_xlsx_policy || (!wants_xlsx_local && !wants_xlsx_sandbox))) {
+                const auto dispatch = resolve_agent_resource_processor_dispatch({
+                    processor_policies, source_type, sandbox_backend});
+                const bool has_page_policy = dispatch.has_page_policy;
+                const bool has_ocr_policy = dispatch.has_ocr_policy;
+                const bool wants_page_local = dispatch.wants_page_local;
+                const bool wants_page_sandbox = dispatch.wants_page_sandbox;
+                const bool wants_ocr_local = dispatch.wants_ocr_local;
+                const bool wants_ocr_sandbox = dispatch.wants_ocr_sandbox;
+                const bool wants_pandoc_local = dispatch.wants_pandoc_local;
+                const bool wants_pandoc_sandbox = dispatch.wants_pandoc_sandbox;
+                const bool wants_xlsx_local = dispatch.wants_xlsx_local;
+                const bool wants_xlsx_sandbox = dispatch.wants_xlsx_sandbox;
+                if (!dispatch.selected) {
                     return std::shared_ptr<agent_resource_processing_provider>();
                 }
 
@@ -760,38 +707,9 @@ bool resolve_agent_host_tool_selection(
                 execution.operation_id = operation_id;
 
                 std::shared_ptr<agent_resource_processing_host> host;
-                const bool selected_page = has_page_policy && (wants_page_local || wants_page_sandbox);
-                const bool selected_ocr = !selected_page && has_ocr_policy && (wants_ocr_local || wants_ocr_sandbox);
-                const bool selected_pandoc = !selected_page && !selected_ocr &&
-                    (wants_pandoc_local || wants_pandoc_sandbox);
-                const bool selected_xlsx = !selected_page && !selected_ocr && !selected_pandoc &&
-                    (wants_xlsx_local || wants_xlsx_sandbox);
-                if (!selected_page && !selected_ocr && !selected_pandoc && !selected_xlsx) {
-                    return std::shared_ptr<agent_resource_processing_provider>();
-                }
-                const auto & selected_policy = selected_page
-                    ? page_policy->second
-                    : (selected_ocr ? ocr_policy->second
-                        : (selected_pandoc ? *selected_pandoc_policy : *selected_xlsx_policy));
-                const std::string selected_execution_class = selected_page
-                    ? "resource.processor.pdf.page_image"
-                    : (selected_ocr ? "resource.processor.ocr.tesseract"
-                        : (selected_pandoc ? "resource.processor.pandoc" : "resource.processor.xlsx"));
-                const auto execution_backend = selected_page
-                    ? (wants_page_local ? "local" :
-                       (selected_policy.backend == "kubernetes" ? "kubernetes" : sandbox_backend))
-                    : selected_ocr
-                        ? (wants_ocr_local ? "local" :
-                           (selected_policy.backend == "kubernetes" ? "kubernetes" : sandbox_backend))
-                        : selected_pandoc
-                            ? (wants_pandoc_local ? "local" :
-                               (selected_policy.backend == "kubernetes" ? "kubernetes" : sandbox_backend))
-                            : selected_xlsx
-                                ? (wants_xlsx_local ? "local" :
-                                   (selected_policy.backend == "kubernetes" ? "kubernetes" : sandbox_backend))
-                                : (selected_page && selected_policy.backend == "kubernetes"
-                                    ? "kubernetes"
-                                    : sandbox_backend);
+                const auto & selected_policy = dispatch.policy;
+                const auto & selected_execution_class = dispatch.execution_class;
+                const auto & execution_backend = dispatch.execution_backend;
                 if (execution_backend == "docker") {
                     auto value = std::make_shared<agent_sandbox_resource_processing_host>(
                         *docker_runtime_for_processors,
@@ -822,7 +740,7 @@ bool resolve_agent_host_tool_selection(
                 std::vector<std::shared_ptr<agent_resource_processor>> processors;
                 std::string registration_error;
                 if (has_page_policy) {
-                    const auto & policy = page_policy->second;
+                    const auto & policy = *dispatch.page_policy;
                     auto processor = std::make_shared<agent_pdf_page_image_processor>(
                         *host,
                         execution,
@@ -832,7 +750,7 @@ bool resolve_agent_host_tool_selection(
                     processors.push_back(std::move(processor));
                 }
                 if (has_ocr_policy) {
-                    const auto & policy = ocr_policy->second;
+                    const auto & policy = *dispatch.ocr_policy;
                     auto processor = std::make_shared<agent_tesseract_ocr_processor>(
                         *host,
                         execution,
@@ -842,7 +760,7 @@ bool resolve_agent_host_tool_selection(
                     processors.push_back(std::move(processor));
                 }
                 if (wants_pandoc_local) {
-                    const auto & policy = *selected_pandoc_policy;
+                    const auto & policy = *dispatch.selected_pandoc_policy;
                     agent_pandoc_options options;
                     if (source_type == "application/vnd.oasis.opendocument.text") {
                         options.input_format = "odt";
@@ -863,7 +781,7 @@ bool resolve_agent_host_tool_selection(
                     processors.push_back(std::move(processor));
                 }
                 if (wants_pandoc_sandbox) {
-                    const auto & policy = *selected_pandoc_policy;
+                    const auto & policy = *dispatch.selected_pandoc_policy;
                     agent_pandoc_options options;
                     if (source_type == "application/vnd.oasis.opendocument.text") {
                         options.input_format = "odt";
@@ -887,7 +805,7 @@ bool resolve_agent_host_tool_selection(
                     processors.push_back(std::move(processor));
                 }
                 if (wants_xlsx_local || wants_xlsx_sandbox) {
-                    const auto & policy = *selected_xlsx_policy;
+                    const auto & policy = *dispatch.selected_xlsx_policy;
                     const auto backend = wants_xlsx_local ? agent_resource_backend_kind::local_process
                         : (policy.backend == "kubernetes" ? agent_resource_backend_kind::kubernetes
                             : agent_resource_backend_kind::docker);

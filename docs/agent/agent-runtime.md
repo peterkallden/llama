@@ -1805,6 +1805,23 @@ approved Docker, and approved Kubernetes. If none is available, processing
 fails with a typed unavailable result; it is not silently converted into an
 unbounded local command.
 
+The operation-scoped CLI assembly keeps processor implementations under
+`tools/agent/resource/processors/` and keeps policy selection in
+`tools/agent/resource/dispatch/agent-resource-processor-dispatch.h`. The
+dispatch resolver combines only three host-owned inputs: the configured
+processor policy, the normalized source MIME type, and the configured sandbox
+backend. It returns the selected processor family, execution class, policy
+and execution backend; the adapter then constructs the existing processor and
+processing host from that result.
+
+The resolver preserves the current deterministic priority for overlapping
+policies: PDF page image, OCR, Pandoc and XLSX. This is an internal migration
+seam, not a new model contract. The model still asks for a representation such
+as `text`; it never selects `mutool`, `tesseract`, `pandoc`, Python, Docker or
+Kubernetes. A future capability-aware registry can replace this fixed priority
+without changing the processor implementations or the resource-processing
+service.
+
 Local execution now reuses the existing `common_agent_sandbox_runtime` seam
 through `common_agent_sandbox_local_runtime`, which delegates process creation
 to the repository's `common_subproc` wrapper. The provider maps virtual

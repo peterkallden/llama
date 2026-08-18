@@ -806,6 +806,16 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-resource-processor-dispatch-smoke)
+add_executable(${TARGET}
+    smoke/resource/agent-resource-processor-dispatch-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/common
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-media-type-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-media-type-smoke.cpp
@@ -1289,6 +1299,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-resource-backend-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-backend-smoke>)
     set_property(TEST llama-agent-resource-backend-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-resource-processor-dispatch-ctest
+        COMMAND $<TARGET_FILE:llama-agent-resource-processor-dispatch-smoke>)
+    set_property(TEST llama-agent-resource-processor-dispatch-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-resource-media-type-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-media-type-smoke>)
