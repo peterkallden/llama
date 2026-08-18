@@ -16,15 +16,84 @@ param(
     [ValidateSet('auto', 'reflective', 'deliberate', 'research')]
     [string]$ThinkingMode = 'auto',
     [ValidateSet('none', 'docker', 'kubernetes')] [string]$Sandbox = 'none',
+    [string]$SandboxExecutable = 'docker',
+    [ValidateSet('stdio', 'mcp-http', 'jsonl-tcp', 'jsonl-unix')] [string]$Transport = 'stdio',
+    [string]$Listen = '127.0.0.1',
+    [ValidateRange(1, 65535)] [int]$Port = 8080,
+    [string]$UnixSocket = 'run/llama-agent.sock',
+    [ValidateSet('none', 'opaque', 'jwt')] [string]$AuthMode = 'none',
+    [string]$EnableTools = '',
+    [switch]$ListTools,
+    [string]$TokenEnv = '',
+    [string]$TokenProfile = '',
+    [string]$JwtIssuer = '',
+    [string]$JwtAudience = '',
+    [string]$JwtJwksUri = '',
+    [string]$JwtToolProfile = '',
+    [string]$JwtScope = '',
+    [ValidateSet('disabled', 'local_preferred', 'local_required', 'sandbox_preferred', 'sandbox_required')]
+    [string]$PdfPageImageExecution = 'disabled',
+    [ValidateSet('auto', 'local', 'docker', 'kubernetes')]
+    [string]$PdfPageImageBackend = 'auto',
+    [string]$PdfPageImageExecutable = 'mutool',
+    [string]$PdfPageImageExpectedVersion = '',
+    [ValidateSet('disabled', 'local_preferred', 'local_required', 'sandbox_preferred', 'sandbox_required')]
+    [string]$OcrTesseractExecution = 'disabled',
+    [ValidateSet('auto', 'local', 'docker', 'kubernetes')]
+    [string]$OcrTesseractBackend = 'auto',
+    [string]$OcrTesseractExecutable = 'tesseract',
+    [string]$OcrTesseractExpectedVersion = '',
     [string]$ProvidersFile
 )
 
+if ($ListTools) {
+    @(
+        'Internal agent capabilities: memory, planning, deliberation, reflection, research, resources'
+        'External catalog tools: calculator, time_now, memory_search, memory_get, memory_inspect, memory_conflict_check'
+        '  repository.list, repository.search, repository.read, repository.diff, repository.log, repository.status'
+        '  workspace.list, workspace.read, workspace.search, workspace.patch'
+        '  diagnostics.compile, diagnostics.symbol, diagnostics.references, diagnostics.call_hierarchy'
+        '  dataset.list, dataset.inspect, dataset.schema, dataset.sample, dataset.validate'
+        '  data.query, data.filter, data.aggregate, data.join, data.transform'
+        '  statistics.describe, statistics.outliers, statistics.value_counts, artifact.export, resource_read'
+        '  web_search, web_fetch, development.build, development.test'
+    ) | Write-Output
+    exit 0
+}
+
+if ($AuthMode -eq 'opaque' -and ([string]::IsNullOrWhiteSpace($TokenEnv) -or [string]::IsNullOrWhiteSpace($TokenProfile))) {
+    throw 'AuthMode opaque requires TokenEnv and TokenProfile'
+}
+if ($AuthMode -eq 'jwt' -and ([string]::IsNullOrWhiteSpace($JwtIssuer) -or [string]::IsNullOrWhiteSpace($JwtAudience) -or [string]::IsNullOrWhiteSpace($JwtJwksUri) -or [string]::IsNullOrWhiteSpace($JwtToolProfile))) {
+    throw 'AuthMode jwt requires JwtIssuer, JwtAudience, JwtJwksUri and JwtToolProfile'
+}
+if ($EnableTools -and $AuthMode -eq 'none') {
+    throw 'EnableTools requires AuthMode opaque or jwt'
+}
+
+$processorPolicies = [ordered]@{}
+if ($PdfPageImageExecution -ne 'disabled') {
+    $processorPolicies['pdf.page_image'] = [ordered]@{
+        execution = $PdfPageImageExecution; backend = $PdfPageImageBackend
+        executable = $PdfPageImageExecutable; expected_version = $PdfPageImageExpectedVersion
+    }
+}
+if ($OcrTesseractExecution -ne 'disabled') {
+    $processorPolicies['ocr.tesseract'] = [ordered]@{
+        execution = $OcrTesseractExecution; backend = $OcrTesseractBackend
+        executable = $OcrTesseractExecutable; expected_version = $OcrTesseractExpectedVersion
+    }
+}
+
 $providers = @()
 if ($ProvidersFile) {
-    if (-not (Test-Path -LiteralPath $ProvidersFile -PathType Leaf)) {
+    if ($ProvidersFile -eq '-') {
+        $providers = @([Console]::In.ReadToEnd() | ConvertFrom-Json)
+    } elseif (-not (Test-Path -LiteralPath $ProvidersFile -PathType Leaf)) {
         throw "Provider file not found: $ProvidersFile"
+    } else {
+        $providers = @(Get-Content -LiteralPath $ProvidersFile -Raw | ConvertFrom-Json)
     }
-    $providers = @(Get-Content -LiteralPath $ProvidersFile -Raw | ConvertFrom-Json)
 }
 
 $config = [ordered]@{
@@ -48,10 +117,13 @@ $config = [ordered]@{
     tools = [ordered]@{ profile = $ToolProfile; repository_root = $RepositoryRoot; providers = $providers }
     sandbox = [ordered]@{
         backend = $Sandbox
+        docker = [ordered]@{ executable = $SandboxExecutable; default_image = 'llama-agent-dev:latest' }
+        kubernetes = [ordered]@{ namespace = 'llama-agent'; service_account = 'llama-agent-runner'; runtime_class = 'standard'; cleanup = $true }
         workspace = [ordered]@{
             root = "$CozoRoot/workspaces"; artifact_root = "$CozoRoot/artifacts"
             operation_mode = 'ephemeral'; project_mode = 'persistent'
         }
+        defaults = [ordered]@{ timeout_ms = 60000; cpu_count = 1; max_output_bytes = 65536; network = 'none'; filesystem = 'readonly'; allow_artifacts = $true }
     }
     diagnostics = [ordered]@{
         semantic_backend = 'auto'; clang_executable = 'clang'; clangd_executable = 'clangd'
@@ -64,6 +136,26 @@ $config = [ordered]@{
         mcp_connect_timeout_ms = 5000; mcp_request_timeout_ms = 30000
         mcp_shutdown_timeout_ms = 2000; max_tool_rounds = 0
     }
+}
+
+if ($processorPolicies.Count -gt 0) { $config.resources.processor_policies = $processorPolicies }
+
+$enabledTools = @()
+if ($EnableTools -and $EnableTools -ne 'none') { $enabledTools = @($EnableTools -split ',' | ForEach-Object { $_.Trim() }) }
+$inbound = [ordered]@{ enabled = ($Transport -eq 'mcp-http'); listen = $Listen; port = $Port; path = '/mcp'; agent_tools = $false; max_delegation_depth = 1 }
+if ($AuthMode -eq 'none') {
+    $inbound.tokens = @()
+} elseif ($AuthMode -eq 'opaque') {
+    $token = [ordered]@{ id = 'bootstrap-client'; token_env = $TokenEnv; audience = 'llama-agent'; namespace = 'local'; project = 'default'; tool_profile = $TokenProfile; allow_writes = $false }
+    if ($EnableTools) { $token.allowed_tools = $enabledTools }
+    $inbound.tokens = @($token)
+} else {
+    $inbound.authorization = [ordered]@{ mode = 'jwt'; issuer = $JwtIssuer; audience = $JwtAudience; jwks_uri = $JwtJwksUri; allowed_algorithms = @('RS256'); required_scopes = @($JwtScope); tool_profile = $JwtToolProfile; allowed_tools = $enabledTools; allow_writes = $false }
+}
+$config.mcp = [ordered]@{ inbound = $inbound }
+$config.jsonl = [ordered]@{
+    tcp = [ordered]@{ enabled = ($Transport -eq 'jsonl-tcp'); listen = $Listen; port = $Port; max_line_bytes = 1048576; idle_timeout_seconds = 300 }
+    unix_socket = [ordered]@{ enabled = ($Transport -eq 'jsonl-unix'); path = $UnixSocket; mode = 432 }
 }
 
 $parent = Split-Path -Parent $Output

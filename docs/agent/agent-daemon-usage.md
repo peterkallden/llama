@@ -43,10 +43,13 @@ deterministic.
 ## Bootstrap a first configuration
 
 The repository includes
-[`scripts/agent-config-bootstrap.sh`](../../scripts/agent-config-bootstrap.sh) for
-creating a complete starting configuration. It uses Cozo for the memory, plan
-and structured-data stores, enables the normal agent deliberation defaults,
-and keeps network transports disabled unless they are selected explicitly.
+[`scripts/agent-config-bootstrap.sh`](../../scripts/agent-config-bootstrap.sh)
+and [`scripts/agent-config-bootstrap.ps1`](../../scripts/agent-config-bootstrap.ps1)
+for creating a complete starting configuration. They use Cozo for the memory,
+plan and structured-data stores, enable the normal agent deliberation defaults,
+and keep network transports disabled unless they are selected explicitly. The
+two scripts expose the same daemon transport, authentication, sandbox and
+processor-policy controls.
 
 Run it from the repository root in Bash:
 
@@ -60,6 +63,48 @@ Run it from the repository root in Bash:
   --gpu-layers 0 \
   --output agent-daemon-config.json
 ```
+
+On Windows, the equivalent command is:
+
+```powershell
+.\scripts\agent-config-bootstrap.ps1 `
+  -Model models\model.gguf `
+  -EmbeddingModel models\embedding.gguf `
+  -CozoRoot data `
+  -RepositoryRoot . `
+  -Threads 4 `
+  -GpuLayers 0 `
+  -Output agent-daemon-config.json
+```
+
+The default sandbox backend is `none`. For the Docker-compatible Podman
+backend, keep the contract backend name as `docker` and select Podman as the
+host executable:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --sandbox docker \
+  --sandbox-executable podman \
+  --output agent-daemon-config.json
+```
+
+Resource processors remain sandboxed unless explicitly selected. For trusted
+hosts with MuPDF and Tesseract installed locally, local execution can be
+enabled as follows:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --pdf-page-image-execution local_preferred \
+  --pdf-page-image-backend auto \
+  --ocr-tesseract-execution local_preferred \
+  --ocr-tesseract-backend auto \
+  --output agent-daemon-config.json
+```
+
+The PowerShell names are `-PdfPageImageExecution`,
+`-PdfPageImageBackend`, `-OcrTesseractExecution` and
+`-OcrTesseractBackend`. Use `local_required` when silently falling back to a
+sandbox is not acceptable.
 
 The generated file can then be used by the daemon:
 

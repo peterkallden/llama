@@ -36,6 +36,14 @@ Usage: agent-config-bootstrap.sh [options]
   --jwt-jwks-uri URL          JWT JWKS URI
   --jwt-tool-profile NAME     Tool profile for JWT clients
   --jwt-scope NAME            Required JWT scope
+  --pdf-page-image-execution MODE  disabled, local_preferred, local_required, sandbox_preferred or sandbox_required
+  --pdf-page-image-backend BACKEND auto, local, docker or kubernetes
+  --pdf-page-image-executable PATH  PDF renderer (default: mutool)
+  --pdf-page-image-version VERSION  Expected renderer version
+  --ocr-tesseract-execution MODE    disabled, local_preferred, local_required, sandbox_preferred or sandbox_required
+  --ocr-tesseract-backend BACKEND   auto, local, docker or kubernetes
+  --ocr-tesseract-executable PATH   OCR executable (default: tesseract)
+  --ocr-tesseract-version VERSION   Expected OCR version
   --help                     Show this help
 EOF
 }
@@ -80,6 +88,14 @@ jwt_tool_profile=
 jwt_scope=
 enable_tools_csv=
 enable_tools_set=false
+pdf_page_image_execution=disabled
+pdf_page_image_backend=auto
+pdf_page_image_executable=mutool
+pdf_page_image_version=
+ocr_tesseract_execution=disabled
+ocr_tesseract_backend=auto
+ocr_tesseract_executable=tesseract
+ocr_tesseract_version=
 
 list_tools() {
     cat <<'EOF'
@@ -151,6 +167,14 @@ while (($# > 0)); do
         --jwt-jwks-uri) jwt_jwks_uri=$2 ;;
         --jwt-tool-profile) jwt_tool_profile=$2 ;;
         --jwt-scope) jwt_scope=$2 ;;
+        --pdf-page-image-execution) pdf_page_image_execution=$2 ;;
+        --pdf-page-image-backend) pdf_page_image_backend=$2 ;;
+        --pdf-page-image-executable) pdf_page_image_executable=$2 ;;
+        --pdf-page-image-version) pdf_page_image_version=$2 ;;
+        --ocr-tesseract-execution) ocr_tesseract_execution=$2 ;;
+        --ocr-tesseract-backend) ocr_tesseract_backend=$2 ;;
+        --ocr-tesseract-executable) ocr_tesseract_executable=$2 ;;
+        --ocr-tesseract-version) ocr_tesseract_version=$2 ;;
         *) echo "Unknown option: $option" >&2; usage >&2; exit 2 ;;
     esac
     [[ $option == --help || $option == -h ]] || { [[ $# -ge 2 ]] || exit 2; shift 2; }
@@ -170,6 +194,10 @@ case $transport in stdio|mcp-http|jsonl-tcp|jsonl-unix) ;; *) exit 2 ;; esac
     exit 2
 }
 case $auth_mode in none|opaque|jwt) ;; *) exit 2 ;; esac
+case $pdf_page_image_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
+case $ocr_tesseract_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
+case $pdf_page_image_backend in auto|local|docker|kubernetes) ;; *) exit 2 ;; esac
+case $ocr_tesseract_backend in auto|local|docker|kubernetes) ;; *) exit 2 ;; esac
 if [[ $auth_mode == opaque && ( -z $token_env || -z $token_profile ) ]]; then exit 2; fi
 if [[ $auth_mode == jwt && ( -z $jwt_issuer || -z $jwt_audience || -z $jwt_jwks_uri || -z $jwt_tool_profile ) ]]; then exit 2; fi
 if [[ $enable_tools_set == true && $auth_mode == none ]]; then
@@ -194,6 +222,23 @@ tool_profile=$(escape_json "$tool_profile")
 listen=$(escape_json "$listen")
 unix_socket=$(escape_json "$unix_socket")
 sandbox_executable=$(escape_json "$sandbox_executable")
+pdf_page_image_executable=$(escape_json "$pdf_page_image_executable")
+pdf_page_image_version=$(escape_json "$pdf_page_image_version")
+ocr_tesseract_executable=$(escape_json "$ocr_tesseract_executable")
+ocr_tesseract_version=$(escape_json "$ocr_tesseract_version")
+
+processor_policies_json=''
+if [[ $pdf_page_image_execution != disabled ]]; then
+    processor_policies_json+="\"pdf.page_image\":{\"execution\":\"$pdf_page_image_execution\",\"backend\":\"$pdf_page_image_backend\",\"executable\":\"$pdf_page_image_executable\",\"expected_version\":\"$pdf_page_image_version\"}"
+fi
+if [[ $ocr_tesseract_execution != disabled ]]; then
+    [[ -n $processor_policies_json ]] && processor_policies_json+=', '
+    processor_policies_json+="\"ocr.tesseract\":{\"execution\":\"$ocr_tesseract_execution\",\"backend\":\"$ocr_tesseract_backend\",\"executable\":\"$ocr_tesseract_executable\",\"expected_version\":\"$ocr_tesseract_version\"}"
+fi
+processor_policies_suffix=
+if [[ -n $processor_policies_json ]]; then
+    processor_policies_suffix=",\"processor_policies\":{$processor_policies_json}"
+fi
 
 providers_json='[]'
 if [[ -n $providers_file && $providers_file != none ]]; then
@@ -257,7 +302,7 @@ cat > "$output" <<EOF
     "plan":{"backend":"cozo","path":"$cozo_root/plan.cozo"},
     "data":{"backend":"cozo","path":"$cozo_root/structured.cozo"}
   },
-  "resources": {"blob_backend":"fs","blob_root":"$cozo_root/resources","metadata_backend":"cozo","metadata_db":"$cozo_root/resources.cozo"},
+  "resources": {"blob_backend":"fs","blob_root":"$cozo_root/resources","metadata_backend":"cozo","metadata_db":"$cozo_root/resources.cozo"$processor_policies_suffix},
   "tools": {"profile":"$tool_profile","repository_root":"$repository_root","providers":$providers_json},
   "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
   "diagnostics": {"semantic_backend":"auto","clang_executable":"clang","clangd_executable":"clangd","compile_commands":"auto"},
