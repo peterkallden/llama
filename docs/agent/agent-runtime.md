@@ -280,9 +280,12 @@ upstream llama.cpp target:
 llama-agent-sandbox
     local, Docker/Podman and Kubernetes sandbox backends
 
+llama-agent-tooling
+    tool catalog, schema projection, registry, bridge and adapter families
+
 llama-agent-core
     common/agent contracts, planning, adapters and runtime policy
-    -> links the sandbox contract/backend library
+    -> links tooling and the sandbox contract/backend library
 
 llama-agent-resource
     resource store, chunking, MIME handling and resource processors
