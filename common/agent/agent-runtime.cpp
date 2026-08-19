@@ -313,6 +313,72 @@ static bool merge_reflection_tool_repair_arguments(
     return true;
 }
 
+static bool reflection_operation_has_active_tool_failure(
+        const common_plan_state & plan,
+        const common_plan_operation & operation) {
+    const auto failed_step = [&](const std::string & step_id) {
+        for (const auto & step : plan.steps) {
+            if (step.id == step_id) {
+                return step.status == common_plan_step_status::failed &&
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::tool;
+            }
+        }
+        return false;
+    };
+
+    if (operation.kind == common_plan_operation_kind::add_step) {
+        if (!operation.step || !operation.step->tool_call) return true;
+        bool completed_same_tool = false;
+        for (const auto & step : plan.steps) {
+            if (step.status == common_plan_step_status::failed && step.tool_call &&
+                    step.tool_call->name == operation.step->tool_call->name) {
+                return true;
+            }
+            completed_same_tool = completed_same_tool ||
+                (step.status == common_plan_step_status::completed && step.tool_call &&
+                 step.tool_call->name == operation.step->tool_call->name);
+        }
+        // A new tool operation can be a legitimate reflection extension. It
+        // becomes stale only when reflection tries to schedule another call
+        // for a tool that has already completed successfully.
+        return !completed_same_tool;
+    }
+
+    if (operation.kind == common_plan_operation_kind::replace_step && operation.step) {
+        return failed_step(operation.step->id);
+    }
+    if (operation.kind == common_plan_operation_kind::activate_step ||
+            operation.kind == common_plan_operation_kind::reset_step ||
+            operation.kind == common_plan_operation_kind::unblock_step) {
+        return operation.step_id && failed_step(*operation.step_id);
+    }
+    return true;
+}
+
+static void discard_stale_reflection_repairs(
+        const common_plan_state & plan,
+        common_reflection_result & reflection,
+        common_agent_result & result) {
+    std::vector<common_plan_operation> retained;
+    retained.reserve(reflection.proposed_plan_operations.size());
+    for (auto & operation : reflection.proposed_plan_operations) {
+        const bool repair_operation = operation.kind == common_plan_operation_kind::add_step ||
+            operation.kind == common_plan_operation_kind::replace_step ||
+            operation.kind == common_plan_operation_kind::activate_step ||
+            operation.kind == common_plan_operation_kind::reset_step ||
+            operation.kind == common_plan_operation_kind::unblock_step;
+        if (repair_operation && !reflection_operation_has_active_tool_failure(plan, operation)) {
+            append_trace(result, common_runtime_trace_stage::reflection,
+                common_runtime_trace_kind::skipped,
+                "stale reflection repair ignored: no active failed tool step", plan.id,
+                operation.step_id.value_or(operation.step ? operation.step->id : std::string()));
+            continue;
+        }
+        retained.push_back(std::move(operation));
+    }
+    reflection.proposed_plan_operations = std::move(retained);
+}
+
 static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
     const std::string base = "tool:" + step_id + ":" + tool_name;
     const std::string attempt_prefix = base + ":attempt:";
@@ -1306,6 +1372,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             result.error = "reflection failed safely: " + error;
             break;
         }
+        discard_stale_reflection_repairs(plan, reflection, result);
         const bool deeper_deliberation =
             request.deliberation_policy.mode != common_agent_thinking_mode::reflective;
         const auto reflection_escalation = handle_common_agent_reflection_escalation(

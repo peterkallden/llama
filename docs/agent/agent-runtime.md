@@ -651,6 +651,13 @@ tool-discovery protocol. The model is used only when deterministic matching is
 ambiguous or when the arguments need semantic correction. The same path is
 available to all thinking modes; the mode changes only the repair budget.
 
+Reflection repair is also failure-aware. A repair, reset, replacement, or
+retry operation must correspond to an active failed tool step. A newly added
+tool step may still be a legitimate reflection extension, but a second call
+to a tool that already completed successfully is treated as stale repair and
+is ignored with a trace entry. This prevents a late reflection pass from
+reopening a verified result while preserving ordinary plan extensions.
+
 The mode controls only the bounded budget around this common path: reflective
 gets the minimum repair/reflection pass, while deliberate and research may
 spend their larger review budgets on the same context. Static chat without a
