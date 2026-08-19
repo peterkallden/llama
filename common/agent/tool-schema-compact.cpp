@@ -129,7 +129,9 @@ std::vector<common_model_tool_field> project_fields(
         common_model_tool_field field;
         field.name = it.key();
         field.required = required.count(field.name) != 0;
-        field.may_be_inferred = !outputs && inferable.count(field.name) != 0;
+        field.may_be_inferred = !outputs &&
+            (inferable.count(field.name) != 0 ||
+             it.value().value("x-agent-inferable", false));
         if (it.value().contains("x-agent-type") && it.value()["x-agent-type"].is_string()) {
             field.semantic_type = it.value()["x-agent-type"].get<std::string>();
         }

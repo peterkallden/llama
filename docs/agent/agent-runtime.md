@@ -1474,20 +1474,40 @@ The same separation applies to results. A tool may provide a
 `model_result_schema_json` projection alongside `result_schema_json`. The
 full result schema remains authoritative for execution, typed dataflow and
 binding validation; the model projection only exposes outputs useful for
-chaining or evidence. If no result projection is supplied, the full result
-schema is used as the model fallback. This keeps fields such as materialization
-flags, scan limits and truncation diagnostics out of the ordinary planner view
-without hiding them from the host or runtime diagnostics.
+chaining or evidence. If no explicit result projection is supplied, the
+catalog first attempts its conservative default projection and falls back to
+the full result schema only when no safe projection can be generated. This
+keeps fields such as materialization flags, scan limits and truncation
+diagnostics out of the ordinary planner view without hiding them from the host
+or runtime diagnostics.
 
-Simple model input projections derive `x-agent-autowire-fields` from optional
-`dataset_ref` properties. These fields remain host-required when execution
-needs them, but the compact model contract renders them as `may be inferred`.
-Alternative schemas such as `anyOf` remain explicit until their binding
-semantics are modeled separately. The derived hint is only a model-facing
-capability; the host still decides at runtime whether exactly one compatible
-completed predecessor exists. Zero candidates leave the input unresolved and
-multiple candidates require an explicit `$previous.field` or `$alias.field`
-reference. Explicit metadata remains available for future exceptions.
+Simple model input projections derive their inference hints from the full host
+contract. A typed input may opt in with field-level `x-agent-inferable: true`
+metadata; the model projection then carries the model-facing
+`x-agent-autowire-fields` hint and the compact contract renders `may be
+inferred`. This is deliberately field metadata, not a second list of tool
+names. A field can therefore be both host-required and model-optional: the
+host must receive it before execution, but the model need not provide it when
+the plan makes the source unambiguous.
+
+`typed` and `inferable` are different properties. `x-agent-type` says that a
+field participates in typed dataflow. `x-agent-inferable` says that the host
+may attempt to fill the field when the plan context proves that there is one
+compatible completed source. It does not promise that inference will succeed.
+Zero candidates leave the input unresolved and multiple candidates require an
+explicit `$previous.field` or `$alias.field` reference. Semantic choices such
+as `data.join.left` and `data.join.right` should remain explicit even though
+they are typed. Alternative schemas such as `anyOf` remain explicit until
+their binding semantics are modeled separately.
+
+When no explicit `model_result_schema_json` is supplied, the catalog creates a
+conservative default result projection from the full result contract. It keeps
+typed dataflow fields and a small set of evidence fields such as `rows`,
+`columns`, `values`, `count` and `valid`, while leaving runtime and diagnostic
+fields such as `materialized`, `scan_truncated` and `elapsed_ms` out of the
+ordinary planner view. An explicit result projection remains the override for
+tools with special evidence or branching semantics. The host result schema
+remains authoritative for execution, diagnostics and typed dataflow.
 
 The compact renderer now projects the model schema into a small internal
 model-tool contract before rendering text. This keeps semantic fields such as
@@ -1528,18 +1548,19 @@ The inference rule is deliberately narrow:
 Zero candidates leave the input unresolved. Multiple candidates are an
 ambiguity and require an explicit model reference. A typed field is therefore
 not automatically a semantic choice for the model, and `may be inferred` does
-not mean that inference will always succeed. The first generated projection
-currently covers simple optional `dataset_ref` inputs; explicit overrides and
-more complex alternatives remain available for cases such as `data.join` or
-`anyOf` contracts.
+not mean that inference will always succeed. The first generated input
+projections cover explicitly inferable simple data inputs; explicit overrides
+and more complex alternatives remain available for cases such as `data.join`
+or `anyOf` contracts.
 
 When adding a new tool, define the complete host input/result schemas and
-their `x-agent-type` values first. Add a model projection only when the
-default compact view exposes too much or too little. Treat `left`/`right`,
-source selection and other semantic choices as explicit until the plan
-context can prove them unambiguously. This keeps a new simple dataset tool
-from needing a new renderer special case while avoiding unsafe automatic
-wiring for branching operations.
+their `x-agent-type` values first. Mark an input `x-agent-inferable` only when
+the host is allowed to infer it in an unambiguous dataflow context. Add a
+model projection only when the default compact view exposes too much or too
+little. Treat `left`/`right`, source selection and other semantic choices as
+explicit until the plan context can prove them unambiguously. This keeps a
+new simple dataset tool from needing a new renderer special case while
+avoiding unsafe automatic wiring for branching operations.
 
 Native repair diagnostics use the full host input schema even when the model
 view hides host-owned controls or an autowire-capable input. Providers without

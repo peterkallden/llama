@@ -89,7 +89,9 @@ int main() {
     assert(document_table_input["properties"]["resource"].value("x-agent-type", "") == "resource_ref");
     assert(document_table_input["properties"]["node_id"].value("x-agent-type", "") == "table_ref");
     assert(aggregate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_input["properties"]["dataset"].value("x-agent-inferable", false));
     assert(aggregate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
+    assert(aggregate_model_input["properties"]["dataset"].value("x-agent-inferable", false));
     assert(aggregate_model_input["x-agent-autowire-fields"][0] == "dataset");
     const auto aggregate_contract = common_project_model_tool_contract(
         data_aggregate->name,
@@ -117,6 +119,9 @@ int main() {
     assert(document_table_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_result["properties"].contains("materialized"));
+    assert(aggregate_model_result["properties"].contains("rows"));
+    assert(aggregate_model_result["properties"].contains("dataset"));
+    assert(aggregate_model_result["additionalProperties"] == false);
     assert(!aggregate_model_result["properties"].contains("materialized"));
     assert(!aggregate_model_result["properties"].contains("scan_truncated"));
     assert(dataset_schema_result["properties"].contains("columns"));
