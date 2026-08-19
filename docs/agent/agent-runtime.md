@@ -4367,3 +4367,30 @@ cleanup, session lanes are removed on session close, resources follow their
 scope and expiry metadata, plans and memory follow their stores' retention
 policy, and event history remains bounded by the collector. Checkpointing a
 research workspace is deliberately left for a later step.
+## Processor selection seam
+
+Resource processors are selected by the host, never by model arguments. The
+dispatch seam combines the normalized source media type, configured processor
+policies and the available sandbox backend. The result is indexed by the
+processor kind (`page_image`, `ocr`, `pandoc` or `xlsx`) and exposes one policy
+and two capability decisions (`wants_local_for` and `wants_sandbox_for`) for
+each kind. This keeps processor selection data-driven and avoids a separate
+`wants_<processor>_<backend>` field for every new processor.
+
+The existing deterministic priority is preserved:
+
+```text
+pdf.page_image -> ocr.tesseract -> pandoc -> xlsx.workbook
+```
+
+The selected execution backend remains host-owned. A processor policy may
+allow local execution or the configured sandbox backend; the model cannot
+select an executable, image, workspace, or backend. Adding a processor should
+therefore require a descriptor/registration entry and a processor factory,
+not another parallel set of model-facing arguments or runtime policy flags.
+
+The catalog projection code now lives under `common/agent/catalog/`. Its
+responsibility is limited to deriving conservative model input/result views
+from full tool definitions. Catalog bootstrap and profile resolution remain in
+`tool-catalog.cpp`; projection rules are kept separate so model visibility
+does not become mixed with registration and policy loading.

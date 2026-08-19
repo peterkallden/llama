@@ -1,4 +1,5 @@
 #include "agent/tool-catalog.h"
+#include "agent/catalog/model-projection.h"
 
 #include <nlohmann/json.hpp>
 
@@ -30,43 +31,6 @@ common_tool_definition tool(
     definition.max_result_bytes = max_result_bytes;
     definition.policy_json = policy;
     return definition;
-}
-
-std::string default_model_result_projection(const common_tool_definition & definition) {
-    const auto result = json::parse(definition.result_schema_json, nullptr, false);
-    if (!result.is_object() || result.value("type", std::string()) != "object") return {};
-    const auto properties = result.value("properties", json::object());
-    if (!properties.is_object()) return {};
-
-    static const std::set<std::string> evidence_fields = {
-        "rows", "columns", "values", "value", "count", "distinct_count",
-        "null_count", "valid", "violations", "name", "path", "format"
-    };
-    json projection = json::object();
-    projection["type"] = "object";
-    projection["properties"] = json::object();
-    std::set<std::string> retained;
-    for (const auto & item : properties.items()) {
-        const auto & property = item.value();
-        if (!property.is_object()) continue;
-        const auto role = property.value("x-agent-role", std::string());
-        if (property.contains("x-agent-type") ||
-                role == "dataflow" || role == "evidence" ||
-                evidence_fields.count(item.key()) != 0) {
-            projection["properties"][item.key()] = property;
-            retained.insert(item.key());
-        }
-    }
-    if (retained.empty()) return {};
-    projection["additionalProperties"] = false;
-    json required = json::array();
-    for (const auto & value : result.value("required", json::array())) {
-        if (value.is_string() && retained.count(value.get<std::string>()) != 0) {
-            required.push_back(value);
-        }
-    }
-    if (!required.empty()) projection["required"] = std::move(required);
-    return projection.dump();
 }
 
 std::vector<common_tool_definition> builtin_definitions() {
@@ -162,6 +126,14 @@ std::vector<common_tool_definition> builtin_definitions() {
     set_model_schema("statistics.outliers", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"columns":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":128}},"column":{"type":"string","minLength":1,"maxLength":128},"group_by":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":128}},"method":{"type":"string","enum":["iqr"]},"multiplier":{"type":"number","minimum":0.1,"maximum":10.0}}})");
     set_model_schema("statistics.value_counts", R"({"type":"object","additionalProperties":false,"required":["column"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"column":{"type":"string","minLength":1,"maxLength":128},"limit":{"type":"integer","minimum":1,"maximum":1000}}})");
     set_model_schema("artifact.export", R"({"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":256},"content":{"type":"string","maxLength":65536},"mime_type":{"type":"string","maxLength":128},"source_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"format":{"type":"string","enum":["csv"]}},"anyOf":[{"required":["name","content"]},{"required":["source_dataset"]}]})");
+    // Most tools need no hand-written model input schema. Generate a
+    // conservative projection from the host contract and keep explicit
+    // schemas above only for tools with genuinely different model semantics.
+    for (auto & definition : definitions) {
+        if (definition.model_input_schema_json.empty()) {
+            definition.model_input_schema_json = common_tool_default_model_input_projection(definition);
+        }
+    }
     // Derive model-facing inference hints from field capabilities in the full
     // host contract. The host still decides at runtime whether exactly one
     // compatible source exists. Alternative schemas remain explicit until
@@ -193,7 +165,7 @@ std::vector<common_tool_definition> builtin_definitions() {
     // hatch for tools whose evidence semantics need a custom view.
     for (auto & definition : definitions) {
         if (definition.model_result_schema_json.empty()) {
-            definition.model_result_schema_json = default_model_result_projection(definition);
+            definition.model_result_schema_json = common_tool_default_model_result_projection(definition);
         }
     }
     // Keep execution/result schemas authoritative while presenting only

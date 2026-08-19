@@ -666,16 +666,10 @@ bool resolve_agent_host_tool_selection(
                         : binding.media_type.declared_type);
                 const auto dispatch = resolve_agent_resource_processor_dispatch({
                     processor_policies, source_type, sandbox_backend});
-                const bool has_page_policy = dispatch.has_page_policy;
-                const bool has_ocr_policy = dispatch.has_ocr_policy;
-                const bool wants_page_local = dispatch.wants_page_local;
-                const bool wants_page_sandbox = dispatch.wants_page_sandbox;
-                const bool wants_ocr_local = dispatch.wants_ocr_local;
-                const bool wants_ocr_sandbox = dispatch.wants_ocr_sandbox;
-                const bool wants_pandoc_local = dispatch.wants_pandoc_local;
-                const bool wants_pandoc_sandbox = dispatch.wants_pandoc_sandbox;
-                const bool wants_xlsx_local = dispatch.wants_xlsx_local;
-                const bool wants_xlsx_sandbox = dispatch.wants_xlsx_sandbox;
+                const auto page_kind = agent_resource_processor_kind::page_image;
+                const auto ocr_kind = agent_resource_processor_kind::ocr;
+                const auto pandoc_kind = agent_resource_processor_kind::pandoc;
+                const auto xlsx_kind = agent_resource_processor_kind::xlsx;
                 if (!dispatch.selected) {
                     return std::shared_ptr<agent_resource_processing_provider>();
                 }
@@ -724,8 +718,7 @@ bool resolve_agent_host_tool_selection(
                     value->set_workspace_manager(workspace_manager_for_processors.get());
                     value->set_resource_store(bound_resource_store_for_processors, binding.authority);
                     host = std::move(value);
-                } else if (execution_backend == "local" &&
-                        (wants_page_local || wants_ocr_local || wants_pandoc_local || wants_xlsx_local)) {
+                } else if (execution_backend == "local") {
                     auto value = std::make_shared<agent_sandbox_resource_processing_host>(
                         *local_runtime_for_processors,
                         make_policy(selected_execution_class, selected_policy.image));
@@ -739,8 +732,8 @@ bool resolve_agent_host_tool_selection(
                 auto registry = std::make_shared<agent_resource_processor_registry>();
                 std::vector<std::shared_ptr<agent_resource_processor>> processors;
                 std::string registration_error;
-                if (has_page_policy) {
-                    const auto & policy = *dispatch.page_policy;
+                if (dispatch.has_policy(page_kind)) {
+                    const auto & policy = *dispatch.policy_for(page_kind);
                     auto processor = std::make_shared<agent_pdf_page_image_processor>(
                         *host,
                         execution,
@@ -749,8 +742,8 @@ bool resolve_agent_host_tool_selection(
                     if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
                     processors.push_back(std::move(processor));
                 }
-                if (has_ocr_policy) {
-                    const auto & policy = *dispatch.ocr_policy;
+                if (dispatch.has_policy(ocr_kind)) {
+                    const auto & policy = *dispatch.policy_for(ocr_kind);
                     auto processor = std::make_shared<agent_tesseract_ocr_processor>(
                         *host,
                         execution,
@@ -759,8 +752,8 @@ bool resolve_agent_host_tool_selection(
                     if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
                     processors.push_back(std::move(processor));
                 }
-                if (wants_pandoc_local) {
-                    const auto & policy = *dispatch.selected_pandoc_policy;
+                if (dispatch.has_policy(pandoc_kind) && dispatch.wants_local_for(pandoc_kind)) {
+                    const auto & policy = *dispatch.policy_for(pandoc_kind);
                     agent_pandoc_options options;
                     if (source_type == "application/vnd.oasis.opendocument.text") {
                         options.input_format = "odt";
@@ -780,8 +773,8 @@ bool resolve_agent_host_tool_selection(
                     if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
                     processors.push_back(std::move(processor));
                 }
-                if (wants_pandoc_sandbox) {
-                    const auto & policy = *dispatch.selected_pandoc_policy;
+                if (dispatch.has_policy(pandoc_kind) && dispatch.wants_sandbox_for(pandoc_kind)) {
+                    const auto & policy = *dispatch.policy_for(pandoc_kind);
                     agent_pandoc_options options;
                     if (source_type == "application/vnd.oasis.opendocument.text") {
                         options.input_format = "odt";
@@ -804,9 +797,10 @@ bool resolve_agent_host_tool_selection(
                     if (!registry->add(*processor, registration_error)) return std::shared_ptr<agent_resource_processing_provider>();
                     processors.push_back(std::move(processor));
                 }
-                if (wants_xlsx_local || wants_xlsx_sandbox) {
-                    const auto & policy = *dispatch.selected_xlsx_policy;
-                    const auto backend = wants_xlsx_local ? agent_resource_backend_kind::local_process
+                if (dispatch.has_policy(xlsx_kind) &&
+                        (dispatch.wants_local_for(xlsx_kind) || dispatch.wants_sandbox_for(xlsx_kind))) {
+                    const auto & policy = *dispatch.policy_for(xlsx_kind);
+                    const auto backend = dispatch.wants_local_for(xlsx_kind) ? agent_resource_backend_kind::local_process
                         : (policy.backend == "kubernetes" ? agent_resource_backend_kind::kubernetes
                             : agent_resource_backend_kind::docker);
                     auto processor = std::make_shared<agent_xlsx_workbook_json_processor>(

@@ -61,6 +61,16 @@ int main() {
     assert(web_search->executor_id == "builtin.web_search");
     assert(web_fetch->executor_id == "builtin.web_fetch");
 
+    const auto * calculator = catalog.find_definition("calculator");
+    const auto * data_query = catalog.find_definition("data.query");
+    assert(calculator && data_query);
+    const auto calculator_model = nlohmann::json::parse(calculator->model_input_schema_json);
+    const auto data_query_model = nlohmann::json::parse(data_query->model_input_schema_json);
+    assert(calculator_model["properties"].contains("expression"));
+    assert(data_query_model["properties"].contains("dataset"));
+    assert(!data_query_model["properties"].contains("max_scan_rows"));
+    assert(!data_query_model["properties"].contains("materialize"));
+
     const auto * document_tables = catalog.find_definition("document.tables");
     const auto * document_table = catalog.find_definition("document.table");
     const auto * data_aggregate = catalog.find_definition("data.aggregate");
