@@ -2,6 +2,8 @@
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "tools/agent/resource/assembly/agent-resource-processor-factory.h"
+#include "tools/agent/host/agent-sandbox-assembly.h"
+#include "tools/agent/mcp/agent-mcp-client-factory.h"
 #include "tools/agent/resource/processors/agent-pdf-text-processor.h"
 
 #include "../runtime/agent-plan-orchestration.h"
@@ -517,98 +519,37 @@ bool resolve_agent_host_tool_selection(
             };
         }
 
+        const auto needs_sandbox_assembly = [&request]() {
+            return request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
+                request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("odt.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("xlsx.workbook") != request.resource_processor_policies.end();
+        };
         std::shared_ptr<common_agent_sandbox_docker_runtime> docker_runtime;
         std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
-        if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
-                request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("odt.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("xlsx.workbook") != request.resource_processor_policies.end()) {
-            const auto backend = request.sandbox.backend;
-            docker_runtime = std::make_shared<common_agent_sandbox_docker_runtime>(
-                common_agent_docker_sandbox_config{
-                    request.sandbox.docker_executable,
-                    request.sandbox.docker_default_image,
-                });
-            workspace_manager = std::make_shared<common_agent_workspace_manager>(
-                request.sandbox.workspace);
-            const auto policies = request.sandbox.classes;
-            const auto defaults = request.sandbox.defaults;
-            const auto tool_context = request.tool_context;
-            auto * bound_resource_store = resource_store;
-            kubernetes_runtime = std::make_shared<common_agent_sandbox_kubernetes_runtime>(
-                common_agent_kubernetes_sandbox_config{
-                    request.sandbox.kubernetes_executable,
-                    request.sandbox.kubernetes_kubeconfig,
-                    request.sandbox.kubernetes_context,
-                    request.sandbox.kubernetes_insecure_skip_tls_verify,
-                    request.sandbox.kubernetes_namespace,
-                    request.sandbox.kubernetes_service_account,
-                    request.sandbox.kubernetes_runtime_class,
-                    request.sandbox.kubernetes_storage_class,
-                    request.sandbox.kubernetes_workspace_storage_size,
-                    request.sandbox.kubernetes_artifact_storage_size,
-                    request.sandbox.kubernetes_staging_image,
-                    request.sandbox.kubernetes_pvc_retention,
-                    request.sandbox.kubernetes_staging_timeout_ms,
-                    request.sandbox.kubernetes_cleanup,
-                });
-            bindings.sandbox_execute = [backend, docker_runtime, kubernetes_runtime, workspace_manager, policies, defaults, tool_context, bound_resource_store](
-                    common_agent_sandbox_request sandbox_request) {
-                common_agent_sandbox_policy policy = defaults;
-                const auto it = policies.find(sandbox_request.execution_class);
-                if (it != policies.end()) policy = it->second;
-                policy.execution_class = sandbox_request.execution_class;
-                common_agent_sandbox_runtime & runtime = backend == "docker"
-                    ? static_cast<common_agent_sandbox_runtime &>(*docker_runtime)
-                    : static_cast<common_agent_sandbox_runtime &>(*kubernetes_runtime);
-                common_agent_sandbox_tool_helper helper(runtime, policy);
-                helper.set_workspace_manager(workspace_manager.get());
-                helper.set_resource_store(bound_resource_store, {
-                    tool_context.scope.namespace_id,
-                    tool_context.scope.session_id,
-                    tool_context.scope.project_id,
-                    tool_context.scope.turn_id,
-                });
-                common_agent_workspace_context workspace_context;
-                workspace_context.workspace_id = tool_context.scope.project_id.empty()
-                    ? "session:" + tool_context.scope.session_id
-                    : "project:" + tool_context.scope.project_id;
-                workspace_context.project_id = tool_context.scope.project_id;
-                workspace_context.namespace_id = tool_context.scope.namespace_id;
-                workspace_context.session_id = tool_context.scope.session_id;
-                workspace_context.turn_id = tool_context.scope.turn_id;
-                workspace_context.input_resources = sandbox_request.workspace.input_resources;
-                return helper.run_for_workspace(
-                    workspace_context,
-                    sandbox_request.operation_id,
-                    std::move(sandbox_request));
-            };
+        if (needs_sandbox_assembly()) {
+            auto sandbox_assembly = make_agent_host_sandbox_assembly({
+                request.sandbox,
+                request.tool_context.scope,
+                resource_store,
+            });
+            docker_runtime = std::move(sandbox_assembly.docker_runtime);
+            kubernetes_runtime = std::move(sandbox_assembly.kubernetes_runtime);
+            workspace_manager = std::move(sandbox_assembly.workspace_manager);
+            bindings.sandbox_execute = std::move(sandbox_assembly.execute);
         } else {
-            auto unavailable_runtime = std::make_shared<common_agent_sandbox_unavailable_runtime>();
-            const auto policies = request.sandbox.classes;
-            const auto defaults = request.sandbox.defaults;
-            bindings.sandbox_execute = [unavailable_runtime, policies, defaults](
-                    common_agent_sandbox_request sandbox_request) {
-                common_agent_sandbox_policy policy = defaults;
-                const auto it = policies.find(sandbox_request.execution_class);
-                if (it != policies.end()) policy = it->second;
-                policy.execution_class = sandbox_request.execution_class;
-                common_agent_sandbox_tool_helper helper(*unavailable_runtime, policy);
-                return helper.run(sandbox_request);
-            };
+            bindings.sandbox_execute = make_agent_host_sandbox_assembly({
+                request.sandbox,
+                request.tool_context.scope,
+                resource_store,
+            }).execute;
         }
 
-        if (request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
-                request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("odt.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
-                request.resource_processor_policies.find("xlsx.workbook") != request.resource_processor_policies.end()) {
+        if (needs_sandbox_assembly()) {
             agent_resource_processing_assembly_request assembly;
             assembly.policies = request.resource_processor_policies;
             assembly.sandbox_classes = request.sandbox.classes;
@@ -641,35 +582,20 @@ bool resolve_agent_host_tool_selection(
 
     std::vector<std::unique_ptr<mcp_agent_tool_provider>> mcp_providers;
     for (const auto & provider_request : request.mcp_providers) {
-        std::unique_ptr<agent_mcp_tool_client> client;
-        if (provider_request.transport == "stdio") {
-            if (provider_request.command_line.empty()) {
-                error = "MCP provider command line must not be empty";
-                return false;
-            }
-            client = std::make_unique<agent_mcp_stdio_client>(agent_mcp_stdio_client_config{
-                provider_request.server_name,
-                provider_request.command_line,
-                {},
-                provider_request.request_timeout_ms,
-                provider_request.shutdown_timeout_ms,
-            });
-        } else {
-            if (provider_request.url.empty()) {
-                error = "HTTP MCP provider url must not be empty";
-                return false;
-            }
-            client = std::make_unique<agent_mcp_http_client>(agent_mcp_http_client_config{
-                provider_request.server_name,
-                provider_request.url,
-                provider_request.bearer_token,
-                provider_request.allowed_tools,
-                provider_request.connect_timeout_ms,
-                provider_request.request_timeout_ms,
-                provider_request.shutdown_timeout_ms,
-                provider_request.max_result_bytes,
-            });
-        }
+        const auto client_request = agent_mcp_client_factory_request{
+            provider_request.server_name,
+            provider_request.transport,
+            provider_request.command_line,
+            provider_request.url,
+            provider_request.bearer_token,
+            provider_request.allowed_tools,
+            provider_request.connect_timeout_ms,
+            provider_request.request_timeout_ms,
+            provider_request.shutdown_timeout_ms,
+            provider_request.max_result_bytes,
+        };
+        auto client = make_agent_mcp_client(client_request, error);
+        if (!client) return false;
         auto provider = std::make_unique<mcp_agent_tool_provider>(
             provider_request.server_name,
             *client,

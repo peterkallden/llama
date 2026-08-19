@@ -4397,6 +4397,17 @@ the service then executes through the resource-processing contract. This keeps
 selection tests independent of process construction and keeps the CLI host
 adapter from owning every processor-specific `make_shared` branch.
 
+Sandbox construction follows the same seam. The host configuration, scope and
+resource store are passed to one sandbox assembly function, which owns backend
+runtime construction, workspace binding, policy resolution and the final
+`sandbox_execute` callback. The CLI therefore routes sandbox work through an
+execution seam instead of constructing Docker, Kubernetes and unavailable
+runtimes in parallel branches. MCP transport selection follows the same
+principle: the host supplies a normalized provider request and a small factory
+selects the stdio or HTTP client; transport-specific construction stays out of
+the host adapter. These seams preserve host ownership of executable details
+while making the assembly paths independently testable.
+
 The catalog projection code now lives under `common/agent/catalog/`. Its
 responsibility is limited to deriving conservative model input/result views
 from full tool definitions. Catalog bootstrap and profile resolution remain in
