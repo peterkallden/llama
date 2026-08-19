@@ -3967,9 +3967,10 @@ within normal plan and policy validation.
 ### Agent build and library structure
 
 The agent build keeps reusable implementation out of individual smoke
-executables. The current first extraction is `llama-agent-runtime-support`, an
-internal library containing the shared implementation used by the CLI, daemon,
-resource, runtime, and MCP-client targets. Smoke executables should normally
+executables. The current shared host assembly is `llama-agent-runtime-support`,
+which contains implementation used by the CLI, daemon, runtime and MCP-client
+targets and links the already separated resource/data/diagnostics libraries.
+Smoke executables should normally
 compile only their focused `pocs/agent/smoke/<area>/*.cpp` source and link the
 library they exercise.
 
@@ -3982,6 +3983,47 @@ common/*
     -> llama-agent-runtime-support
     -> CLI, daemon, MCP, and smoke targets
 ```
+
+#### Long-term shared-library backlog
+
+The next library split should follow execution seams rather than create one
+library per directory. The planned order is:
+
+```text
+1. llama-agent-runtime-engine.so
+   session, execution, turn-driver, inference executor and capacity gate
+
+2. llama-agent-runtime-host.so
+   runtime host, resident runtime, assembly and plan orchestration
+
+3. llama-agent-cli.so
+   CLI-specific host, options, generation and selection code
+
+4. llama-agent-daemon.so
+   daemon service, dispatcher, protocol client and administration code
+
+5. llama-agent-mcp-client.so
+   MCP HTTP/stdio client and client-factory code
+```
+
+The existing libraries remain the foundation of that plan:
+
+```text
+llama-agent-core.so
+llama-agent-memory.so
+llama-agent-plan.so
+llama-agent-sandbox.so
+llama-agent-tooling.so
+llama-agent-resource.so
+llama-agent-data.so
+llama-agent-diagnostics.so
+```
+
+This is a build-isolation backlog, not a requirement to expose every library
+as a public ABI. A candidate split must first have an acyclic target graph,
+stable narrow headers and a measurable recompilation benefit. The first
+implementation slice is therefore `llama-agent-runtime-engine`; CLI, daemon
+and MCP extraction follow only after that boundary builds and tests cleanly.
 
 `common/agent` must not depend on implementation under `tools/agent`. Daemon
 services, MCP servers, and optional Cozo storage may be split into narrower

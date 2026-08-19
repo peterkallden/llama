@@ -76,6 +76,25 @@ if (LLAMA_MEMORY_COZO)
     )
 endif()
 
+# Runtime execution is a separate build seam from host assembly. Keep the
+# session/turn/inference implementation together so changes there do not
+# recompile CLI, daemon and MCP host code unnecessarily.
+set(AGENT_RUNTIME_ENGINE_SOURCES
+    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
+    ../../tools/agent/runtime/agent-runtime-event-projector.cpp
+    ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
+    ../../tools/agent/runtime/agent-inference-executor.cpp
+    ../../tools/agent/runtime/agent-inference-capacity-gate.cpp
+    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
+    ../../tools/agent/runtime/agent-runtime-execution.cpp
+    ../../tools/agent/runtime/agent-runtime-session.cpp
+    ../../tools/agent/runtime/agent-server-context-host.cpp
+    ../../tools/agent/runtime/agent-server-generation.cpp
+    ../../tools/agent/runtime/agent-server-inference.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
+
 # Keep the host/runtime assembly independent from the high-churn resource,
 # data and diagnostics implementations. These are agent-only libraries; the
 # upstream llama.cpp targets remain untouched.
@@ -190,6 +209,55 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-runtime-engine ${AGENT_RUNTIME_ENGINE_SOURCES})
+target_include_directories(llama-agent-runtime-engine
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+        ${PROJECT_SOURCE_DIR}/tools/mtmd
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-runtime-engine PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-runtime-engine
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-runtime-engine
+    PUBLIC
+        llama-agent-memory
+        llama-common
+        llama
+        llama-agent-core
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
+        server-context
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (WIN32)
+    target_link_libraries(llama-agent-runtime-engine PUBLIC ws2_32)
+endif()
+if (LLAMA_MEMORY_COZO)
+    target_include_directories(llama-agent-runtime-engine PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(llama-agent-runtime-engine PUBLIC llama-agent-storage-cozo)
+    llama_link_cozo(llama-agent-runtime-engine)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-engine PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 # Shared implementation for the agent CLI, daemon, and model-free smoke
 # targets.  Keep the source list here so the implementation is compiled once
 # per build configuration instead of once per executable target.
@@ -223,6 +291,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-agent-resource
         llama-agent-data
         llama-agent-diagnostics
+        llama-agent-runtime-engine
         server-context
         Threads::Threads
     PRIVATE
@@ -336,6 +405,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-core
         llama-agent-mcp-core
         llama-agent-mcp-server
+        llama-agent-runtime-engine
         llama-agent-runtime-support
         llama-agent-resource
         llama-agent-data
