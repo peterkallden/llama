@@ -7,7 +7,7 @@ on:
     types:
       - completed
     branches:
-      - feature/llama-agent
+      - master
   workflow_dispatch:
     inputs:
       source_ref:
@@ -35,7 +35,6 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event != 'pull_request' &&
-       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.source_ref == 'feature/llama-agent')
     runs-on: ubuntu-24.04
@@ -45,7 +44,7 @@ jobs:
       - name: Checkout verified source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
 
       - name: Install Debian and agent build dependencies
         shell: bash
@@ -97,7 +96,7 @@ jobs:
           cp "${packages[@]}" debian-artifacts/
           printf '%s\n' \
             "package=llama-agent" \
-            "source_branch=${{ github.event.workflow_run.head_branch || inputs.source_ref }}" \
+            "source_branch=${{ inputs.source_ref || 'feature/llama-agent' }}" \
             "commit_sha=$(git rev-parse HEAD)" \
             "backend=$LLAMA_AGENT_BACKEND" \
             "cozo_version=$COZO_VERSION" \
