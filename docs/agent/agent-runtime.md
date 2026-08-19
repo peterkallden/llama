@@ -1526,6 +1526,27 @@ model-tool contract before rendering text. This keeps semantic fields such as
 same projection to provide repair hints or tool-selection metadata later.
 The full host schema remains authoritative for execution and diagnostics.
 
+Schema field extraction is shared with the plan binding layer through the
+small `common_plan_schema_field` contract seam. Required state, semantic type,
+role and inferability are extracted once; the model renderer and typed
+dataflow resolver then build their narrower views from that result. This is
+intentional: model rendering and execution remain separate, but they no
+longer maintain independent interpretations of the same schema metadata.
+
+Arguments follow one normalization pipeline wherever possible:
+
+    raw model/reflection arguments
+        -> wrapper and alias normalization
+        -> canonical tool arguments
+        -> typed/reference normalization
+        -> strict schema validation
+        -> execution
+
+Plan parsing, reflection repair and the native registry reuse the same plan
+argument normalizer. Normalization must be bounded and idempotent; it may
+recognize compatibility aliases but must not silently choose between
+ambiguous semantic values.
+
 The contract rule of thumb is:
 
     host contract  = everything execution, validation and dataflow need
@@ -1580,6 +1601,11 @@ model, while the structured JSON result is the source for typed bindings when
 the tool provides one. A text-only or unknown result contract must never cause
 the host to fabricate typed outputs. In that case the tool remains usable, but
 its result is not a candidate for implicit dataflow.
+
+The runtime records a summary-only result as a JSON object containing only a
+`summary` field when no structured output exists. This keeps observations
+uniform for context and persistence while ensuring that summary text cannot be
+mistaken for a typed dataflow result.
 
 When adding a new tool, define the complete host input/result schemas and
 their `x-agent-type` values first. Mark an input `x-agent-inferable` only when

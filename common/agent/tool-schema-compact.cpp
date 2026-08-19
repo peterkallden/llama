@@ -1,7 +1,9 @@
 #include "agent/tool-schema-compact.h"
+#include "plan/plan-contract.h"
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -117,10 +119,14 @@ std::vector<common_model_tool_field> project_fields(
         error = "tool schema properties must be an object";
         return fields;
     }
-    std::set<std::string> required;
-    for (const auto & value : schema.value("required", json::array())) {
-        if (value.is_string()) required.insert(value.get<std::string>());
+    std::vector<common_plan_schema_field> extracted;
+    std::string extraction_error;
+    if (!common_plan_extract_schema_fields(schema.dump(), extracted, extraction_error)) {
+        error = extraction_error;
+        return fields;
     }
+    std::map<std::string, common_plan_schema_field> semantic_fields;
+    for (auto & field : extracted) semantic_fields.emplace(field.name, std::move(field));
     std::set<std::string> inferable;
     for (const auto & value : schema.value("x-agent-autowire-fields", json::array())) {
         if (value.is_string()) inferable.insert(value.get<std::string>());
@@ -128,13 +134,13 @@ std::vector<common_model_tool_field> project_fields(
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         common_model_tool_field field;
         field.name = it.key();
-        field.required = required.count(field.name) != 0;
-        field.may_be_inferred = !outputs &&
-            (inferable.count(field.name) != 0 ||
-             it.value().value("x-agent-inferable", false));
-        field.role = it.value().value("x-agent-role", std::string());
-        if (it.value().contains("x-agent-type") && it.value()["x-agent-type"].is_string()) {
-            field.semantic_type = it.value()["x-agent-type"].get<std::string>();
+        const auto semantic = semantic_fields.find(field.name);
+        if (semantic != semantic_fields.end()) {
+            field.required = semantic->second.required;
+            field.semantic_type = semantic->second.semantic_type;
+            field.role = semantic->second.role;
+            field.may_be_inferred = !outputs &&
+                (inferable.count(field.name) != 0 || semantic->second.inferable);
         }
         field.display_type = scalar_type(it.value());
         fields.push_back(std::move(field));

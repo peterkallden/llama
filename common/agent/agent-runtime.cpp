@@ -225,6 +225,16 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
         classification, result.retryable, result.safe_summary.empty() ? "The tool failed." : result.safe_summary);
 }
 
+static std::string tool_observation_payload(const common_tool_execution_result & result) {
+    // Structured output is the binding source. A summary-only result is still
+    // recorded as JSON, but deliberately has no typed fields to autowire.
+    if (!result.output.empty()) return result.output;
+    json fallback = json::object();
+    if (!result.content_summary.empty()) fallback["summary"] = result.content_summary;
+    else if (!result.safe_summary.empty()) fallback["summary"] = result.safe_summary;
+    return fallback.dump();
+}
+
 static std::string tool_repair_context_json(const common_agent_tool_repair_context & context) {
     json available = json::array();
     for (const auto & name : context.available_tools) available.push_back(name);
@@ -1170,7 +1180,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
-            std::string tool_result = execution.output;
+            std::string tool_result = tool_observation_payload(execution);
             if (tool_result.size() > context_budgets.tool_observation_chars) tool_result.resize(context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
             common_plan_operation observed;

@@ -1,5 +1,6 @@
 #include "agent/tool-catalog.h"
 #include "agent/tool-schema-compact.h"
+#include "plan/plan-contract.h"
 
 #include <cassert>
 #include <cstdio>
@@ -198,6 +199,29 @@ int main() {
     assert(aggregate_compact.find("materialized") == std::string::npos);
     assert(aggregate_compact.find("scan_truncated") == std::string::npos);
     assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
+
+    std::vector<common_plan_schema_field> extracted_fields;
+    std::string extraction_error;
+    assert(common_plan_extract_schema_fields(R"({
+        "type":"object",
+        "properties":{
+            "dataset":{"type":"string","x-agent-type":"dataset_ref","x-agent-role":"dataflow","x-agent-inferable":true},
+            "rows":{"type":"array","x-agent-role":"evidence"}
+        },
+        "required":["dataset"]
+    })", extracted_fields, extraction_error));
+    assert(extraction_error.empty());
+    assert(extracted_fields.size() == 2);
+    assert(extracted_fields[0].name == "dataset");
+    assert(extracted_fields[0].semantic_type == "dataset_ref");
+    assert(extracted_fields[0].role == "dataflow");
+    assert(extracted_fields[0].required && extracted_fields[0].inferable);
+    assert(extracted_fields[1].name == "rows");
+    assert(extracted_fields[1].role == "evidence");
+    assert(!extracted_fields[1].required && !extracted_fields[1].inferable);
+    assert(!common_plan_extract_schema_fields("[]", extracted_fields, extraction_error));
+    assert(!extraction_error.empty());
+
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 

@@ -59,26 +59,6 @@ bool normalize_tool_arguments_contract(
         error);
 }
 
-bool normalize_tool_arguments_json_text(
-    const std::string & tool_name,
-    const std::string & arguments_json,
-    std::string & normalized_arguments,
-    std::string & error) {
-    common_plan_tool_arguments_contract contract;
-    if (!common_plan_parse_tool_arguments_contract_json(
-            tool_name,
-            arguments_json,
-            contract,
-            error)) {
-        return false;
-    }
-    return common_plan_serialize_tool_arguments_contract_json(
-        tool_name,
-        contract,
-        normalized_arguments,
-        error);
-}
-
 bool parse_compact_tool(
     const common_json_contract_value & item,
     common_plan_step & step,
@@ -358,7 +338,7 @@ bool common_reflection_parse_json(const std::string & text, common_reflection_re
                         const auto tool_name = tool_call["name"].get<std::string>();
                         const auto arguments = tool_call.contains("arguments_json") && tool_call["arguments_json"].is_string() ? tool_call["arguments_json"].get<std::string>() : std::string("{}");
                         std::string normalized_arguments;
-                        if (!normalize_tool_arguments_json_text(tool_name, arguments, normalized_arguments, error)) { return false; }
+                        if (!common_plan_normalize_tool_arguments_json(tool_name, arguments, normalized_arguments, error)) { return false; }
                         parsed.tool_call = common_plan_tool_call{tool_name, normalized_arguments};
                         parsed.selected_tool = tool_name;
                         parsed.mode = common_plan_step_mode::tool;

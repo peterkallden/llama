@@ -1,8 +1,8 @@
 #include "plan/plan-bindings.h"
+#include "plan/plan-contract.h"
 
 #include <nlohmann/json.hpp>
 
-#include <set>
 
 namespace {
 
@@ -257,30 +257,21 @@ bool common_plan_dataflow_contract_from_schemas(
         const std::string & result_schema_json,
         common_plan_tool_dataflow_contract & contract,
         std::string & error) {
-    const auto input = json::parse(input_schema_json, nullptr, false);
-    const auto result = json::parse(result_schema_json, nullptr, false);
-    if (!input.is_object() || !result.is_object()) {
-        error = "tool dataflow contract requires object input and result schemas";
-        return false;
-    }
+    std::vector<common_plan_schema_field> input_fields;
+    std::vector<common_plan_schema_field> result_fields;
+    if (!common_plan_extract_schema_fields(input_schema_json, input_fields, error) ||
+            !common_plan_extract_schema_fields(result_schema_json, result_fields, error)) return false;
     contract = {};
     contract.tool_name = tool_name;
-    const auto collect = [](const json & schema, std::vector<common_plan_tool_field_contract> & fields) {
-        const auto properties = schema.value("properties", json::object());
-        if (!properties.is_object()) return;
-        std::set<std::string> required;
-        for (const auto & item : schema.value("required", json::array())) {
-            if (item.is_string()) required.insert(item.get<std::string>());
-        }
-        for (const auto & item : properties.items()) {
-            const auto & property = item.value();
-            if (!property.is_object() || !property.contains("x-agent-type") ||
-                    !property["x-agent-type"].is_string()) continue;
-            fields.push_back({item.key(), property["x-agent-type"].get<std::string>(), required.count(item.key()) != 0});
+    const auto collect = [](const std::vector<common_plan_schema_field> & source,
+            std::vector<common_plan_tool_field_contract> & fields) {
+        for (const auto & item : source) {
+            if (item.semantic_type.empty()) continue;
+            fields.push_back({item.name, item.semantic_type, item.required});
         }
     };
-    collect(input, contract.inputs);
-    collect(result, contract.outputs);
+    collect(input_fields, contract.inputs);
+    collect(result_fields, contract.outputs);
     error.clear();
     return true;
 }
