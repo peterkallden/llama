@@ -3967,9 +3967,13 @@ within normal plan and policy validation.
 ### Agent build and library structure
 
 The agent build keeps reusable implementation out of individual smoke
-executables. The current shared host assembly is `llama-agent-runtime-support`,
-which contains implementation used by the CLI, daemon, runtime and MCP-client
-targets and links the already separated resource/data/diagnostics libraries.
+executables. The current shared assembly is `llama-agent-runtime-support`,
+which contains CLI/daemon/MCP wiring and the remaining runtime orchestration.
+The provider-facing implementation is now isolated in
+`llama-agent-tool-provider`; runtime host code links that provider seam without
+making the execution engine depend on the higher-level tool assembly. The
+support target still links the already separated resource/data/diagnostics
+libraries.
 Smoke executables should normally
 compile only their focused `pocs/agent/smoke/<area>/*.cpp` source and link the
 library they exercise.
@@ -3980,8 +3984,20 @@ The dependency direction is intentionally one-way:
 common/*
     -> llama-agent-core
     -> llama-agent-memory / llama-agent-plan
-    -> llama-agent-runtime-support
-    -> CLI, daemon, MCP, and smoke targets
+    -> llama-agent-tooling
+
+llama-agent-tool-provider
+    -> common contracts and tooling
+
+llama-agent-runtime-engine
+    -> common runtime contracts
+
+llama-agent-runtime-host
+    -> runtime-engine and tool-provider
+
+llama-agent-runtime-support
+    -> runtime-host, tool-provider, resource/data/diagnostics
+        -> CLI, daemon, MCP, and smoke targets
 ```
 
 #### Long-term shared-library backlog
@@ -3992,20 +4008,27 @@ order is:
 
 ```text
 1. llama-agent-runtime-engine.so (implemented)
-   session, execution, turn-driver, inference executor and capacity gate
+   execution-facing session state, server generation/inference adapters and
+   capacity/event projection code. It must remain independent of provider and
+   host assembly.
 
 2. llama-agent-runtime-host.so (initial lifecycle slice implemented)
-   runtime host and resident lifecycle; assembly and plan orchestration remain
-   in support until their provider dependencies can be extracted without a
-   cycle
+   runtime/resident lifecycle plus session host, turn driver, inference
+   executor and session manager. This is the host-owned lifecycle seam above
+   the engine.
 
-3. llama-agent-cli.so
+3. llama-agent-tool-provider.so (implemented)
+   native/provider selection, provider runtime adapters and tool-result
+   contracts. This is a reusable seam for host, CLI, daemon and MCP-facing
+   assembly; it is not a second tool registry.
+
+4. llama-agent-cli.so
    CLI-specific host, options, generation and selection code
 
-4. llama-agent-daemon.so
+5. llama-agent-daemon.so
    daemon service, dispatcher, protocol client and administration code
 
-5. llama-agent-mcp-client.so
+6. llama-agent-mcp-client.so
    MCP HTTP/stdio client and client-factory code
 ```
 
@@ -4023,6 +4046,7 @@ llama-agent-data.so
 llama-agent-diagnostics.so
 llama-agent-runtime-engine.so
 llama-agent-runtime-host.so
+llama-agent-tool-provider.so
 ```
 
 This is a build-isolation backlog, not a requirement to expose every library
@@ -4050,6 +4074,26 @@ compiling the same data sources again.
 Daemon service and host-configuration sources remain in the runtime-support
 library. The narrow libraries therefore reduce repeated compilation without
 moving orchestration or ownership into a lower-level utility target.
+
+The current runtime split deliberately stops at a measured dependency seam:
+
+```text
+runtime-support
+    CLI/daemon/MCP assembly and remaining orchestration
+        ├── runtime-host
+        │     session/turn/inference lifecycle and resident forwarding
+        │         └── runtime-engine
+        │               execution state, server adapters, capacity and event projection
+        └── tool-provider
+              provider selection, runtime adapters and result contracts
+```
+
+The branches describe the intended link direction from the higher-level
+assembly to the lower-level implementation it consumes. In particular,
+`runtime-engine` must not grow dependencies on `runtime-support` or on
+provider selection. A future CLI/daemon/MCP split should reuse the same rule:
+extract a seam only when its headers are narrow, the target graph remains
+acyclic, and a clean rebuild demonstrates a useful recompilation boundary.
 
 Agent support libraries follow the repository's `BUILD_SHARED_LIBS` policy. They
 use target-scoped include directories, compile definitions, and link libraries;

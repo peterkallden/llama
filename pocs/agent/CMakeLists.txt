@@ -80,13 +80,8 @@ endif()
 # session/turn/inference implementation together so changes there do not
 # recompile CLI, daemon and MCP host code unnecessarily.
 set(AGENT_RUNTIME_ENGINE_SOURCES
-    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-event-projector.cpp
-    ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
-    ../../tools/agent/runtime/agent-inference-executor.cpp
     ../../tools/agent/runtime/agent-inference-capacity-gate.cpp
-    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
-    ../../tools/agent/runtime/agent-runtime-execution.cpp
     ../../tools/agent/runtime/agent-runtime-session.cpp
     ../../tools/agent/runtime/agent-server-context-host.cpp
     ../../tools/agent/runtime/agent-server-generation.cpp
@@ -101,9 +96,22 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
 set(AGENT_RUNTIME_HOST_SOURCES
     ../../tools/agent/runtime/agent-runtime-host.cpp
     ../../tools/agent/runtime/agent-runtime-resident.cpp
+    ../../tools/agent/runtime/agent-runtime-session-host.cpp
+    ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
+    ../../tools/agent/runtime/agent-inference-executor.cpp
+    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
 )
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
+
+set(AGENT_TOOL_PROVIDER_SOURCES
+    ../../tools/agent/tooling/agent-selection-contracts.cpp
+    ../../tools/agent/tooling/agent-tool-provider.cpp
+    ../../tools/agent/tooling/agent-tool-result-json-contracts.cpp
+    ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_TOOL_PROVIDER_SOURCES})
 
 # Keep the host/runtime assembly independent from the high-churn resource,
 # data and diagnostics implementations. These are agent-only libraries; the
@@ -219,6 +227,39 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+# Provider and runtime-adapter implementation is shared by the host, CLI,
+# daemon and MCP layers. Keep it below the common tool contracts and above
+# runtime assembly so host libraries do not have to depend on one another.
+add_library(llama-agent-tool-provider ${AGENT_TOOL_PROVIDER_SOURCES})
+target_include_directories(llama-agent-tool-provider
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-tool-provider PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-tool-provider
+    PUBLIC
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-tool-provider PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-runtime-engine ${AGENT_RUNTIME_ENGINE_SOURCES})
 target_include_directories(llama-agent-runtime-engine
     PUBLIC
@@ -284,6 +325,7 @@ target_link_libraries(llama-agent-runtime-host
         llama-agent-memory
         llama-common
         llama-agent-core
+        llama-agent-tool-provider
         Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
@@ -328,6 +370,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-agent-diagnostics
         llama-agent-runtime-engine
         llama-agent-runtime-host
+        llama-agent-tool-provider
         server-context
         Threads::Threads
     PRIVATE
@@ -441,6 +484,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-core
         llama-agent-mcp-core
         llama-agent-mcp-server
+        llama-agent-tool-provider
         llama-agent-runtime-engine
         llama-agent-runtime-host
         llama-agent-runtime-support
