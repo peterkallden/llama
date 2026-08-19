@@ -270,6 +270,44 @@ and `1Gi` for artifacts; an empty storage class uses the cluster default. PVC id
 Operation directories are created below that PVC. Clients cannot choose PVC
 names, mount paths or Kubernetes Job details.
 
+## Incremental build boundaries
+
+The agent build keeps high-churn implementation areas in separate libraries.
+This is an agent-only build boundary; it does not split or replace any
+upstream llama.cpp target:
+
+```text
+llama-agent-core
+    common/agent contracts, planning, adapters and runtime policy
+
+llama-agent-resource
+    resource store, chunking, MIME handling and resource processors
+
+llama-agent-data
+    data-store selection and dataset import
+
+llama-agent-diagnostics
+    clangd protocol, sessions and diagnostics provider
+
+llama-agent-runtime-support
+    CLI, daemon, host/session assembly, MCP and runtime executors
+    -> links the focused agent libraries above
+```
+
+The focused libraries are installed together with the runtime support library
+and retain the same public agent behavior. A change to a resource processor,
+dataset importer or clangd integration can therefore rebuild and relink its
+focused library without compiling the host assembly. Changes to broad headers,
+especially shared contract headers, can still invalidate several libraries;
+those headers are kept as an explicit later optimization target rather than
+being duplicated between libraries.
+
+The intended direction is to introduce further stable boundaries under
+`common/agent` (tooling/adapters, thinking, sandbox and runtime) only when the
+header dependencies support it. A target split must follow an existing
+responsibility boundary and must not create parallel implementations or alter
+the upstream build graph.
+
 ## Tool execution boundaries
 
 ### Adapter family layout

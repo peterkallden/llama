@@ -77,6 +77,120 @@ if (LLAMA_MEMORY_COZO)
     )
 endif()
 
+# Keep the host/runtime assembly independent from the high-churn resource,
+# data and diagnostics implementations. These are agent-only libraries; the
+# upstream llama.cpp targets remain untouched.
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
+    ../../tools/agent/resource/agent-resource-catalog.cpp
+    ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-media-type.cpp
+    ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/agent-resource-processing-cache.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
+    ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-pandoc-command.cpp
+    ../../tools/agent/resource/processors/agent-docx-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
+    ../../tools/agent/data/agent-data-store-factory.cpp
+    ../../tools/agent/data/agent-dataset-importer.cpp
+    ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
+    ../../tools/agent/diagnostics/agent-clangd-session.cpp
+    ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+    ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+)
+
+add_library(llama-agent-resource
+    ../../tools/agent/resource/agent-resource-catalog.cpp
+    ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-media-type.cpp
+    ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/agent-resource-processing-cache.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
+    ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-pandoc-command.cpp
+    ../../tools/agent/resource/processors/agent-docx-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
+)
+if (LLAMA_MEMORY_COZO)
+    target_sources(llama-agent-resource PRIVATE
+        ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+    )
+endif()
+target_include_directories(llama-agent-resource PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+)
+target_compile_features(llama-agent-resource PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-resource PUBLIC
+    llama-common
+    llama-agent-core
+    Threads::Threads
+)
+if (LLAMA_MEMORY_COZO)
+    target_include_directories(llama-agent-resource PRIVATE ${COZO_INCLUDE_DIR})
+    llama_link_cozo(llama-agent-resource)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-resource PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-data
+    ../../tools/agent/data/agent-data-store-factory.cpp
+    ../../tools/agent/data/agent-dataset-importer.cpp
+)
+target_include_directories(llama-agent-data PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_compile_features(llama-agent-data PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-data PUBLIC llama-agent-core)
+if (LLAMA_MEMORY_COZO)
+    target_link_libraries(llama-agent-data PUBLIC llama-agent-storage-cozo)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-data PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-diagnostics
+    ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
+    ../../tools/agent/diagnostics/agent-clangd-session.cpp
+    ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+)
+target_include_directories(llama-agent-diagnostics PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+)
+target_compile_features(llama-agent-diagnostics PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-diagnostics PUBLIC
+    llama-common
+    llama-agent-core
+    Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-diagnostics PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 # Shared implementation for the agent CLI, daemon, and model-free smoke
 # targets.  Keep the source list here so the implementation is compiled once
 # per build configuration instead of once per executable target.
@@ -107,6 +221,9 @@ target_link_libraries(llama-agent-runtime-support
         llama-common
         llama
         llama-agent-core
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
         server-context
         Threads::Threads
     PRIVATE
@@ -219,6 +336,9 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-mcp-core
         llama-agent-mcp-server
         llama-agent-runtime-support
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
     )
     if(TARGET llama-agent-storage-cozo)
         list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-storage-cozo)
