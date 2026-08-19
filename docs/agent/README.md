@@ -5,7 +5,7 @@
 [![Agent development package (.tar.gz)](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml)
 [![Agent development package (Debian/Ubuntu)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
 [![Agent development package (Windows)](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)
-[![Agent container images](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml)
+[![Agent container images](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-container-images.yml)
 [![Latest agent tag](https://img.shields.io/github/v/tag/peterkallden/llama?filter=llama-agent-v*&sort=semver)](https://github.com/peterkallden/llama/tags)
 
 `llama-agent` is a resident agent runtime built on llama.cpp. It provides
@@ -63,11 +63,14 @@ evidence-based milestone record is maintained in
   `llama-agent-vulkan`; they conflict with one another so only one backend is
   installed. Release metadata records the agent version, CI build number,
   upstream llama.cpp build, commit, and backend.
-- [Development `.tar.gz` packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml)
-- [Debian development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
-- [Windows development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)
-  are dated workflow artifacts for testing non-master development branches.
-- [Container images](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
+- [Development `.tar.gz` packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml),
+  [Debian development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml),
+  and [Windows development packages](https://github.com/peterkallden/llama/actions/workflows/agent-package-windows.yml)
+  are dated GitHub Actions artifacts for testing `feature/llama-agent`.
+  They are not GitHub Release assets; open a successful workflow run and
+  download its artifact. Development archive names have the form
+  `llama-agent-dev-<timestamp>-run-<run-id>.tar.gz`.
+- [Release container images](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
   are published to GitHub Container Registry. Pull a release image with:
 
   ```bash
@@ -76,11 +79,16 @@ evidence-based milestone record is maintained in
   docker pull ghcr.io/peterkallden/llama/llama-agent:vulkan1.4-amd64-latest
   ```
 
-  The development CPU image is published separately:
+  The [development container package](https://github.com/peterkallden/llama/pkgs/container/llama-agent-dev)
+  is published separately from the verified `.tar.gz` workflow artifact. The
+  development workflow currently publishes a CPU image:
 
   ```bash
   docker pull ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
   ```
+
+  Development CUDA and Vulkan images are not published yet; those backends
+  currently belong to the release-image matrix.
 
   Podman uses the same image names; replace `docker pull` with `podman pull`.
 
