@@ -1,4 +1,5 @@
 #include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/adapters/families/data-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
@@ -964,6 +965,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 definition, bindings, registry, installed, error);
         if (handled_by_memory_family) {
             // The memory family owns its bindings and policy details.
+        } else if (common_try_register_data_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // The data family owns dataset, data and statistics adapters.
         } else if (definition.executor_id == "builtin.calculator") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err;
@@ -1192,106 +1196,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     edges.push_back({{"from", from}, {"to", to}});
                 }
                 return tool_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}});
-            }, error);
-        } else if (definition.executor_id == "builtin.dataset.validate" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("dataset") || !arguments["dataset"].is_string() || !arguments.contains("rules") || !arguments["rules"].is_array()) {
-                    return tool_validation_failure("tool.dataset.validate.invalid_arguments", "dataset.validate requires dataset and rules");
-                }
-                std::filesystem::path path;
-                if (!dataset_file(bindings, arguments["dataset"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.validate.unavailable", std::move(err), "Dataset is unavailable.");
-                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.validate.unsupported_format", "dataset.validate currently supports CSV");
-                std::ifstream file(path); std::string line;
-                if (!std::getline(file, line)) return tool_success_json({{"valid", true}, {"violations", json::array()}});
-                const auto columns = split_csv(line); std::vector<std::string> rows;
-                while (rows.size() < 100000 && std::getline(file, line)) rows.push_back(line);
-                json violations = json::array();
-                for (const auto & rule : arguments["rules"]) {
-                    if (!rule.is_object() || !rule.contains("type") || !rule["type"].is_string() || !rule.contains("column") || !rule["column"].is_string()) continue;
-                    const auto type = rule["type"].get<std::string>();
-                    const auto it = std::find(columns.begin(), columns.end(), rule["column"].get<std::string>());
-                    if (it == columns.end()) { violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", rows.size()}, {"message", "column not found"}}); continue; }
-                    const auto index = static_cast<size_t>(std::distance(columns.begin(), it)); size_t count = 0; std::set<std::string> values;
-                    for (const auto & row_text : rows) { const auto fields = split_csv(row_text); const auto value = index < fields.size() ? fields[index] : std::string(); if ((type == "not_null" && value.empty()) || (type == "unique" && !values.insert(value).second)) ++count; }
-                    if (count > 0) violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", count}});
-                }
-                return tool_success_json({{"valid", violations.empty()}, {"violations", violations}});
-            }, error);
-        } else if (definition.executor_id == "builtin.data.query" || definition.executor_id == "builtin.data.filter" || definition.executor_id == "builtin.data.aggregate" || definition.executor_id == "builtin.data.join" || definition.executor_id == "builtin.data.transform" || definition.executor_id == "builtin.statistics.describe" || definition.executor_id == "builtin.statistics.outliers" || definition.executor_id == "builtin.statistics.value_counts") {
-            const auto operation = definition.name;
-            installed = register_definition(definition, registry, [bindings, operation](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.data.invalid_arguments", std::move(err));
-                return execute_data_backend(bindings, operation, arguments.dump());
-            }, error);
-        } else if (definition.executor_id == "builtin.dataset.list" && !bindings.repository_root.empty()) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.list.invalid_arguments", std::move(err));
-                std::filesystem::path root;
-                if (!repository_path(bindings.repository_root, arguments.value("path", std::string("datasets")), root, err) || !std::filesystem::is_directory(root)) return tool_not_found_failure("tool.dataset.list.path_not_found", "dataset list directory was not found", "Dataset directory was not found.");
-                const int limit = arguments.value("max_results", 128); json datasets = json::array();
-                for (const auto & entry : std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied)) {
-                    if (datasets.size() >= static_cast<size_t>(limit)) break;
-                    if (!entry.is_regular_file()) continue;
-                    const auto ext = lower_copy(entry.path().extension().string());
-                    if (ext == ".csv" || ext == ".json" || ext == ".parquet") datasets.push_back({{"path", std::filesystem::relative(entry.path(), bindings.repository_root).generic_string()}, {"format", ext.substr(1)}, {"size_bytes", entry.file_size()}});
-                }
-                return tool_success_json({{"datasets", datasets}, {"truncated", datasets.size() >= static_cast<size_t>(limit)}});
-            }, error);
-        } else if (definition.executor_id == "builtin.dataset.inspect" &&
-                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", std::move(err));
-                if (arguments.contains("resource")) {
-                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
-                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "inspect");
-                }
-                if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "inspect");
-                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.inspect.invalid_arguments", "dataset.inspect requires dataset or path");
-                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.inspect.unavailable", std::move(err), "Dataset is unavailable.");
-                return tool_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"format", lower_copy(path.extension().string()).substr(1)}, {"size_bytes", std::filesystem::file_size(path)}});
-            }, error);
-        } else if (definition.executor_id == "builtin.dataset.schema" &&
-                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.schema.invalid_arguments", std::move(err));
-                if (arguments.contains("resource")) {
-                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
-                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "schema");
-                }
-                if (arguments.contains("dataset")) return execute_dataset_descriptor_tool(bindings, arguments, "schema");
-                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.schema.invalid_arguments", "dataset.schema requires dataset or path");
-                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.schema.unavailable", std::move(err), "Dataset is unavailable.");
-                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.schema.unsupported_format", "dataset.schema currently supports CSV");
-                std::ifstream file(path); std::string line; if (!std::getline(file, line)) return tool_success_json({{"columns", json::array()}});
-                const auto names = split_csv(line); json columns = json::array(); for (const auto & name : names) columns.push_back({{"name", name}, {"type", "string"}, {"nullable", true}});
-                return tool_success_json({{"columns", columns}});
-            }, error);
-        } else if (definition.executor_id == "builtin.dataset.sample" &&
-                (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.sample.invalid_arguments", std::move(err));
-                if (arguments.contains("resource")) {
-                    if (!bindings.dataset_from_resource) return tool_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
-                    return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "sample");
-                }
-                if (arguments.contains("dataset")) {
-                    const size_t rows = std::min<size_t>(arguments.value("rows", 20), 100);
-                    json query = {{"dataset", arguments["dataset"]}, {"limit", rows}, {"max_result_rows", rows}, {"max_scan_rows", 10000}};
-                    return execute_data_backend(bindings, "data.query", query.dump());
-                }
-                if (!arguments.contains("path") || !arguments["path"].is_string()) return tool_validation_failure("tool.dataset.sample.invalid_arguments", "dataset.sample requires dataset or path");
-                std::filesystem::path path; if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, err)) return tool_not_found_failure("tool.dataset.sample.unavailable", std::move(err), "Dataset is unavailable.");
-                if (lower_copy(path.extension().string()) != ".csv") return tool_validation_failure("tool.dataset.sample.unsupported_format", "dataset.sample currently supports CSV");
-                const int limit = arguments.value("rows", 20); std::ifstream file(path); std::string line; json rows = json::array(); json columns = json::array();
-                if (std::getline(file, line)) { const auto names = split_csv(line); for (const auto & name : names) columns.push_back(name); }
-                while (rows.size() < static_cast<size_t>(limit) && std::getline(file, line)) { const auto fields = split_csv(line); json row = json::object(); for (size_t i = 0; i < fields.size() && i < columns.size(); ++i) row[columns[i].get<std::string>()] = fields[i]; rows.push_back(std::move(row)); }
-                return tool_success_json({{"columns", columns}, {"rows", rows}});
             }, error);
         } else if (definition.executor_id == "builtin.document.tables" && bindings.document_tables) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {

@@ -2489,6 +2489,7 @@ tools/
 common/agent/tooling/
   adapters/         native tool-family registration and execution adapters
     families/        family-specific adapters, starting with memory
+    support/         shared registration, JSON and failure helpers
   catalog/           tool definitions and model projections
   contracts/         tool/runtime/schema result contracts
   registry/          registered native tool handlers
@@ -2522,6 +2523,9 @@ Short responsibility summary:
   responsible for catalog iteration and result accounting. New families
   should be extracted only when the boundary is real, not merely to create
   smaller files.
+- `common/agent/tooling/adapters/support`: small internal adapter helpers used
+  by multiple families. Registration and result construction belong here;
+  domain-specific validation and bindings remain in the owning family.
 - `common/agent/sandbox`: sandbox contracts, policy, runtime selection and
   concrete local/container/Kubernetes backends.
 - `common/agent/thinking`: reflection, deliberation, research orchestration
@@ -2602,6 +2606,14 @@ accounting and registry ownership in one place while allowing a family to
 own its bindings, validation and policy behavior. Future repository, data,
 resource or web families should follow this pattern only when their boundary
 is genuinely independent.
+
+The data sweep is complete as well. Dataset validation/list/inspect/schema/
+sample, data manipulation and statistics executors now live in
+`families/data-adapters.{h,cpp}`. They share the data-store, dataset-reference
+and resource-to-dataset boundaries without pulling document, repository,
+diagnostics or resource-store registration into the same family. The compact
+top-level adapter still owns profile iteration and registered/unavailable
+accounting.
 
 That compatibility-header bridge has now effectively been retired for the active agent path. The branch no longer keeps a forwarder header layer under `pocs/agent`; active code, tests, and smoke binaries now include the concrete `tools/agent/...` locations directly. In practice that means `pocs/agent` is now much closer to its intended role in this phase: smoke harnesses, a few helper binaries, and migration-era build glue, rather than a second include tree pretending to own the runtime.
 
