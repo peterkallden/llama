@@ -2622,6 +2622,34 @@ Short responsibility summary:
 
 The practical rule is simple: reusable contracts move downward; executable host assembly moves upward; old experiments move aside.
 
+### Header dependency rule
+
+The same rule applies inside `common/agent`: an umbrella header is a
+compatibility boundary, not the normal dependency for every implementation.
+Prefer the narrowest contract header that provides the type being used. This
+keeps a change to events, learning, requests or results from invalidating all
+agent consumers unnecessarily.
+
+The planned contract split is:
+
+```text
+common/agent/contracts/
+  agent-events.h       event types and event sinks
+  agent-failures.h     stable failure classifications and diagnostics
+  agent-learning.h     learning signals and explicit user corrections
+  agent-request.h      host-owned request, objective and input resources
+  agent-result.h       turn result, generation, research and trace outputs
+  agent-contract.h     compatibility umbrella for legacy callers
+```
+
+`agent-contract.h` may include the narrower headers so existing callers remain
+source-compatible. New code should include a specific contract instead. The
+runtime interfaces follow the same direction: tool runtime, planner, action
+executor and reflection interfaces should be separate from the small runtime
+facade. A split is worthwhile only when it removes a real include dependency;
+creating more files without migrating consumers does not improve incremental
+builds.
+
 ## Refactor Status and Migration Notes
 
 The repository split described here was implemented in small, buildable
