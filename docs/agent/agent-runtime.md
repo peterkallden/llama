@@ -277,8 +277,12 @@ This is an agent-only build boundary; it does not split or replace any
 upstream llama.cpp target:
 
 ```text
+llama-agent-sandbox
+    local, Docker/Podman and Kubernetes sandbox backends
+
 llama-agent-core
     common/agent contracts, planning, adapters and runtime policy
+    -> links the sandbox contract/backend library
 
 llama-agent-resource
     resource store, chunking, MIME handling and resource processors

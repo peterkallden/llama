@@ -35,7 +35,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/resource/agent-resource-processing-cache.cpp
-    ../../common/agent/sandbox/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/data/agent-dataset-importer.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
@@ -332,6 +331,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     set(AGENT_PACKAGE_LIBRARY_TARGETS
         llama-agent-memory
         llama-agent-plan
+        llama-agent-sandbox
         llama-agent-core
         llama-agent-mcp-core
         llama-agent-mcp-server
@@ -487,7 +487,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-core
+    llama-agent-sandbox
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
@@ -499,7 +499,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-core
+    llama-agent-sandbox
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
