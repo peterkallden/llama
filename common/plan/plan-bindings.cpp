@@ -101,8 +101,14 @@ bool add_unambiguous_typed_binding(
                 required_ambiguity = required_ambiguity || (input != nullptr && input->required);
             }
             if (required_ambiguity) {
+                std::string details;
+                for (const auto & item : candidates) {
+                    if (!details.empty()) details += ", ";
+                    details += item.input + "<-" + source_step->id + "." + item.output;
+                }
                 error = "plan.binding.ambiguous_autowire: tool '" + step.tool_call->name +
-                    "' has multiple unresolved inputs compatible with completed outputs; explicit bindings are required";
+                    "' has multiple unresolved inputs compatible with completed outputs (" + details +
+                    "); explicit bindings are required";
                 return false;
             }
         }

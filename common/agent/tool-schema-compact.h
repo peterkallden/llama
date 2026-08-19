@@ -7,6 +7,7 @@ struct common_model_tool_field {
     std::string name;
     std::string semantic_type;
     std::string display_type;
+    std::string role;
     bool required = false;
     bool may_be_inferred = false;
 };

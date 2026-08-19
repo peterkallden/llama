@@ -49,7 +49,10 @@ std::string default_model_result_projection(const common_tool_definition & defin
     for (const auto & item : properties.items()) {
         const auto & property = item.value();
         if (!property.is_object()) continue;
-        if (property.contains("x-agent-type") || evidence_fields.count(item.key()) != 0) {
+        const auto role = property.value("x-agent-role", std::string());
+        if (property.contains("x-agent-type") ||
+                role == "dataflow" || role == "evidence" ||
+                evidence_fields.count(item.key()) != 0) {
             projection["properties"][item.key()] = property;
             retained.insert(item.key());
         }

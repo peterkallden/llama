@@ -105,6 +105,16 @@ int main() {
     assert(aggregate_contract.inputs[0].may_be_inferred);
     assert(aggregate_contract.outputs.size() == 2);
     assert(aggregate_contract.outputs[0].name == "rows");
+    std::string role_error;
+    const auto role_contract = common_project_model_tool_contract(
+        "role-test", "role test",
+        R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref","x-agent-inferable":true}}})",
+        R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref","x-agent-role":"dataflow"},"rows":{"type":"array","x-agent-role":"evidence"},"elapsed_ms":{"type":"integer","x-agent-role":"diagnostic"}}})",
+        role_error);
+    assert(role_error.empty());
+    assert(role_contract.outputs[0].role == "dataflow");
+    assert(role_contract.outputs[1].role == "evidence");
+    assert(role_contract.outputs[2].role == "diagnostic");
     assert(validate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(validate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(export_model_input["properties"]["source_dataset"].value("x-agent-type", "") == "dataset_ref");

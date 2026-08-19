@@ -1509,6 +1509,17 @@ ordinary planner view. An explicit result projection remains the override for
 tools with special evidence or branching semantics. The host result schema
 remains authoritative for execution, diagnostics and typed dataflow.
 
+Result fields may also declare an `x-agent-role`:
+
+    dataflow    values that can feed a later typed binding
+    evidence    useful result data for reasoning or synthesis
+    diagnostic  host/runtime information, normally hidden from the planner
+
+Roles are semantic metadata, not permissions. The runtime still validates the
+full result contract and applies scope and policy checks before a value can be
+used as a binding. Field-name defaults remain conservative compatibility
+fallbacks for older definitions; new tools should prefer explicit roles.
+
 The compact renderer now projects the model schema into a small internal
 model-tool contract before rendering text. This keeps semantic fields such as
 `may_be_inferred` separate from JSON Schema syntax and leaves room for the
@@ -1552,6 +1563,23 @@ not mean that inference will always succeed. The first generated input
 projections cover explicitly inferable simple data inputs; explicit overrides
 and more complex alternatives remain available for cases such as `data.join`
 or `anyOf` contracts.
+
+Autowire diagnostics include the producing step and output field when an
+inference is ambiguous. For example:
+
+    plan.binding.ambiguous_autowire:
+      data.join has multiple candidates
+      left<-step_1.dataset, right<-step_1.dataset
+
+This provenance is diagnostic information only. The model must still provide
+explicit semantic references such as `$orders.dataset` and
+`$customers.dataset` when selecting between sources.
+
+Tool results have two distinct uses: a bounded summary may be shown to the
+model, while the structured JSON result is the source for typed bindings when
+the tool provides one. A text-only or unknown result contract must never cause
+the host to fabricate typed outputs. In that case the tool remains usable, but
+its result is not a candidate for implicit dataflow.
 
 When adding a new tool, define the complete host input/result schemas and
 their `x-agent-type` values first. Mark an input `x-agent-inferable` only when
