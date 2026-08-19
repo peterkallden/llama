@@ -113,6 +113,17 @@ set(AGENT_TOOL_PROVIDER_SOURCES
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_TOOL_PROVIDER_SOURCES})
 
+set(AGENT_CLI_SOURCES
+    ../../tools/agent/cli/agent-cli-config.cpp
+    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/cli/agent-cli-inference.cpp
+    ../../tools/agent/cli/agent-cli-memory-tools.cpp
+    ../../tools/agent/cli/agent-cli-options.cpp
+    ../../tools/agent/cli/agent-cli-generation.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_CLI_SOURCES})
+
 # Keep the host/runtime assembly independent from the high-churn resource,
 # data and diagnostics implementations. These are agent-only libraries; the
 # upstream llama.cpp targets remain untouched.
@@ -260,6 +271,38 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-cli-library ${AGENT_CLI_SOURCES})
+set_target_properties(llama-agent-cli-library PROPERTIES OUTPUT_NAME llama-agent-cli)
+target_include_directories(llama-agent-cli-library
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-cli-library PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-cli-library
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-cli-library
+    PUBLIC
+        llama-agent-core
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        llama
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-cli-library PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-runtime-engine ${AGENT_RUNTIME_ENGINE_SOURCES})
 target_include_directories(llama-agent-runtime-engine
     PUBLIC
@@ -371,6 +414,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-agent-runtime-engine
         llama-agent-runtime-host
         llama-agent-tool-provider
+        llama-agent-cli-library
         server-context
         Threads::Threads
     PRIVATE
@@ -485,6 +529,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-mcp-core
         llama-agent-mcp-server
         llama-agent-tool-provider
+        llama-agent-cli-library
         llama-agent-runtime-engine
         llama-agent-runtime-host
         llama-agent-runtime-support

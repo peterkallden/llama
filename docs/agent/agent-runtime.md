@@ -4022,8 +4022,10 @@ order is:
    contracts. This is a reusable seam for host, CLI, daemon and MCP-facing
    assembly; it is not a second tool registry.
 
-4. llama-agent-cli.so
-   CLI-specific host, options, generation and selection code
+4. llama-agent-cli.so (initial core slice implemented)
+   CLI configuration/options, generation helpers, inference adapter and memory
+   tools. CLI host/run/selection code remains in support because it still
+   consumes runtime assembly and would otherwise create a target cycle.
 
 5. llama-agent-daemon.so
    daemon service, dispatcher, protocol client and administration code
@@ -4047,6 +4049,7 @@ llama-agent-diagnostics.so
 llama-agent-runtime-engine.so
 llama-agent-runtime-host.so
 llama-agent-tool-provider.so
+llama-agent-cli.so
 ```
 
 This is a build-isolation backlog, not a requirement to expose every library
@@ -4087,6 +4090,14 @@ runtime-support
         └── tool-provider
               provider selection, runtime adapters and result contracts
 ```
+
+The CLI split follows the same rule. The current `llama-agent-cli.so` is the
+low-level CLI implementation slice consumed by runtime support; the executable
+target keeps its historical name `llama-agent-cli`. The remaining CLI assembly
+(`agent-cli-host-adapter`, `agent-cli-runtime`, `agent-cli-selection` and the
+top-level run path) stays in support until runtime assembly has a lower-level
+seam that can be reused without a cycle. This is intentional partial
+extraction, not a duplicated CLI implementation.
 
 The branches describe the intended link direction from the higher-level
 assembly to the lower-level implementation it consumes. In particular,
