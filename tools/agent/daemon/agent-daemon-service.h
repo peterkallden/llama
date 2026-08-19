@@ -9,6 +9,7 @@
 
 #include "memory/memory-store.h"
 #include "agent/data-store.h"
+#include "agent/turn-summary.h"
 #include "plan/plan-store.h"
 
 #include <memory>

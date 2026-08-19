@@ -1,6 +1,9 @@
-// Compatibility umbrella for the agent's public request/result contracts.
-// New code should include the narrow contract it consumes from
-// agent/contracts/ directly.
+// Full agent contract umbrella.
+//
+// This header intentionally remains as a stable compatibility and public API
+// entrypoint. New entries belong in the narrow headers under agent/contracts/;
+// implementation code should include those headers directly when it only
+// consumes one contract family.
 #pragma once
 
 #include "agent/contracts/agent-events.h"

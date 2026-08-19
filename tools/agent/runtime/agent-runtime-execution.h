@@ -2,7 +2,9 @@
 
 #include "../runtime/agent-runtime-tooling.h"
 #include "../tooling/agent-tool-provider.h"
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-events.h"
+#include "agent/contracts/agent-request.h"
+#include "agent/contracts/agent-result.h"
 #include "agent/agent-inference.h"
 #include "agent/learning/blueprint-selector.h"
 #include "agent/tooling/registry/tool-registry.h"

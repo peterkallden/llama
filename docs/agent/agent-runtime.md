@@ -2644,11 +2644,25 @@ common/agent/contracts/
 
 `agent-contract.h` may include the narrower headers so existing callers remain
 source-compatible. New code should include a specific contract instead. The
-runtime interfaces follow the same direction: tool runtime, planner, action
-executor and reflection interfaces should be separate from the small runtime
-facade. A split is worthwhile only when it removes a real include dependency;
-creating more files without migrating consumers does not improve incremental
-builds.
+runtime interfaces follow the same direction and are grouped under
+`common/agent/runtime`:
+
+```text
+common/agent/runtime/
+  agent-tool-runtime.h       validation, policy and tool execution
+  agent-planner.h             plan proposal contract
+  agent-action-executor.h     draft and reasoning generation contract
+  agent-reflection-engine.h   reflection result and review contract
+  agent-runtime.h             small runtime facade and composition seam
+```
+
+`common/agent/agent-runtime.h` remains a compatibility umbrella for callers
+that need the complete runtime contract. New implementation code should use
+the narrow runtime header matching its seam. This is an include/build
+boundary, not a new runtime subsystem: behavior and ownership remain in the
+existing implementation. A split is worthwhile only when it removes a real
+include dependency; creating more files without migrating consumers does not
+improve incremental builds.
 
 ## Refactor Status and Migration Notes
 
