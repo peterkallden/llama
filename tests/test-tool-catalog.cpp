@@ -91,6 +91,18 @@ int main() {
     assert(aggregate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(aggregate_model_input["x-agent-autowire-fields"][0] == "dataset");
+    const auto aggregate_contract = common_project_model_tool_contract(
+        data_aggregate->name,
+        data_aggregate->description,
+        data_aggregate->model_input_schema_json,
+        data_aggregate->model_result_schema_json,
+        error);
+    assert(error.empty());
+    assert(aggregate_contract.inputs.size() == 3);
+    assert(aggregate_contract.inputs[0].name == "dataset");
+    assert(aggregate_contract.inputs[0].may_be_inferred);
+    assert(aggregate_contract.outputs.size() == 2);
+    assert(aggregate_contract.outputs[0].name == "rows");
     assert(validate_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(validate_model_input["properties"]["dataset"].value("x-agent-type", "") == "dataset_ref");
     assert(export_model_input["properties"]["source_dataset"].value("x-agent-type", "") == "dataset_ref");

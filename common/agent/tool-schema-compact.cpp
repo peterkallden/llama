@@ -105,18 +105,48 @@ std::string render_object(const json & schema, std::string & error) {
     return out.str();
 }
 
-std::string render_returns(const std::string & schema_json) {
-    const auto schema = json::parse(schema_json, nullptr, false);
-    if (!schema.is_object()) return "value";
+std::vector<common_model_tool_field> project_fields(
+        const json & schema, bool outputs, std::string & error) {
+    std::vector<common_model_tool_field> fields;
+    if (!schema.is_object() || schema.value("type", std::string()) != "object") {
+        error = "model tool contract requires an object schema";
+        return fields;
+    }
     const auto properties = schema.value("properties", json::object());
-    if (!properties.is_object() || properties.empty()) return "value";
+    if (!properties.is_object()) {
+        error = "tool schema properties must be an object";
+        return fields;
+    }
+    std::set<std::string> required;
+    for (const auto & value : schema.value("required", json::array())) {
+        if (value.is_string()) required.insert(value.get<std::string>());
+    }
+    std::set<std::string> inferable;
+    for (const auto & value : schema.value("x-agent-autowire-fields", json::array())) {
+        if (value.is_string()) inferable.insert(value.get<std::string>());
+    }
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        common_model_tool_field field;
+        field.name = it.key();
+        field.required = required.count(field.name) != 0;
+        field.may_be_inferred = !outputs && inferable.count(field.name) != 0;
+        if (it.value().contains("x-agent-type") && it.value()["x-agent-type"].is_string()) {
+            field.semantic_type = it.value()["x-agent-type"].get<std::string>();
+        }
+        field.display_type = scalar_type(it.value());
+        fields.push_back(std::move(field));
+    }
+    return fields;
+}
 
+std::string render_fields(const std::vector<common_model_tool_field> & fields, bool inputs) {
     std::ostringstream out;
     bool first = true;
-    for (auto it = properties.begin(); it != properties.end(); ++it) {
-        if (!first) out << ", ";
+    for (const auto & field : fields) {
+        if (!first) out << (inputs ? "; " : ", ");
         first = false;
-        out << it.key() << ':' << scalar_type(it.value());
+        out << field.name << (field.required ? "" : "?") << ':' << field.display_type;
+        if (field.may_be_inferred) out << " [may be inferred]";
     }
     return out.str();
 }
@@ -135,18 +165,49 @@ std::string common_render_compact_tool_schema(
     return render_object(schema, error);
 }
 
+common_model_tool_contract common_project_model_tool_contract(
+        const std::string & name,
+        const std::string & description,
+        const std::string & input_schema_json,
+        const std::string & result_schema_json,
+        std::string & error) {
+    error.clear();
+    const auto input = json::parse(input_schema_json, nullptr, false);
+    const auto result = json::parse(result_schema_json, nullptr, false);
+    common_model_tool_contract contract;
+    contract.name = name;
+    contract.purpose = description;
+    if (input.is_discarded() || result.is_discarded()) {
+        error = "tool schema is not valid JSON";
+        return contract;
+    }
+    contract.inputs = project_fields(input, false, error);
+    if (!error.empty()) return contract;
+    contract.outputs = project_fields(result, true, error);
+    return contract;
+}
+
+std::string common_render_compact_tool_description(
+        const common_model_tool_contract & contract,
+        std::string & error) {
+    error.clear();
+    std::ostringstream out;
+    out << contract.name << "\n" << contract.purpose << "\n";
+    const auto args = render_fields(contract.inputs, true);
+    out << "args: " << (args.empty() ? "object" : args) << "\n";
+    const auto returns = render_fields(contract.outputs, false);
+    out << "returns: " << (returns.empty() ? "value" : returns);
+    return out.str();
+}
+
 std::string common_render_compact_tool_description(
         const std::string & name,
         const std::string & description,
         const std::string & input_schema_json,
         const std::string & result_schema_json,
         std::string & error) {
-    const auto args = common_render_compact_tool_schema(input_schema_json, error);
+    const auto contract = common_project_model_tool_contract(
+        name, description, input_schema_json, result_schema_json, error);
     if (!error.empty()) return {};
-
-    std::ostringstream out;
-    out << name << "\n" << description << "\n";
-    out << "args: " << (args.empty() ? "object" : args) << "\n";
-    out << "returns: " << render_returns(result_schema_json);
-    return out.str();
+    return common_render_compact_tool_description(contract, error);
 }

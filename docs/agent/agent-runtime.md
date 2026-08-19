@@ -1478,14 +1478,21 @@ schema is used as the model fallback. This keeps fields such as materialization
 flags, scan limits and truncation diagnostics out of the ordinary planner view
 without hiding them from the host or runtime diagnostics.
 
-Model input projections may mark fields with the schema extension
-`x-agent-autowire-fields`. These fields remain host-required when execution
+Simple model input projections derive `x-agent-autowire-fields` from optional
+`dataset_ref` properties. These fields remain host-required when execution
 needs them, but the compact model contract renders them as `may be inferred`.
-That statement is deliberately conditional: the planner may omit the field
-only when the current plan has exactly one compatible completed predecessor;
-zero candidates leave the input unresolved and multiple candidates require an
-explicit `$previous.field` or `$alias.field` reference. The host contract and
-repair diagnostics continue to use the full input schema.
+Alternative schemas such as `anyOf` remain explicit until their binding
+semantics are modeled separately. The derived hint is only a model-facing
+capability; the host still decides at runtime whether exactly one compatible
+completed predecessor exists. Zero candidates leave the input unresolved and
+multiple candidates require an explicit `$previous.field` or `$alias.field`
+reference. Explicit metadata remains available for future exceptions.
+
+The compact renderer now projects the model schema into a small internal
+model-tool contract before rendering text. This keeps semantic fields such as
+`may_be_inferred` separate from JSON Schema syntax and leaves room for the
+same projection to provide repair hints or tool-selection metadata later.
+The full host schema remains authoritative for execution and diagnostics.
 
 Native repair diagnostics use the full host input schema even when the model
 view hides host-owned controls or an autowire-capable input. Providers without

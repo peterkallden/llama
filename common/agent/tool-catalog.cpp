@@ -125,27 +125,30 @@ std::vector<common_tool_definition> builtin_definitions() {
     set_model_schema("statistics.outliers", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"columns":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":128}},"column":{"type":"string","minLength":1,"maxLength":128},"group_by":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":128}},"method":{"type":"string","enum":["iqr"]},"multiplier":{"type":"number","minimum":0.1,"maximum":10.0}}})");
     set_model_schema("statistics.value_counts", R"({"type":"object","additionalProperties":false,"required":["column"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"column":{"type":"string","minLength":1,"maxLength":128},"limit":{"type":"integer","minimum":1,"maximum":1000}}})");
     set_model_schema("artifact.export", R"({"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":256},"content":{"type":"string","maxLength":65536},"mime_type":{"type":"string","maxLength":128},"source_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"format":{"type":"string","enum":["csv"]}},"anyOf":[{"required":["name","content"]},{"required":["source_dataset"]}]})");
-    const auto set_model_autowire_fields = [&](const char * name, std::initializer_list<const char *> fields) {
-        for (auto & definition : definitions) {
-            if (definition.name != name || definition.model_input_schema_json.empty()) continue;
-            auto schema = json::parse(definition.model_input_schema_json, nullptr, false);
-            if (!schema.is_object()) continue;
-            schema["x-agent-autowire-fields"] = json::array();
-            for (const auto * field : fields) schema["x-agent-autowire-fields"].push_back(field);
-            definition.model_input_schema_json = schema.dump();
+    // Derive model-facing inference hints from simple typed contracts. The
+    // host still decides at runtime whether exactly one compatible source
+    // exists. Alternative schemas remain explicit until their binding
+    // semantics are modeled more precisely.
+    for (auto & definition : definitions) {
+        if (definition.model_input_schema_json.empty()) continue;
+        auto schema = json::parse(definition.model_input_schema_json, nullptr, false);
+        if (!schema.is_object() || schema.contains("anyOf") || schema.contains("oneOf")) continue;
+        const auto properties = schema.value("properties", json::object());
+        if (!properties.is_object()) continue;
+        std::set<std::string> required;
+        for (const auto & value : schema.value("required", json::array())) {
+            if (value.is_string()) required.insert(value.get<std::string>());
         }
-    };
-    set_model_autowire_fields("dataset.inspect", {"dataset"});
-    set_model_autowire_fields("dataset.schema", {"dataset"});
-    set_model_autowire_fields("dataset.sample", {"dataset"});
-    set_model_autowire_fields("dataset.validate", {"dataset"});
-    set_model_autowire_fields("data.query", {"dataset"});
-    set_model_autowire_fields("data.filter", {"dataset"});
-    set_model_autowire_fields("data.aggregate", {"dataset"});
-    set_model_autowire_fields("data.transform", {"dataset"});
-    set_model_autowire_fields("statistics.describe", {"dataset"});
-    set_model_autowire_fields("statistics.outliers", {"dataset"});
-    set_model_autowire_fields("statistics.value_counts", {"dataset"});
+        json inferable = json::array();
+        for (auto it = properties.begin(); it != properties.end(); ++it) {
+            if (required.count(it.key()) != 0 || !it.value().is_object()) continue;
+            if (it.value().value("x-agent-type", std::string()) == "dataset_ref") {
+                inferable.push_back(it.key());
+            }
+        }
+        if (!inferable.empty()) schema["x-agent-autowire-fields"] = std::move(inferable);
+        definition.model_input_schema_json = schema.dump();
+    }
     // Keep execution/result schemas authoritative while presenting only
     // useful chaining and evidence fields to the model.
     set_model_result_schema("document.tables", R"({"type":"object","properties":{"resource":{"type":"string","x-agent-type":"resource_ref"},"tables":{"type":"array","items":{"type":"object"}}}})");
