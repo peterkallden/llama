@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/data-adapters.h"
+#include "agent/tooling/adapters/families/diagnostics-adapters.h"
 #include "agent/tooling/adapters/families/document-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
@@ -976,6 +977,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_repository_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The repository family owns repository/workspace filesystem and Git adapters.
+        } else if (common_try_register_diagnostics_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // The diagnostics family owns compiler, symbol and test-analysis adapters.
         } else if (definition.executor_id == "builtin.calculator") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err;
@@ -999,107 +1003,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 const auto timezone = arguments.value("timezone", std::string("UTC"));
                 if (timezone != "UTC") return tool_validation_failure("tool.time_now.unsupported_timezone", "time_now currently supports only UTC", "Only UTC is currently supported.");
                 return tool_success_json({{"timezone", "UTC"}, {"time", utc_now()}});
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.compile") {
-            installed = register_definition(definition, registry, [](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) return tool_validation_failure("tool.diagnostics.compile.invalid_output", "diagnostics.compile requires compiler output");
-                json diagnostics = json::array();
-                const std::regex gcc(R"(^(.+):(\d+):(\d+):\s*(error|warning|note):\s*(.*)$)");
-                const std::regex msvc(R"(^(.+)\((\d+),(\d+)\):\s*(error|warning|note)\s*[^:]*:\s*(.*)$)");
-                std::istringstream lines(arguments["output"].get<std::string>()); std::string line;
-                while (std::getline(lines, line) && diagnostics.size() < 256) {
-                    std::smatch match;
-                    if (std::regex_match(line, match, gcc) || std::regex_match(line, match, msvc)) diagnostics.push_back({{"path", match[1].str()}, {"line", std::stoi(match[2].str())}, {"column", std::stoi(match[3].str())}, {"severity", match[4].str()}, {"message", match[5].str()}});
-                }
-                return tool_success_json({{"diagnostics", diagnostics}, {"count", diagnostics.size()}});
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.symbol") {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.symbol.invalid_arguments", "diagnostics.symbol requires a symbol");
-                if (bindings.diagnostics_symbol) return bindings.diagnostics_symbol(input);
-                return fallback_diagnostics_symbol(bindings, arguments, false);
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.references") {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.references.invalid_arguments", "diagnostics.references requires a symbol");
-                if (bindings.diagnostics_references) return bindings.diagnostics_references(input);
-                return fallback_diagnostics_symbol(bindings, arguments, true);
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.call_hierarchy") {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return tool_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy requires a symbol");
-                const auto direction = arguments.value("direction", std::string("both"));
-                const auto max_depth = arguments.value("max_depth", 3);
-                const auto max_results = arguments.value("max_results", 128);
-                if (direction != "callers" && direction != "callees" && direction != "both" || max_depth < 1 || max_depth > 8 || max_results < 1 || max_results > 128) return tool_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy arguments are out of bounds");
-                if (bindings.diagnostics_call_hierarchy) return bindings.diagnostics_call_hierarchy(input);
-                return tool_execution_failure("tool.diagnostics.call_hierarchy.unavailable", "diagnostics.call_hierarchy requires a semantic provider", "Call hierarchy is unavailable until a clangd or project-index provider is configured.");
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.test_failures") {
-            installed = register_definition(definition, registry, [](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("result") || !arguments["result"].is_string()) {
-                    return tool_validation_failure("tool.diagnostics.test_failures.invalid_result", "diagnostics.test_failures requires a bounded test result");
-                }
-                const auto text = arguments["result"].get<std::string>();
-                json groups = json::array();
-                std::map<std::string, size_t> group_indices;
-                std::istringstream lines(text); std::string line;
-                while (std::getline(lines, line)) {
-                    const auto lower = lower_copy(line);
-                    if (lower.find("failed") == std::string::npos && lower.find("failure") == std::string::npos && lower.find("error") == std::string::npos && lower.find("timeout") == std::string::npos && lower.find("assert") == std::string::npos) continue;
-                    const auto classification = classify_failure(line);
-                    const auto normalized = normalize_failure_message(line);
-                    const auto key = classification + "|" + normalized;
-                    auto found = group_indices.find(key);
-                    if (found == group_indices.end()) {
-                        if (groups.size() >= 64) continue;
-                        group_indices.emplace(key, groups.size());
-                        groups.push_back({{"classification", classification}, {"message", normalized}, {"count", 1}, {"examples", json::array({line.substr(0, 1024)})}});
-                    } else {
-                        auto & group = groups[found->second];
-                        group["count"] = group["count"].get<size_t>() + 1;
-                        if (group["examples"].size() < 3) group["examples"].push_back(line.substr(0, 1024));
-                    }
-                }
-                return tool_success_json({{"failure_groups", groups}, {"count", groups.size()}, {"backend", "bounded-text"}});
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.format") {
-            installed = register_definition(definition, registry, [](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) {
-                    return tool_validation_failure("tool.diagnostics.format.invalid_output", "diagnostics.format requires formatter output");
-                }
-                const auto text = arguments["output"].get<std::string>();
-                json files = json::array();
-                std::istringstream lines(text); std::string line;
-                while (std::getline(lines, line) && files.size() < 256) {
-                    if (line.find("would reformat") != std::string::npos || line.find("needs formatting") != std::string::npos) files.push_back(line);
-                }
-                return tool_success_json({{"formatted", files.empty()}, {"files", files}, {"raw_output", text.substr(0, 65536)}});
-            }, error);
-        } else if (definition.executor_id == "builtin.diagnostics.include_graph") {
-            installed = register_definition(definition, registry, [](const std::string & input) {
-                std::string err; json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("output") || !arguments["output"].is_string()) {
-                    return tool_validation_failure("tool.diagnostics.include_graph.invalid_output", "diagnostics.include_graph requires dependency output");
-                }
-                json nodes = json::array(), edges = json::array(); std::set<std::string> seen;
-                std::istringstream lines(arguments["output"].get<std::string>()); std::string line;
-                while (std::getline(lines, line) && edges.size() < 512) {
-                    const auto separator = line.find(" -> ");
-                    if (separator == std::string::npos) continue;
-                    const auto from = line.substr(0, separator), to = line.substr(separator + 4);
-                    if (from.empty() || to.empty()) continue;
-                    if (seen.insert(from).second) nodes.push_back(from);
-                    if (seen.insert(to).second) nodes.push_back(to);
-                    edges.push_back({{"from", from}, {"to", to}});
-                }
-                return tool_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}});
             }, error);
         } else if (definition.executor_id == "builtin.artifact.export" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
