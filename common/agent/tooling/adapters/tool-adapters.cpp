@@ -1,4 +1,5 @@
 #include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/adapters/families/memory-adapters.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "base64.hpp"
@@ -959,7 +960,11 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
     if (!error.empty()) return false;
     for (const auto & definition : definitions) {
         bool installed = false;
-        if (definition.executor_id == "builtin.calculator") {
+        const bool handled_by_memory_family = common_try_register_memory_tool_adapter(
+                definition, bindings, registry, installed, error);
+        if (handled_by_memory_family) {
+            // The memory family owns its bindings and policy details.
+        } else if (definition.executor_id == "builtin.calculator") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err;
                 json arguments;
@@ -1725,85 +1730,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         {std::move(resource_ref)});
                 }, error);
             }
-        } else if (definition.executor_id == "builtin.memory_search" && bindings.memory_store) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                common_memory_tool_context context;
-                context.query_defaults = bindings.memory_query;
-                context.embed = bindings.embed_memory_query;
-                common_memory_tool_search_result search_result;
-                common_memory_tool_service service(*bindings.memory_store);
-                std::string err;
-                if (!service.search(context, input, search_result, err)) {
-                    return tool_execution_failure("tool.memory_search.retrieve_failed", std::move(err), "Memory search failed.");
-                }
-                return tool_success_json(common_tool_memory_search_result_to_json({
-                    search_result.hits,
-                }));
-            }, error);
-        } else if (definition.executor_id == "builtin.memory_get" && bindings.memory_store) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err;
-                json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("id") || !arguments["id"].is_string()) {
-                    if (err.empty()) err = "memory_get requires an id";
-                    return tool_validation_failure("tool.memory_get.invalid_id", std::move(err), "Memory get requires a valid id.");
-                }
-                const auto id = arguments["id"].get<std::string>();
-                if (id.empty() || id.size() > 256) return tool_validation_failure("tool.memory_get.out_of_bounds", "memory id is out of bounds", "Memory id is out of bounds.");
-                const auto memory = bindings.memory_store->get(id, err);
-                if (!err.empty()) return tool_execution_failure("tool.memory_get.load_failed", std::move(err), "Memory could not be loaded.");
-                if (!memory || !common_memory_scope_matches(*memory, bindings.memory_query)) {
-                    return tool_not_found_failure("tool.memory_get.unavailable", "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
-                }
-                return tool_success_json(common_tool_memory_get_result_to_json(*memory));
-            }, error);
-        } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_store) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                common_memory_tool_context context;
-                context.query_defaults = bindings.memory_query;
-                context.allow_write_proposals = true;
-                context.now = std::time(nullptr);
-                context.embed = bindings.embed_memory_query;
-
-                common_memory_tool_remember_result remember_result;
-                common_memory_tool_service service(*bindings.memory_store);
-                std::string err;
-                if (!service.remember_proposal(context, input, remember_result, err)) {
-                    return tool_execution_failure("tool.memory_remember.policy_failed", std::move(err), "Memory remember proposal failed.");
-                }
-
-                const auto & proposal = remember_result.proposal;
-                const auto & decision = remember_result.decision;
-                common_tool_memory_remember_payload response{
-                    true,
-                    common_memory_remember_decision_name(decision.decision),
-                    decision.reason,
-                    proposal.kind,
-                    proposal.scope,
-                    proposal.content,
-                    decision.related_hits.size(),
-                };
-                for (const auto & hit : decision.related_hits) {
-                    response.related.push_back({
-                        hit.memory.id,
-                        hit.memory.kind,
-                        hit.final_score,
-                        hit.memory.content,
-                    });
-                }
-                if (decision.record.has_value()) {
-                    if (!bindings.memory_store->put(*decision.record, err)) {
-                        response.ok = false;
-                        response.decision = "reject";
-                        response.error = "failed to persist accepted memory: " + err;
-                    } else {
-                        response.id = decision.record->id;
-                    }
-                }
-                return tool_success_text(common_tool_memory_remember_result_to_json(response).dump());
-            }, error, false, true);
-        } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_remember_proposal) {
-            installed = register_definition(definition, registry, bindings.memory_remember_proposal, error, false, true);
         } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && bindings.plan_id != nullptr && !bindings.plan_id->empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err;

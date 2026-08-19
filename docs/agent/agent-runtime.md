@@ -2486,6 +2486,20 @@ tools/
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
+common/agent/tooling/
+  adapters/         native tool-family registration and execution adapters
+    families/        family-specific adapters, starting with memory
+  catalog/           tool definitions and model projections
+  contracts/         tool/runtime/schema result contracts
+  registry/          registered native tool handlers
+  bridge/            chat/tool bridge contracts
+  routing/           tool navigation and routing
+  schema/            compact schema rendering
+
+common/agent/sandbox/   sandbox policy, backends and runtime contracts
+common/agent/thinking/  reflection, deliberation, research and phases
+common/agent/learning/  memory learning and blueprint selection
+
 pocs/
   archive/     older experiments and superseded slices
 ```
@@ -2497,6 +2511,24 @@ Short responsibility summary:
 - `common/resource`: host-neutral resource references, authority descriptors, and later broader resource contracts for larger working material.
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
+- `common/agent/tooling`: the reusable tool layer. `catalog` describes tools,
+  `contracts` owns neutral result/schema contracts, `registry` owns installed
+  handlers, `bridge` adapts tool calls to runtime surfaces, `routing` and
+  `schema` own navigation and compact rendering, and `adapters` owns native
+  execution.
+- `common/agent/tooling/adapters/families`: family-specific registration and
+  execution code. The memory family is the first extracted family; its
+  service/policy behavior stays together while the top-level adapter remains
+  responsible for catalog iteration and result accounting. New families
+  should be extracted only when the boundary is real, not merely to create
+  smaller files.
+- `common/agent/sandbox`: sandbox contracts, policy, runtime selection and
+  concrete local/container/Kubernetes backends.
+- `common/agent/thinking`: reflection, deliberation, research orchestration
+  and thinking phases; `thinking/research` contains research-specific seams.
+- `common/agent/learning`: durable learning decisions and blueprint selection;
+  it is separate from thinking because learning persists or promotes outcomes
+  after execution rather than selecting the current reasoning phase.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
 - `tools/agent/cli`: command-line entrypoints, selection/config parsing, and CLI-specific host adapters.
 - `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
@@ -2560,6 +2592,16 @@ The command-line entrypoints and adapters now live under
 
 Tool-provider/view logic, tool-runtime adapters and host-owned tool
 selection/result contracts now live under `tools/agent/tooling`.
+
+The native adapter cleanup has started without introducing a second
+registration pipeline. `common/agent/tooling/adapters/tool-adapters.cpp`
+remains the composition seam and delegates complete families to
+`tooling/adapters/families/`; the memory family is now in
+`memory-adapters.{h,cpp}`. This keeps catalog iteration, availability
+accounting and registry ownership in one place while allowing a family to
+own its bindings, validation and policy behavior. Future repository, data,
+resource or web families should follow this pattern only when their boundary
+is genuinely independent.
 
 That compatibility-header bridge has now effectively been retired for the active agent path. The branch no longer keeps a forwarder header layer under `pocs/agent`; active code, tests, and smoke binaries now include the concrete `tools/agent/...` locations directly. In practice that means `pocs/agent` is now much closer to its intended role in this phase: smoke harnesses, a few helper binaries, and migration-era build glue, rather than a second include tree pretending to own the runtime.
 
