@@ -1,7 +1,8 @@
 // Optional post-turn durable-memory learning, owned by the native runtime.
 #pragma once
 
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-request.h"
+#include "agent/contracts/agent-result.h"
 #include "memory/memory-candidate.h"
 #include "memory/memory-policy.h"
 #include "plan/plan-store.h"

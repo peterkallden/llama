@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-request.h"
 #include "agent/thinking/research/research-contract.h"
 
 bool common_agent_research_create_workspace(

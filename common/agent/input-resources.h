@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-request.h"
 
 #include <sstream>
 
