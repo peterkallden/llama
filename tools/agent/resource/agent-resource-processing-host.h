@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent/sandbox-contract.h"
+#include "agent/sandbox/sandbox-contract.h"
 #include "tools/agent/tooling/agent-sandbox-helper.h"
 #include "agent/workspace-contract.h"
 

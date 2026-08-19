@@ -1,7 +1,7 @@
 #pragma once
 #include "agent/agent-contract.h"
 #include "agent/agent-context-budgets.h"
-#include "agent/tool-runtime-contract.h"
+#include "agent/tooling/contracts/tool-runtime-contract.h"
 #include "plan/plan-store.h"
 #include "runtime/runtime-operation.h"
 #include <memory>

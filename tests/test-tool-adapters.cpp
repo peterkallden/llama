@@ -1,4 +1,4 @@
-#include "agent/tool-adapters.h"
+#include "agent/tooling/adapters/tool-adapters.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 

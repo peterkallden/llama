@@ -1,8 +1,8 @@
-#include "agent/research/research-contract.h"
-#include "agent/research/research-controller.h"
-#include "agent/research/research-workspace-factory.h"
-#include "agent/research/research-workspace.h"
-#include "agent/research/research-assessor.h"
+#include "agent/thinking/research/research-contract.h"
+#include "agent/thinking/research/research-controller.h"
+#include "agent/thinking/research/research-workspace-factory.h"
+#include "agent/thinking/research/research-workspace.h"
+#include "agent/thinking/research/research-assessor.h"
 #include "agent/input-resources.h"
 
 #ifdef NDEBUG

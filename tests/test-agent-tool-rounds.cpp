@@ -1,5 +1,5 @@
 #include "agent/agent-runtime.h"
-#include "agent/tool-registry.h"
+#include "agent/tooling/registry/tool-registry.h"
 #include "plan/plan-in-memory.h"
 #include "test-tool-runtime-registry-adapter.h"
 

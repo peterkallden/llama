@@ -35,7 +35,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/agent-resource-processing-service.cpp
     ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/resource/agent-resource-processing-cache.cpp
-    ../../common/agent/sandbox-local-runtime.cpp
+    ../../common/agent/sandbox/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/data/agent-dataset-importer.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
@@ -172,7 +172,7 @@ target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-prot
 
 set(AGENT_MCP_SERVER_SOURCES
     ../../common/agent/dataset-contracts.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
@@ -386,8 +386,8 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-workspace-operation-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-workspace-operation-smoke.cpp
-    ../../common/agent/research/research-workspace-factory.cpp
-    ../../common/agent/research/research-workspace.cpp
+    ../../common/agent/thinking/research/research-workspace-factory.cpp
+    ../../common/agent/thinking/research/research-workspace.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
@@ -453,7 +453,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-http-inbound-dispatcher-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-server-smoke.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -484,7 +484,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-agent-tools-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-agent-tools-smoke.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -526,7 +526,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-stdio-fake-server)
 add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-stdio-fake-server.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

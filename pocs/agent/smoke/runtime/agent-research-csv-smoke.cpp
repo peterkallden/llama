@@ -1,5 +1,5 @@
-#include "agent/research/research-runner.h"
-#include "agent/research/research-workspace.h"
+#include "agent/thinking/research/research-runner.h"
+#include "agent/thinking/research/research-workspace.h"
 
 #include <algorithm>
 #include <cstdio>

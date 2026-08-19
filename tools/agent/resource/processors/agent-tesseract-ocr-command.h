@@ -2,7 +2,7 @@
 
 #include "agent-resource-backend.h"
 #include "resource/resource-contract.h"
-#include "agent/sandbox-contract.h"
+#include "agent/sandbox/sandbox-contract.h"
 
 #include <cstdint>
 #include <string>

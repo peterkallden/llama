@@ -1,5 +1,5 @@
-#include "agent/research/research-workspace-context.h"
-#include "agent/research/research-workspace-factory.h"
+#include "agent/thinking/research/research-workspace-context.h"
+#include "agent/thinking/research/research-workspace-factory.h"
 #include "agent/workspace-manager.h"
 
 #include <cassert>

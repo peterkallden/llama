@@ -61,7 +61,7 @@ remote MCP tools. Its temporary workspace composes existing plans,
 observations, resource references, trace entries, and turn/session state. It
 does not create a parallel persistence model.
 
-The first research contract slice now exists in `common/agent/research`. It is
+The first research contract slice now exists in `common/agent/thinking/research`. It is
 an ephemeral, scope-bound workspace model for objectives, gaps, tasks, sources,
 evidence, budgets, coverage, and a normalized result. Sources may point at the
 existing resource store through `common_runtime_resource_ref`; the workspace
@@ -4408,8 +4408,54 @@ selects the stdio or HTTP client; transport-specific construction stays out of
 the host adapter. These seams preserve host ownership of executable details
 while making the assembly paths independently testable.
 
-The catalog projection code now lives under `common/agent/catalog/`. Its
+The catalog projection code now lives under `common/agent/tooling/catalog/`. Its
 responsibility is limited to deriving conservative model input/result views
 from full tool definitions. Catalog bootstrap and profile resolution remain in
-`tool-catalog.cpp`; projection rules are kept separate so model visibility
+`tooling/catalog/tool-catalog.cpp`; projection rules are kept separate so model visibility
 does not become mixed with registration and policy loading.
+
+## Agent source layout
+
+The common agent code is organized by responsibility rather than by the
+alphabetical origin of a file:
+
+```text
+common/agent/
+  thinking/   reflective/deliberate/research mode semantics
+  learning/   durable memory learning and procedural blueprint reuse
+  tooling/    tool contracts, catalog, registry, routing and adapters
+  sandbox/    backend-neutral sandbox contracts and runtimes
+
+  (core, context, runtime and data files remain at this level for now;
+   they are later candidates only when a clear maintenance boundary exists)
+
+common/plan/
+  ...         plan IR, persistence, scheduling and canonical bindings
+```
+
+`common/agent/tooling/` is intentionally separate from `common/plan/`.
+Tools describe capabilities and execute semantic requests; plan bindings
+translate those requests into host-owned step identities and JSON pointers.
+The binding layer therefore remains part of the plan IR and must not be
+duplicated in tool adapters.
+
+The `thinking` layer may emit bounded reflection or learning signals, but it
+does not own persistence. `learning` owns candidate extraction, durable memory
+decisions and verified procedure/blueprint reuse. `research` is a thinking
+mode with a substantial workspace/controller/verification subsystem and may
+therefore have its own child directory under `thinking`.
+
+When adding code, prefer the following seams:
+
+* model/tool contracts and projections belong under `tooling`;
+* backend execution policies and runtimes belong under `sandbox`;
+* host-specific composition belongs under `tools/agent/host`;
+* plan normalization, dependency inference and binding materialization belong
+  under `common/plan`;
+* persistent cross-turn reuse belongs under `learning`, not under a thinking
+  mode.
+
+Directories should be introduced when a responsibility has several cohesive
+  files. A new directory should not be used merely to hide one unrelated
+  implementation file, and a tool family should not acquire a separate
+  adapter until the shared adapter file has a real maintenance boundary.

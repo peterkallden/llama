@@ -1,5 +1,5 @@
-#include "agent/tool-catalog.h"
-#include "agent/tool-schema-compact.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 #include "plan/plan-contract.h"
 
 #include <cassert>

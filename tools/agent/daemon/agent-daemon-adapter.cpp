@@ -1,6 +1,6 @@
 #include "agent-daemon-adapter.h"
 
-#include "agent/deliberation-policy.h"
+#include "agent/thinking/deliberation-policy.h"
 
 #include "../cli/agent-cli-selection.h"
 #include "agent-daemon-dispatcher.h"

@@ -1,4 +1,4 @@
-#include "agent/memory-learning.h"
+#include "agent/learning/memory-learning.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tools/agent/cli/agent-cli-options.h"
-#include "agent/tool-catalog.h"
+#include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/data-store.h"
 
 #include "../host/agent-host-mcp-provider-config.h"

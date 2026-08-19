@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agent-host-config.h"
-#include "agent/tool-adapters.h"
-#include "agent/sandbox-runtime.h"
+#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/sandbox/sandbox-runtime.h"
 #include "agent/workspace-manager.h"
 
 #include <functional>

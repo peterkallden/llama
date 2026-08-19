@@ -4,7 +4,7 @@
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "agent/agent-bootstrap.h"
-#include "agent/blueprint-selector.h"
+#include "agent/learning/blueprint-selector.h"
 
 #include <algorithm>
 #include <cstdio>

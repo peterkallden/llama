@@ -1,9 +1,9 @@
 #include "agent-sandbox-assembly.h"
 
-#include "agent/sandbox-docker-runtime.h"
-#include "agent/sandbox-kubernetes-runtime.h"
-#include "agent/sandbox-local-runtime.h"
-#include "agent/sandbox-policy.h"
+#include "agent/sandbox/sandbox-docker-runtime.h"
+#include "agent/sandbox/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-local-runtime.h"
+#include "agent/sandbox/sandbox-policy.h"
 #include "tools/agent/tooling/agent-sandbox-helper.h"
 
 #include <utility>

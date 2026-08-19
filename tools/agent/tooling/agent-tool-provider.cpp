@@ -3,9 +3,9 @@
 #include "agent-tool-result-json-contracts.h"
 #include "agent/agent-runtime.h"
 
-#include "agent/tool-registry.h"
-#include "agent/schema-contract.h"
-#include "agent/tool-schema-compact.h"
+#include "agent/tooling/registry/tool-registry.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
 #include <atomic>

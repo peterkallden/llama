@@ -1,6 +1,6 @@
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-package-json.h"
-#include "agent/blueprint-selector.h"
+#include "agent/learning/blueprint-selector.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-blueprint.h"
 #include "plan/plan-in-memory.h"

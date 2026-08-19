@@ -2,8 +2,8 @@
 
 #include "tools/agent/resource/agent-resource-processing-service.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
-#include "agent/sandbox-runtime.h"
-#include "agent/sandbox-policy.h"
+#include "agent/sandbox/sandbox-runtime.h"
+#include "agent/sandbox/sandbox-policy.h"
 #include "agent/workspace-manager.h"
 
 #include <functional>
