@@ -4,6 +4,7 @@
 #include "agent/tooling/adapters/families/document-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
+#include "agent/tooling/adapters/families/resource-adapters.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "base64.hpp"
@@ -980,6 +981,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_diagnostics_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The diagnostics family owns compiler, symbol and test-analysis adapters.
+        } else if (common_try_register_resource_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // The resource family owns resource inspection, reads and representation materialization.
         } else if (definition.executor_id == "builtin.calculator") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err;
@@ -1024,146 +1028,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 }
                 return bindings.sandbox_execute(std::move(request));
             }, error, false, true);
-        } else if (definition.executor_id == "builtin.resource_inspect" && bindings.resource_runtime.store != nullptr) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err;
-                json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("uri") || !arguments["uri"].is_string()) {
-                    if (err.empty()) err = "resource_inspect requires a uri";
-                    return tool_validation_failure("tool.resource_inspect.invalid_uri", std::move(err), "Resource inspection requires a valid resource URI.");
-                }
-                const auto uri = trim_copy(arguments["uri"].get<std::string>());
-                if (uri.empty() || uri.size() > 512) {
-                    return tool_validation_failure("tool.resource_inspect.invalid_uri", "resource_inspect uri is out of bounds", "Resource inspection requires a bounded resource URI.");
-                }
-
-                agent_resource_descriptor descriptor;
-                const auto authority = make_resource_read_authority(bindings);
-                if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
-                    return tool_not_found_failure("tool.resource_inspect.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
-                }
-
-                return common_tool_execution_result::success(
-                    common_tool_resource_inspect_result_to_json({
-                        descriptor,
-                        agent_resource_available_representations(descriptor),
-                    }).dump(),
-                    "Resource descriptor and available representations loaded from the host-owned resource store.");
-            }, error);
-        } else if (definition.executor_id == "builtin.resource_read" && bindings.resource_runtime.store != nullptr) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err;
-                json arguments;
-                if (!parse_object(input, arguments, err) || !arguments.contains("uri") || !arguments["uri"].is_string()) {
-                    if (err.empty()) err = "resource_read requires a uri";
-                    return tool_validation_failure("tool.resource_read.invalid_uri", std::move(err), "Resource read requires a valid resource URI.");
-                }
-                const auto uri = trim_copy(arguments["uri"].get<std::string>());
-                const auto representation = trim_copy(arguments.value("representation", std::string("text")));
-                if (representation.empty() || representation.size() > 64) {
-                    return tool_validation_failure("tool.resource_read.invalid_representation", "resource_read representation is out of bounds", "Resource representation must be a bounded non-empty identifier.");
-                }
-                if (representation != "text" && representation != "bytes") {
-                    return tool_not_found_failure("tool.resource_read.representation_unavailable", "resource representation is not available in the current runtime", "The requested resource representation is not available.");
-                }
-                int64_t offset = 0;
-                if (arguments.contains("offset")) {
-                    if (!arguments["offset"].is_number_integer()) {
-                        return tool_validation_failure("tool.resource_read.invalid_offset", "resource_read offset must be an integer", "Resource read offset must be a non-negative integer.");
-                    }
-                    offset = arguments["offset"].get<int64_t>();
-                }
-                const int max_bytes = arguments.value("max_bytes", 8192);
-                if (uri.empty() || uri.size() > 512 || offset < 0 || offset > 1073741824LL || max_bytes < 1 || max_bytes > 32768) {
-                    return tool_validation_failure("tool.resource_read.out_of_bounds", "resource_read arguments are out of bounds", "Resource read arguments are out of bounds.");
-                }
-
-                agent_resource_descriptor descriptor;
-                const auto authority = make_resource_read_authority(bindings);
-                if (!bindings.resource_runtime.store->stat(uri, authority, descriptor, err)) {
-                    return tool_not_found_failure("tool.resource_read.unavailable", std::move(err), "Resource is unavailable in the current runtime scope.");
-                }
-                if (representation == "text" && !agent_resource_has_text_representation(descriptor) &&
-                        (bindings.resource_processing_service != nullptr ||
-                         static_cast<bool>(bindings.resource_processing_provider_factory))) {
-                    agent_resource_processing_binding_request processing_request;
-                    processing_request.source_uri = descriptor.uri;
-                    processing_request.operation_id = "resource-read/" +
-                        (bindings.resource_runtime.turn_id.empty()
-                            ? std::string("turn")
-                            : bindings.resource_runtime.turn_id) +
-                        "/" + std::to_string(std::hash<std::string>{}(uri));
-                    processing_request.authority = authority;
-                    processing_request.media_type.declared_type = descriptor.mime_type;
-                    processing_request.target_representation = "text";
-                    std::shared_ptr<agent_resource_processing_provider> operation_provider;
-                    agent_resource_processing_provider * provider = bindings.resource_processing_service;
-                    if (bindings.resource_processing_provider_factory) {
-                        operation_provider = bindings.resource_processing_provider_factory(processing_request);
-                        provider = operation_provider.get();
-                    }
-                    if (provider == nullptr) {
-                        return tool_execution_failure(
-                            "tool.resource_read.processing_failed",
-                            "The resource processor provider could not be created.",
-                            "The resource representation could not be materialized.");
-                    }
-                    const auto processed = provider->process(processing_request);
-                    if (!processed.success || processed.resources.empty()) {
-                        if (processed.failure_code == "resource.unsupported_media_type" ||
-                                processed.failure_code == "resource.text_representation_unavailable" ||
-                                processed.failure_code == "resource.ocr_language_uncertain") {
-                            return tool_not_found_failure(
-                                "tool.resource_read.representation_unavailable",
-                                processed.safe_summary,
-                                "The requested resource representation is not available.");
-                        }
-                        return tool_execution_failure(
-                            "tool.resource_read.processing_failed",
-                            processed.safe_summary,
-                            "The resource representation could not be materialized.");
-                    }
-                    descriptor = {};
-                    if (!bindings.resource_runtime.store->stat(
-                            processed.resources.front().uri, authority, descriptor, err) ||
-                            !agent_resource_has_text_representation(descriptor)) {
-                        return tool_execution_failure(
-                            "tool.resource_read.processing_failed",
-                            "The processor did not return a readable text resource.",
-                            "The resource representation could not be materialized.");
-                    }
-                } else if (representation == "text" && !agent_resource_has_text_representation(descriptor)) {
-                    return tool_not_found_failure(
-                        "tool.resource_read.representation_unavailable",
-                        "text representation is not available for resource media type " + descriptor.mime_type,
-                        "The requested resource representation is not available.");
-                }
-
-                std::string content;
-                if (representation == "bytes" && !bindings.resource_runtime.store->read_bytes_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, err)) {
-                    return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource bytes could not be read.");
-                }
-                if (representation == "text" && !bindings.resource_runtime.store->read_text_range(uri, authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, err)) {
-                    return tool_execution_failure("tool.resource_read.read_failed", std::move(err), "Resource content could not be read.");
-                }
-
-                std::string content_encoding;
-                if (representation == "bytes") {
-                    content = base64::encode(content);
-                    content_encoding = "base64";
-                }
-
-                return common_tool_execution_result::success(
-                    common_tool_resource_read_result_to_json({
-                        descriptor,
-                        representation,
-                        content,
-                        content_encoding,
-                    }).dump(),
-                    descriptor.metadata.content_summary.empty()
-                        ? "Resource content loaded from the host-owned resource store."
-                        : descriptor.metadata.content_summary);
-            }, error);
         } else if (definition.executor_id == "builtin.web_search") {
             if (bindings.web_search) {
                 installed = register_definition(definition, registry, bindings.web_search, error);

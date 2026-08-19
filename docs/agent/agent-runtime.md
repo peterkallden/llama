@@ -272,6 +272,32 @@ names, mount paths or Kubernetes Job details.
 
 ## Tool execution boundaries
 
+### Adapter family layout
+
+Native tool registration is kept as one routing seam, while implementation is
+grouped by responsibility under `common/agent/tooling/adapters/families/`.
+The current families are deliberately narrow:
+
+| Family | Owns |
+| --- | --- |
+| `memory-adapters` | memory search, retrieval and mutation policy |
+| `data-adapters` | dataset inspection plus data/statistics operations |
+| `document-adapters` | document table discovery and table extraction |
+| `repository-adapters` | workspace/repository filesystem and Git operations |
+| `diagnostics-adapters` | compiler output, symbol/reference lookup, formatting and test-failure analysis |
+| `resource-adapters` | resource inspection, bounded reads and processor-backed representation materialization |
+
+`tool-adapters.cpp` remains the routing and compatibility seam. It should not
+become a second implementation of a family. Shared registration and failure
+helpers live in `tooling/adapters/support/adapter-support.h`; family-specific contracts remain
+with the family. Artifact export is still at the resource/artifact boundary in
+the routing seam because it also owns dataset-to-CSV export and provenance;
+that is an intentional next extraction, not a second resource-read path.
+
+The rule for future extraction is: move a coherent executor family together,
+preserve its host-owned bindings and tests, then leave one explicit family call
+in the router. Do not split a family merely to reduce line count.
+
 Tools are classified by where their work is performed and which host-owned
 authority they use. The classification is a runtime design constraint, not a
 choice exposed to the client:
