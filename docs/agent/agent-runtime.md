@@ -1424,10 +1424,11 @@ URIs before the document representation binding is called.
 ### Compact tool notation
 
 The runtime generates a compact, line-oriented model description from the
-strict input and result schemas. This is a presentation projection only. It is
-not a second tool contract and the model still returns JSON tool arguments.
-The strict schema remains the source of truth for validation, bounds, enum
-values, defaults, and host dispatch.
+model projections of the host input and result schemas. If no projection is
+provided, the full schema is used as the fallback. This is a presentation
+projection only. It is not a second execution contract and the model still
+returns JSON tool arguments. The full host schema remains the source of truth
+for validation, bounds, enum values, defaults, and host dispatch.
 
 For example, the strict resource_read input schema is projected to:
 
@@ -1493,6 +1494,52 @@ model-tool contract before rendering text. This keeps semantic fields such as
 `may_be_inferred` separate from JSON Schema syntax and leaves room for the
 same projection to provide repair hints or tool-selection metadata later.
 The full host schema remains authoritative for execution and diagnostics.
+
+The contract rule of thumb is:
+
+    host contract  = everything execution, validation and dataflow need
+    model contract = the smallest semantic choice the model must make
+    model IR       = the derived bridge used to render the model contract
+
+For example, a host contract may contain:
+
+    dataset: dataset_ref
+    measures: measure[]
+    max_scan_rows: integer
+    materialize: boolean
+    result_dataset: dataset_ref
+
+while the model contract can expose only:
+
+    dataset?: dataset_ref [may be inferred]
+    measures: measure[]
+
+The model IR records the field name, semantic type, display type, whether the
+model must provide it, and whether the host may infer it. It does not replace
+the host schema and it must not become a second source of truth.
+
+The inference rule is deliberately narrow:
+
+    optional typed input
+        + simple contract
+        + exactly one compatible completed predecessor output
+            => host may insert the binding
+
+Zero candidates leave the input unresolved. Multiple candidates are an
+ambiguity and require an explicit model reference. A typed field is therefore
+not automatically a semantic choice for the model, and `may be inferred` does
+not mean that inference will always succeed. The first generated projection
+currently covers simple optional `dataset_ref` inputs; explicit overrides and
+more complex alternatives remain available for cases such as `data.join` or
+`anyOf` contracts.
+
+When adding a new tool, define the complete host input/result schemas and
+their `x-agent-type` values first. Add a model projection only when the
+default compact view exposes too much or too little. Treat `left`/`right`,
+source selection and other semantic choices as explicit until the plan
+context can prove them unambiguously. This keeps a new simple dataset tool
+from needing a new renderer special case while avoiding unsafe automatic
+wiring for branching operations.
 
 Native repair diagnostics use the full host input schema even when the model
 view hides host-owned controls or an autowire-capable input. Providers without
