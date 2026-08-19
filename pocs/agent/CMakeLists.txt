@@ -95,6 +95,16 @@ set(AGENT_RUNTIME_ENGINE_SOURCES
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
 
+# The host facade is the next seam above the execution engine. Keep resident
+# lifecycle forwarding here; CLI/daemon/MCP assembly remains in support until
+# its provider dependencies can be extracted without a cycle.
+set(AGENT_RUNTIME_HOST_SOURCES
+    ../../tools/agent/runtime/agent-runtime-host.cpp
+    ../../tools/agent/runtime/agent-runtime-resident.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
+
 # Keep the host/runtime assembly independent from the high-churn resource,
 # data and diagnostics implementations. These are agent-only libraries; the
 # upstream llama.cpp targets remain untouched.
@@ -258,6 +268,31 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-runtime-host ${AGENT_RUNTIME_HOST_SOURCES})
+target_include_directories(llama-agent-runtime-host
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_compile_features(llama-agent-runtime-host PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-host
+    PUBLIC
+        llama-agent-runtime-engine
+        llama-agent-memory
+        llama-common
+        llama-agent-core
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-host PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 # Shared implementation for the agent CLI, daemon, and model-free smoke
 # targets.  Keep the source list here so the implementation is compiled once
 # per build configuration instead of once per executable target.
@@ -292,6 +327,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-agent-data
         llama-agent-diagnostics
         llama-agent-runtime-engine
+        llama-agent-runtime-host
         server-context
         Threads::Threads
     PRIVATE
@@ -406,6 +442,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-mcp-core
         llama-agent-mcp-server
         llama-agent-runtime-engine
+        llama-agent-runtime-host
         llama-agent-runtime-support
         llama-agent-resource
         llama-agent-data

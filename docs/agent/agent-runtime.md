@@ -3987,14 +3987,17 @@ common/*
 #### Long-term shared-library backlog
 
 The next library split should follow execution seams rather than create one
-library per directory. The planned order is:
+library per directory. The first two slices are now implemented; the remaining
+order is:
 
 ```text
-1. llama-agent-runtime-engine.so
+1. llama-agent-runtime-engine.so (implemented)
    session, execution, turn-driver, inference executor and capacity gate
 
-2. llama-agent-runtime-host.so
-   runtime host, resident runtime, assembly and plan orchestration
+2. llama-agent-runtime-host.so (initial lifecycle slice implemented)
+   runtime host and resident lifecycle; assembly and plan orchestration remain
+   in support until their provider dependencies can be extracted without a
+   cycle
 
 3. llama-agent-cli.so
    CLI-specific host, options, generation and selection code
@@ -4006,7 +4009,8 @@ library per directory. The planned order is:
    MCP HTTP/stdio client and client-factory code
 ```
 
-The existing libraries remain the foundation of that plan:
+The existing libraries remain the foundation of that plan, together with the
+two newly extracted runtime libraries:
 
 ```text
 llama-agent-core.so
@@ -4017,13 +4021,16 @@ llama-agent-tooling.so
 llama-agent-resource.so
 llama-agent-data.so
 llama-agent-diagnostics.so
+llama-agent-runtime-engine.so
+llama-agent-runtime-host.so
 ```
 
 This is a build-isolation backlog, not a requirement to expose every library
 as a public ABI. A candidate split must first have an acyclic target graph,
 stable narrow headers and a measurable recompilation benefit. The first
-implementation slice is therefore `llama-agent-runtime-engine`; CLI, daemon
-and MCP extraction follow only after that boundary builds and tests cleanly.
+implementation slices are therefore `llama-agent-runtime-engine` and the
+runtime-host lifecycle facade; CLI, daemon and MCP extraction follow only
+after their provider dependencies have a similarly clean boundary.
 
 `common/agent` must not depend on implementation under `tools/agent`. Daemon
 services, MCP servers, and optional Cozo storage may be split into narrower
