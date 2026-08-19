@@ -31,6 +31,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
     ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/resource/agent-resource-processing-cache.cpp
     ../../common/agent/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp

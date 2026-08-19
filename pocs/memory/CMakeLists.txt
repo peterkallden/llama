@@ -17,6 +17,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp

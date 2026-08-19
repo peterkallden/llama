@@ -4389,6 +4389,14 @@ select an executable, image, workspace, or backend. Adding a processor should
 therefore require a descriptor/registration entry and a processor factory,
 not another parallel set of model-facing arguments or runtime policy flags.
 
+The CLI keeps this boundary in four small stages: normalized host
+configuration, processor dispatch, operation-scoped assembly, and processing
+service execution. The dispatch code chooses a policy; the resource
+processor factory creates the sandbox host, registry and processor instances;
+the service then executes through the resource-processing contract. This keeps
+selection tests independent of process construction and keeps the CLI host
+adapter from owning every processor-specific `make_shared` branch.
+
 The catalog projection code now lives under `common/agent/catalog/`. Its
 responsibility is limited to deriving conservative model input/result views
 from full tool definitions. Catalog bootstrap and profile resolution remain in
