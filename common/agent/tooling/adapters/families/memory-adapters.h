@@ -1,6 +1,8 @@
 #pragma once
 
-#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/adapters/adapter-bindings.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/registry/tool-registry.h"
 
 // Registers one memory-family adapter. Returns true when the definition is a
 // memory executor, including when it is unavailable because its host binding

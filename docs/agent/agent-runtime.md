@@ -339,6 +339,12 @@ with the family. Artifact export is still at the resource/artifact boundary in
 the routing seam because it also owns dataset-to-CSV export and provenance;
 that is an intentional next extraction, not a second resource-read path.
 
+Family headers consume the small `tooling/adapters/adapter-bindings.h` contract
+for host-owned stores, processors, diagnostics and sandbox callbacks. They do
+not include the complete router header merely to name their bindings. The
+router header remains the public registration entry point; the bindings header
+is the lower-level dependency seam used by individual families.
+
 The rule for future extraction is: move a coherent executor family together,
 preserve its host-owned bindings and tests, then leave one explicit family call
 in the router. Do not split a family merely to reduce line count.
