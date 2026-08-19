@@ -70,7 +70,7 @@ evidence-based milestone record is maintained in
   They are not GitHub Release assets; open a successful workflow run and
   download its artifact. Development archive names have the form
   `llama-agent-dev-<timestamp>-run-<run-id>.tar.gz`.
-- [Release container images](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
+- [Release container images](https://github.com/users/peterkallden/packages?repo_name=peterkallden%2Fllama)
   are published to GitHub Container Registry. Pull a release image with:
 
   ```bash
@@ -79,7 +79,7 @@ evidence-based milestone record is maintained in
   docker pull ghcr.io/peterkallden/llama/llama-agent:vulkan1.4-amd64-latest
   ```
 
-  The [development container package](https://github.com/peterkallden/llama/pkgs/container/llama-agent-dev)
+  The [development container package](https://github.com/users/peterkallden/packages/container/package/llama%2Fllama-agent-dev)
   is published separately from the verified `.tar.gz` workflow artifact. The
   development workflow currently publishes a CPU image:
 
@@ -94,7 +94,8 @@ evidence-based milestone record is maintained in
 
   The release image labels use the short backend labels `cuda13` and
   `vulkan1.4`. The exact build versions are recorded in the image metadata:
-  CUDA 13.3 and Vulkan SDK 1.4.357.0.
+  CUDA 13.3 and Vulkan SDK 1.4.357.0. The Linux release workflow currently
+  provisions Vulkan SDK 1.4.350.1 for the native Linux Vulkan package.
 
 ## Quick start
 
@@ -162,7 +163,7 @@ The packaged Docker image uses persistent mounts for `/models`,
 `/etc/llama-agent`, `/var/lib/llama-agent/data`, and `/var/log/llama-agent`.
 The entrypoint bootstraps `/etc/llama-agent/config.json` only when it is
 missing. Published images are
-available through the repository's [Packages](https://github.com/peterkallden/llama/pkgs/container/llama-agent)
+available through the owner's [Packages](https://github.com/users/peterkallden/packages?repo_name=peterkallden%2Fllama)
 page when the corresponding workflows have completed successfully.
 
 ## Testing and assurance
