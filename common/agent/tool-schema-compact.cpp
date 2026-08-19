@@ -145,7 +145,7 @@ std::string render_fields(const std::vector<common_model_tool_field> & fields, b
     for (const auto & field : fields) {
         if (!first) out << (inputs ? "; " : ", ");
         first = false;
-        out << field.name << (field.required ? "" : "?") << ':' << field.display_type;
+        out << field.name << (inputs && !field.required ? "?" : "") << ':' << field.display_type;
         if (field.may_be_inferred) out << " [may be inferred]";
     }
     return out.str();

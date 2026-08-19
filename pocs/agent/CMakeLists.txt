@@ -1107,6 +1107,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
     llama-agent-resource-backend-smoke
+    llama-agent-resource-processor-dispatch-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
@@ -1180,6 +1181,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
     llama-agent-resource-backend-smoke
+    llama-agent-resource-processor-dispatch-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
