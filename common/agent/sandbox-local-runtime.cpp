@@ -89,8 +89,8 @@ bool common_agent_sandbox_local_runtime::execute(
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    const int exit_code = process.join();
     if (output_reader.joinable()) output_reader.join();
+    const int exit_code = process.join();
 
     result.exit_code = exit_code;
     result.stdout_excerpt = std::move(output);
