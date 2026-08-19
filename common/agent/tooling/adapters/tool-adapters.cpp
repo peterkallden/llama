@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/data-adapters.h"
+#include "agent/tooling/adapters/families/document-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
@@ -968,6 +969,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_data_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The data family owns dataset, data and statistics adapters.
+        } else if (common_try_register_document_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // The document family owns document table projection adapters.
         } else if (definition.executor_id == "builtin.calculator") {
             installed = register_definition(definition, registry, [](const std::string & input) {
                 std::string err;
@@ -1196,39 +1200,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     edges.push_back({{"from", from}, {"to", to}});
                 }
                 return tool_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}});
-            }, error);
-        } else if (definition.executor_id == "builtin.document.tables" && bindings.document_tables) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err;
-                json arguments;
-                if (!parse_object(input, arguments, err) ||
-                        !arguments.contains("resource") || !arguments["resource"].is_string()) {
-                    return tool_validation_failure("tool.document.tables.invalid_arguments",
-                        err.empty() ? "document.tables requires resource" : std::move(err));
-                }
-                if (arguments.value("max_results", 32) < 1 || arguments.value("max_results", 32) > 64) {
-                    return tool_validation_failure("tool.document.tables.invalid_limit", "document.tables max_results is out of bounds");
-                }
-                return bindings.document_tables(arguments.dump());
-            }, error);
-        } else if (definition.executor_id == "builtin.document.table" && bindings.document_table) {
-            installed = register_definition(definition, registry, [bindings](const std::string & input) {
-                std::string err;
-                json arguments;
-                if (!parse_object(input, arguments, err) ||
-                        !arguments.contains("resource") || !arguments["resource"].is_string()) {
-                    return tool_validation_failure("tool.document.table.invalid_arguments",
-                        err.empty() ? "document.table requires resource" : std::move(err));
-                }
-                size_t locators = 0;
-                for (const auto * key : {"table", "table_index", "node_id"}) {
-                    if (arguments.contains(key)) ++locators;
-                }
-                if (locators != 1) {
-                    return tool_validation_failure("tool.document.table.invalid_locator",
-                        "document.table requires exactly one of table, table_index or node_id");
-                }
-                return bindings.document_table(arguments.dump());
             }, error);
         } else if (definition.executor_id == "builtin.artifact.export" && bindings.resource_runtime.store != nullptr) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
