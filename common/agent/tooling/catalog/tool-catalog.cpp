@@ -96,6 +96,31 @@ std::vector<common_tool_definition> builtin_definitions() {
         for (auto & definition : definitions) {
             if (definition.name == name) {
                 definition.model_input_schema_json = schema;
+                // Explicit model projections still inherit host-owned
+                // inferability.  The projection may hide bounds and control
+                // fields, but it must not hide the fact that a typed input
+                // can be supplied by deterministic host dataflow.
+                auto model = json::parse(definition.model_input_schema_json, nullptr, false);
+                const auto host = json::parse(definition.input_schema_json, nullptr, false);
+                if (model.is_object() && host.is_object() &&
+                        model.contains("properties") && host.contains("properties")) {
+                    auto & properties = model["properties"];
+                    const auto host_properties = host["properties"];
+                    json inferable = json::array();
+                    if (properties.is_object() && host_properties.is_object()) {
+                        for (auto it = properties.begin(); it != properties.end(); ++it) {
+                            const auto host_it = host_properties.find(it.key());
+                            if (host_it != host_properties.end() &&
+                                    host_it.value().is_object() &&
+                                    host_it.value().value("x-agent-inferable", false)) {
+                                it.value()["x-agent-inferable"] = true;
+                                inferable.push_back(it.key());
+                            }
+                        }
+                    }
+                    if (!inferable.empty()) model["x-agent-autowire-fields"] = std::move(inferable);
+                    definition.model_input_schema_json = model.dump();
+                }
                 return;
             }
         }

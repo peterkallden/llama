@@ -3967,16 +3967,46 @@ within normal plan and policy validation.
 ### Agent build and library structure
 
 The agent build keeps reusable implementation out of individual smoke
-executables. The current shared assembly is `llama-agent-runtime-support`,
-which contains CLI/daemon/MCP wiring and the remaining runtime orchestration.
-The provider-facing implementation is now isolated in
-`llama-agent-tool-provider`; runtime host code links that provider seam without
-making the execution engine depend on the higher-level tool assembly. The
+executables. The remaining `llama-agent-runtime-support` target is a
+compatibility assembly for older CLI/daemon/MCP targets; it is not the
+architectural owner of the runtime.
+
+The current runtime seams are:
+
+```text
+llama-agent-runtime-engine
+    execution-facing session, generation/inference and event code
+
+llama-agent-runtime-adapters
+    llama-backed inference, generation, planner, action and reflection
+    implementations used by non-CLI hosts as well as the CLI
+
+llama-agent-runtime-selection
+    model-backed plan/blueprint selection and blueprint tool binding
+
+llama-agent-runtime-packages
+    bootstrap import/export and plan-scope parsing
+
+llama-agent-runtime-host
+    lifecycle, assembly, orchestration and host-facing execution
+
+llama-agent-runtime-support
+    transitional compatibility assembly for remaining frontends
+```
+
+The provider-facing implementation is isolated in
+`llama-agent-tool-provider`; runtime host code links that provider seam
+without making the execution engine depend on higher-level tool assembly. The
 support target still links the already separated resource/data/diagnostics
-libraries.
-Smoke executables should normally
-compile only their focused `pocs/agent/smoke/<area>/*.cpp` source and link the
-library they exercise.
+libraries. Smoke executables should normally compile only their focused
+`pocs/agent/smoke/<area>/*.cpp` source and link the library they exercise.
+
+Static builds are intentionally treated as an architecture check. A missing
+symbol that only appears in a static archive usually means that an
+implementation was placed in the wrong seam or that two libraries depend on
+each other's implementation. The preferred fix is to move the implementation
+to the layer that owns the dependency, not to hide the cycle with a linker
+rescan group or a new catch-all `common/shared` library.
 
 The dependency direction is intentionally one-way:
 
@@ -3992,12 +4022,22 @@ llama-agent-tool-provider
 llama-agent-runtime-engine
     -> common runtime contracts
 
+llama-agent-runtime-adapters
+    -> common contracts, memory/plan/tooling and llama inference
+
+llama-agent-runtime-selection
+    -> runtime-adapters, plan and tooling
+
+llama-agent-runtime-packages
+    -> core, memory, plan and package contracts
+
 llama-agent-runtime-host
-    -> runtime-engine and tool-provider
+    -> runtime-engine, runtime-adapters, runtime-selection,
+       runtime-packages and tool-provider
 
 llama-agent-runtime-support
         -> runtime-host, tool-provider, resource/data/diagnostics
-        -> CLI, MCP assembly, and smoke targets
+        -> transitional CLI, daemon, MCP and smoke targets
 
 llama-agent-mcp-client.so
     -> llama-agent-mcp-core, tool-provider
@@ -4029,17 +4069,24 @@ remaining order is:
    contracts. This is a reusable seam for host, CLI, daemon and MCP-facing
    assembly; it is not a second tool registry.
 
-4. llama-agent-cli.so (initial core slice implemented)
-   CLI configuration/options, generation helpers, inference adapter and memory
-   tools. CLI host/run/selection code remains in support because it still
-   consumes runtime assembly and would otherwise create a target cycle.
+4. llama-agent-runtime-adapters.so (implemented)
+   llama-backed inference, generation helpers and model-facing
+   planner/action/reflection implementations. These are runtime adapters, not
+   CLI frontend code.
 
-5. llama-agent-daemon.so (initial implementation slice implemented)
+5. llama-agent-runtime-selection.so and
+   llama-agent-runtime-packages.so (initial slices implemented)
+   Selection owns plan/blueprint decisions and blueprint tool binding.
+   Packages owns bootstrap import/export and scope parsing. The compatibility
+   header under `tools/agent/cli` may still expose both APIs to old callers,
+   but the implementations and link ownership are separate.
+
+6. llama-agent-daemon.so (initial implementation slice implemented)
    daemon service, dispatcher, runtime adapter, protocol adapter, client and
    administration code. The executable-only TCP/Unix entrypoints remain in the
    daemon executable target.
 
-6. llama-agent-mcp-client.so (initial client slice implemented)
+7. llama-agent-mcp-client.so (initial client slice implemented)
    MCP HTTP/stdio client and client-factory code. MCP server/transport
    assembly remains in the support/server seam.
 ```
