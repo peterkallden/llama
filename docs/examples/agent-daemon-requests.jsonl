@@ -1,0 +1,3 @@
+{"command":"status"}
+{"mode":"chat","prompt":"Reply with OK only.","session_id":"example-session","namespace_id":"example","project_id":"example-project","memory_scope":"session","plan_scope":"turn"}
+{"command":"shutdown"}

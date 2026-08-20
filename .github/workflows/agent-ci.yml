@@ -1,0 +1,191 @@
+name: Agent verification (Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-ci.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'common/runtime/**'
+      - 'tools/agent/**'
+      - 'tools/server/**'
+      - 'tools/mtmd/**'
+      - 'pocs/agent/**'
+      - 'pocs/memory/**'
+      - 'pocs/common/**'
+      - 'tests/**'
+      - 'scripts/test-agent*'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+  pull_request:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-ci.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'common/runtime/**'
+      - 'tools/agent/**'
+      - 'tools/server/**'
+      - 'tools/mtmd/**'
+      - 'pocs/agent/**'
+      - 'pocs/memory/**'
+      - 'pocs/common/**'
+      - 'tests/**'
+      - 'scripts/test-agent*'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  COZO_VERSION: '0.7.6'
+  LLAMA_AGENT_KUBERNETES_IMAGE: alpine:3.20
+  LLAMA_AGENT_KUBERNETES_NAMESPACE: llama-agent
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+permissions:
+  contents: read
+
+jobs:
+  agent-linux:
+    name: Verify agent on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build and agent dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            clangd \
+            cmake \
+            curl \
+            git \
+            libssl-dev \
+            ninja-build \
+            zlib1g-dev
+          clang --version
+          clangd --version
+
+      - name: Provision Cozo C API
+        shell: bash
+        run: |
+          set -euo pipefail
+          cozo_root="$RUNNER_TEMP/cozo-${COZO_VERSION}"
+          cozo_lib="$RUNNER_TEMP/libcozo_c-${COZO_VERSION}.so"
+          git clone --depth 1 --branch "v${COZO_VERSION}" \
+            https://github.com/cozodb/cozo.git "$cozo_root"
+          curl --fail --location --retry 3 \
+            "https://github.com/cozodb/cozo/releases/download/v${COZO_VERSION}/libcozo_c-${COZO_VERSION}-x86_64-unknown-linux-gnu.so.gz" \
+            | gzip -d > "$cozo_lib"
+          test -s "$cozo_root/cozo-lib-c/cozo_c.h"
+          test -s "$cozo_lib"
+          {
+            echo "COZO_INCLUDE_DIR=$cozo_root/cozo-lib-c"
+            echo "COZO_LIBRARY=$cozo_lib"
+            echo "LD_LIBRARY_PATH=$RUNNER_TEMP:${LD_LIBRARY_PATH:-}"
+          } >> "$GITHUB_ENV"
+
+      - name: Create ephemeral Kubernetes cluster
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: llama-agent
+          wait: 120s
+
+      - name: Prepare Kubernetes sandbox namespace and storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl create namespace "$LLAMA_AGENT_KUBERNETES_NAMESPACE"
+          kubectl apply -f \
+            https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
+          kubectl -n local-path-storage rollout status \
+            deployment/local-path-provisioner --timeout=120s
+          kubectl get storageclass
+
+      - name: Configure agent build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Agent runtime support reuses server-context and its MTMD dependency.
+          cmake -S . -B build-agent-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLLAMA_BUILD_TESTS=ON \
+            -DBUILD_TESTING=ON \
+            -DLLAMA_TESTS_INSTALL=OFF \
+            -DLLAMA_AGENT_PACKAGE_INSTALL=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DLLAMA_TOOLS_INSTALL=OFF \
+            -DLLAMA_MEMORY_COZO=ON \
+            -DLLAMA_PLAN_COZO=ON \
+            -DLLAMA_AGENT_RUNTIME=ON \
+            -DLLAMA_AGENT_TOOLS_CLANG=ON \
+            -DCOZO_INCLUDE_DIR="$COZO_INCLUDE_DIR" \
+            -DCOZO_LIBRARY="$COZO_LIBRARY"
+
+      - name: Build agent pack
+        shell: bash
+        run: cmake --build build-agent-ci --parallel 4 --target llama-agent-build-pack
+
+      - name: Run agent CTest label
+        shell: bash
+        run: ctest --test-dir build-agent-ci -L agent --output-on-failure --timeout 900
+
+      - name: Run Kubernetes sandbox CTest label
+        shell: bash
+        env:
+          LLAMA_AGENT_KUBERNETES_SMOKE: '1'
+        run: ctest --test-dir build-agent-ci -L sandbox-kubernetes --output-on-failure --timeout 300
+
+      - name: Install agent package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --install build-agent-ci --prefix agent-package
+          mkdir -p agent-package/lib
+          cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+          test -f agent-package/bin/llama-agent
+          test -f agent-package/bin/llama-agent-daemon
+          test -f agent-package/bin/llama-agent-mcp-stdio-server
+          test -x agent-package/bin/llama-agent-config-bootstrap
+          test -f agent-package/lib/libllama-agent-core.so
+          test -f agent-package/lib/libllama-agent-memory.so
+          test -f agent-package/lib/libllama-agent-plan.so
+          test -f agent-package/lib/libllama-agent-mcp-core.so
+          test -f agent-package/lib/libllama-agent-mcp-server.so
+          test -f agent-package/lib/libllama-agent-runtime-support.so
+          test -f agent-package/lib/libllama-agent-storage-cozo.so
+
+      - name: Upload Linux staging package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-dev-linux-staging
+          path: agent-package/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload agent test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-ci-diagnostics
+          path: |
+            build-agent-ci/Testing/**
+            build-agent-ci/CMakeCache.txt
+          if-no-files-found: ignore

@@ -139,11 +139,102 @@ option(LLAMA_USE_PREBUILT_UI "llama: use prebuilt UI from HF Bucket when availab
 
 option(LLAMA_TOOLS_INSTALL "llama: install tools" ${LLAMA_TOOLS_INSTALL_DEFAULT})
 option(LLAMA_TESTS_INSTALL "llama: install tests" ON)
+option(LLAMA_AGENT_PACKAGE_INSTALL "llama-agent: install the agent runtime package" OFF)
+option(LLAMA_AGENT_PACKAGE_CPACK "llama-agent: generate CPack package metadata" OFF)
+set(LLAMA_AGENT_SYSCONFDIR "/etc/llama-agent" CACHE PATH
+    "llama-agent: default system configuration directory")
+
+if (LLAMA_AGENT_PACKAGE_CPACK)
+    set(CPACK_PACKAGE_NAME "llama-agent" CACHE STRING "Agent package name")
+    set(CPACK_PACKAGE_VENDOR "llama.cpp" CACHE STRING "Agent package vendor")
+    set(CPACK_PACKAGE_VERSION "0.0.0" CACHE STRING "Agent package version")
+    set(CPACK_PACKAGE_FILE_NAME "llama-agent" CACHE STRING "Agent package file name")
+    set(CPACK_GENERATOR "WIX;ZIP" CACHE STRING "Agent package generators")
+endif()
 
 # 3rd party libs
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" ON)
 option(LLAMA_SUBPROCESS "llama-common: use subprocess, required by server tools and server router mode" ${LLAMA_SUBPROCESS_DEFAULT})
 option(LLAMA_LLGUIDANCE "llama-common: include LLGuidance library for structured output in common utils" OFF)
+
+option(LLAMA_MEMORY      "llama: build native memory support" OFF)
+option(LLAMA_MEMORY_COZO "llama-agent-memory: build optional CozoDB backend" OFF)
+option(LLAMA_PLAN "llama: build native dynamic plan support" OFF)
+option(LLAMA_PLAN_COZO "llama-agent-plan: build optional CozoDB backend" OFF)
+option(LLAMA_AGENT_RUNTIME "llama: build the bounded agent runtime" OFF)
+option(LLAMA_AGENT_TOOLS_CLANG "llama-agent: enable clang/clangd semantic tool support" OFF)
+
+# The agent runtime is defined in terms of persistent memory and planning.
+# Keep the lower-level options for standalone consumers, but make a complete
+# agent build self-contained instead of requiring three switches in every
+# workflow and package recipe.
+if (LLAMA_AGENT_RUNTIME)
+    set(LLAMA_MEMORY ON CACHE BOOL "llama: build native memory support" FORCE)
+    set(LLAMA_PLAN ON CACHE BOOL "llama: build native dynamic plan support" FORCE)
+endif()
+
+if (LLAMA_AGENT_TOOLS_CLANG)
+    find_program(LLAMA_AGENT_CLANG_EXECUTABLE NAMES clang clang.exe)
+    find_program(LLAMA_AGENT_CLANGD_EXECUTABLE NAMES clangd clangd.exe)
+    if (NOT LLAMA_AGENT_CLANG_EXECUTABLE)
+        message(WARNING "LLAMA_AGENT_TOOLS_CLANG=ON but clang was not found; compiler-backed providers will remain unavailable at runtime")
+    endif()
+    if (NOT LLAMA_AGENT_CLANGD_EXECUTABLE)
+        message(WARNING "LLAMA_AGENT_TOOLS_CLANG=ON but clangd was not found; semantic symbol/reference providers will remain unavailable at runtime")
+    endif()
+endif()
+
+if (LLAMA_MEMORY_COZO AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_MEMORY_COZO=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN AND NOT LLAMA_MEMORY)
+    message(FATAL_ERROR "LLAMA_PLAN=ON requires LLAMA_MEMORY=ON")
+endif()
+if (LLAMA_PLAN_COZO AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_PLAN_COZO=ON requires LLAMA_PLAN=ON")
+endif()
+if (LLAMA_AGENT_RUNTIME AND NOT LLAMA_PLAN)
+    message(FATAL_ERROR "LLAMA_AGENT_RUNTIME=ON requires LLAMA_PLAN=ON")
+endif()
+
+set(LLAMA_COZO_RELEASE_COMPAT OFF)
+if (MSVC)
+    if (DEFINED COZO_LIBRARY AND COZO_LIBRARY)
+        string(TOLOWER "${COZO_LIBRARY}" LLAMA_COZO_LIBRARY_LOWER)
+        if (LLAMA_COZO_LIBRARY_LOWER MATCHES "cozo-release")
+            set(LLAMA_COZO_RELEASE_COMPAT ON)
+        endif()
+    elseif (EXISTS "${CMAKE_SOURCE_DIR}/work/cozo-release")
+        set(LLAMA_COZO_RELEASE_COMPAT ON)
+    endif()
+endif()
+
+if (LLAMA_COZO_RELEASE_COMPAT)
+    message(STATUS "Cozo release library detected on MSVC; using release CRT/iterator mode for compatibility")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    add_compile_definitions(
+        $<$<CONFIG:Debug>:_HAS_ITERATOR_DEBUGGING=0>
+        $<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=0>
+    )
+endif()
+
+function(llama_link_cozo TARGET_NAME)
+    if (NOT COZO_INCLUDE_DIR)
+        message(FATAL_ERROR "llama_link_cozo(${TARGET_NAME}) requires COZO_INCLUDE_DIR to be set")
+    endif()
+    if (NOT COZO_LIBRARY)
+        message(FATAL_ERROR "llama_link_cozo(${TARGET_NAME}) requires COZO_LIBRARY to be set")
+    endif()
+
+    target_include_directories(${TARGET_NAME} PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(${TARGET_NAME} PRIVATE ${COZO_LIBRARY})
+
+    if (WIN32)
+        target_link_libraries(${TARGET_NAME} PRIVATE ws2_32 bcrypt ntdll rpcrt4 uuid shlwapi crypt32)
+    endif()
+
+endfunction()
+
 
 
 # Required for relocatable CMake package
@@ -237,6 +328,11 @@ endif()
 
 if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+# The agent runtime implementation and its model-free tests live in pocs/agent.
+# They must be available independently of the optional example programs.
+if (LLAMA_BUILD_COMMON AND (LLAMA_BUILD_EXAMPLES OR LLAMA_AGENT_RUNTIME))
     add_subdirectory(pocs)
 endif()
 
@@ -306,3 +402,7 @@ configure_file(cmake/llama.pc.in
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/llama.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+if (LLAMA_AGENT_PACKAGE_CPACK)
+    include(CPack)
+endif()

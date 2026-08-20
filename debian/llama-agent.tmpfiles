@@ -1,0 +1,3 @@
+d /etc/llama-agent 0750 root llama-agent -
+d /var/lib/llama-agent 0750 llama-agent llama-agent -
+d /var/log/llama-agent 0750 llama-agent llama-agent -

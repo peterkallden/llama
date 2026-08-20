@@ -1,0 +1,19 @@
+Source: llama-agent
+Section: misc
+Priority: optional
+Maintainer: Peter Kallden <kallden.peter@gmail.com>
+Build-Depends: debhelper-compat (= 13), cmake, ninja-build, pkg-config, libssl-dev, zlib1g-dev, clang, clangd
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/peterkallden/llama
+
+Package: llama-agent
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser
+Description: resident llama.cpp agent runtime
+ llama-agent is a resident agent runtime built on llama.cpp. It provides
+ host-controlled tools and capabilities, persistent memory and planning,
+ bounded reflection and research, daemon operation, and MCP integration.
+ .
+ The package includes the command-line client, foreground daemon, MCP stdio
+ server, configuration bootstrap helper, examples, and a systemd service.

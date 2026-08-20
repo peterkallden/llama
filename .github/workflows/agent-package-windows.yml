@@ -1,0 +1,209 @@
+name: Agent development package (Windows)
+
+on:
+  workflow_run:
+    workflows:
+      - Agent development package (.tar.gz)
+    types:
+      - completed
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source branch to package manually; must be feature/llama-agent
+        required: true
+        default: feature/llama-agent
+
+concurrency:
+  group: agent-windows-development-package-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COZO_VERSION: '0.7.6'
+  CMAKE_BUILD_PARALLEL_LEVEL: 3
+
+jobs:
+  package-cpu:
+    name: Build Windows CPU package
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.source_ref == 'feature/llama-agent')
+    runs-on: windows-2022
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
+
+      - name: Provision Cozo C API
+        shell: pwsh
+        run: |
+          $cozoRoot = Join-Path $env:RUNNER_TEMP "cozo-$env:COZO_VERSION"
+          git clone --depth 1 --branch "v$env:COZO_VERSION" `
+            https://github.com/cozodb/cozo.git $cozoRoot
+          $cozoArchive = Join-Path $cozoRoot "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip"
+          gh release download "v$env:COZO_VERSION" `
+            --repo cozodb/cozo `
+            --pattern "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip" `
+            --dir $cozoRoot
+          if (-not (Test-Path $cozoArchive)) {
+            throw "Cozo library archive was not downloaded: $cozoArchive"
+          }
+          Expand-Archive -LiteralPath $cozoArchive -DestinationPath $cozoRoot -Force
+          $cozoLibrary = Get-ChildItem -Path $cozoRoot `
+            -Filter "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib" `
+            -File -Recurse |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not (Test-Path (Join-Path $cozoRoot 'cozo-lib-c\cozo_c.h'))) {
+            throw 'Cozo header was not provisioned'
+          }
+          if ([string]::IsNullOrWhiteSpace($cozoLibrary) -or -not (Test-Path -LiteralPath $cozoLibrary)) {
+            throw "Cozo library was not provisioned: $cozoLibrary"
+          }
+          "COZO_INCLUDE_DIR=$cozoRoot\cozo-lib-c" | Out-File $env:GITHUB_ENV -Append
+          "COZO_LIBRARY=$cozoLibrary" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Configure agent build and CPack
+        shell: pwsh
+        run: |
+          $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat'
+          if (-not (Test-Path $vsDevCmd)) {
+            $vsDevCmd = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+          }
+          if (-not (Test-Path $vsDevCmd)) {
+            throw 'Visual Studio x64 developer environment was not found'
+          }
+          $packageName = "llama-agent-cpu-windows-x64-dev"
+          $configure = @(
+            'cmake -S . -B build-agent-windows-dev -G "Visual Studio 17 2022" -A x64',
+            '-DLLAMA_BUILD_TESTS=ON -DBUILD_TESTING=ON',
+            '-DLLAMA_TESTS_INSTALL=OFF -DLLAMA_AGENT_PACKAGE_INSTALL=ON',
+            '-DLLAMA_AGENT_PACKAGE_CPACK=ON',
+            '-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF',
+            '-DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF',
+            '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY_COZO=ON',
+            '-DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
+            '-DLLAMA_AGENT_TOOLS_CLANG=ON -DLLAMA_SUBPROCESS=ON',
+            '-DCPACK_PACKAGE_NAME=llama-agent-cpu-windows-x64-dev',
+            "-DCPACK_PACKAGE_VERSION=0.0.0.$env:GITHUB_RUN_NUMBER",
+            "-DCPACK_PACKAGE_FILE_NAME=$packageName",
+            "-DCOZO_INCLUDE_DIR=`"$env:COZO_INCLUDE_DIR`"",
+            "-DCOZO_LIBRARY=`"$env:COZO_LIBRARY`"",
+            '-DLLAMA_AGENT_CLANG_EXECUTABLE=clang.exe -DLLAMA_AGENT_CLANGD_EXECUTABLE=clangd.exe'
+          ) -join ' '
+          $command = "call `"$vsDevCmd`" x64 && $configure"
+          cmd.exe /d /c $command
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build agent package target
+        shell: pwsh
+        run: |
+          cmake --build build-agent-windows-dev --config RelWithDebInfo --parallel 3 --target llama-agent-build-pack
+
+      - name: Run agent tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build-agent-windows-dev -C RelWithDebInfo -L agent --output-on-failure --parallel 1
+
+      - name: Install and smoke-test staging tree
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force package-root -ErrorAction SilentlyContinue
+          cmake --install build-agent-windows-dev --config RelWithDebInfo --prefix package-root
+          $required = @(
+            'bin\llama-agent.exe',
+            'bin\llama-agent-daemon.exe',
+            'bin\llama-agent-mcp-stdio-server.exe',
+            'bin\llama-agent-core.dll',
+            'bin\llama-agent-memory.dll',
+            'bin\llama-agent-plan.dll',
+            'bin\llama-agent-config-bootstrap.ps1',
+            'share\llama-agent\examples\agent-config.example.json'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path (Join-Path 'package-root' $path))) {
+              throw "Missing installed agent file: $path"
+            }
+          }
+          $configSmoke = Join-Path $env:RUNNER_TEMP 'llama-agent-config-bootstrap.json'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Create ZIP and MSI
+        shell: pwsh
+        run: |
+          $packageName = 'llama-agent-cpu-windows-x64-dev'
+          7z a -tzip "$packageName.zip" .\package-root\*
+          cpack --config build-agent-windows-dev\CPackConfig.cmake -G WIX -C RelWithDebInfo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $msi = Get-Item -LiteralPath "$packageName.msi" -ErrorAction SilentlyContinue
+          if (-not $msi) { throw 'CPack did not produce an MSI' }
+          Get-FileHash "$packageName.zip","$packageName.msi" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content SHA256SUMS
+
+      - name: Dump WiX log on packaging failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $wixLogs = @(
+            Get-ChildItem -Path . -Filter 'wix.log' -File -Recurse -ErrorAction SilentlyContinue
+          )
+          if ($wixLogs.Count -eq 0) {
+            Write-Warning 'No wix.log was found under the workspace'
+            exit 0
+          }
+          foreach ($wixLog in $wixLogs) {
+            Write-Host "===== $($wixLog.FullName) ====="
+            Get-Content -LiteralPath $wixLog.FullName
+          }
+
+      - name: Upload Windows dev package
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-dev-windows-cpu-package
+          path: |
+            llama-agent-cpu-windows-x64-dev.zip
+            llama-agent-cpu-windows-x64-dev.msi
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain only the five newest Windows development packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $artifacts = @(
+            gh api --paginate "/repos/$env:GITHUB_REPOSITORY/actions/artifacts?per_page=100" `
+              --jq '.artifacts[] | select(.name == "llama-agent-dev-windows-cpu-package") | {id: .id, created_at: .created_at}' |
+              ConvertFrom-Json
+          )
+
+          $artifacts |
+            Sort-Object created_at -Descending |
+            Select-Object -Skip 5 |
+            ForEach-Object {
+              Write-Host "Deleting older Windows development package artifact $($_.id)"
+              gh api --method DELETE "/repos/$env:GITHUB_REPOSITORY/actions/artifacts/$($_.id)"
+            }
+
+      - name: Upload Windows diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-windows-dev-diagnostics
+          path: |
+            build-agent-windows-dev/CMakeCache.txt
+            build-agent-windows-dev/Testing/**
+          if-no-files-found: ignore

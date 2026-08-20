@@ -17,6 +17,9 @@
 
 </div>
 
+> This fork includes the [llama-agent runtime](docs/agent/README.md) with persistent sessions, host-controlled tools, memory, planning, research, and daemon support.
+> It also provides MCP integration for exposing agent capabilities to clients and connecting approved external tools and services.
+
 ## Quick start
 
 A few options to get `llama.cpp` installed on your machine:

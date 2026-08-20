@@ -1,0 +1,42 @@
+The Debian package uses CMake's agent installation target and debhelper's
+CMake build system. The agent's bootstrap configuration uses persistent Cozo
+stores, so the package build requires an explicitly provisioned Cozo C API.
+This keeps the external dependency visible and avoids producing a package that
+installs successfully but cannot use its default configuration.
+
+Build the source package with:
+
+    dpkg-buildpackage -us -uc -b
+
+Pass the Cozo paths through the build environment, for example:
+
+    COZO_INCLUDE_DIR=/path/to/cozo/cozo-lib-c \
+    COZO_LIBRARY=/path/to/libcozo_c.so \
+    dpkg-buildpackage -us -uc -b
+
+The backend is selected explicitly with `LLAMA_AGENT_BACKEND`. Supported
+values are `cpu`, `cuda`, `vulkan`, and `auto`. Release builds use an explicit
+backend so that the package never silently changes GPU support because of the
+builder's installed toolchains:
+
+    LLAMA_AGENT_BACKEND=vulkan \
+    LLAMA_AGENT_NATIVE=off \
+    dpkg-buildpackage -us -uc -b
+
+For a local development build, `auto` enables CUDA and/or Vulkan when their
+development toolchains are available. CPU, CUDA, and Vulkan release packages
+use mutually exclusive Debian package names: `llama-agent-cpu`,
+`llama-agent-cuda`, and `llama-agent-vulkan`. Each provides the virtual
+capability `llama-agent-backend` and conflicts with the other backend packages.
+The development package keeps the unqualified `llama-agent` name as the CPU
+default.
+
+`LLAMA_AGENT_NATIVE` defaults to `off` so binaries from a Debian archive or
+PPA remain portable. A downstream maintainer building for a controlled host
+may set it to `on`.
+
+The resulting package installs the daemon and bootstrap helper under
+/usr/sbin, client binaries under /usr/bin, examples under
+/usr/share/doc/llama-agent/examples, and the systemd unit without enabling or
+starting it automatically. Generate /etc/llama-agent/config.json with
+llama-agent-config-bootstrap before enabling llama-agent.service.

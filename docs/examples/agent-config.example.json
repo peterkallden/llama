@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "models/model.gguf",
+    "embedding_model": ""
+  },
+  "runtime": {
+    "context_size": 0,
+    "n_predict": 128,
+    "n_threads": 4,
+    "n_gpu_layers": 0,
+    "default_mode": "agent",
+    "thinking_mode": "auto",
+    "max_reflection_rounds": 2,
+    "max_plan_revisions": 3,
+    "max_research_iterations": 4,
+    "memory_learn": "post-turn",
+    "agent_plan": "auto",
+    "agent_trace": true,
+    "context_budgets": {
+      "plan_chars": 12000,
+      "step_chars": 12000,
+      "tool_observation_chars": 16000,
+      "input_resources_chars": 24000,
+      "memory_chars": 16000,
+      "memory_per_item_chars": 4000,
+      "overlay_chars": 8000,
+      "overlay_per_item_chars": 2000,
+      "working_state": {
+        "max_total_chars": 8192,
+        "max_value_chars": 1024,
+        "max_completed_steps": 64,
+        "max_remaining_steps": 64,
+        "max_constraints": 32,
+        "max_open_questions": 32,
+        "max_resource_refs": 32,
+        "max_chunk_status": 64,
+        "max_tool_results": 32
+      }
+    }
+  },
+  "stores": {
+    "memory": {
+      "backend": "auto",
+      "path": "data/memory.cozo"
+    },
+    "plan": {
+      "backend": "auto",
+      "path": "data/plan.cozo"
+    },
+    "data": {
+      "backend": "auto",
+      "path": "data/structured.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "auto",
+    "blob_root": "data/resources",
+    "metadata_backend": "auto",
+    "metadata_db": "data/resources.cozo",
+    "processor_policies": {
+      "pdf.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "mutool",
+        "expected_version": ""
+      },
+      "pdf.page_image": {
+        "execution": "sandbox_required",
+        "backend": "kubernetes",
+        "image": "registry.example/pdf-worker@sha256:replace-me",
+        "expected_version": "mupdf-1.26"
+      },
+      "ocr.tesseract": {
+        "execution": "sandbox_required",
+        "backend": "auto",
+        "executable": "tesseract",
+        "expected_version": "tesseract 5.x"
+      },
+      "xlsx.workbook": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "python",
+        "script": "scripts/agent-xlsx-to-json.py",
+        "expected_version": "Python 3.x; agent-xlsx-to-json.py"
+      }
+    }
+  },
+  "tools": {
+    "profile": "all-configured",
+    "repository_root": ".",
+    "capabilities": {
+      "utility.read": ["calculator", "time_now"],
+      "memory.read": ["memory_search", "memory_get"]
+    },
+    "profiles": {
+      "local-minimal": {
+        "include_capabilities": ["utility.read", "memory.read"],
+        "allow_network": false,
+        "allow_policy_gated_writes": false
+      }
+    },
+    "providers": []
+  },
+  "sandbox": {
+    "backend": "none",
+    "docker": {
+      "default_image": "llama-agent-dev:latest"
+    },
+    "kubernetes": {
+      "namespace": "llama-agent",
+      "service_account": "llama-agent-runner",
+      "runtime_class": "standard",
+      "cleanup": true
+    },
+    "workspace": {
+      "root": "workspaces",
+      "artifact_root": "artifacts",
+      "operation_mode": "ephemeral",
+      "project_mode": "persistent"
+    },
+    "defaults": {
+      "timeout_ms": 60000,
+      "cpu_count": 1,
+      "max_output_bytes": 65536,
+      "network": "none",
+      "filesystem": "readonly",
+      "allow_artifacts": true
+    },
+    "classes": {
+      "resource.processor.pdf.page_image": {
+        "timeout_ms": 120000,
+        "cpu_count": 1,
+        "max_output_bytes": 67108864,
+        "network": "none",
+        "filesystem": "artifact_write",
+        "allow_artifacts": true
+      },
+      "resource.processor.ocr.tesseract": {
+        "timeout_ms": 120000,
+        "cpu_count": 1,
+        "max_output_bytes": 67108864,
+        "network": "none",
+        "filesystem": "artifact_write",
+        "allow_artifacts": true
+      }
+    }
+  },
+  "diagnostics": {
+    "semantic_backend": "auto",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "auto"
+  },
+  "mcp": {
+    "inbound": {
+      "enabled": false,
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "path": "/mcp",
+      "agent_tools": false,
+      "max_delegation_depth": 1,
+      "tokens": []
+    }
+  },
+  "jsonl": {
+    "tcp": {
+      "enabled": false,
+      "listen": "127.0.0.1",
+      "port": 8090,
+      "max_line_bytes": 1048576,
+      "idle_timeout_seconds": 300
+    },
+    "unix_socket": {
+      "enabled": false,
+      "path": "run/llama-agent.sock",
+      "mode": 432
+    }
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "turn_timeout_ms": 120000,
+    "inference_step_timeout_ms": 0,
+    "tool_timeout_ms": 1000,
+    "mcp_connect_timeout_ms": 5000,
+    "mcp_request_timeout_ms": 30000,
+    "mcp_shutdown_timeout_ms": 2000,
+    "max_tool_rounds": 0,
+    "max_continuations": 2
+  }
+}

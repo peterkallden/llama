@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "research"
+  },
+  "tools": {
+    "profile": "research",
+    "repository_root": "."
+  },
+  "mcp": {
+    "inbound": {
+      "enabled": true,
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "path": "/mcp",
+      "authorization": {
+        "mode": "jwt",
+        "issuer": "https://login.example.com/",
+        "audience": "https://agent.example.com/mcp",
+        "jwks_uri": "https://login.example.com/.well-known/jwks.json",
+        "allowed_algorithms": [
+          "RS256"
+        ],
+        "required_scopes": [
+          "agent:mcp"
+        ],
+        "tool_profile": "research",
+        "allowed_tools": [],
+        "allow_writes": false
+      }
+    }
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1
+  }
+}

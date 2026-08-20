@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "research"
+  },
+  "tools": {
+    "profile": "research",
+    "repository_root": "."
+  },
+  "mcp": {
+    "inbound": {
+      "enabled": true,
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "path": "/mcp",
+      "tokens": [
+        {
+          "id": "readonly-client",
+          "token_env": "LLAMA_AGENT_READ_TOKEN",
+          "audience": "llama-agent",
+          "namespace": "local",
+          "project": "default",
+          "tool_profile": "minimal",
+          "allowed_tools": [
+            "calculator",
+            "repository.read"
+          ],
+          "allow_writes": false
+        },
+        {
+          "id": "admin-client",
+          "token_env": "LLAMA_AGENT_ADMIN_TOKEN",
+          "audience": "llama-agent",
+          "namespace": "local",
+          "project": "default",
+          "tool_profile": "research",
+          "allow_writes": true
+        }
+      ]
+    }
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1
+  }
+}

@@ -1,0 +1,249 @@
+name: Agent container images
+
+on:
+  workflow_run:
+    workflows:
+      - Agent development package (.tar.gz)
+      - Agent release packages
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_channel:
+        description: Package channel to consume
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - release
+      package_run_id:
+        description: Successful package or release workflow run ID to consume
+        required: true
+        type: string
+      source_ref:
+        description: Source branch containing the Docker files; must be feature/llama-agent for dev images
+        required: true
+        default: feature/llama-agent
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: agent-docker-${{ github.event.workflow_run.id || inputs.package_run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build-dev:
+    name: Build and publish development image
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.image_channel == 'dev' &&
+       inputs.source_ref == 'feature/llama-agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out image definition
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
+
+      - name: Download development package
+        id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ github.event.workflow_run.id || inputs.package_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package-artifact docker-context
+          gh run download "$PACKAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir package-artifact
+
+          archive="$(find package-artifact -type f -name 'llama-agent-dev-*.tar.gz' -print -quit)"
+          checksum="$(find package-artifact -type f -name 'llama-agent-dev-*.tar.gz.sha256' -print -quit)"
+          test -n "$archive"
+          test -n "$checksum"
+          (cd "$(dirname "$archive")" && sha256sum --check "$(basename "$checksum")")
+
+          mkdir -p docker-context
+          cp "$archive" docker-context/agent-package.tar.gz
+          cp docker/agent/Dockerfile docker-context/Dockerfile
+          cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
+          cp docker/agent/agent-config.docker.example.json \
+            docker-context/agent-config.docker.example.json
+          package_id="$(basename "$archive" .tar.gz)"
+          safe_package_tag="${package_id#llama-agent-dev-}"
+          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
+          echo "safe_package_tag=$safe_package_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set dev image metadata
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_repo="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<< "$REPOSITORY")/llama-agent-dev"
+          {
+            echo "tags<<TAGS"
+            echo "$image_repo:cpu-amd64-latest"
+            echo "$image_repo:cpu-amd64-${{ steps.package.outputs.safe_package_tag }}"
+            echo "TAGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push dev CPU image
+        uses: docker/build-push-action@v7
+        with:
+          context: docker-context
+          file: docker-context/Dockerfile
+          build-args: |
+            BACKEND=cpu
+            BASE_IMAGE=ubuntu:24.04
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=llama-agent-dev
+            org.opencontainers.image.description=llama-agent development package image
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
+            org.opencontainers.image.version=${{ steps.package.outputs.package_id }}
+          cache-from: type=gha
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  build-release:
+    name: Build and publish ${{ matrix.backend }} release image
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Agent release packages' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && inputs.image_channel == 'release')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cpu
+            backend_label: cpu
+            backend_version: native
+            base_image: ubuntu:24.04
+          - backend: cuda
+            backend_label: cuda13
+            backend_version: 13.3
+            base_image: nvidia/cuda:13.3.0-runtime-ubuntu24.04
+          - backend: vulkan
+            backend_label: vulkan1.4
+            backend_version: 1.4.357.0
+            base_image: ubuntu:24.04
+    steps:
+      - name: Check out image definition
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+
+      - name: Download release package
+        id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ github.event.workflow_run.id || inputs.package_run_id }}
+          BACKEND: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package-artifact docker-context
+          gh run download "$PACKAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "llama-agent-release-$BACKEND" \
+            --dir package-artifact
+
+          archive="$(find package-artifact -type f -name "llama-agent-*-${BACKEND}-linux-x64.tar.gz" -print -quit)"
+          checksum="$(find package-artifact -type f -name "llama-agent-*-${BACKEND}-linux-x64.tar.gz.sha256" -print -quit)"
+          test -n "$archive"
+          test -n "$checksum"
+          (cd "$(dirname "$archive")" && sha256sum --check "$(basename "$checksum")")
+
+          mkdir -p docker-context
+          cp "$archive" docker-context/agent-package.tar.gz
+          cp docker/agent/Dockerfile docker-context/Dockerfile
+          cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
+          cp docker/agent/agent-config.docker.example.json \
+            docker-context/agent-config.docker.example.json
+          archive_id="$(basename "$archive" .tar.gz)"
+          release_version="${archive_id#llama-agent-}"
+          release_version="${release_version%-${BACKEND}-linux-x64}"
+          echo "archive_id=$archive_id" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set release image metadata
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          BACKEND: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_repo="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<< "$REPOSITORY")/llama-agent"
+          {
+            echo "tags<<TAGS"
+            echo "$image_repo:${{ matrix.backend_label }}-amd64-latest"
+            echo "$image_repo:${{ matrix.backend_label }}-amd64-${{ steps.package.outputs.release_version }}"
+            echo "TAGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push release image
+        uses: docker/build-push-action@v7
+        with:
+          context: docker-context
+          file: docker-context/Dockerfile
+          build-args: |
+            BACKEND=${{ matrix.backend }}
+            BASE_IMAGE=${{ matrix.base_image }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=llama-agent
+            org.opencontainers.image.description=llama-agent ${{ matrix.backend }} release image
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
+            org.opencontainers.image.version=${{ steps.package.outputs.release_version }}
+            org.opencontainers.image.base.name=${{ matrix.base_image }}
+            io.llama-agent.backend=${{ matrix.backend }}
+            io.llama-agent.backend.version=${{ matrix.backend_version }}
+            io.llama-agent.backend.label=${{ matrix.backend_label }}
+          cache-from: type=gha
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true

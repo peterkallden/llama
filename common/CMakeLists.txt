@@ -80,6 +80,8 @@ add_library(${TARGET}
     http.h
     imatrix-loader.cpp
     imatrix-loader.h
+    json-partial.cpp
+    json-partial.h
     json-schema-to-grammar.cpp
     llguidance.cpp
     log.cpp
@@ -94,8 +96,10 @@ add_library(${TARGET}
     peg-parser.h
     preset.cpp
     preset.h
+    regex-partial.cpp
     reasoning-budget.cpp
     reasoning-budget.h
+    regex-partial.h
     sampling.cpp
     sampling.h
     speculative.cpp
@@ -177,3 +181,13 @@ if (LLAMA_LLGUIDANCE)
 endif()
 
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)
+
+if (LLAMA_MEMORY)
+    add_subdirectory(memory)
+endif()
+if (LLAMA_PLAN)
+    add_subdirectory(plan)
+endif()
+if (LLAMA_AGENT_RUNTIME)
+    add_subdirectory(agent)
+endif()

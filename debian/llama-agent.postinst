@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    addgroup --system --quiet llama-clients 2>/dev/null || true
+    adduser --system --quiet --home /var/lib/llama-agent \
+        --no-create-home --group llama-agent 2>/dev/null || true
+    install -d -o root -g llama-agent -m 0750 /etc/llama-agent
+    install -d -o llama-agent -g llama-agent -m 0750 \
+        /var/lib/llama-agent /var/log/llama-agent
+fi
+
+#DEBHELPER#
+
+exit 0

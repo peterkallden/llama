@@ -1,0 +1,86 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+COZO_INCLUDE_DIR ?=
+COZO_LIBRARY ?=
+COZO_LIBRARY_BASENAME := $(notdir $(COZO_LIBRARY))
+LLAMA_AGENT_BACKEND ?= cpu
+LLAMA_AGENT_NATIVE ?= off
+
+CUDA_TOOLKIT_AVAILABLE := $(if $(shell command -v nvcc 2>/dev/null),ON,OFF)
+VULKAN_DEVELOPMENT_AVAILABLE := $(if $(shell pkg-config --exists vulkan 2>/dev/null && echo yes),ON,OFF)
+
+ifeq ($(LLAMA_AGENT_BACKEND),cpu)
+GGML_CUDA_FLAG := OFF
+GGML_VULKAN_FLAG := OFF
+else ifeq ($(LLAMA_AGENT_BACKEND),cuda)
+GGML_CUDA_FLAG := ON
+GGML_VULKAN_FLAG := OFF
+else ifeq ($(LLAMA_AGENT_BACKEND),vulkan)
+GGML_CUDA_FLAG := OFF
+GGML_VULKAN_FLAG := ON
+else ifeq ($(LLAMA_AGENT_BACKEND),auto)
+GGML_CUDA_FLAG := $(CUDA_TOOLKIT_AVAILABLE)
+GGML_VULKAN_FLAG := $(VULKAN_DEVELOPMENT_AVAILABLE)
+else
+$(error LLAMA_AGENT_BACKEND must be cpu, cuda, vulkan, or auto)
+endif
+
+ifeq ($(LLAMA_AGENT_NATIVE),on)
+GGML_NATIVE_FLAG := ON
+else ifeq ($(LLAMA_AGENT_NATIVE),off)
+GGML_NATIVE_FLAG := OFF
+else
+$(error LLAMA_AGENT_NATIVE must be on or off)
+endif
+
+ifeq ($(strip $(COZO_INCLUDE_DIR)),)
+$(error COZO_INCLUDE_DIR must point to cozo-lib-c before building llama-agent)
+endif
+ifeq ($(strip $(COZO_LIBRARY)),)
+$(error COZO_LIBRARY must point to libcozo_c.so before building llama-agent)
+endif
+
+%:
+	dh $@ --buildsystem=cmake --builddirectory=debian/build
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-G Ninja \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DLLAMA_BUILD_TESTS=OFF \
+		-DBUILD_TESTING=OFF \
+		-DLLAMA_TESTS_INSTALL=OFF \
+		-DLLAMA_AGENT_PACKAGE_INSTALL=ON \
+		-DLLAMA_BUILD_EXAMPLES=OFF \
+		-DLLAMA_BUILD_APP=OFF \
+		-DLLAMA_BUILD_SERVER=ON \
+		-DLLAMA_BUILD_UI=OFF \
+		-DLLAMA_USE_PREBUILT_UI=OFF \
+		-DLLAMA_TOOLS_INSTALL=OFF \
+		-DLLAMA_MEMORY_COZO=ON \
+		-DLLAMA_PLAN_COZO=ON \
+		-DLLAMA_AGENT_RUNTIME=ON \
+		-DLLAMA_AGENT_TOOLS_CLANG=ON \
+		-DGGML_CPU=ON \
+		-DGGML_CUDA=$(GGML_CUDA_FLAG) \
+		-DGGML_VULKAN=$(GGML_VULKAN_FLAG) \
+		-DGGML_NATIVE=$(GGML_NATIVE_FLAG) \
+		-DCOZO_INCLUDE_DIR=$(COZO_INCLUDE_DIR) \
+		-DCOZO_LIBRARY=$(COZO_LIBRARY)
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/tmp cmake --install debian/build --config RelWithDebInfo
+	@echo 'Installed files under debian/tmp before dh_install:'
+	find debian/tmp -maxdepth 6 -type f -print | sort
+	install -D -m 0644 $(COZO_LIBRARY) debian/tmp/usr/lib/$(COZO_LIBRARY_BASENAME)
+	if [ "$(COZO_LIBRARY_BASENAME)" != libcozo_c.so ]; then \
+		ln -sf $(COZO_LIBRARY_BASENAME) debian/tmp/usr/lib/libcozo_c.so; \
+	fi
+
+override_dh_auto_build:
+	cmake --build debian/build --target llama-agent-build-pack --parallel
+
+override_dh_installsystemd:
+	dh_installsystemd --no-start --no-enable

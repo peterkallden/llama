@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "llama-agent": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\llama-agent-mcp-stdio-server.exe",
+      "args": [
+        "--tool-profile",
+        "research",
+        "--repository-root",
+        "C:\\path\\to\\repository"
+      ]
+    }
+  }
+}

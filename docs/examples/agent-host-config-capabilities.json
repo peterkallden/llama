@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "reflective"
+  },
+  "tools": {
+    "profile": "local-minimal",
+    "capabilities": {
+      "utility.read": ["calculator", "time_now"],
+      "memory.read": ["memory_search", "memory_get"]
+    },
+    "profiles": {
+      "local-minimal": {
+        "include_capabilities": ["utility.read"],
+        "allow_network": false,
+        "allow_policy_gated_writes": false
+      }
+    },
+    "repository_root": "."
+  },
+  "sandbox": {
+    "backend": "docker",
+    "docker": {
+      "default_image": "llama-agent-dev:latest"
+    },
+    "kubernetes": {
+      "namespace": "llama-agent-jobs",
+      "service_account": "llama-agent-runner",
+      "runtime_class": "standard",
+      "cleanup": true
+    },
+    "workspace": {
+      "root": "C:/agent-workspaces",
+      "artifact_root": "C:/agent-artifacts",
+      "operation_mode": "ephemeral",
+      "project_mode": "persistent"
+    },
+    "defaults": {
+      "timeout_ms": 60000,
+      "cpu_count": 1,
+      "max_output_bytes": 65536,
+      "network": "none",
+      "filesystem": "readonly",
+      "allow_artifacts": true
+    },
+    "classes": {
+      "developer-build": {
+        "image": "llama-agent-dev:latest",
+        "timeout_ms": 1200000,
+        "cpu_count": 4,
+        "memory_bytes": 8589934592,
+        "filesystem": "workspace_write"
+      }
+    }
+  },
+  "limits": {
+    "worker_count": 1,
+    "inference_max_active": 1
+  }
+}

@@ -353,3 +353,60 @@ if (TARGET gguf-model-data)
     target_link_libraries(test-export-graph-ops PRIVATE gguf-model-data)
     target_compile_definitions(test-export-graph-ops PRIVATE LLAMA_HF_FETCH)
 endif()
+
+if (LLAMA_AGENT_RUNTIME)
+    foreach(TEST_SOURCE
+        test-agent-contract.cpp
+        test-agent-continuation.cpp
+        test-agent-research-contract.cpp
+        test-agent-runtime-json.cpp
+        test-agent-loop.cpp
+        test-agent-tool-rounds.cpp
+        test-memory-learning.cpp
+        test-memory-policy.cpp
+        test-plan-context.cpp
+        test-plan-json.cpp
+        test-plan-store.cpp
+        test-reflection-json.cpp
+        test-tool-adapters.cpp
+        test-tool-catalog.cpp
+        test-tool-chat-bridge.cpp
+        test-tool-navigation.cpp
+        test-agent-clangd-protocol.cpp
+        test-agent-config-bootstrap.cpp
+        test-agent-bootstrap.cpp
+    )
+        get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+        llama_build_and_test(${TEST_SOURCE})
+        target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_NAME STREQUAL "test-agent-continuation")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-config-bootstrap")
+            file(TO_CMAKE_PATH
+                "${PROJECT_SOURCE_DIR}/scripts/agent-config-bootstrap.sh"
+                AGENT_BOOTSTRAP_SCRIPT_PATH)
+            target_compile_definitions(${TEST_NAME} PRIVATE
+                LLAMA_AGENT_BOOTSTRAP_SCRIPT_PATH="${AGENT_BOOTSTRAP_SCRIPT_PATH}")
+        endif()
+        set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+    endforeach()
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-data-store-cozo.cpp)
+        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)
+        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        set_property(TEST test-agent-data-store-cozo PROPERTY LABELS agent)
+
+        add_executable(llama-agent-data-store-cozo-seed
+            agent-data-store-cozo-seed.cpp)
+        target_link_libraries(llama-agent-data-store-cozo-seed PRIVATE llama-agent-storage-cozo)
+        target_include_directories(llama-agent-data-store-cozo-seed PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        target_compile_features(llama-agent-data-store-cozo-seed PRIVATE cxx_std_17)
+    endif()
+endif()

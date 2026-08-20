@@ -1,0 +1,232 @@
+name: Agent development package (.tar.gz)
+
+on:
+  workflow_run:
+    workflows:
+      - Agent verification (Linux)
+    types:
+      - completed
+    branches:
+      - feature/llama-agent
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Verified package source branch; must be feature/llama-agent
+        required: true
+        default: feature/llama-agent
+        type: string
+      ci_run_id:
+        description: Successful Agent CI run ID for source_ref
+        required: true
+        type: string
+      sanitizer_run_id:
+        description: Successful dynamic analysis run ID for source_ref
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: agent-development-archive-${{ github.event.workflow_run.head_branch || inputs.source_ref }}-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Build verified Linux archive
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && inputs.source_ref == 'feature/llama-agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Wait for both verification workflows
+        id: verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+          BRANCH_NAME: ${{ github.event.workflow_run.head_branch || inputs.source_ref }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          SANITIZER_RUN_ID: ${{ inputs.sanitizer_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$BRANCH_NAME" == feature/llama-agent ]] || {
+              echo "Refusing to create a development package from $BRANCH_NAME; expected feature/llama-agent" >&2
+              exit 1
+            }
+
+            ci_run="$(gh run view "$CI_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json databaseId,status,conclusion,headSha,headBranch)"
+            sanitizer_run="$(gh run view "$SANITIZER_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json databaseId,status,conclusion,headSha,headBranch)"
+
+            ci_status="$(jq -r '.status' <<< "$ci_run")"
+            ci_conclusion="$(jq -r '.conclusion // empty' <<< "$ci_run")"
+            sanitizer_status="$(jq -r '.status' <<< "$sanitizer_run")"
+            sanitizer_conclusion="$(jq -r '.conclusion // empty' <<< "$sanitizer_run")"
+            ci_sha="$(jq -r '.headSha' <<< "$ci_run")"
+            sanitizer_sha="$(jq -r '.headSha' <<< "$sanitizer_run")"
+            ci_branch="$(jq -r '.headBranch' <<< "$ci_run")"
+            sanitizer_branch="$(jq -r '.headBranch' <<< "$sanitizer_run")"
+
+            [[ "$ci_status" == completed && "$ci_conclusion" == success ]] || {
+              echo "Agent CI run $CI_RUN_ID did not succeed" >&2
+              exit 1
+            }
+            [[ "$sanitizer_status" == completed && "$sanitizer_conclusion" == success ]] || {
+              echo "Dynamic analysis run $SANITIZER_RUN_ID did not succeed" >&2
+              exit 1
+            }
+            [[ "$ci_sha" == "$sanitizer_sha" ]] || {
+              echo "Verification runs do not target the same commit" >&2
+              exit 1
+            }
+            [[ "$ci_branch" == "$BRANCH_NAME" && "$sanitizer_branch" == "$BRANCH_NAME" ]] || {
+              echo "Verification runs do not target $BRANCH_NAME" >&2
+              exit 1
+            }
+
+            echo "ci_run_id=$CI_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$ci_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          find_run() {
+            local workflow="$1"
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch "$BRANCH_NAME" \
+              --commit "$COMMIT_SHA" \
+              --limit 20 \
+              --json databaseId,status,conclusion,headSha \
+              | jq -c --arg sha "$COMMIT_SHA" \
+                'map(select(.headSha == $sha)) | sort_by(.databaseId) | last // empty'
+          }
+
+          for attempt in $(seq 1 180); do
+            ci_run="$(find_run agent-ci.yml)"
+            sanitizer_run="$(find_run agent-analysis.yml)"
+
+            if [[ -n "$ci_run" && -n "$sanitizer_run" ]]; then
+              ci_status="$(jq -r '.status' <<< "$ci_run")"
+              ci_conclusion="$(jq -r '.conclusion // empty' <<< "$ci_run")"
+              sanitizer_status="$(jq -r '.status' <<< "$sanitizer_run")"
+              sanitizer_conclusion="$(jq -r '.conclusion // empty' <<< "$sanitizer_run")"
+
+              echo "agent-ci: $ci_status / ${ci_conclusion:-pending}"
+              echo "sanitizer: $sanitizer_status / ${sanitizer_conclusion:-pending}"
+
+              if [[ "$ci_status" == completed && "$sanitizer_status" == completed ]]; then
+                if [[ "$ci_conclusion" != success || "$sanitizer_conclusion" != success ]]; then
+                  echo "Required verification did not pass for $COMMIT_SHA" >&2
+                  exit 1
+                fi
+
+                ci_id="$(jq -r '.databaseId' <<< "$ci_run")"
+                echo "ci_run_id=$ci_id" >> "$GITHUB_OUTPUT"
+                echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              echo "Waiting for both workflow runs for $COMMIT_SHA (attempt $attempt/180)"
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting 45 minutes for verification workflows for $COMMIT_SHA" >&2
+          exit 1
+
+      - name: Download verified Linux staging package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ steps.verification.outputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package-source
+          gh run download "$CI_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name llama-agent-dev-linux-staging \
+            --dir package-source
+          test -f package-source/bin/llama-agent
+          test -f package-source/bin/llama-agent-daemon
+          test -f package-source/bin/llama-agent-mcp-stdio-server
+          test -x package-source/bin/llama-agent-config-bootstrap
+          test -f package-source/lib/libllama-agent-core.so
+          test -f package-source/lib/libllama-agent-memory.so
+          test -f package-source/lib/libllama-agent-plan.so
+          test -f package-source/lib/libllama-agent-mcp-core.so
+          test -f package-source/lib/libllama-agent-mcp-server.so
+          test -f package-source/lib/libllama-agent-runtime-support.so
+          test -f package-source/lib/libllama-agent-storage-cozo.so
+
+      - name: Create dated package
+        id: package
+        env:
+          COMMIT_SHA: ${{ steps.verification.outputs.commit_sha }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_id="llama-agent-dev-$(date -u +%Y%m%dT%H%M%SZ)-run-${GITHUB_RUN_ID}"
+          archive="${package_id}.tar.gz"
+
+          printf '%s\n' \
+            "package_id=$package_id" \
+            "source_branch=$SOURCE_BRANCH" \
+            "commit_sha=$COMMIT_SHA" \
+            "source_ci_run_id=${{ steps.verification.outputs.ci_run_id }}" \
+            "package_workflow_run_id=$GITHUB_RUN_ID" \
+            "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > package-source/AGENT-PACKAGE-MANIFEST.txt
+
+          tar -czf "$archive" -C package-source .
+          sha256sum "$archive" > "${archive}.sha256"
+          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish development package artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.package.outputs.package_id }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain only the five newest development packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[]
+              | select(.name | startswith("llama-agent-dev-"))
+              | [.created_at, (.id | tostring)]
+              | @tsv' \
+            | sort -r \
+            | tail -n +6 \
+            | cut -f2 \
+            | while IFS= read -r artifact_id; do
+                if [[ -n "$artifact_id" ]]; then
+                  echo "Deleting older development package artifact $artifact_id"
+                  gh api --method DELETE \
+                    "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+                fi
+              done
