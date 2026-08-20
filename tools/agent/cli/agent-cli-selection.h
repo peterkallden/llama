@@ -1,11 +1,9 @@
 #pragma once
 
 #include "agent/agent-inference.h"
-#include "agent/agent-bootstrap.h"
 #include "agent/learning/blueprint-selector.h"
 #include "tools/agent/cli/agent-cli-options.h"
-#include "memory/memory-store.h"
-#include "plan/plan-store.h"
+#include "tools/agent/runtime/agent-runtime-package-io.h"
 
 #include <memory>
 #include <optional>
@@ -14,20 +12,6 @@
 
 struct common_agent_generation_config;
 class agent_tool_view;
-
-bool parse_plan_scope(const std::string & value, common_plan_scope & scope);
-
-bool load_bootstrap_file(
-    const std::string & path,
-    common_agent_bootstrap_package & package,
-    std::string & error);
-
-bool export_agent_package(
-    common_memory_store & memory_store,
-    common_plan_store & plan_store,
-    const common_agent_scope & scope,
-    const std::string & output_path,
-    std::string & error);
 
 std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
     common_agent_inference & inference,

@@ -104,11 +104,34 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ../../tools/agent/runtime/agent-runtime-execution.cpp
     ../../tools/agent/runtime/agent-runtime-assembly.cpp
     ../../tools/agent/runtime/agent-plan-orchestration.cpp
-    ../../tools/agent/cli/agent-cli-runtime.cpp
-    ../../tools/agent/cli/agent-cli-selection.cpp
 )
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
+
+# Model-backed implementations of the agent interfaces.  These are runtime
+# adapters, not CLI frontend code; resident, daemon and MCP hosts may use them
+# without depending on command parsing or process entrypoints.
+set(AGENT_RUNTIME_ADAPTER_SOURCES
+    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/cli/agent-cli-generation.cpp
+    ../../tools/agent/cli/agent-cli-inference.cpp
+    ../../tools/agent/cli/agent-cli-runtime.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
+
+set(AGENT_RUNTIME_SELECTION_SOURCES
+    ../../tools/agent/cli/agent-cli-selection.cpp
+)
+
+set(AGENT_RUNTIME_PACKAGE_SOURCES
+    ../../tools/agent/runtime/agent-runtime-package-io.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
+    ${AGENT_RUNTIME_SELECTION_SOURCES}
+    ${AGENT_RUNTIME_PACKAGE_SOURCES}
+)
 
 set(AGENT_TOOL_PROVIDER_SOURCES
     ../../tools/agent/tooling/agent-selection-contracts.cpp
@@ -129,6 +152,7 @@ set(AGENT_CLI_SOURCES
 )
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_CLI_SOURCES})
+list(REMOVE_ITEM AGENT_CLI_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
 
 set(AGENT_DAEMON_SOURCES
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
@@ -331,6 +355,89 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-runtime-adapters ${AGENT_RUNTIME_ADAPTER_SOURCES})
+set_target_properties(llama-agent-runtime-adapters PROPERTIES OUTPUT_NAME llama-agent-runtime-adapters)
+target_include_directories(llama-agent-runtime-adapters
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-runtime-adapters PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-runtime-adapters
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-runtime-adapters
+    PUBLIC
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        llama
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-adapters PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-selection ${AGENT_RUNTIME_SELECTION_SOURCES})
+set_target_properties(llama-agent-runtime-selection PROPERTIES OUTPUT_NAME llama-agent-runtime-selection)
+target_include_directories(llama-agent-runtime-selection
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+)
+target_compile_features(llama-agent-runtime-selection PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-selection
+    PUBLIC
+        llama-agent-runtime-adapters
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-selection PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-packages ${AGENT_RUNTIME_PACKAGE_SOURCES})
+set_target_properties(llama-agent-runtime-packages PROPERTIES OUTPUT_NAME llama-agent-runtime-packages)
+target_include_directories(llama-agent-runtime-packages
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_compile_features(llama-agent-runtime-packages PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-packages
+    PUBLIC
+        llama-agent-core
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-packages PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-runtime-engine ${AGENT_RUNTIME_ENGINE_SOURCES})
 target_include_directories(llama-agent-runtime-engine
     PUBLIC
@@ -399,6 +506,9 @@ target_link_libraries(llama-agent-runtime-host
         llama-agent-core
         llama-agent-tool-provider
         llama-agent-cli-library
+        llama-agent-runtime-adapters
+        llama-agent-runtime-selection
+        llama-agent-runtime-packages
         Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
