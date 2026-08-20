@@ -1625,6 +1625,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke
     llama-agent-runtime-operation-manager-smoke
+    llama-agent-deliberation-policy-smoke
     llama-agent-resource-store-smoke
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
@@ -1772,6 +1773,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-cli-document-table-ctest
         COMMAND $<TARGET_FILE:llama-agent-cli-document-table-smoke>)
     set_property(TEST llama-agent-cli-document-table-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-deliberation-policy-ctest
+        COMMAND $<TARGET_FILE:llama-agent-deliberation-policy-smoke>)
+    set_property(TEST llama-agent-deliberation-policy-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-mcp-stdio-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-client-smoke>)
