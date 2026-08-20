@@ -48,7 +48,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-host-adapter.cpp
     ../../tools/agent/cli/agent-cli-inference.cpp
     ../../tools/agent/runtime/agent-plan-orchestration.cpp
-    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-host.cpp
     ../../tools/agent/runtime/agent-runtime-resident.cpp
     ../../tools/agent/runtime/agent-runtime-session-host.cpp
@@ -94,6 +93,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
 # lifecycle forwarding here; CLI/daemon/MCP assembly remains in support until
 # its provider dependencies can be extracted without a cycle.
 set(AGENT_RUNTIME_HOST_SOURCES
+    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-host.cpp
     ../../tools/agent/runtime/agent-runtime-resident.cpp
     ../../tools/agent/runtime/agent-runtime-session-host.cpp
