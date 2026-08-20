@@ -89,9 +89,10 @@ set(AGENT_RUNTIME_ENGINE_SOURCES
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
 
-# The host facade is the next seam above the execution engine. Keep resident
-# lifecycle forwarding here; CLI/daemon/MCP assembly remains in support until
-# its provider dependencies can be extracted without a cycle.
+# The host facade is the seam above the execution engine. Keep runtime
+# execution, orchestration and the CLI-facing assembly glue here as one
+# dependency direction; these pieces compose the engine and CLI providers and
+# must not be split back across support in static builds.
 set(AGENT_RUNTIME_HOST_SOURCES
     ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-host.cpp
@@ -100,6 +101,11 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
     ../../tools/agent/runtime/agent-inference-executor.cpp
     ../../tools/agent/runtime/agent-runtime-session-manager.cpp
+    ../../tools/agent/runtime/agent-runtime-execution.cpp
+    ../../tools/agent/runtime/agent-runtime-assembly.cpp
+    ../../tools/agent/runtime/agent-plan-orchestration.cpp
+    ../../tools/agent/cli/agent-cli-runtime.cpp
+    ../../tools/agent/cli/agent-cli-selection.cpp
 )
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
@@ -388,9 +394,11 @@ target_link_libraries(llama-agent-runtime-host
     PUBLIC
         llama-agent-runtime-engine
         llama-agent-memory
+        llama-agent-plan
         llama-common
         llama-agent-core
         llama-agent-tool-provider
+        llama-agent-cli-library
         Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
