@@ -3997,7 +3997,10 @@ llama-agent-runtime-host
 
 llama-agent-runtime-support
         -> runtime-host, tool-provider, resource/data/diagnostics
-        -> CLI, MCP, and smoke targets
+        -> CLI, MCP assembly, and smoke targets
+
+llama-agent-mcp-client.so
+    -> llama-agent-mcp-core, tool-provider
 
 llama-agent-daemon.so
     -> runtime-support
@@ -4036,8 +4039,9 @@ remaining order is:
    administration code. The executable-only TCP/Unix entrypoints remain in the
    daemon executable target.
 
-6. llama-agent-mcp-client.so
-   MCP HTTP/stdio client and client-factory code
+6. llama-agent-mcp-client.so (initial client slice implemented)
+   MCP HTTP/stdio client and client-factory code. MCP server/transport
+   assembly remains in the support/server seam.
 ```
 
 The existing libraries remain the foundation of that plan, together with the
@@ -4045,6 +4049,7 @@ two newly extracted runtime libraries:
 
 ```text
 llama-agent-core.so
+llama-agent-dataset-contracts.so
 llama-agent-memory.so
 llama-agent-plan.so
 llama-agent-sandbox.so
@@ -4062,9 +4067,10 @@ This is a build-isolation backlog, not a requirement to expose every library
 as a public ABI. A candidate split must first have an acyclic target graph,
 stable narrow headers and a measurable recompilation benefit. The first
 implementation slices are therefore `llama-agent-runtime-engine`, the
-runtime-host lifecycle facade, the CLI core and the daemon implementation.
-The remaining MCP-client extraction follows only after its provider and
-runtime dependencies have a similarly clean boundary.
+runtime-host lifecycle facade, the CLI core, the daemon implementation and
+the MCP client transport seam. `llama-agent-dataset-contracts` is deliberately
+small and sits below both core/tooling and MCP server code; it prevents the
+dataset contract implementation from creating a core/tooling cycle.
 
 `common/agent` must not depend on implementation under `tools/agent`. Daemon
 services, MCP servers, and optional Cozo storage may be split into narrower
@@ -4100,6 +4106,11 @@ runtime-support
         │               execution state, server adapters, capacity and event projection
         └── tool-provider
               provider selection, runtime adapters and result contracts
+
+mcp-client
+    HTTP/stdio transport clients and factory
+        ├── mcp-core
+        └── tool-provider
 
 daemon
     daemon service/client/dispatcher implementation

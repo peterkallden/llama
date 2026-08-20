@@ -138,6 +138,14 @@ set(AGENT_DAEMON_SOURCES
 
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_DAEMON_SOURCES})
 
+set(AGENT_MCP_CLIENT_SOURCES
+    ../../tools/agent/mcp/agent-mcp-http-client.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
+    ../../tools/agent/mcp/agent-mcp-client-factory.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_MCP_CLIENT_SOURCES})
+
 # Keep the host/runtime assembly independent from the high-churn resource,
 # data and diagnostics implementations. These are agent-only libraries; the
 # upstream llama.cpp targets remain untouched.
@@ -504,6 +512,34 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-mcp-client-library ${AGENT_MCP_CLIENT_SOURCES})
+set_target_properties(llama-agent-mcp-client-library PROPERTIES OUTPUT_NAME llama-agent-mcp-client)
+target_include_directories(llama-agent-mcp-client-library
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-mcp-client-library PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-mcp-client-library
+    PUBLIC
+        llama-agent-mcp-core
+        llama-agent-tool-provider
+        llama-common
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-mcp-client-library PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-mcp-client-library)
+
 add_library(llama-agent-daemon-protocol STATIC
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
@@ -525,7 +561,6 @@ endif()
 target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-protocol)
 
 set(AGENT_MCP_SERVER_SOURCES
-    ../../common/agent/dataset-contracts.cpp
     ../../common/agent/tooling/contracts/schema-contract.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
@@ -549,6 +584,7 @@ target_link_libraries(llama-agent-mcp-server
     PUBLIC
         llama-common
         Threads::Threads
+        llama-agent-dataset-contracts
         llama-agent-mcp-core
     PRIVATE
         cpp-httplib
@@ -567,6 +603,7 @@ endif()
 # binaries into the runtime package.
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     set(AGENT_PACKAGE_LIBRARY_TARGETS
+        llama-agent-dataset-contracts
         llama-agent-memory
         llama-agent-plan
         llama-agent-sandbox
@@ -577,6 +614,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-tool-provider
         llama-agent-cli-library
         llama-agent-daemon-library
+        llama-agent-mcp-client-library
         llama-agent-runtime-engine
         llama-agent-runtime-host
         llama-agent-runtime-support
@@ -611,7 +649,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
@@ -827,7 +865,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-mcp-http-vertical-smoke)
@@ -842,7 +880,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-mcp-agent-tools-smoke)
