@@ -3996,15 +3996,19 @@ llama-agent-runtime-host
     -> runtime-engine and tool-provider
 
 llama-agent-runtime-support
-    -> runtime-host, tool-provider, resource/data/diagnostics
-        -> CLI, daemon, MCP, and smoke targets
+        -> runtime-host, tool-provider, resource/data/diagnostics
+        -> CLI, MCP, and smoke targets
+
+llama-agent-daemon.so
+    -> runtime-support
+        -> daemon executable and daemon smokes
 ```
 
 #### Long-term shared-library backlog
 
 The next library split should follow execution seams rather than create one
-library per directory. The first two slices are now implemented; the remaining
-order is:
+library per directory. Several execution slices are now implemented; the
+remaining order is:
 
 ```text
 1. llama-agent-runtime-engine.so (implemented)
@@ -4027,8 +4031,10 @@ order is:
    tools. CLI host/run/selection code remains in support because it still
    consumes runtime assembly and would otherwise create a target cycle.
 
-5. llama-agent-daemon.so
-   daemon service, dispatcher, protocol client and administration code
+5. llama-agent-daemon.so (initial implementation slice implemented)
+   daemon service, dispatcher, runtime adapter, protocol adapter, client and
+   administration code. The executable-only TCP/Unix entrypoints remain in the
+   daemon executable target.
 
 6. llama-agent-mcp-client.so
    MCP HTTP/stdio client and client-factory code
@@ -4055,9 +4061,10 @@ llama-agent-cli.so
 This is a build-isolation backlog, not a requirement to expose every library
 as a public ABI. A candidate split must first have an acyclic target graph,
 stable narrow headers and a measurable recompilation benefit. The first
-implementation slices are therefore `llama-agent-runtime-engine` and the
-runtime-host lifecycle facade; CLI, daemon and MCP extraction follow only
-after their provider dependencies have a similarly clean boundary.
+implementation slices are therefore `llama-agent-runtime-engine`, the
+runtime-host lifecycle facade, the CLI core and the daemon implementation.
+The remaining MCP-client extraction follows only after its provider and
+runtime dependencies have a similarly clean boundary.
 
 `common/agent` must not depend on implementation under `tools/agent`. Daemon
 services, MCP servers, and optional Cozo storage may be split into narrower
@@ -4074,21 +4081,29 @@ is enabled. The runtime-support library links both narrow libraries where
 needed; tests and seed tools link the Cozo library directly rather than
 compiling the same data sources again.
 
-Daemon service and host-configuration sources remain in the runtime-support
-library. The narrow libraries therefore reduce repeated compilation without
-moving orchestration or ownership into a lower-level utility target.
+The daemon service, client and host-facing protocol adapters now live in
+`llama-agent-daemon.so`; only the executable-specific TCP/Unix entrypoints
+remain in the executable target. The reusable JSONL protocol remains the
+separate static `llama-agent-daemon-protocol` target because subprocess
+fixtures can copy it without requiring a DLL staging step. These boundaries
+reduce repeated compilation without moving orchestration or ownership into a
+lower-level utility target.
 
 The current runtime split deliberately stops at a measured dependency seam:
 
 ```text
 runtime-support
-    CLI/daemon/MCP assembly and remaining orchestration
+    CLI/MCP assembly and remaining orchestration
         ├── runtime-host
         │     session/turn/inference lifecycle and resident forwarding
         │         └── runtime-engine
         │               execution state, server adapters, capacity and event projection
         └── tool-provider
               provider selection, runtime adapters and result contracts
+
+daemon
+    daemon service/client/dispatcher implementation
+        └── runtime-support
 ```
 
 The CLI split follows the same rule. The current `llama-agent-cli.so` is the
