@@ -122,6 +122,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
 
 set(AGENT_RUNTIME_SELECTION_SOURCES
     ../../tools/agent/cli/agent-cli-selection.cpp
+    ../../tools/agent/tooling/agent-selection-contracts.cpp
 )
 
 set(AGENT_RUNTIME_PACKAGE_SOURCES
@@ -134,7 +135,6 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
 )
 
 set(AGENT_TOOL_PROVIDER_SOURCES
-    ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/tooling/agent-tool-provider.cpp
     ../../tools/agent/tooling/agent-tool-result-json-contracts.cpp
     ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
@@ -467,6 +467,7 @@ target_link_libraries(llama-agent-runtime-engine
         llama-agent-resource
         llama-agent-data
         llama-agent-diagnostics
+        llama-agent-runtime-adapters
         server-context
         Threads::Threads
     PRIVATE
