@@ -28,16 +28,29 @@ model_binding_parse_result model_output_binding(const std::string & value, json 
     const std::string step_id = value.substr(1, separator - 1);
     const std::string field_path = value.substr(separator + 1);
     std::string pointer = "/";
-    size_t begin = 0;
-    while (begin < field_path.size()) {
-        const size_t end = field_path.find('.', begin);
-        const std::string field = field_path.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+    size_t cursor = 0;
+    while (cursor < field_path.size()) {
+        const size_t field_start = cursor;
+        while (cursor < field_path.size() && (std::isalnum(static_cast<unsigned char>(field_path[cursor])) != 0 || field_path[cursor] == '_' || field_path[cursor] == '-')) ++cursor;
+        if (cursor == field_start) return model_binding_parse_result::invalid;
+        const std::string field = field_path.substr(field_start, cursor - field_start);
         if (!valid_identifier(field)) return model_binding_parse_result::invalid;
         if (pointer.size() > 256 - field.size() - 1) return model_binding_parse_result::invalid;
         if (pointer.size() > 1) pointer += '/';
         pointer += field;
-        if (end == std::string::npos) break;
-        begin = end + 1;
+        while (cursor < field_path.size() && field_path[cursor] == '[') {
+            ++cursor;
+            const size_t index_start = cursor;
+            while (cursor < field_path.size() && std::isdigit(static_cast<unsigned char>(field_path[cursor])) != 0) ++cursor;
+            if (cursor == index_start || cursor >= field_path.size() || field_path[cursor] != ']') return model_binding_parse_result::invalid;
+            const std::string index = field_path.substr(index_start, cursor - index_start);
+            if (pointer.size() > 256 - index.size() - 1) return model_binding_parse_result::invalid;
+            pointer += '/' + index;
+            ++cursor;
+        }
+        if (cursor == field_path.size()) break;
+        if (field_path[cursor] != '.') return model_binding_parse_result::invalid;
+        ++cursor;
     }
     if (!valid_identifier(step_id) || pointer.size() <= 1) return model_binding_parse_result::invalid;
     binding = json{{"$from_step", step_id}, {"$json_pointer", pointer}};
@@ -63,7 +76,7 @@ bool normalize_model_output_bindings(
             const auto parsed = model_output_binding(shorthand, binding);
             if (parsed == model_binding_parse_result::invalid && strict_model_references) {
                 error = "plan.binding.invalid_syntax: '" + shorthand +
-                    "' is not a valid model reference; expected '$previous.field' or '$alias.field'";
+                    "' is not a valid model reference; expected '$previous.field', '$alias.field' or '$alias.field[index]'";
                 return false;
             }
             if (parsed == model_binding_parse_result::literal && strict_model_references && aliases != nullptr) {

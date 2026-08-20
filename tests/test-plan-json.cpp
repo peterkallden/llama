@@ -130,6 +130,14 @@ int main() {
     const auto invalid_reference_shape = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$table","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(!common_plan_parse_proposal_json(invalid_reference_shape, plan, operations, error));
     assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
+    const auto indexed_reference = R"({"goal":"select the first dataset","steps":[{"tool":"dataset.list","args":{},"as":"candidates"},{"tool":"dataset.inspect","args":{"dataset":"$candidates.datasets[0]"}}]})";
+    assert(common_plan_parse_proposal_json(indexed_reference, plan, operations, error));
+    const auto indexed_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
+    assert(indexed_args["dataset"].value("$from_step", "") == "step_1");
+    assert(indexed_args["dataset"].value("$json_pointer", "") == "/datasets/0");
+    const auto invalid_indexed_reference = R"({"goal":"select a dataset","steps":[{"tool":"dataset.list","args":{},"as":"candidates"},{"tool":"dataset.inspect","args":{"dataset":"$candidates.datasets[wrong]"}}]})";
+    assert(!common_plan_parse_proposal_json(invalid_indexed_reference, plan, operations, error));
+    assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
 
     const auto literal_alias_name = R"({"goal":"use a literal","steps":[{"tool":"document.table","args":{"resource":"r1","table":"table"},"as":"table"}]})";
     assert(common_plan_parse_proposal_json(literal_alias_name, plan, operations, error));

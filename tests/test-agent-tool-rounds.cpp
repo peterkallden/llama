@@ -183,5 +183,50 @@ int main() {
     run_repair_case(common_agent_thinking_mode::deliberate, "repair-deliberate", "lookup", R"({"wrong":true})", "\"id\":\"\"");
     run_repair_case(common_agent_thinking_mode::reflective, "repair-redaction", "lookup", R"({"token":"do-not-log","wrong":true})", "\"id\":\"\"");
     run_repair_case(common_agent_thinking_mode::reflective, "repair-unavailable", "missing", R"({})", "\"lookup\"");
+
+    common_registered_tool write_tool;
+    write_tool.name = "write_tool";
+    write_tool.executor_id = "test.write";
+    write_tool.read_only = false;
+    write_tool.arguments_schema = R"({"type":"object","required":["value"],"properties":{"value":{"type":"string"}}})";
+    write_tool.handler = [](const std::string &) { return common_tool_execution_result::success("must not run"); };
+    assert(registry.register_tool(std::move(write_tool), error));
+    class policy_reflector final : public common_reflection_engine {
+    public:
+        common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+            error.clear();
+            common_reflection_result result;
+            result.decision = common_reflection_decision::revise;
+            common_plan_operation add;
+            add.kind = common_plan_operation_kind::add_step;
+            common_plan_step step{"write", "Write", "Attempt a policy-denied write"};
+            step.selected_tool = "write_tool";
+            step.tool_call = common_plan_tool_call{"write_tool", R"({"value":"blocked"})"};
+            add.step = std::move(step);
+            result.proposed_plan_operations.push_back(std::move(add));
+            return result;
+        }
+    } reflector;
+    common_plan_in_memory_store policy_store;
+    assert(policy_store.open("", error));
+    repair_planner policy_planner("policy-reflection", "lookup", R"({"id":"first"})");
+    executor policy_executor;
+    repair_test_runtime policy_tools(registry);
+    common_agent_runtime policy_runtime(policy_store, policy_planner, policy_executor, reflector, &policy_tools);
+    common_agent_request policy_request;
+    policy_request.prompt = "reject policy-denied reflection repair";
+    policy_request.max_iterations = 2;
+    policy_request.max_reflection_rounds = 1;
+    policy_request.max_tool_batches = 1;
+    const auto policy_result = policy_runtime.run(policy_request);
+    assert(!policy_result.error.empty() && policy_result.error.find("not allowed") != std::string::npos);
+    bool saw_policy_failure = false;
+    for (const auto & trace : policy_result.trace) {
+        saw_policy_failure = saw_policy_failure ||
+            (trace.stage == common_runtime_trace_stage::reflection &&
+             trace.kind == common_runtime_trace_kind::failed &&
+             trace.detail.find("write_tool") != std::string::npos);
+    }
+    assert(saw_policy_failure);
     return 0;
 }

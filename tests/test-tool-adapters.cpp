@@ -34,6 +34,19 @@ public:
         descriptor = stored_descriptor;
         return true;
     }
+    bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & descriptors, std::string &) override {
+        descriptors = {stored_descriptor};
+        return true;
+    }
+    bool find_dataset_by_name(const std::string & name,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        if (name != stored_descriptor.ref.name && name != "sales") {
+            error = "dataset name was not found";
+            return false;
+        }
+        descriptor = stored_descriptor;
+        return true;
+    }
     bool execute(const std::string & operation, const std::string & request_json, std::string & result, std::string & error) override {
         last_operation = operation;
         last_request = request_json;
@@ -186,6 +199,7 @@ int main() {
         {"workspace.patch", 1, true, "{}"},
         {"diagnostics.compile", 1, true, "{}"},
         {"dataset.list", 1, true, "{}"},
+        {"dataset.select", 1, true, "{}"},
         {"dataset.inspect", 1, true, "{}"},
         {"dataset.schema", 1, true, "{}"},
         {"dataset.sample", 1, true, "{}"},
@@ -293,6 +307,12 @@ int main() {
     assert(result.ok && result.output.find("decimal") != std::string::npos);
     result = dataset_only_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
     assert(result.ok && dataset_only_data.last_operation == "data.query");
+    result = dataset_only_registry.execute({"dataset.list", "{}"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.select", R"({"name":"sales"})"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.select", R"({"name":"missing"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.select.not_found");
     result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
     assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});

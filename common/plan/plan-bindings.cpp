@@ -57,6 +57,10 @@ bool validate_explicit_binding_types(
         const auto field_name = pointer.substr(1, end == std::string::npos ? std::string::npos : end - 1);
         const auto * output = find_field(source.outputs, field_name);
         if (!output || input.semantic_type.empty() || output->semantic_type.empty()) continue;
+        if (output->collection && end == std::string::npos) {
+            error = "plan.binding.collection_requires_index: collection output '" + field_name + "' requires an array index";
+            return false;
+        }
         if (!common_plan_semantic_types_compatible(output->semantic_type, input.semantic_type)) {
             error = "plan.binding.incompatible_types: '" + field_name + "' has type " +
                 output->semantic_type + ", but '" + input.name + "' requires " + input.semantic_type;
@@ -87,7 +91,7 @@ bool add_unambiguous_typed_binding(
     for (const auto & input : target.inputs) {
         if (arguments.contains(input.name) || input.semantic_type.empty()) continue;
         for (const auto & output : source_contract.outputs) {
-            if (common_plan_semantic_types_compatible(output.semantic_type, input.semantic_type) &&
+            if (!output.collection && common_plan_semantic_types_compatible(output.semantic_type, input.semantic_type) &&
                     observation_has_field(*observation, output.name)) {
                 candidates.push_back({input.name, output.name});
             }
@@ -268,9 +272,16 @@ bool common_plan_dataflow_contract_from_schemas(
         }
         for (const auto & item : properties.items()) {
             const auto & property = item.value();
-            if (!property.is_object() || !property.contains("x-agent-type") ||
-                    !property["x-agent-type"].is_string()) continue;
-            fields.push_back({item.key(), property["x-agent-type"].get<std::string>(), required.count(item.key()) != 0});
+            if (!property.is_object()) continue;
+            bool collection = property.value("type", std::string()) == "array";
+            std::string semantic_type;
+            if (property.contains("x-agent-type") && property["x-agent-type"].is_string()) semantic_type = property["x-agent-type"].get<std::string>();
+            else if (collection && property.value("items", json::object()).is_object() &&
+                    property["items"].contains("x-agent-type") && property["items"]["x-agent-type"].is_string()) {
+                semantic_type = property["items"]["x-agent-type"].get<std::string>();
+            }
+            if (semantic_type.empty()) continue;
+            fields.push_back({item.key(), semantic_type, required.count(item.key()) != 0, collection});
         }
     };
     collect(input, contract.inputs);

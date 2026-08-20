@@ -275,6 +275,8 @@ struct common_agent_request {
     size_t max_iterations = 2;
     size_t max_reflection_rounds = 1;
     size_t max_tool_batches = 1;
+    // Do not hide planner failure behind an ungrounded answer-only fallback.
+    bool require_tool_execution = false;
     bool allow_policy_gated_tool_proposals = false;
 
     // Host-owned cancellation hooks used by bounded research acquisition.

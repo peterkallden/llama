@@ -953,6 +953,7 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
     common_agent_runtime_turn_request turn_request;
     turn_request.request = std::move(request);
     turn_request.request.input_resources = std::move(input_resources);
+    turn_request.request.require_tool_execution = options.require_tool_execution;
     turn_request.scope = scope;
     turn_request.inference_options = make_agent_inference_options({
         options.model,

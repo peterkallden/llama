@@ -594,6 +594,29 @@ The following constraints apply:
 
 ### Tool-call repair
 
+Dataset repair keeps the dataset family visible even when the failed planner
+output did not contain a usable tool call. The bounded compact contract is:
+
+```text
+dataset.list() -> datasets: dataset_ref[], names: string[]
+dataset.select(name: string) -> dataset: dataset_ref
+dataset.inspect(dataset: dataset_ref)
+dataset.schema(dataset: dataset_ref)
+dataset.sample(dataset: dataset_ref)
+```
+
+Use `dataset.select` when a dataset is known by name. Use an indexed reference
+only for an explicitly named collection result, for example
+`$candidates.datasets[0]`; `$datasets[0]` is invalid because `datasets` has not
+been introduced as an alias. The host still validates the resulting typed
+binding and owns the canonical step/pointer representation.
+
+When a request is marked as requiring tool execution, a rejected planner JSON
+object is a bounded planner failure. The runtime must not turn it into an
+answer-only fallback, because that would make an ungrounded answer look like a
+successful tool-backed turn. Callers that allow ordinary conversational
+fallback may retain the old bounded answer step.
+
 Tool-call repair is a common runtime path shared by `reflective`, `deliberate`
 and `research`; it is not a mode-specific tool provider. After a schema or
 availability failure, the host records a bounded repair context for the next
@@ -645,6 +668,12 @@ tool-backed step is not evidence of completion: the runtime blocks final
 synthesis until the step has been reset/replaced and successfully rerun. If
 reflection accepts the draft without scheduling such a repair, the turn fails
 bounded rather than presenting the draft as a verified answer.
+
+Reflection repair is also fail-closed for policy. If reflection proposes a
+tool that is not in the effective runtime view, or is not read-only/policy
+approved for the request, the repair itself is marked failed. It is not
+degraded into a reasoning step, since that would silently remove the required
+operation and could permit an answer to proceed without the requested tool.
 
 This makes repair a bounded normalization and validation path, not a second
 tool-discovery protocol. The model is used only when deterministic matching is

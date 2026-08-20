@@ -1220,6 +1220,20 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.data.invalid_arguments", std::move(err));
                 return execute_data_backend(bindings, operation, arguments.dump());
             }, error);
+        } else if (definition.executor_id == "builtin.dataset.list" && bindings.data_store != nullptr) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.dataset.list.invalid_arguments", std::move(err));
+                std::vector<common_agent_dataset_descriptor> descriptors;
+                if (!bindings.data_store->list_dataset_descriptors(descriptors, err)) return tool_execution_failure("tool.dataset.list.backend_unavailable", std::move(err), "The dataset registry is unavailable.");
+                const size_t limit = std::min<size_t>(arguments.value("max_results", 128), 256);
+                json datasets = json::array(); json names = json::array();
+                for (size_t index = 0; index < descriptors.size() && index < limit; ++index) {
+                    datasets.push_back(descriptors[index].ref.uri);
+                    names.push_back(descriptors[index].ref.name);
+                }
+                return tool_success_json({{"datasets", datasets}, {"names", names}, {"truncated", descriptors.size() > limit}});
+            }, error);
         } else if (definition.executor_id == "builtin.dataset.list" && !bindings.repository_root.empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
@@ -1234,6 +1248,17 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     if (ext == ".csv" || ext == ".json" || ext == ".parquet") datasets.push_back({{"path", std::filesystem::relative(entry.path(), bindings.repository_root).generic_string()}, {"format", ext.substr(1)}, {"size_bytes", entry.file_size()}});
                 }
                 return tool_success_json({{"datasets", datasets}, {"truncated", datasets.size() >= static_cast<size_t>(limit)}});
+            }, error);
+        } else if (definition.executor_id == "builtin.dataset.select" && bindings.data_store != nullptr) {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                std::string err; json arguments;
+                if (!parse_object(input, arguments, err) || !arguments.contains("name") || !arguments["name"].is_string()) return tool_validation_failure("tool.dataset.select.invalid_arguments", "dataset.select requires name");
+                common_agent_dataset_descriptor descriptor;
+                if (!bindings.data_store->find_dataset_by_name(arguments["name"].get<std::string>(), descriptor, err)) {
+                    const auto code = err.find("ambiguous") != std::string::npos ? "tool.dataset.select.ambiguous" : "tool.dataset.select.not_found";
+                    return tool_not_found_failure(code, std::move(err), "The requested dataset name did not resolve to exactly one dataset.");
+                }
+                return tool_success_json({{"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name}});
             }, error);
         } else if (definition.executor_id == "builtin.dataset.inspect" &&
                 (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {

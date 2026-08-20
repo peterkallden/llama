@@ -16,7 +16,7 @@ void print_agent_usage(const char * argv0, const char * command_name) {
         "         [--tool-profile NAME] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--max-tool-rounds N] [--n-predict N] [--context-size N] [--threads N] [-ngl N]\n"
-        "         [--inference-step-timeout-ms N] [--generation-trace]\n"
+        "         [--inference-step-timeout-ms N] [--generation-trace] [--require-tool-execution]\n"
         "         [--agent-inference-backend cli|server-context] [--mmproj PATH]\n"
         "         [--mcp-tool-command PATH] [--mcp-tool-arg VALUE ...] [--mcp-tool-server-name NAME] [--mcp-tool-prefix PREFIX]\n"
         "         [--resource-blob-backend auto|in-memory|fs|s3] [--resource-blob-root PATH]\n"
@@ -205,6 +205,8 @@ bool parse_agent_run_args(int argc, char ** argv, args & out) {
             out.agent_trace = true;
         } else if (strcmp(argv[i], "--generation-trace") == 0) {
             out.generation_trace = true;
+        } else if (strcmp(argv[i], "--require-tool-execution") == 0) {
+            out.require_tool_execution = true;
         } else if (strcmp(argv[i], "--memory-global-opt-in") == 0) {
             out.memory_global_opt_in = true;
         } else {

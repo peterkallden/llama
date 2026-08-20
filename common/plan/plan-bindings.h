@@ -11,6 +11,7 @@ struct common_plan_tool_field_contract {
     std::string name;
     std::string semantic_type;
     bool required = false;
+    bool collection = false;
 };
 
 struct common_plan_tool_dataflow_contract {

@@ -523,61 +523,20 @@ int main() {
     reflection_request.max_tool_batches = 1;
 
     const auto reflection_result = reflection_runtime.run(reflection_request);
-    if (!reflection_result.error.empty()) {
-        std::fprintf(stderr, "reflection runtime run failed: %s\n", reflection_result.error.c_str());
+    if (reflection_result.error.empty() ||
+            reflection_result.error.find("not allowed") == std::string::npos) {
+        std::fprintf(stderr, "reflection runtime did not fail closed for the disallowed memory_get repair: %s\n", reflection_result.error.c_str());
         return 1;
     }
-    bool saw_memory_get_guardrail = false;
-    for (const auto & event : reflection_result.events) {
-        if (event.type == common_agent_event_type::tool_rejected &&
-                event.detail.find("reflection-added tool step degraded to reasoning: memory_get requires an id from a prior memory_search or recorded memory reference") != std::string::npos) {
-            saw_memory_get_guardrail = true;
-            break;
-        }
+    bool saw_policy_failure = false;
+    for (const auto & trace : reflection_result.trace) {
+        saw_policy_failure = saw_policy_failure ||
+            (trace.stage == common_runtime_trace_stage::reflection &&
+             trace.kind == common_runtime_trace_kind::failed &&
+             trace.detail.find("memory_get") != std::string::npos);
     }
-    if (!saw_memory_get_guardrail) {
-        std::fprintf(stderr, "reflection runtime did not emit the expected memory_get guardrail detail\n");
-        return 1;
-    }
-    bool saw_suspended_answer = false;
-    bool saw_repair_completed = false;
-    bool saw_repair_before_accept = false;
-    size_t suspended_trace_index = reflection_result.trace.size();
-    size_t repair_trace_index = reflection_result.trace.size();
-    size_t accepted_trace_index = reflection_result.trace.size();
-    for (size_t trace_index = 0; trace_index < reflection_result.trace.size(); ++trace_index) {
-        const auto & trace = reflection_result.trace[trace_index];
-        if (trace.detail.find("final answer suspended for pending reflection repair") != std::string::npos) {
-            saw_suspended_answer = true;
-            suspended_trace_index = std::min(suspended_trace_index, trace_index);
-        }
-        if (trace.detail.find("reasoning step completed") != std::string::npos) {
-            saw_repair_completed = true;
-            repair_trace_index = std::min(repair_trace_index, trace_index);
-        }
-        if (trace.detail.find("response accepted without reflection revision") != std::string::npos) {
-            accepted_trace_index = std::min(accepted_trace_index, trace_index);
-        }
-    }
-    saw_repair_before_accept = saw_suspended_answer && saw_repair_completed &&
-        suspended_trace_index < repair_trace_index && repair_trace_index < accepted_trace_index;
-    if (!saw_suspended_answer || !saw_repair_completed || !saw_repair_before_accept) {
-        std::fprintf(stderr, "reflection runtime accepted the draft before executing its repair step\n");
-        return 1;
-    }
-    auto stored_reflection_plan = reflection_plan_store.get(reflection_result.plan_id.value_or(""), error);
-    if (!stored_reflection_plan) {
-        std::fprintf(stderr, "reflection runtime did not persist its final plan: %s\n", error.c_str());
-        return 1;
-    }
-    bool repair_step_completed = false;
-    bool answer_step_completed = false;
-    for (const auto & step : stored_reflection_plan->steps) {
-        if (step.id == "repair-memory") repair_step_completed = step.status == common_plan_step_status::completed;
-        if (step.id == "answer") answer_step_completed = step.status == common_plan_step_status::completed;
-    }
-    if (!repair_step_completed || !answer_step_completed) {
-        std::fprintf(stderr, "reflection runtime did not complete repair and answer steps\n");
+    if (!saw_policy_failure) {
+        std::fprintf(stderr, "reflection runtime did not emit a failed reflection trace for memory_get\n");
         return 1;
     }
 

@@ -12,6 +12,7 @@ extern "C" {
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
@@ -297,6 +298,55 @@ bool common_agent_cozo_data_store::get_dataset_descriptor(
     descriptor.lineage.operation = value.value("operation", std::string());
     descriptor.lineage.operation_summary = value.value("operation_summary", std::string());
     return validate_common_agent_dataset_descriptor(descriptor, common_agent_dataset_limits{}, error);
+}
+
+bool common_agent_cozo_data_store::list_dataset_descriptors(
+        std::vector<common_agent_dataset_descriptor> & descriptors,
+        std::string & error) {
+    descriptors.clear();
+    std::string raw;
+    if (!run("?[dataset_uri] := *agent_dataset_metadata[dataset_uri, descriptor_json]", "{}", raw, error)) return false;
+    const auto result = json::parse(raw, nullptr, false);
+    if (!result.is_object() || !result.contains("rows")) {
+        error = "dataset descriptor listing returned invalid data";
+        return false;
+    }
+    std::vector<std::string> uris;
+    for (const auto & row : result["rows"]) {
+        if (row.is_array() && !row.empty() && row[0].is_string()) uris.push_back(row[0].get<std::string>());
+    }
+    std::sort(uris.begin(), uris.end());
+    for (const auto & uri : uris) {
+        common_agent_dataset_descriptor descriptor;
+        if (!get_dataset_descriptor(uri, descriptor, error)) return false;
+        descriptors.push_back(std::move(descriptor));
+    }
+    error.clear();
+    return true;
+}
+
+bool common_agent_cozo_data_store::find_dataset_by_name(
+        const std::string & name,
+        common_agent_dataset_descriptor & descriptor,
+        std::string & error) {
+    descriptor = {};
+    std::vector<common_agent_dataset_descriptor> descriptors;
+    if (!list_dataset_descriptors(descriptors, error)) return false;
+    std::string wanted;
+    for (const char ch : name) if (!std::isspace(static_cast<unsigned char>(ch))) wanted += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (wanted.empty()) { error = "dataset name must not be empty"; return false; }
+    const common_agent_dataset_descriptor * match = nullptr;
+    for (const auto & candidate : descriptors) {
+        std::string candidate_name;
+        for (const char ch : candidate.ref.name) if (!std::isspace(static_cast<unsigned char>(ch))) candidate_name += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (candidate_name != wanted) continue;
+        if (match != nullptr) { error = "dataset name is ambiguous"; return false; }
+        match = &candidate;
+    }
+    if (match == nullptr) { error = "dataset name was not found"; return false; }
+    descriptor = *match;
+    error.clear();
+    return true;
 }
 
 bool common_agent_cozo_data_store::execute(const std::string & operation, const std::string & request_json, std::string & result_json, std::string & error) {

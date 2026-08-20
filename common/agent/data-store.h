@@ -3,6 +3,7 @@
 #include "agent/dataset-contracts.h"
 
 #include <string>
+#include <vector>
 
 struct common_agent_data_store_config {
     std::string backend = "auto";
@@ -45,6 +46,27 @@ public:
         (void) dataset_uri;
         descriptor = {};
         error = "data store does not support dataset descriptors";
+        return false;
+    }
+
+    // Optional registry lookup used by the model-facing dataset.select and
+    // dataset.list contracts. Backends that do not persist descriptors keep
+    // the legacy path-based dataset adapter instead.
+    virtual bool list_dataset_descriptors(
+            std::vector<common_agent_dataset_descriptor> & descriptors,
+            std::string & error) {
+        descriptors.clear();
+        error = "data store does not support dataset descriptor listing";
+        return false;
+    }
+
+    virtual bool find_dataset_by_name(
+            const std::string & name,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) name;
+        descriptor = {};
+        error = "data store does not support dataset name lookup";
         return false;
     }
 

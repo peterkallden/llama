@@ -85,6 +85,7 @@ struct args {
     bool include_summary = false;
     bool agent_trace = false;
     bool generation_trace = false;
+    bool require_tool_execution = false;
     bool memory_global_opt_in = false;
     bool tool_profile_explicit = false;
     std::map<std::string, std::vector<std::string>> tool_capabilities;

@@ -1433,6 +1433,19 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
             if (op.kind == common_plan_operation_kind::add_step && op.step && op.step->tool_call) {
+                const auto & proposed_call = *op.step->tool_call;
+                const bool reflection_policy_allowed = tools != nullptr &&
+                    (tools->is_read_only(proposed_call.name) ||
+                     (request.allow_policy_gated_tool_proposals && tools->is_policy_gated(proposed_call.name)));
+                if (!reflection_policy_allowed) {
+                    const std::string detail = "reflection repair proposed a tool that is not allowed: " + proposed_call.name;
+                    append_event(result, request, {common_agent_event_type::tool_rejected, detail, {}, plan.id});
+                    append_trace(result, common_runtime_trace_stage::reflection,
+                        common_runtime_trace_kind::failed, detail, plan.id,
+                        op.step->id, proposed_call.name);
+                    result.error = detail;
+                    return result;
+                }
                 std::string repair_merge_error;
                 if (merge_reflection_tool_repair_arguments(plan, op, repair_merge_error)) {
                     append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
