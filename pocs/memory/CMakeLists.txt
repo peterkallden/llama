@@ -90,6 +90,7 @@ if (LLAMA_AGENT_RUNTIME)
     target_link_libraries(${TARGET} PRIVATE
         llama-agent-core
         llama-agent-runtime-support
+        llama-agent-daemon-library
         server-context
     )
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)
