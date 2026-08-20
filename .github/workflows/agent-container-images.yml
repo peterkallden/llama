@@ -128,7 +128,9 @@ jobs:
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
             org.opencontainers.image.version=${{ steps.package.outputs.package_id }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   build-release:
     name: Build and publish ${{ matrix.backend }} release image
@@ -242,4 +244,6 @@ jobs:
             io.llama-agent.backend.version=${{ matrix.backend_version }}
             io.llama-agent.backend.label=${{ matrix.backend_label }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true
