@@ -133,8 +133,9 @@ remote MCP providers, status/readiness, and Docker usage.
   image fallback. See [Agent multimodal runtime](agent-multimodal.md).
 - **Daemon and protocols** — foreground JSONL administration, TCP and Unix
   transports, inbound MCP, readiness/status reporting, and systemd examples.
-- **Sandbox workspaces** — controlled Docker/Kubernetes execution and artifact
-  handling. See [Agent Sandbox Workspaces](agent-sandbox-workspaces.md).
+- **Sandbox workspaces** — capability-checked Docker/Podman, Kubernetes and
+  optional LXC execution with deterministic local/sandbox fallback and
+  artifact handling. See [Agent Sandbox Workspaces](agent-sandbox-workspaces.md).
 
 ## MCP integration
 
@@ -171,7 +172,7 @@ page when the corresponding workflows have completed successfully.
 Agent verification is split by dependency and execution cost:
 
 - model-free contract and protocol tests use the `agent` CTest label;
-- Docker and Kubernetes tests use their dedicated sandbox labels;
+- Docker, Kubernetes and optional LXC tests use dedicated sandbox labels;
 - model-backed resident and end-to-end checks are separate from contract
   assurance;
 - release packaging runs only after the configured release checks pass.

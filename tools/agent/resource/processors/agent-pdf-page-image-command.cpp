@@ -122,6 +122,7 @@ bool make_agent_pdf_page_image_request(
             break;
         case agent_resource_backend_kind::docker:
         case agent_resource_backend_kind::kubernetes:
+        case agent_resource_backend_kind::lxc:
         case agent_resource_backend_kind::local_pandoc:
             error = "sandbox backend must be resolved to a concrete PDF renderer before command construction";
             return false;

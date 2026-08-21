@@ -13,6 +13,11 @@ struct common_agent_sandbox_host_config {
     std::string backend = "none";
     std::string docker_executable = "docker";
     std::string docker_default_image;
+    std::string lxc_executable = "lxc";
+    std::string lxc_default_image = "ubuntu:24.04";
+    std::string lxc_network_mode = "none";
+    std::string lxc_network_profile;
+    bool lxc_cleanup = true;
     std::string kubernetes_executable = "kubectl";
     std::string kubernetes_kubeconfig;
     std::string kubernetes_context;

@@ -904,6 +904,18 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-sandbox-lxc-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-sandbox-lxc-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-agent-sandbox
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-workspace-operation-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-workspace-operation-smoke.cpp
@@ -1605,6 +1617,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-sandbox-local-runtime-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
+    llama-agent-sandbox-lxc-smoke
     llama-agent-workspace-operation-smoke
     llama-agent-mcp-tool-provider-smoke
     llama-agent-mcp-stdio-client-smoke
@@ -1664,6 +1677,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-sandbox-local-runtime-smoke
     llama-agent-sandbox-docker-smoke
     llama-agent-sandbox-kubernetes-smoke
+    llama-agent-sandbox-lxc-smoke
     llama-agent-workspace-operation-smoke
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke
@@ -1897,6 +1911,11 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-sandbox-kubernetes-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-kubernetes-smoke>)
     set_property(TEST llama-agent-sandbox-kubernetes-ctest PROPERTY LABELS sandbox-kubernetes)
+
+    add_test(NAME llama-agent-sandbox-lxc-ctest
+        COMMAND $<TARGET_FILE:llama-agent-sandbox-lxc-smoke>)
+    set_property(TEST llama-agent-sandbox-lxc-ctest PROPERTY LABELS sandbox-lxc)
+    set_tests_properties(llama-agent-sandbox-lxc-ctest PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 function(llama_agent_add_smoke_group TARGET_NAME)

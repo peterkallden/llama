@@ -89,6 +89,10 @@ bool common_agent_sandbox_docker_runtime::execute(
         result.error = error;
         return false;
     }
+    if (!common_agent_sandbox_validate_capabilities(request, capabilities(), error)) {
+        result.error = error;
+        return false;
+    }
     if (request.network != common_agent_sandbox_network_scope::none) {
         error = "Docker sandbox currently supports only network=none";
         result.error = error;

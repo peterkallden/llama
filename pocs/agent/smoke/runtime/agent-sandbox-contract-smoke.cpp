@@ -4,6 +4,44 @@
 #include <filesystem>
 
 int main() {
+    common_agent_sandbox_capabilities docker_capabilities;
+    docker_capabilities.process_isolation = true;
+    docker_capabilities.filesystem_readonly = true;
+    docker_capabilities.filesystem_workspace_write = true;
+    docker_capabilities.filesystem_artifact_write = true;
+    docker_capabilities.network_none = true;
+    docker_capabilities.cpu_limit = true;
+    docker_capabilities.memory_limit = true;
+    docker_capabilities.process_limit = true;
+    docker_capabilities.artifact_collection = true;
+    if (!docker_capabilities.process_isolation ||
+            !docker_capabilities.filesystem_artifact_write ||
+            !docker_capabilities.network_none ||
+            docker_capabilities.network_package_registry) {
+        std::fprintf(stderr, "Docker capability declaration is inconsistent\n");
+        return 1;
+    }
+
+    common_agent_sandbox_request capability_request;
+    capability_request.operation_id = "capability-check";
+    capability_request.command.program = "test-program";
+    capability_request.limits.cpu_count = 1;
+    capability_request.network = common_agent_sandbox_network_scope::none;
+    capability_request.filesystem = common_agent_sandbox_filesystem_scope::artifact_write;
+    std::string capability_error;
+    if (!common_agent_sandbox_validate_capabilities(
+            capability_request, docker_capabilities, capability_error)) {
+        std::fprintf(stderr, "Docker capability check unexpectedly failed: %s\n",
+            capability_error.c_str());
+        return 1;
+    }
+    capability_request.network = common_agent_sandbox_network_scope::package_registry;
+    if (common_agent_sandbox_validate_capabilities(
+            capability_request, docker_capabilities, capability_error)) {
+        std::fprintf(stderr, "Unsupported Docker network scope was accepted\n");
+        return 1;
+    }
+
     common_agent_sandbox_local_test_runtime runtime;
     common_agent_sandbox_policy policy;
     policy.execution_class = "readonly-analysis";

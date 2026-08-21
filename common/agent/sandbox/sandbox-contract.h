@@ -40,6 +40,49 @@ enum class common_agent_sandbox_filesystem_scope {
     artifact_write,
 };
 
+// Backend capabilities are explicit rather than inferred from enum ordering.
+// A backend advertises what it can enforce; policy resolution must fail closed
+// when a requested scope is not represented here.
+struct common_agent_sandbox_capabilities {
+    bool process_isolation = false;
+    bool filesystem_readonly = false;
+    bool filesystem_workspace_write = false;
+    bool filesystem_artifact_write = false;
+    bool network_none = false;
+    bool network_dns_only = false;
+    bool network_allowlisted = false;
+    bool network_package_registry = false;
+    bool network_research_web = false;
+    bool cpu_limit = false;
+    bool memory_limit = false;
+    bool process_limit = false;
+    bool artifact_collection = false;
+};
+
+inline bool common_agent_sandbox_supports_network(
+        const common_agent_sandbox_capabilities & capabilities,
+        common_agent_sandbox_network_scope scope) {
+    switch (scope) {
+        case common_agent_sandbox_network_scope::none: return capabilities.network_none;
+        case common_agent_sandbox_network_scope::dns_only: return capabilities.network_dns_only;
+        case common_agent_sandbox_network_scope::allowlisted: return capabilities.network_allowlisted;
+        case common_agent_sandbox_network_scope::package_registry: return capabilities.network_package_registry;
+        case common_agent_sandbox_network_scope::research_web: return capabilities.network_research_web;
+    }
+    return false;
+}
+
+inline bool common_agent_sandbox_supports_filesystem(
+        const common_agent_sandbox_capabilities & capabilities,
+        common_agent_sandbox_filesystem_scope scope) {
+    switch (scope) {
+        case common_agent_sandbox_filesystem_scope::readonly: return capabilities.filesystem_readonly;
+        case common_agent_sandbox_filesystem_scope::workspace_write: return capabilities.filesystem_workspace_write;
+        case common_agent_sandbox_filesystem_scope::artifact_write: return capabilities.filesystem_artifact_write;
+    }
+    return false;
+}
+
 struct common_agent_sandbox_limits {
     uint32_t timeout_ms = 60000;
     size_t memory_bytes = 0;
@@ -81,6 +124,42 @@ struct common_agent_sandbox_request {
     common_agent_sandbox_artifact_policy artifacts;
 };
 
+inline bool common_agent_sandbox_validate_capabilities(
+        const common_agent_sandbox_request & request,
+        const common_agent_sandbox_capabilities & capabilities,
+        std::string & error) {
+    if (!capabilities.process_isolation) {
+        error = "sandbox backend does not provide process isolation";
+        return false;
+    }
+    if (!common_agent_sandbox_supports_network(capabilities, request.network)) {
+        error = "sandbox backend does not support the requested network scope";
+        return false;
+    }
+    if (!common_agent_sandbox_supports_filesystem(capabilities, request.filesystem)) {
+        error = "sandbox backend does not support the requested filesystem scope";
+        return false;
+    }
+    if (request.limits.cpu_count != 0 && !capabilities.cpu_limit) {
+        error = "sandbox backend cannot enforce CPU limits";
+        return false;
+    }
+    if (request.limits.memory_bytes != 0 && !capabilities.memory_limit) {
+        error = "sandbox backend cannot enforce memory limits";
+        return false;
+    }
+    if (request.limits.process_count != 0 && !capabilities.process_limit) {
+        error = "sandbox backend cannot enforce process limits";
+        return false;
+    }
+    if (request.artifacts.collect && !capabilities.artifact_collection) {
+        error = "sandbox backend cannot collect artifacts";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 struct common_agent_sandbox_usage {
     uint64_t wall_time_ms = 0;
     uint64_t cpu_time_ms = 0;
@@ -102,6 +181,10 @@ struct common_agent_sandbox_result {
 class common_agent_sandbox_runtime {
 public:
     virtual ~common_agent_sandbox_runtime() = default;
+
+    virtual common_agent_sandbox_capabilities capabilities() const {
+        return {};
+    }
 
     virtual bool execute(
         const common_agent_sandbox_request & request,

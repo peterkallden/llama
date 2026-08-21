@@ -11,6 +11,7 @@ enum class agent_resource_backend_kind {
     local_pandoc,
     docker,
     kubernetes,
+    lxc,
 };
 
 struct agent_resource_backend_capabilities {
@@ -24,6 +25,7 @@ struct agent_resource_backend_capabilities {
     bool has_pandoc = false;
     bool has_docker = false;
     bool has_kubernetes = false;
+    bool has_lxc = false;
 };
 
 struct agent_resource_backend_candidate {
@@ -55,6 +57,8 @@ inline bool is_agent_resource_backend_available(
             return capabilities.has_docker;
         case agent_resource_backend_kind::kubernetes:
             return capabilities.has_kubernetes;
+        case agent_resource_backend_kind::lxc:
+            return capabilities.has_lxc;
     }
     return false;
 }

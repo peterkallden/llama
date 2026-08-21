@@ -20,6 +20,7 @@ struct agent_resource_processing_assembly_request {
     common_agent_sandbox_policy sandbox_defaults;
     std::shared_ptr<common_agent_sandbox_runtime> docker_runtime;
     std::shared_ptr<common_agent_sandbox_runtime> kubernetes_runtime;
+    std::shared_ptr<common_agent_sandbox_runtime> lxc_runtime;
     std::shared_ptr<common_agent_sandbox_runtime> local_runtime;
     std::shared_ptr<common_agent_workspace_manager> workspace_manager;
     agent_resource_store * resource_store = nullptr;

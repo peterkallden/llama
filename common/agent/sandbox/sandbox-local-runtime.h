@@ -4,6 +4,10 @@
 
 class common_agent_sandbox_local_runtime final : public common_agent_sandbox_runtime {
 public:
+    common_agent_sandbox_capabilities capabilities() const override {
+        return {};
+    }
+
     bool execute(
             const common_agent_sandbox_request & request,
             common_agent_sandbox_result & result,

@@ -4,6 +4,45 @@
 
 #include <string>
 
+inline bool common_agent_sandbox_network_scope_within(
+        common_agent_sandbox_network_scope requested,
+        common_agent_sandbox_network_scope allowed) {
+    switch (allowed) {
+        case common_agent_sandbox_network_scope::none:
+            return requested == common_agent_sandbox_network_scope::none;
+        case common_agent_sandbox_network_scope::dns_only:
+            return requested == common_agent_sandbox_network_scope::none ||
+                requested == common_agent_sandbox_network_scope::dns_only;
+        case common_agent_sandbox_network_scope::allowlisted:
+            return requested == common_agent_sandbox_network_scope::none ||
+                requested == common_agent_sandbox_network_scope::dns_only ||
+                requested == common_agent_sandbox_network_scope::allowlisted;
+        case common_agent_sandbox_network_scope::package_registry:
+            return requested == common_agent_sandbox_network_scope::none ||
+                requested == common_agent_sandbox_network_scope::dns_only ||
+                requested == common_agent_sandbox_network_scope::allowlisted ||
+                requested == common_agent_sandbox_network_scope::package_registry;
+        case common_agent_sandbox_network_scope::research_web:
+            return true;
+    }
+    return false;
+}
+
+inline bool common_agent_sandbox_filesystem_scope_within(
+        common_agent_sandbox_filesystem_scope requested,
+        common_agent_sandbox_filesystem_scope allowed) {
+    switch (allowed) {
+        case common_agent_sandbox_filesystem_scope::readonly:
+            return requested == common_agent_sandbox_filesystem_scope::readonly;
+        case common_agent_sandbox_filesystem_scope::workspace_write:
+            return requested == common_agent_sandbox_filesystem_scope::readonly ||
+                requested == common_agent_sandbox_filesystem_scope::workspace_write;
+        case common_agent_sandbox_filesystem_scope::artifact_write:
+            return true;
+    }
+    return false;
+}
+
 struct common_agent_sandbox_policy {
     std::string execution_class;
     // Host-owned image selection. Requests may leave image empty and inherit
@@ -43,11 +82,11 @@ struct common_agent_sandbox_policy {
             error = "sandbox output limit exceeds policy";
             return false;
         }
-        if (static_cast<int>(request.network) > static_cast<int>(network)) {
+        if (!common_agent_sandbox_network_scope_within(request.network, network)) {
             error = "sandbox network scope exceeds policy";
             return false;
         }
-        if (static_cast<int>(request.filesystem) > static_cast<int>(filesystem)) {
+        if (!common_agent_sandbox_filesystem_scope_within(request.filesystem, filesystem)) {
             error = "sandbox filesystem scope exceeds policy";
             return false;
         }

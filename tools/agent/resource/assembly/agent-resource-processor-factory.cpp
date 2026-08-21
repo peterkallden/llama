@@ -60,6 +60,7 @@ std::shared_ptr<agent_resource_processing_host> make_processing_host(
     std::shared_ptr<common_agent_sandbox_runtime> runtime;
     if (backend == "docker") runtime = assembly.docker_runtime;
     else if (backend == "kubernetes") runtime = assembly.kubernetes_runtime;
+    else if (backend == "lxc") runtime = assembly.lxc_runtime;
     else if (backend == "local") runtime = assembly.local_runtime;
     else return {};
     if (!runtime) return {};
@@ -92,7 +93,11 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
                 ? binding.media_type.resolved_type
                 : binding.media_type.declared_type);
     const auto dispatch = resolve_agent_resource_processor_dispatch({
-        assembly.policies, source_type, assembly.sandbox_backend});
+        assembly.policies,
+        source_type,
+        assembly.sandbox_backend,
+        assembly.local_runtime != nullptr,
+        assembly.sandbox_backend != "none"});
     if (!dispatch.selected || assembly.resource_store == nullptr) return {};
 
     const auto operation_id = binding.operation_id.empty()
@@ -148,7 +153,9 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
         const auto & selected = *dispatch.policy_for(pandoc);
         const auto backend = selected.backend == "kubernetes"
             ? agent_resource_backend_kind::kubernetes
-            : agent_resource_backend_kind::docker;
+            : (selected.backend == "lxc"
+                ? agent_resource_backend_kind::lxc
+                : agent_resource_backend_kind::docker);
         if (!add(std::make_shared<agent_pandoc_processor>(
                 *host, execution, backend,
                 selected.executable.empty() ? "pandoc" : selected.executable,
@@ -162,7 +169,9 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
             ? agent_resource_backend_kind::local_process
             : (selected.backend == "kubernetes"
                 ? agent_resource_backend_kind::kubernetes
-                : agent_resource_backend_kind::docker);
+                : (selected.backend == "lxc"
+                    ? agent_resource_backend_kind::lxc
+                    : agent_resource_backend_kind::docker));
         if (!add(std::make_shared<agent_xlsx_workbook_json_processor>(
                 *host, execution, backend,
                 selected.executable.empty() ? "python" : selected.executable,

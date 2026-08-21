@@ -2387,7 +2387,7 @@ processor implementation details and are not model-selected tools.
 The host configuration can assign an execution policy per processor id below
 `resources.processor_policies`. Supported modes are `local_preferred`,
 `sandbox_preferred`, `local_required`, and `sandbox_required`; the backend is
-`auto`, `local`, `docker`, or `kubernetes`. `executable` is an optional local
+`auto`, `local`, `docker`, `kubernetes`, or `lxc`. `executable` is an optional local
 process name/path, `image` is an optional sandbox image, and
 `expected_version` is an operator-visible compatibility expectation. These
 values constrain host execution only. A runtime version mismatch must produce
@@ -2649,7 +2649,7 @@ The active execution-policy fields are representation-independent:
 
 `execution` accepts `local_preferred`, `sandbox_preferred`,
 `local_required` and `sandbox_required`. `backend` accepts `auto`, `local`,
-`docker` and `kubernetes`. `executable` is an optional runtime executable
+`docker`, `kubernetes` and `lxc`. `executable` is an optional runtime executable
 name or path; an empty value permits host `PATH` resolution. `image` selects a
 host-approved sandbox image, and `expected_version` is an operator-visible
 compatibility expectation. Version mismatches must produce bounded warning
@@ -2671,9 +2671,11 @@ backend resolution for all future processors remains open.
 When `pdf.page_image`, `ocr.tesseract`, `docx.text`, `odt.text`, `html.text` or
 `xlsx.workbook` is configured, the same operation-scoped host assembly can
 install a local processor without adding a model-visible external tool.
-`local_preferred` with `backend=auto` uses the configured executable or host
-`PATH`; `local_required` fails closed if the processor cannot be started. Docker
-and Kubernetes execution for these processor directions use the same isolated
+`local_preferred` with `backend=auto` tries the local capability first and falls
+back to the configured sandbox capability only when local is unavailable.
+`sandbox_preferred` reverses that order. The `*_required` modes never cross the
+local/sandbox boundary. An explicit backend restricts the candidate set. Docker,
+Kubernetes and LXC execution for these processor directions use the same isolated
 worker images and existing execution-provider contracts. The worker command
 remains the host-typed processor invocation; the model does not select an executable. The
 sandbox paths remain the default deployment choice, while local execution is

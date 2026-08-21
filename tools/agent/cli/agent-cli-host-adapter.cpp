@@ -11,6 +11,7 @@
 #include "../runtime/agent-runtime-execution.h"
 #include "agent/sandbox/sandbox-docker-runtime.h"
 #include "agent/sandbox/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-lxc-runtime.h"
 #include "agent/sandbox/sandbox-local-runtime.h"
 #include "agent/sandbox/sandbox-runtime.h"
 #include "../diagnostics/agent-clangd-provider.h"
@@ -256,7 +257,8 @@ bool resolve_agent_host_tool_selection(
         // execution backend. Keep the profile itself intact for diagnostics,
         // but resolve an effective snapshot that cannot advertise tools which
         // would only fail later with sandbox.backend_unavailable.
-        if (request.sandbox.backend != "docker" && request.sandbox.backend != "kubernetes") {
+        if (request.sandbox.backend != "docker" && request.sandbox.backend != "kubernetes" &&
+                request.sandbox.backend != "lxc") {
             std::vector<common_tool_definition> available_tools;
             for (auto & definition : profile_snapshot->tools) {
                 if (definition.risk_class != common_tool_risk_class::sandbox_execution) {
@@ -521,6 +523,7 @@ bool resolve_agent_host_tool_selection(
 
         const auto needs_sandbox_assembly = [&request]() {
             return request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
+                request.sandbox.backend == "lxc" ||
                 request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
@@ -530,6 +533,7 @@ bool resolve_agent_host_tool_selection(
         };
         std::shared_ptr<common_agent_sandbox_docker_runtime> docker_runtime;
         std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
+        std::shared_ptr<common_agent_sandbox_lxc_runtime> lxc_runtime;
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
         if (needs_sandbox_assembly()) {
             auto sandbox_assembly = make_agent_host_sandbox_assembly({
@@ -539,6 +543,7 @@ bool resolve_agent_host_tool_selection(
             });
             docker_runtime = std::move(sandbox_assembly.docker_runtime);
             kubernetes_runtime = std::move(sandbox_assembly.kubernetes_runtime);
+            lxc_runtime = std::move(sandbox_assembly.lxc_runtime);
             workspace_manager = std::move(sandbox_assembly.workspace_manager);
             bindings.sandbox_execute = std::move(sandbox_assembly.execute);
         } else {
@@ -556,6 +561,7 @@ bool resolve_agent_host_tool_selection(
             assembly.sandbox_defaults = request.sandbox.defaults;
             assembly.docker_runtime = docker_runtime;
             assembly.kubernetes_runtime = kubernetes_runtime;
+            assembly.lxc_runtime = lxc_runtime;
             assembly.local_runtime = std::make_shared<common_agent_sandbox_local_runtime>();
             assembly.workspace_manager = workspace_manager;
             assembly.resource_store = resource_store;

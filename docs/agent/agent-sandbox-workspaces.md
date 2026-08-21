@@ -36,6 +36,13 @@ Workspace roots and execution classes belong in host configuration:
       "executable": "docker",
       "default_image": "llama-agent-dev:latest"
     },
+    "lxc": {
+      "executable": "lxc",
+      "default_image": "ubuntu:24.04",
+      "network_mode": "none",
+      "network_profile": "",
+      "cleanup": true
+    },
     "workspace": {
       "root": "C:/agent-workspaces",
       "artifact_root": "C:/agent-artifacts",
@@ -82,6 +89,31 @@ the effective tool view, while direct sandbox execution returns
 `sandbox.backend_unavailable` instead of falling back to an unsandboxed
 process. Broader network scopes are
 rejected by the Docker-compatible backend until explicit allowlists are implemented.
+
+## Backend capabilities and LXC
+
+`docker`, `kubernetes` and `lxc` are sandbox backends; `none` is an explicit
+unavailable state and never means “run locally”. Each backend advertises the
+capabilities it can enforce: process isolation, filesystem scope, resource
+limits, artifact collection and network scope. The host validates the requested
+policy against that capability declaration and fails closed when it cannot be
+honoured.
+
+LXC is an optional lightweight fallback for Linux hosts with LXC/Incus. It
+creates an ephemeral container, mounts the host-created source, writable and
+artifact directories at the standard workspace paths, and removes the container
+after completion when `cleanup` is enabled. The default `network_mode: none`
+exposes only the networkless capability. Set `network_mode: profile` together
+with an operator-managed `network_profile` to allow network use; the profile is
+host configuration and is never chosen by a tool or model. This is a capability
+declaration, not a promise that arbitrary LXC profiles provide the same network
+isolation as Kubernetes NetworkPolicy.
+
+Processor execution modes have deterministic fallback semantics. With
+`backend: auto`, `local_preferred` tries local then sandbox, while
+`sandbox_preferred` tries sandbox then local. `local_required` and
+`sandbox_required` fail rather than cross the requested trust boundary. An
+explicit `backend` such as `lxc` restricts the choice to that backend.
 
 ## Kubernetes backend
 

@@ -88,6 +88,21 @@ host executable:
   --output agent-daemon-config.json
 ```
 
+On Linux, LXC/Incus can be selected as the sandbox backend when Docker,
+Podman or Kubernetes is unavailable:
+
+```bash
+./scripts/agent-config-bootstrap.sh \
+  --sandbox lxc \
+  --lxc-executable lxc \
+  --lxc-image ubuntu:24.04 \
+  --output agent-daemon-config.json
+```
+
+The LXC default is networkless. An operator-managed network profile can be
+enabled explicitly with `--lxc-network-mode profile --lxc-network-profile
+<profile>`.
+
 Resource processors remain sandboxed unless explicitly selected. For trusted
 hosts with MuPDF and Tesseract installed locally, local execution can be
 enabled as follows:
@@ -101,6 +116,7 @@ enabled as follows:
   --output agent-daemon-config.json
 ```
 
+The backend values are `auto`, `local`, `docker`, `kubernetes` and `lxc`.
 The PowerShell names are `-PdfPageImageExecution`,
 `-PdfPageImageBackend`, `-OcrTesseractExecution` and
 `-OcrTesseractBackend`. Use `local_required` when silently falling back to a

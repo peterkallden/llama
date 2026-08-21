@@ -389,6 +389,15 @@ bool parse_agent_host_config_json(
             read_optional(docker, "executable", config.sandbox.docker_executable);
             read_optional(docker, "default_image", config.sandbox.docker_default_image);
         }
+        if (sandbox.contains("lxc")) {
+            if (!sandbox["lxc"].is_object()) { error = "sandbox.lxc must be an object"; return false; }
+            const auto & lxc = sandbox["lxc"];
+            read_optional(lxc, "executable", config.sandbox.lxc_executable);
+            read_optional(lxc, "default_image", config.sandbox.lxc_default_image);
+            read_optional(lxc, "network_mode", config.sandbox.lxc_network_mode);
+            read_optional(lxc, "network_profile", config.sandbox.lxc_network_profile);
+            read_optional(lxc, "cleanup", config.sandbox.lxc_cleanup);
+        }
         if (sandbox.contains("kubernetes")) {
             if (!sandbox["kubernetes"].is_object()) { error = "sandbox.kubernetes must be an object"; return false; }
             const auto & kubernetes = sandbox["kubernetes"];
@@ -856,6 +865,13 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"executable", config.sandbox.docker_executable},
                 {"default_image", config.sandbox.docker_default_image},
             }},
+            {"lxc", {
+                {"executable", config.sandbox.lxc_executable},
+                {"default_image", config.sandbox.lxc_default_image},
+                {"network_mode", config.sandbox.lxc_network_mode},
+                {"network_profile", config.sandbox.lxc_network_profile},
+                {"cleanup", config.sandbox.lxc_cleanup},
+            }},
             {"kubernetes", {
                 {"executable", config.sandbox.kubernetes_executable},
                 {"kubeconfig", config.sandbox.kubernetes_kubeconfig},
@@ -1137,7 +1153,8 @@ bool validate_agent_host_config(
             return false;
         }
         if (policy.backend != "auto" && policy.backend != "local" &&
-                policy.backend != "docker" && policy.backend != "kubernetes") {
+                policy.backend != "docker" && policy.backend != "kubernetes" &&
+                policy.backend != "lxc") {
             error = "resource processor policy has unsupported backend: " + entry.first;
             return false;
         }
@@ -1146,13 +1163,28 @@ bool validate_agent_host_config(
             return false;
         }
         if (policy.execution == "local_required" &&
-                (policy.backend == "docker" || policy.backend == "kubernetes")) {
+                (policy.backend == "docker" || policy.backend == "kubernetes" || policy.backend == "lxc")) {
             error = "local_required resource processor policy cannot use a sandbox backend: " + entry.first;
             return false;
         }
     }
-    if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" && config.sandbox.backend != "kubernetes") {
-        error = "sandbox.backend must be none, docker or kubernetes";
+    if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" &&
+            config.sandbox.backend != "kubernetes" && config.sandbox.backend != "lxc") {
+        error = "sandbox.backend must be none, docker, kubernetes or lxc";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_executable.empty()) {
+        error = "sandbox.lxc.executable must not be empty";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode != "none" &&
+            config.sandbox.lxc_network_mode != "profile") {
+        error = "sandbox.lxc.network_mode must be none or profile";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode == "profile" &&
+            config.sandbox.lxc_network_profile.empty()) {
+        error = "sandbox.lxc.network_profile is required when network_mode is profile";
         return false;
     }
     if (config.sandbox.backend == "kubernetes" && config.sandbox.kubernetes_namespace.empty()) {

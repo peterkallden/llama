@@ -15,8 +15,12 @@ param(
     [ValidateSet('chat', 'agent')] [string]$DefaultMode = 'agent',
     [ValidateSet('auto', 'reflective', 'deliberate', 'research')]
     [string]$ThinkingMode = 'auto',
-    [ValidateSet('none', 'docker', 'kubernetes')] [string]$Sandbox = 'none',
+    [ValidateSet('none', 'docker', 'kubernetes', 'lxc')] [string]$Sandbox = 'none',
     [string]$SandboxExecutable = 'docker',
+    [string]$LxcExecutable = 'lxc',
+    [string]$LxcImage = 'ubuntu:24.04',
+    [ValidateSet('none', 'profile')] [string]$LxcNetworkMode = 'none',
+    [string]$LxcNetworkProfile = '',
     [ValidateSet('stdio', 'mcp-http', 'jsonl-tcp', 'jsonl-unix')] [string]$Transport = 'stdio',
     [string]$Listen = '127.0.0.1',
     [ValidateRange(1, 65535)] [int]$Port = 8080,
@@ -33,13 +37,13 @@ param(
     [string]$JwtScope = '',
     [ValidateSet('disabled', 'local_preferred', 'local_required', 'sandbox_preferred', 'sandbox_required')]
     [string]$PdfPageImageExecution = 'disabled',
-    [ValidateSet('auto', 'local', 'docker', 'kubernetes')]
+    [ValidateSet('auto', 'local', 'docker', 'kubernetes', 'lxc')]
     [string]$PdfPageImageBackend = 'auto',
     [string]$PdfPageImageExecutable = 'mutool',
     [string]$PdfPageImageExpectedVersion = '',
     [ValidateSet('disabled', 'local_preferred', 'local_required', 'sandbox_preferred', 'sandbox_required')]
     [string]$OcrTesseractExecution = 'disabled',
-    [ValidateSet('auto', 'local', 'docker', 'kubernetes')]
+    [ValidateSet('auto', 'local', 'docker', 'kubernetes', 'lxc')]
     [string]$OcrTesseractBackend = 'auto',
     [string]$OcrTesseractExecutable = 'tesseract',
     [string]$OcrTesseractExpectedVersion = '',
@@ -69,6 +73,9 @@ if ($AuthMode -eq 'jwt' -and ([string]::IsNullOrWhiteSpace($JwtIssuer) -or [stri
 }
 if ($EnableTools -and $AuthMode -eq 'none') {
     throw 'EnableTools requires AuthMode opaque or jwt'
+}
+if ($LxcNetworkMode -eq 'profile' -and [string]::IsNullOrWhiteSpace($LxcNetworkProfile)) {
+    throw 'LxcNetworkProfile is required when LxcNetworkMode is profile'
 }
 
 $processorPolicies = [ordered]@{}
@@ -118,6 +125,7 @@ $config = [ordered]@{
     sandbox = [ordered]@{
         backend = $Sandbox
         docker = [ordered]@{ executable = $SandboxExecutable; default_image = 'llama-agent-dev:latest' }
+        lxc = [ordered]@{ executable = $LxcExecutable; default_image = $LxcImage; network_mode = $LxcNetworkMode; network_profile = $LxcNetworkProfile; cleanup = $true }
         kubernetes = [ordered]@{ namespace = 'llama-agent'; service_account = 'llama-agent-runner'; runtime_class = 'standard'; cleanup = $true }
         workspace = [ordered]@{
             root = "$CozoRoot/workspaces"; artifact_root = "$CozoRoot/artifacts"

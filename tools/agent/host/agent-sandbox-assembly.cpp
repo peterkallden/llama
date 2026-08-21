@@ -2,6 +2,7 @@
 
 #include "agent/sandbox/sandbox-docker-runtime.h"
 #include "agent/sandbox/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-lxc-runtime.h"
 #include "agent/sandbox/sandbox-local-runtime.h"
 #include "agent/sandbox/sandbox-policy.h"
 #include "tools/agent/tooling/agent-sandbox-helper.h"
@@ -67,15 +68,24 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
             config.kubernetes_staging_timeout_ms,
             config.kubernetes_cleanup,
         });
+    result.lxc_runtime = std::make_shared<common_agent_sandbox_lxc_runtime>(
+        common_agent_lxc_sandbox_config{
+            config.lxc_executable,
+            config.lxc_default_image,
+            config.lxc_network_mode,
+            config.lxc_network_profile,
+            config.lxc_cleanup,
+        });
 
-    if (config.backend == "docker" || config.backend == "kubernetes") {
+    if (config.backend == "docker" || config.backend == "kubernetes" || config.backend == "lxc") {
         const auto backend = config.backend;
         const auto docker_runtime = result.docker_runtime;
         const auto kubernetes_runtime = result.kubernetes_runtime;
+        const auto lxc_runtime = result.lxc_runtime;
         const auto workspace_manager = result.workspace_manager;
         const auto policies = config.classes;
         const auto defaults = config.defaults;
-        result.execute = [backend, docker_runtime, kubernetes_runtime, workspace_manager,
+        result.execute = [backend, docker_runtime, kubernetes_runtime, lxc_runtime, workspace_manager,
                 policies, defaults, scope, resource_store](common_agent_sandbox_request sandbox_request) {
             auto policy = defaults;
             const auto it = policies.find(sandbox_request.execution_class);
@@ -83,7 +93,9 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
             policy.execution_class = sandbox_request.execution_class;
             common_agent_sandbox_runtime & runtime = backend == "docker"
                 ? static_cast<common_agent_sandbox_runtime &>(*docker_runtime)
-                : static_cast<common_agent_sandbox_runtime &>(*kubernetes_runtime);
+                : (backend == "kubernetes"
+                    ? static_cast<common_agent_sandbox_runtime &>(*kubernetes_runtime)
+                    : static_cast<common_agent_sandbox_runtime &>(*lxc_runtime));
             common_agent_sandbox_tool_helper helper(runtime, policy);
             helper.set_workspace_manager(workspace_manager.get());
             helper.set_resource_store(resource_store, {

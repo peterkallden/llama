@@ -108,6 +108,13 @@
     "docker": {
       "default_image": "llama-agent-dev:latest"
     },
+    "lxc": {
+      "executable": "lxc",
+      "default_image": "ubuntu:24.04",
+      "network_mode": "none",
+      "network_profile": "",
+      "cleanup": true
+    },
     "kubernetes": {
       "namespace": "llama-agent",
       "service_account": "llama-agent-runner",

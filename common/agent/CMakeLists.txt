@@ -4,6 +4,8 @@ add_library(llama-agent-sandbox
     sandbox/sandbox-docker-runtime.h
     sandbox/sandbox-kubernetes-runtime.cpp
     sandbox/sandbox-kubernetes-runtime.h
+    sandbox/sandbox-lxc-runtime.cpp
+    sandbox/sandbox-lxc-runtime.h
     sandbox/sandbox-local-runtime.cpp
     sandbox/sandbox-local-runtime.h
 )

@@ -21,10 +21,19 @@ struct agent_resource_processor_dispatch_request {
     const std::map<std::string, agent_resource_processor_execution_policy> & policies;
     std::string source_type;
     std::string sandbox_backend;
+    // These are host-resolved availability facts. They are deliberately not
+    // inferred from the model-facing policy; preferred modes use them to
+    // choose a deterministic fallback without weakening required modes.
+    bool local_available = true;
+    bool sandbox_available = false;
 };
 
 struct agent_resource_processor_dispatch_selection {
     std::array<std::optional<agent_resource_processor_execution_policy>, 4> policies;
+    // These flags describe the selected execution placement, not every
+    // candidate that could have been used. This prevents the factory from
+    // registering duplicate local and sandbox processor variants after a
+    // preferred-mode fallback has been resolved.
     std::array<bool, 4> wants_local{};
     std::array<bool, 4> wants_sandbox{};
 
@@ -51,19 +60,41 @@ struct agent_resource_processor_dispatch_selection {
     }
 };
 
-inline bool agent_resource_processor_policy_allows_local(
-        const agent_resource_processor_execution_policy & policy) {
-    return (policy.execution == "local_preferred" ||
-            policy.execution == "local_required") &&
-        (policy.backend == "auto" || policy.backend == "local");
-}
-
-inline bool agent_resource_processor_policy_allows_sandbox(
+inline std::string resolve_agent_resource_processor_backend(
         const agent_resource_processor_execution_policy & policy,
-        const std::string & sandbox_backend) {
-    return (policy.execution == "sandbox_preferred" ||
-            policy.execution == "sandbox_required") &&
-        (policy.backend == "auto" || policy.backend == sandbox_backend);
+        const agent_resource_processor_dispatch_request & request) {
+    const bool local_mode = policy.execution == "local_preferred" ||
+        policy.execution == "local_required";
+    const bool sandbox_mode = policy.execution == "sandbox_preferred" ||
+        policy.execution == "sandbox_required";
+    if (policy.backend == "local") {
+        return local_mode && request.local_available ? "local" : std::string();
+    }
+    if (policy.backend != "auto") {
+        return sandbox_mode && request.sandbox_available && !request.sandbox_backend.empty() &&
+            policy.backend == request.sandbox_backend ? request.sandbox_backend : std::string();
+    }
+    const bool local_candidate = local_mode || policy.execution == "sandbox_preferred";
+    const bool sandbox_candidate = sandbox_mode || policy.execution == "local_preferred";
+    const bool has_local = request.local_available && local_candidate;
+    const bool has_sandbox = request.sandbox_available && !request.sandbox_backend.empty() &&
+        sandbox_candidate;
+
+    if (policy.execution == "local_required") {
+        return has_local ? "local" : std::string();
+    }
+    if (policy.execution == "sandbox_required") {
+        return has_sandbox ? request.sandbox_backend : std::string();
+    }
+    if (policy.execution == "local_preferred") {
+        if (has_local) return "local";
+        return has_sandbox ? request.sandbox_backend : std::string();
+    }
+    if (policy.execution == "sandbox_preferred") {
+        if (has_sandbox) return request.sandbox_backend;
+        return has_local ? "local" : std::string();
+    }
+    return {};
 }
 
 inline agent_resource_processor_dispatch_selection resolve_agent_resource_processor_dispatch(
@@ -96,26 +127,18 @@ inline agent_resource_processor_dispatch_selection resolve_agent_resource_proces
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ? xlsx_policy
         : std::nullopt;
-    for (size_t i = 0; i < result.policies.size(); ++i) {
-        if (!result.policies[i]) continue;
-        result.wants_local[i] = agent_resource_processor_policy_allows_local(*result.policies[i]);
-        result.wants_sandbox[i] = agent_resource_processor_policy_allows_sandbox(
-            *result.policies[i], request.sandbox_backend);
-    }
-
     const auto select = [&result, &request](agent_resource_processor_kind kind,
             const char * execution_class) {
         const auto & policy = result.policy_for(kind);
-        const bool local = result.wants_local_for(kind);
-        const bool sandbox = result.wants_sandbox_for(kind);
-        if (!local && !sandbox) return;
+        const auto backend = resolve_agent_resource_processor_backend(*policy, request);
+        if (backend.empty()) return;
         result.selected = true;
         result.kind = kind;
         result.policy = *policy;
         result.execution_class = execution_class;
-        result.execution_backend = local
-            ? "local"
-            : (policy->backend == "kubernetes" ? "kubernetes" : request.sandbox_backend);
+        result.execution_backend = backend;
+        result.wants_local[result.index(kind)] = backend == "local";
+        result.wants_sandbox[result.index(kind)] = backend != "local";
     };
 
     // Preserve the existing deterministic priority: page image, OCR, Pandoc,

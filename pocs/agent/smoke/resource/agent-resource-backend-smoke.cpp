@@ -9,6 +9,7 @@ int main() {
         {agent_resource_backend_kind::local_ghostscript, "pdf-render.ghostscript"},
         {agent_resource_backend_kind::docker, "pdf-render.docker"},
         {agent_resource_backend_kind::kubernetes, "pdf-render.kubernetes"},
+        {agent_resource_backend_kind::lxc, "pdf-render.lxc"},
     };
 
     agent_resource_backend_capabilities local;

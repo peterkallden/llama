@@ -20,8 +20,12 @@ Usage: agent-config-bootstrap.sh [options]
   --inference-max-active N   Concurrent inference limit (default: 1)
   --default-mode MODE        chat or agent (default: agent)
   --thinking-mode MODE       auto, reflective, deliberate or research (default: auto)
-  --sandbox BACKEND          none, docker or kubernetes (default: none)
+  --sandbox BACKEND          none, docker, kubernetes or lxc (default: none)
   --sandbox-executable PATH  Container executable for the docker backend (default: docker)
+  --lxc-executable PATH      LXC/Incus executable (default: lxc)
+  --lxc-image IMAGE          Default LXC image (default: ubuntu:24.04)
+  --lxc-network-mode MODE    none or profile (default: none)
+  --lxc-network-profile NAME Explicit LXC network profile when mode=profile
   --transport NAME           stdio, mcp-http, jsonl-tcp or jsonl-unix (default: stdio)
   --listen ADDRESS           Bind address (default: 127.0.0.1)
   --port N                   MCP/JSONL TCP port (default: 8080)
@@ -37,11 +41,11 @@ Usage: agent-config-bootstrap.sh [options]
   --jwt-tool-profile NAME     Tool profile for JWT clients
   --jwt-scope NAME            Required JWT scope
   --pdf-page-image-execution MODE  disabled, local_preferred, local_required, sandbox_preferred or sandbox_required
-  --pdf-page-image-backend BACKEND auto, local, docker or kubernetes
+  --pdf-page-image-backend BACKEND auto, local, docker, kubernetes or lxc
   --pdf-page-image-executable PATH  PDF renderer (default: mutool)
   --pdf-page-image-version VERSION  Expected renderer version
   --ocr-tesseract-execution MODE    disabled, local_preferred, local_required, sandbox_preferred or sandbox_required
-  --ocr-tesseract-backend BACKEND   auto, local, docker or kubernetes
+  --ocr-tesseract-backend BACKEND   auto, local, docker, kubernetes or lxc
   --ocr-tesseract-executable PATH   OCR executable (default: tesseract)
   --ocr-tesseract-version VERSION   Expected OCR version
   --help                     Show this help
@@ -74,6 +78,10 @@ default_mode=agent
 thinking_mode=auto
 sandbox=none
 sandbox_executable=docker
+lxc_executable=lxc
+lxc_image=ubuntu:24.04
+lxc_network_mode=none
+lxc_network_profile=
 transport=stdio
 listen=127.0.0.1
 port=8080
@@ -154,6 +162,10 @@ while (($# > 0)); do
         --thinking-mode) thinking_mode=$2 ;;
         --sandbox) sandbox=$2 ;;
         --sandbox-executable) sandbox_executable=$2 ;;
+        --lxc-executable) lxc_executable=$2 ;;
+        --lxc-image) lxc_image=$2 ;;
+        --lxc-network-mode) lxc_network_mode=$2 ;;
+        --lxc-network-profile) lxc_network_profile=$2 ;;
         --transport) transport=$2 ;;
         --listen) listen=$2 ;;
         --port) port=$2 ;;
@@ -187,17 +199,26 @@ positive --inference-max-active "$inference_max_active"
 [[ $gpu_layers =~ ^[0-9]+$ && $port =~ ^[1-9][0-9]*$ ]] || exit 2
 case $default_mode in chat|agent) ;; *) exit 2 ;; esac
 case $thinking_mode in auto|reflective|deliberate|research) ;; *) exit 2 ;; esac
-case $sandbox in none|docker|kubernetes) ;; *) exit 2 ;; esac
+case $sandbox in none|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $transport in stdio|mcp-http|jsonl-tcp|jsonl-unix) ;; *) exit 2 ;; esac
 [[ -n $sandbox_executable && $sandbox_executable != *[[:space:]]* ]] || {
     echo "--sandbox-executable must be a non-empty executable name or path without whitespace" >&2
     exit 2
 }
+[[ -n $lxc_executable && $lxc_executable != *[[:space:]]* ]] || {
+    echo "--lxc-executable must be a non-empty executable name or path without whitespace" >&2
+    exit 2
+}
 case $auth_mode in none|opaque|jwt) ;; *) exit 2 ;; esac
 case $pdf_page_image_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
 case $ocr_tesseract_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
-case $pdf_page_image_backend in auto|local|docker|kubernetes) ;; *) exit 2 ;; esac
-case $ocr_tesseract_backend in auto|local|docker|kubernetes) ;; *) exit 2 ;; esac
+case $pdf_page_image_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
+case $ocr_tesseract_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
+case $lxc_network_mode in none|profile) ;; *) exit 2 ;; esac
+if [[ $lxc_network_mode == profile && -z $lxc_network_profile ]]; then
+    echo "--lxc-network-profile is required when --lxc-network-mode=profile" >&2
+    exit 2
+fi
 if [[ $auth_mode == opaque && ( -z $token_env || -z $token_profile ) ]]; then exit 2; fi
 if [[ $auth_mode == jwt && ( -z $jwt_issuer || -z $jwt_audience || -z $jwt_jwks_uri || -z $jwt_tool_profile ) ]]; then exit 2; fi
 if [[ $enable_tools_set == true && $auth_mode == none ]]; then
@@ -222,6 +243,10 @@ tool_profile=$(escape_json "$tool_profile")
 listen=$(escape_json "$listen")
 unix_socket=$(escape_json "$unix_socket")
 sandbox_executable=$(escape_json "$sandbox_executable")
+lxc_executable=$(escape_json "$lxc_executable")
+lxc_image=$(escape_json "$lxc_image")
+lxc_network_mode=$(escape_json "$lxc_network_mode")
+lxc_network_profile=$(escape_json "$lxc_network_profile")
 pdf_page_image_executable=$(escape_json "$pdf_page_image_executable")
 pdf_page_image_version=$(escape_json "$pdf_page_image_version")
 ocr_tesseract_executable=$(escape_json "$ocr_tesseract_executable")
@@ -304,7 +329,7 @@ cat > "$output" <<EOF
   },
   "resources": {"blob_backend":"fs","blob_root":"$cozo_root/resources","metadata_backend":"cozo","metadata_db":"$cozo_root/resources.cozo"$processor_policies_suffix},
   "tools": {"profile":"$tool_profile","repository_root":"$repository_root","providers":$providers_json},
-  "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
+  "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"lxc":{"executable":"$lxc_executable","default_image":"$lxc_image","network_mode":"$lxc_network_mode","network_profile":"$lxc_network_profile","cleanup":true},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
   "diagnostics": {"semantic_backend":"auto","clang_executable":"clang","clangd_executable":"clangd","compile_commands":"auto"},
   "mcp": {"inbound":{"enabled":$inbound,"listen":"$listen","port":$port,"path":"/mcp","agent_tools":false,"max_delegation_depth":1,$authorization}},
   "jsonl": {"tcp":{"enabled":$jsonl_tcp,"listen":"$listen","port":$port,"max_line_bytes":1048576,"idle_timeout_seconds":300},"unix_socket":{"enabled":$jsonl_unix,"path":"$unix_socket","mode":432}},

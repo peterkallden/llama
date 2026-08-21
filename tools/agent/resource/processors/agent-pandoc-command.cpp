@@ -69,8 +69,9 @@ bool make_agent_pandoc_request(
         std::string & error) {
     if (backend != agent_resource_backend_kind::local_pandoc &&
             backend != agent_resource_backend_kind::docker &&
-            backend != agent_resource_backend_kind::kubernetes) {
-        error = "Pandoc backend must be local, Docker or Kubernetes";
+            backend != agent_resource_backend_kind::kubernetes &&
+            backend != agent_resource_backend_kind::lxc) {
+        error = "Pandoc backend must be local, Docker, Kubernetes or LXC";
         return false;
     }
     if (executable.empty() || operation_id.empty() || workspace_id.empty() ||
