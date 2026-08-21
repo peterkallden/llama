@@ -1,4 +1,5 @@
 #include "agent/tool-family-index.h"
+#include "agent/tool-workflow-index.h"
 
 #include <cassert>
 
@@ -41,5 +42,24 @@ int main() {
         R"({"needs_tools":true,"families":["data","data"]})",
         selection,
         error));
+
+    const auto workflows = common_generate_tool_workflow_index();
+    const auto workflow_view = common_render_tool_workflow_index(workflows, {"dataset", "data", "statistics"});
+    assert(workflow_view.find("dataset.discover") != std::string::npos);
+    assert(workflow_view.find("dataset.list() as=candidates") != std::string::npos);
+    assert(workflow_view.find("dataset.select(name=$candidates.names[index])") != std::string::npos);
+    assert(workflow_view.find("dataset.join") != std::string::npos);
+    assert(workflow_view.find("dataset.select(name=<left_name>) as=left") != std::string::npos);
+    assert(workflow_view.find("data.join(left=$left.dataset, right=$right.dataset") != std::string::npos);
+    assert(workflow_view.find("dataset.inspect_named") != std::string::npos);
+    const auto statistics_only = common_render_tool_workflow_index(workflows, {"statistics"});
+    assert(statistics_only.find("dataset.summarize") != std::string::npos);
+    assert(statistics_only.find("dataset.join") == std::string::npos);
+    common_tool_workflow_selection workflow_selection;
+    assert(common_parse_tool_workflow_selection(
+        R"({"workflows":["dataset.discover","dataset.join"]})", workflow_selection, error));
+    assert(workflow_selection.workflow_ids.size() == 2);
+    assert(!common_parse_tool_workflow_selection(
+        R"({"workflows":["dataset.join","dataset.join"]})", workflow_selection, error));
     return 0;
 }

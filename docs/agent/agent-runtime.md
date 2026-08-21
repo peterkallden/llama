@@ -533,6 +533,18 @@ cannot grant access to a tool that the profile did not expose. The family
 projection lives in `common/agent/tool-family-index.*` and is tested by
 `test-tool-family-index`.
 
+Workflow selection is a separate bounded model round after family routing. The
+model first returns workflow IDs such as `dataset.discover` or `dataset.join`.
+Only then does the host render the exact tool contracts belonging to the
+selected recipes. If workflow selection is invalid or unavailable, the host
+falls back to the family-filtered tool view; workflow selection never grants a
+tool outside the active profile.
+
+Selected recipe steps are required patterns unless the request already
+provides the corresponding typed references. In particular, `dataset.join`
+includes the producer `dataset.select` steps before `data.join`; the model must
+not invent `$left` or `$orders` aliases by skipping those producers.
+
 The model-facing surface is intentionally semantic and small:
 `document.tables({resource, max_results})` lists bounded table descriptors, and
 `document.table({resource, table | table_index | node_id})` resolves exactly one
@@ -544,6 +556,60 @@ model-visible in the `analysis`, `research`, `developer-read` and
 profiles, and are also available through MCP when the active tool profile
 includes them, but MCP does
 not expose Pandoc, table parsing libraries or filesystem paths.
+
+### Model-facing workflow recipes
+
+Family routing is followed by a compact workflow view and then by the exact
+contracts for the tools that can realize the selected workflow. A workflow
+recipe describes composition and ordering; it does not expose host-owned step
+IDs, dependencies or canonical bindings. The current data recipes are:
+
+```text
+dataset.discover
+  dataset.list() as=candidates
+  dataset.select(name=$candidates.names[index]) as=<dataset>
+
+dataset.inspect_named
+  dataset.select(name=<name>) as=<dataset>
+  dataset.inspect(dataset=$<dataset>.dataset)
+
+dataset.join
+  dataset.select(name=<left_name>) as=left
+  dataset.select(name=<right_name>) as=right
+  data.join(left=$left.dataset, right=$right.dataset, on=...) as=joined
+
+dataset.summarize
+  data.aggregate(dataset=$source.dataset, measures=..., group_by=...)
+  statistics.describe(dataset=$source.dataset, columns=...)
+```
+
+Recipes are model-facing composition hints, not blueprints. Blueprints remain
+host-owned reusable task templates with internal step identity, dependencies,
+constraints and success criteria. The host may later instantiate a recipe as a
+normal plan or blueprint, adding those execution details at the normalization
+boundary.
+
+Discovery can use either a known name or a name returned by `dataset.list`:
+
+```text
+dataset.select(name="orders") as=orders
+dataset.select(name=$candidates.names[0]) as=orders
+```
+
+The discovery recipe must precede indexed selection. `$datasets[index]` is not
+an implicit catalog variable; it is valid only when an earlier step declared
+`as: datasets` and produced that collection. Prefer `$candidates.names[index]`
+when the model is choosing a registered dataset by name.
+
+Several selects may be used before inspection or joining. `as` makes a result
+available to later steps; it does not fill both semantic sides of a join. The
+join therefore keeps `left` and `right` explicit, while linear consumers such
+as `dataset.inspect`, `data.aggregate` and `statistics.describe` may omit a
+dataset input when the host finds exactly one compatible preceding output.
+The workflow view is generated from the active family selection and is kept
+bounded before exact tool contracts are rendered. This ordering keeps broad
+tools such as `data.query` from overwhelming a small model before it has first
+chosen a suitable composition pattern.
 
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
