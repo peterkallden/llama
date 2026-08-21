@@ -16,8 +16,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
@@ -350,7 +352,14 @@ public:
                 }
             }
         }
-        if (!selected_workflow_ids.empty()) {
+        const bool workflow_requires_runtime_discovery = std::find(
+            selected_workflow_ids.begin(), selected_workflow_ids.end(), "dataset.discover") != selected_workflow_ids.end();
+        if (generation_config.generation_trace && !selected_workflow_ids.empty()) {
+            fprintf(stderr, "agent workflow trace: planning_path=%s\n",
+                workflow_requires_runtime_discovery ? "guided" : "fast");
+        }
+
+        if (!selected_workflow_ids.empty() && workflow_requires_runtime_discovery) {
             std::set<std::string> workflow_tools;
             for (const auto & workflow : workflow_catalog) {
                 if (std::find(selected_workflow_ids.begin(), selected_workflow_ids.end(), workflow.id) == selected_workflow_ids.end()) continue;
@@ -502,6 +511,10 @@ public:
         return proposal;
     }
 
+    void set_tool_runtime(const common_agent_tool_runtime * runtime) override {
+        tool_runtime = runtime;
+    }
+
 private:
     bool create_slot_plan(
             const common_agent_request & request,
@@ -522,6 +535,9 @@ private:
 
         json steps = json::array();
         std::string available_aliases;
+        std::string available_dataset_names;
+        std::vector<std::string> available_dataset_name_values;
+        std::string preflight_list_output;
         common_agent_generation_result last_generation;
         for (const auto & slot : slots) {
             const common_chat_tool * tool = find_planning_tool(planning_tools, slot.tool_name);
@@ -538,11 +554,59 @@ private:
 
             json fixed = json::object();
             for (const auto & item : slot.fixed_arguments) fixed[item.first] = item.second;
+            if (slot.tool_name == "data.join") {
+                // The workflow consumes the joined dataset in later slots.
+                // Keep materialization host-owned so the model only chooses
+                // the join keys while the next step receives a dataset_ref.
+                fixed["materialize"] = true;
+                fixed["result_dataset"] = "dataset://agent/workflow/joined-" +
+                    std::to_string(std::hash<std::string>{}(request.prompt));
+            }
+            const bool host_materializes_discovery = slot.tool_name == "dataset.list" && tool_runtime != nullptr;
+            if (host_materializes_discovery) {
+                fixed["max_results"] = 256;
+                common_agent_tool_call call{slot.tool_name, fixed.dump()};
+                std::string tool_error;
+                if (!tool_runtime->validate(call, tool_error)) {
+                    error = "workflow discovery preflight validation failed: " + tool_error;
+                    return false;
+                }
+                const auto execution = tool_runtime->execute(call);
+                if (!execution.ok) {
+                    error = "workflow discovery preflight failed: " + execution.safe_summary;
+                    return false;
+                }
+                const auto envelope = json::parse(execution.output, nullptr, false);
+                const auto result = envelope.is_object() && envelope.contains("result") && envelope["result"].is_object()
+                    ? envelope["result"] : envelope;
+                if (result.is_discarded() || !result.is_object() || !result.contains("names") || !result["names"].is_array()) {
+                    error = "workflow discovery preflight returned no dataset names: " + execution.output.substr(0, 512);
+                    return false;
+                }
+                // The generic runtime may return a safe execution envelope;
+                // plan observations must contain the tool payload itself so
+                // typed bindings and indexed name references can resolve it.
+                preflight_list_output = result.dump();
+                size_t name_count = 0;
+                for (const auto & name : result["names"]) {
+                    if (!name.is_string() || name_count++ >= 16) break;
+                    available_dataset_name_values.push_back(name.get<std::string>());
+                    if (!available_dataset_names.empty()) available_dataset_names += ", ";
+                    available_dataset_names += name.get<std::string>();
+                }
+                if (available_dataset_names.empty()) {
+                    error = "workflow discovery preflight returned an empty dataset list";
+                    return false;
+                }
+                if (generation_config.generation_trace) {
+                    fprintf(stderr, "agent workflow trace: discovery_preflight names=%s\n", available_dataset_names.c_str());
+                }
+            }
             json generated = json::object();
             const auto schema = json::parse(slot_schema.empty() ? "{}" : slot_schema, nullptr, false);
             const auto properties = schema.is_object()
                 ? schema.value("properties", json::object()) : json::object();
-            const bool needs_model_arguments = properties.is_object() && !properties.empty();
+            const bool needs_model_arguments = !host_materializes_discovery && properties.is_object() && !properties.empty();
             if (needs_model_arguments) {
                 auto generate_slot = [&](bool regeneration) {
                     common_chat_msg system;
@@ -560,6 +624,7 @@ private:
                         "Current slot: " + slot.id + "\nPurpose: " + slot.description +
                         render_slot_fixed_arguments(slot) +
                         "\nAvailable prior aliases: " + (available_aliases.empty() ? "none" : available_aliases) +
+                        (available_dataset_names.empty() ? std::string() : "\nAvailable dataset names from the completed host discovery: " + available_dataset_names) +
                         "\nTool contract:\n" + (compact.empty() ? tool->name : compact) +
                         (tool->name == "dataset.select"
                             ? "\nThe name must be exactly one registered dataset name mentioned by the user or returned by dataset.list. A short name is valid only when it is an exact unique list name. Never combine names with commas, and never use the slot id, alias or a placeholder as the dataset name."
@@ -580,6 +645,7 @@ private:
                         slot_schema));
                 };
                 std::string slot_error;
+                bool accepted = false;
                 last_generation = common_agent_bounded_structured_regeneration(
                     generate_slot,
                     [&](const auto & candidate) {
@@ -589,6 +655,43 @@ private:
                             return false;
                         }
                         generated = value;
+                        if (tool->name == "dataset.select" && generated.contains("name") &&
+                                generated["name"].is_string() && !available_dataset_name_values.empty()) {
+                            auto supplied = generated["name"].get<std::string>();
+                            if (supplied.find(',') != std::string::npos) {
+                                std::vector<std::string> parts;
+                                size_t begin = 0;
+                                while (begin <= supplied.size()) {
+                                    const size_t end = supplied.find(',', begin);
+                                    std::string part = supplied.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+                                    while (!part.empty() && std::isspace(static_cast<unsigned char>(part.front()))) part.erase(part.begin());
+                                    while (!part.empty() && std::isspace(static_cast<unsigned char>(part.back()))) part.pop_back();
+                                    if (part.size() > 4 && part.substr(part.size() - 4) == ".csv") part.resize(part.size() - 4);
+                                    parts.push_back(std::move(part));
+                                    if (end == std::string::npos) break;
+                                    begin = end + 1;
+                                }
+                                bool complete_unique_set = parts.size() == available_dataset_name_values.size();
+                                for (const auto & part : parts) {
+                                    if (part.empty() || std::find(available_dataset_name_values.begin(), available_dataset_name_values.end(), part) == available_dataset_name_values.end() ||
+                                            std::count(parts.begin(), parts.end(), part) != 1) complete_unique_set = false;
+                                }
+                                if (complete_unique_set && (slot.alias == "left" || slot.alias == "right")) {
+                                    const size_t index = slot.alias == "left" ? 0 : 1;
+                                    if (index < parts.size()) {
+                                        generated["name"] = parts[index];
+                                        if (generation_config.generation_trace) fprintf(stderr, "agent workflow trace: dataset_select_repair alias=%s name=%s\n", slot.alias.c_str(), parts[index].c_str());
+                                    }
+                                }
+                            }
+                            supplied = generated["name"].get<std::string>();
+                            auto exact = std::find(available_dataset_name_values.begin(), available_dataset_name_values.end(), supplied);
+                            if (exact == available_dataset_name_values.end() && supplied.size() > 4 && supplied.substr(supplied.size() - 4) == ".csv") {
+                                const auto short_name = supplied.substr(0, supplied.size() - 4);
+                                exact = std::find(available_dataset_name_values.begin(), available_dataset_name_values.end(), short_name);
+                                if (exact != available_dataset_name_values.end()) generated["name"] = short_name;
+                            }
+                        }
                         if (tool->name == "dataset.select" && generated.contains("name") &&
                                 generated["name"].is_string() &&
                                 generated["name"].get<std::string>().find(',') != std::string::npos) {
@@ -600,10 +703,12 @@ private:
                         common_plan_tool_arguments_contract contract;
                         if (!common_plan_parse_tool_arguments_contract_value(
                                 tool->name, merged, contract, slot_error)) return false;
+                        accepted = true;
                         return true;
                     });
-                if (!common_agent_generation_succeeded(last_generation)) {
+                if (!common_agent_generation_succeeded(last_generation) || !accepted) {
                     error = describe_agent_cli_generation_failure("workflow slot generation", last_generation);
+                    if (!accepted && !slot_error.empty()) error = "workflow slot '" + slot.id + "' rejected: " + slot_error;
                     return false;
                 }
                 if (generated.empty() && !slot_error.empty()) {
@@ -632,6 +737,40 @@ private:
         if (!common_plan_parse_proposal_json(plan.dump(), proposal.plan, operations, error, 8)) {
             return false;
         }
+        if (!preflight_list_output.empty()) {
+            std::string list_step_id;
+            for (const auto & operation : operations) {
+                if (operation.step && operation.step->tool_call && operation.step->tool_call->name == "dataset.list") {
+                    list_step_id = operation.step->id;
+                    break;
+                }
+            }
+            if (list_step_id.empty()) {
+                error = "workflow discovery preflight could not find its dataset.list plan step";
+                return false;
+            }
+            common_plan_operation activate;
+            activate.kind = common_plan_operation_kind::activate_step;
+            activate.step_id = list_step_id;
+            activate.reason_summary = "activate host discovery preflight step";
+            operations.push_back(std::move(activate));
+
+            const std::string observation_id = "tool:" + list_step_id + ":dataset.list";
+            common_plan_operation observed;
+            observed.kind = common_plan_operation_kind::record_observation;
+            observed.observation = common_plan_observation{
+                observation_id, "dataset.list", preflight_list_output, 1.0f, {}, {}, 0};
+            observed.step_id = list_step_id;
+            observed.reason_summary = "host discovery preflight result";
+            operations.push_back(std::move(observed));
+
+            common_plan_operation complete;
+            complete.kind = common_plan_operation_kind::complete_step;
+            complete.step_id = list_step_id;
+            complete.evidence_ids = {observation_id};
+            complete.reason_summary = "dataset discovery completed before guided slots";
+            operations.push_back(std::move(complete));
+        }
         std::vector<common_tool_workflow_step_view> views;
         for (const auto & operation : operations) {
             if (!operation.step || !operation.step->tool_call) continue;
@@ -648,6 +787,7 @@ private:
     common_agent_generation_config generation_config;
     std::vector<common_chat_tool> tools;
     std::vector<common_tool_family_index> family_index;
+    const common_agent_tool_runtime * tool_runtime = nullptr;
 };
 
 class llama_action_executor final : public common_action_executor {

@@ -22,6 +22,12 @@ const common_plan_observation * find_step_observation(const common_plan_state & 
 
 using json = nlohmann::ordered_json;
 
+json observation_payload(const common_plan_observation & observation) {
+    const auto value = json::parse(observation.summary, nullptr, false);
+    if (value.is_object() && value.value("ok", false) && value.contains("result")) return value["result"];
+    return value;
+}
+
 const common_plan_tool_field_contract * find_field(
         const std::vector<common_plan_tool_field_contract> & fields,
         const std::string & name) {
@@ -30,7 +36,7 @@ const common_plan_tool_field_contract * find_field(
 }
 
 bool observation_has_field(const common_plan_observation & observation, const std::string & field) {
-    const auto value = json::parse(observation.summary, nullptr, false);
+    const auto value = observation_payload(observation);
     return value.is_object() && value.contains(field) && !value[field].is_null();
 }
 
@@ -199,12 +205,12 @@ bool resolve_value(
         }
         const auto * observation = find_step_observation(plan, step_id);
         if (!observation) { error = "tool argument binding source has no observation"; return false; }
-        const auto source = nlohmann::ordered_json::parse(observation->summary, nullptr, false);
+        const auto source = observation_payload(*observation);
         if (source.is_discarded()) { error = "tool argument binding source is not JSON"; return false; }
         try {
             value = source.at(nlohmann::ordered_json::json_pointer(pointer));
         } catch (const nlohmann::ordered_json::exception &) {
-            error = "tool argument binding JSON pointer was not found";
+            error = "tool argument binding JSON pointer was not found: step=" + step_id + " pointer=" + pointer;
             return false;
         }
         return true;

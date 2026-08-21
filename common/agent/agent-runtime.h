@@ -89,6 +89,10 @@ struct common_plan_proposal { common_plan_state plan; std::vector<common_plan_op
 class common_planner {
 public:
     virtual ~common_planner() = default;
+    // Optional host runtime seam for planners that need a bounded producer
+    // result before rendering a later model-facing slot. Ordinary planners
+    // remain pure proposal builders.
+    virtual void set_tool_runtime(const common_agent_tool_runtime *) {}
     virtual common_plan_proposal create_plan(const common_agent_request & request, std::string & error) = 0;
     virtual common_plan_proposal create_plan_result(const common_agent_request & request, std::string & error) {
         return create_plan(request, error);

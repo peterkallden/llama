@@ -675,12 +675,19 @@ purpose, its compact tool contract, host-filled inputs, available typed aliases
 and the validation error. It does not repeat the complete workflow or tool
 catalog. Only a successfully validated slot allows the host to advance.
 
-The current CLI implementation validates and materializes the complete slot
-plan before tool execution begins. Consequently, a later slot cannot yet see
-the concrete result of an earlier `dataset.list` call during the same planning
-round. Exact names already supplied by the user, and exact unique names from a
-list result in an ordinary plan, are valid; execution-interleaved list-to-select
-slot filling remains a follow-up improvement.
+The CLI uses a bounded discovery preflight for `dataset.list`: the host runs
+that zero-semantic-argument producer, records its result on the list step and
+marks it completed before rendering the select slot. The later slot therefore
+sees the concrete `names` values and can choose either one exact unique name or
+an indexed `$candidates.names[index]` reference. If no tool runtime is bound,
+the planner falls back to ordinary plan construction and cannot perform this
+preflight.
+
+The planner nevertheless keeps a fast path: workflows that do not require a
+runtime discovery result use one complete plan inference. Guided slots are
+selected for discovery workflows because their later arguments depend on the
+result of `dataset.list`. This avoids paying for slot rounds when the user has
+already supplied the required dataset names.
 
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
@@ -4146,13 +4153,15 @@ The `scripts/test-qwen-nomic-agent-data.ps1` helper now accepts optional
 fixtures, seeds Cozo, and runs the model-backed data turn.
 
 The model-backed CSV smoke is not a substitute for the deterministic tool
-tests. In the latest Qwen/Nomic run, the model produced a prose plan that
-mentioned a join but the structured plan selected `dataset.inspect` with
-invalid arguments and never issued `data.join`, `data.aggregate` or
-`statistics.describe`. The smoke therefore failed its expected-tool
-assertion, as intended. This indicates a model planning/selection gap, not a
-successful join path; the host resolver cannot repair a join that the model
-never requested.
+tests. Discovery workflows use a guided host path: `dataset.list` is executed
+and recorded before the later select slots are rendered, so the model sees
+the concrete names. The host accepts one exact unique name (or an indexed
+`$candidates.names[index]` reference); for the bounded two-source join recipe
+it may also repair an unambiguous `name1.csv, name2.csv` response into the
+left/right selections. The join itself is materialized by the host with a
+host-owned result name so later aggregate/statistics slots receive a real
+`dataset_ref`. Ordinary workflows retain the one-shot fast path and do not
+pay for guided slots.
 
 The focused `scripts/test-qwen-nomic-document-table.ps1` helper exercises the
 model-facing document-table path. It supplies a checked-in Pandoc-style JSON

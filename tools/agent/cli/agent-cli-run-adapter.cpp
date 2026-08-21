@@ -47,8 +47,8 @@ bool prepare_agent_cli_args(args & options, std::string & error) {
     if (!resolve_agent_profile(options, error)) {
         return false;
     }
-    if (options.max_tool_rounds < 1 || options.max_tool_rounds > 4) {
-        error = "--max-tool-rounds must be between 1 and 4";
+    if (options.max_tool_rounds < 1 || options.max_tool_rounds > 16) {
+        error = "--max-tool-rounds must be between 1 and 16";
         return false;
     }
     if (!options.resource_paths.empty() && !options.agent_runtime) {

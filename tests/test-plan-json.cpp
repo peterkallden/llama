@@ -246,6 +246,22 @@ int main() {
         dataflow_resolver));
     assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d1");
 
+    // Provider-backed tools record a generic {ok,result,...} envelope. The
+    // binding materializer must expose the inner result exactly like a raw
+    // native observation so typed dataflow does not depend on the provider.
+    materialize_plan.observations.push_back({
+        "tool:table:2", "document.table",
+        R"({"ok":true,"result":{"dataset":"d2","name":"Budget summary"}})",
+        1.0f, {}, {}, 0});
+    assert(common_plan_materialize_tool_arguments(
+        materialize_plan,
+        aggregate_step,
+        aggregate_step.tool_call->arguments_json,
+        materialized_arguments_json,
+        error,
+        dataflow_resolver));
+    assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d2");
+
     common_plan_step bare_aggregate_step{"bare-aggregate", "Aggregate", "Use a bare typed alias"};
     bare_aggregate_step.depends_on = {"table"};
     bare_aggregate_step.tool_call = common_plan_tool_call{
@@ -258,7 +274,7 @@ int main() {
         materialized_arguments_json,
         error,
         dataflow_resolver));
-    assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d1");
+    assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d2");
 
     common_plan_step mismatch_source{"mismatch-source", "Source", "Produce a resource"};
     mismatch_source.status = common_plan_step_status::completed;
