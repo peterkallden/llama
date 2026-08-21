@@ -15,10 +15,12 @@ int main() {
     assert(families.size() == 4);
     assert(families[0].description == "Query and transform datasets");
     const auto rendered = common_render_tool_family_index(families);
-    assert(rendered.find("data: Query and transform datasets; operations: aggregate, join") != std::string::npos);
-    assert(rendered.find("dataset: Choose and inspect datasets for analysis; operations: list") != std::string::npos);
-    assert(rendered.find("web: Search and retrieve information from the web; operations: search") != std::string::npos);
-    assert(rendered.find("calculator: Operations provided by the calculator tool family; operations: calculator") != std::string::npos);
+    assert(rendered.find("data: Query and transform datasets") != std::string::npos);
+    assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);
+    assert(rendered.find("web: Search and retrieve information from the web") != std::string::npos);
+    assert(rendered.find("calculator: Operations provided by the calculator tool family") != std::string::npos);
+    assert(rendered.find("aggregate") == std::string::npos);
+    assert(rendered.find("dataset.list") == std::string::npos);
 
     const auto selected = common_filter_tools_by_families(tools, {"data", "dataset"});
     assert(selected.size() == 3);

@@ -520,13 +520,14 @@ The generated index is intentionally small, for example:
 
 ```text
 tool families:
-- data: Query and transform datasets; operations: aggregate, join
-- dataset: Choose and inspect datasets for analysis; operations: list, select
-- statistics: Describe datasets and compute summaries; operations: describe
+- data: Query and transform datasets
+- dataset: Choose and inspect datasets for analysis
+- statistics: Describe datasets and compute summaries
 ```
 
 The same seam can later support a two-stage tool-intent flow: first expose only
-the family index, then render compact contracts for selected families. A
+the family names and descriptions, then render exact tool names and compact
+contracts for selected families. A
 selected family is always intersected with the active host tool view; routing
 cannot grant access to a tool that the profile did not expose. The family
 projection lives in `common/agent/tool-family-index.*` and is tested by

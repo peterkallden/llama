@@ -68,25 +68,10 @@ std::string common_render_tool_family_index(
         size_t max_chars) {
     std::string rendered = "tool families:";
     for (const auto & family : families) {
-        std::set<std::string> operations;
-        for (const auto & tool_name : family.tool_names) {
-            const auto dot = tool_name.find('.');
-            const auto underscore = tool_name.find('_');
-            const auto separator = dot != std::string::npos ? dot : underscore;
-            if (separator != std::string::npos && separator + 1 < tool_name.size()) {
-                operations.insert(tool_name.substr(separator + 1));
-            }
-        }
-        std::string entry = "\n- " + family.id + ": " + family.description + "; operations: ";
-        if (!operations.empty()) {
-            size_t operation_index = 0;
-            for (const auto & operation : operations) {
-                if (operation_index++ > 0) entry += ", ";
-                entry += operation;
-            }
-        } else {
-            entry += family.id;
-        }
+        // Keep tool_names available for host-side family filtering, but do not
+        // expose individual tools in the first routing context. Exact names
+        // and contracts are rendered only after family selection.
+        const std::string entry = "\n- " + family.id + ": " + family.description;
         if (rendered.size() + entry.size() > max_chars) break;
         rendered += entry;
     }
