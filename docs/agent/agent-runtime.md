@@ -649,7 +649,19 @@ reflection/review pass:
 * the failed tool and validation diagnostic;
 * a host-generated argument skeleton derived from the registered schema, when
   the tool is available;
-* the effective model-visible tool names for the resolved profile.
+* the compact model-facing contract and example for the affected tool;
+* the effective model-visible tool names for the resolved profile, only when a
+  replacement tool must be selected.
+
+Repair does not receive the complete tool catalog by default. Reflection gets
+only the compact contracts for tools already present in the current plan. This
+keeps the repair context bounded while still showing the exact registered
+name, argument notation and one tool-specific example. For example, an
+aggregate repair sees `data.aggregate` and its `measures` example, rather than
+having to rediscover the distinction from the whole catalog. A repair must use
+the exact registered name and keep arguments in the owning tool family; it
+must not invent names such as `dataset.aggregate` or move `on` join arguments
+into an aggregate step.
 
 Tool selection also has a host-owned name-normalization step before schema
 validation. Exact names are preferred, followed by compatibility aliases and

@@ -310,7 +310,12 @@ public:
         common_agent_tool_repair_context result;
         result.tool_name = name;
         result.validation_error = validation_error;
-        for (const auto & tool : chat_tool_list) result.available_tools.push_back(tool.name);
+        for (const auto & tool : chat_tool_list) {
+            if (tool.name == name) {
+                result.available_tools.push_back(tool.name);
+                result.compact_contract = tool.description;
+            }
+        }
         const auto it = definitions.find(name);
         if (it != definitions.end()) fill_repair_skeleton(result, it->second.input_schema_json);
         std::sort(result.available_tools.begin(), result.available_tools.end());
@@ -1000,8 +1005,11 @@ common_agent_tool_repair_context agent_tool_view::make_repair_context(
     result.tool_name = name;
     result.validation_error = validation_error;
     for (const auto & tool : chat_tools()) {
-        result.available_tools.push_back(tool.name);
-        if (tool.name == name) fill_repair_skeleton(result, tool.parameters);
+        if (tool.name == name) {
+            result.available_tools.push_back(tool.name);
+            fill_repair_skeleton(result, tool.parameters);
+            result.compact_contract = tool.description;
+        }
     }
     std::sort(result.available_tools.begin(), result.available_tools.end());
     return result;

@@ -22,6 +22,10 @@ public:
             validation_error,
             call.name == "lookup" ? R"({"id":""})" : "",
             {"lookup"},
+            {},
+            call.arguments_json,
+            false,
+            "lookup\nargs: id:string\nexample: args:{id:first}",
         };
     }
 };
@@ -131,6 +135,7 @@ int main() {
             assert(!plan.observations.empty());
             const auto & observation = plan.observations.back().summary;
             assert(observation.find("repair_context") != std::string::npos);
+            assert(observation.find("lookup\\nargs: id:string") != std::string::npos);
             assert(observation.find(expected) != std::string::npos);
             common_reflection_result result;
             result.decision = common_reflection_decision::accept;

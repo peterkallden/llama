@@ -44,7 +44,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     common_agent_runtime_assembly assembly;
     assembly.planner = make_llama_cli_planner(inference, runtime_config.generation_config, tools);
     assembly.executor = make_llama_cli_action_executor(inference, runtime_config.generation_config);
-    assembly.reflector = make_llama_cli_reflection_engine(inference, runtime_config.generation_config);
+    assembly.reflector = make_llama_cli_reflection_engine(
+        inference, runtime_config.generation_config, tools);
 
     if (runtime_config.enable_memory_learning) {
         assembly.candidate_extractor = make_llama_cli_memory_candidate_extractor(inference, runtime_config.generation_config);

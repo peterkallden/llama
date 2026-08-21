@@ -152,6 +152,12 @@ std::string common_render_compact_tool_description(
         out << "\nexample: args:{left:$orders.dataset; right:$customers.dataset; on:[{left:customer_id; right:customer_id}]}";
     } else if (name == "data.aggregate") {
         out << "\nexample: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}";
+    } else if (name == "dataset.select") {
+        out << "\nexample: args:{name:orders} -> dataset:$orders.dataset";
+    } else if (name == "dataset.list") {
+        out << "\nexample: args:{} -> datasets:$datasets.datasets[]";
+    } else if (name == "statistics.describe") {
+        out << "\nexample: args:{dataset:$joined.dataset; columns:[amount]}";
     }
     return out.str();
 }

@@ -242,6 +242,7 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
             ? json(nullptr)
             : json::parse(context.normalized_arguments, nullptr, false)},
         {"normalization_applied", context.normalization_applied},
+        {"compact_contract", context.compact_contract},
     };
     return value.dump();
 }
