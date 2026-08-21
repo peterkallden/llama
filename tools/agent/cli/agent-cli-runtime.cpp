@@ -7,6 +7,7 @@
 #include "agent/schema-contract.h"
 #include "agent/structured-regeneration.h"
 #include "agent/tool-schema-compact.h"
+#include "agent/tool-family-index.h"
 #include "memory/memory-context.h"
 #include "plan/plan-context.h"
 #include "plan/plan-json.h"
@@ -214,9 +215,7 @@ std::vector<common_memory_hit> select_reasoning_memories(
 class llama_model_planner final : public common_planner {
 public:
     llama_model_planner(common_agent_inference & inference, const common_agent_generation_config & generation_config, const std::vector<common_chat_tool> & tools)
-        : inference(inference), generation_config(generation_config), tool_names(join_tool_names(tools)), tool_contracts(render_planner_tool_contracts(tools)) {
-        for (const auto & tool : tools) allowed_tools.push_back(tool.name);
-    }
+        : inference(inference), generation_config(generation_config), tools(tools), family_index(common_generate_tool_family_index(tools)) {}
 
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
         return create_plan_result(request, error);
@@ -228,6 +227,38 @@ public:
         proposal.plan.id = "chat-plan-" + std::to_string(std::time(nullptr)) + "-" + std::to_string(++sequence);
         proposal.plan.session_id = request.session_id;
         proposal.plan.status = common_plan_status::active;
+
+        std::vector<common_chat_tool> planning_tools = tools;
+        if (generation_config.enable_tool_family_routing && !tools.empty()) {
+            common_chat_msg route_system;
+            route_system.role = "system";
+            route_system.content = "Return only one JSON object. Decide whether the user request needs tools and, if so, select every relevant tool family. Do not select individual tools and do not omit a family needed by the task: join, aggregate, filter, query and transform belong to data; list, select and inspect belong to dataset; describe and outliers belong to statistics. Use needs_tools:false and families:[] for a normal answer. Available families are generated from the active host tool view:\n" +
+                common_render_tool_family_index(family_index, 2048);
+            common_chat_msg route_user;
+            route_user.role = "user";
+            route_user.content = "[User request]\n" + request.prompt;
+            const auto route_generation = inference.generate_result(make_agent_cli_generation_request(
+                request,
+                common_agent_generation_purpose::plan_selection,
+                {route_system, route_user},
+                make_agent_cli_generation_options(generation_config, 96),
+                common_tool_family_selection_schema()));
+            common_tool_family_selection selection;
+            std::string route_error;
+            if (common_agent_generation_succeeded(route_generation) &&
+                    common_parse_tool_family_selection(route_generation.content, selection, route_error)) {
+                if (!selection.needs_tools) {
+                    planning_tools.clear();
+                } else if (!selection.family_ids.empty()) {
+                    planning_tools = common_filter_tools_by_families(tools, selection.family_ids);
+                }
+            }
+        }
+
+        std::vector<std::string> allowed_tools;
+        for (const auto & tool : planning_tools) allowed_tools.push_back(tool.name);
+        const std::string tool_names = join_tool_names(planning_tools);
+        const std::string tool_contracts = render_planner_tool_contracts(planning_tools);
 
         common_chat_msg system;
         system.role = "system";
@@ -327,9 +358,8 @@ public:
 private:
     common_agent_inference & inference;
     common_agent_generation_config generation_config;
-    std::vector<std::string> allowed_tools;
-    std::string tool_names;
-    std::string tool_contracts;
+    std::vector<common_chat_tool> tools;
+    std::vector<common_tool_family_index> family_index;
 };
 
 class llama_action_executor final : public common_action_executor {

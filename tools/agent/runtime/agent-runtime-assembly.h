@@ -34,6 +34,9 @@ struct common_agent_generation_config {
     bool generation_trace = false;
     size_t context_size_tokens = 0;
     common_agent_context_budget_config context_budgets;
+    // Optional host-side preflight that narrows the model-facing tool view by
+    // generated family before the planner sees individual tool contracts.
+    bool enable_tool_family_routing = false;
 };
 
 struct common_agent_inference_options {

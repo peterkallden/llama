@@ -1438,6 +1438,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-memory-search-fallback
     test-tool-registry
     test-tool-catalog
+    test-tool-family-index
     test-tool-adapters
     test-tool-chat-bridge
     test-tool-navigation

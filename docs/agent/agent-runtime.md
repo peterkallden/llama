@@ -507,6 +507,31 @@ duplicate normalized names fail with an ambiguity error rather than selecting
 arbitrarily. The catalog can therefore expose both `Budget summary` and table
 index `1` without making a display name part of the canonical dataset URI.
 
+### Generated tool-family index
+
+The host can generate a compact family index from the already resolved
+model-facing tool view. The generator groups dotted namespaces such as
+`data.join` and `dataset.select`; older underscore names such as `web_search`
+use the prefix before the underscore. This is a projection, not a permission
+mechanism: profile and policy filtering must happen before the family index is
+created.
+
+The generated index is intentionally small, for example:
+
+```text
+tool families:
+- data: Query and transform datasets; operations: aggregate, join
+- dataset: Choose and inspect datasets for analysis; operations: list, select
+- statistics: Describe datasets and compute summaries; operations: describe
+```
+
+The same seam can later support a two-stage tool-intent flow: first expose only
+the family index, then render compact contracts for selected families. A
+selected family is always intersected with the active host tool view; routing
+cannot grant access to a tool that the profile did not expose. The family
+projection lives in `common/agent/tool-family-index.*` and is tested by
+`test-tool-family-index`.
+
 The model-facing surface is intentionally semantic and small:
 `document.tables({resource, max_results})` lists bounded table descriptors, and
 `document.table({resource, table | table_index | node_id})` resolves exactly one

@@ -999,6 +999,8 @@ common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
         },
         options.max_continuations,
     });
+    turn_request.runtime_config.generation_config.enable_tool_family_routing =
+        options.agent_plan == "auto";
     turn_request.orchestration_config = orchestration_config;
     turn_request.generation_options = generation_options;
     turn_request.generation_options.generation_trace = options.generation_trace;

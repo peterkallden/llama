@@ -354,6 +354,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-tool-adapters.cpp
         test-tool-catalog.cpp
         test-tool-chat-bridge.cpp
+        test-tool-family-index.cpp
         test-tool-navigation.cpp
         test-agent-clangd-protocol.cpp
         test-agent-config-bootstrap.cpp
