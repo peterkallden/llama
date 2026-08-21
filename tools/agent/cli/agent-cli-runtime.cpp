@@ -155,7 +155,10 @@ std::string render_plan_prompt_context(
             render_common_agent_working_state(*request.working_state, char_budget) +
             "</compact_working_state>\n" + observations;
     }
-    return common_plan_render_context(plan, {char_budget}) + observations;
+    common_plan_context_config plan_config;
+    plan_config.char_budget = char_budget;
+    plan_config.include_observations = false;
+    return common_plan_render_context(plan, plan_config) + observations;
 }
 
 common_memory_context_config make_memory_context_config(

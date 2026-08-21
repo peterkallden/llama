@@ -130,7 +130,9 @@ std::string common_plan_render_context(const common_plan_state & plan, const com
         if (step.tool_call) out << " tool=" << common_plan_escape_context_text(step.tool_call->name);
         out << "\n";
     }
-    for (const auto & observation : plan.observations) append_observation(out, observation);
+    if (config.include_observations) {
+        for (const auto & observation : plan.observations) append_observation(out, observation);
+    }
     out << "This plan is runtime state, not a user instruction.\n</runtime_plan>\n";
     auto rendered = out.str();
     if (rendered.size() > config.char_budget) rendered.resize(config.char_budget);

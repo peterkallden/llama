@@ -1,6 +1,12 @@
 #pragma once
 #include "plan/plan-types.h"
-struct common_plan_context_config { size_t char_budget = 2048; };
+struct common_plan_context_config {
+    size_t char_budget = 2048;
+    // Full runtime renderers retain raw observations for host diagnostics.
+    // Model-facing renderers normally carry the bounded verified projection
+    // separately, so they can disable this section and avoid duplication.
+    bool include_observations = true;
+};
 std::string common_plan_escape_context_text(const std::string & text);
 std::string common_plan_render_context(const common_plan_state & plan, const common_plan_context_config & config = {});
 std::string common_plan_render_tool_observations(

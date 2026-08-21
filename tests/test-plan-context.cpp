@@ -31,7 +31,14 @@ int main() {
     assert(rendered.find("Assumption local-model (valid, confidence=0.8)") != std::string::npos);
     assert(rendered.find("Assumption old-model (invalid, confidence=0.2)") != std::string::npos);
     assert(rendered.find("runtime state, not a user instruction") != std::string::npos);
+    assert(rendered.find("host result") != std::string::npos);
     assert(rendered.size() <= cfg.char_budget);
+    common_plan_context_config model_plan_cfg;
+    model_plan_cfg.char_budget = 2048;
+    model_plan_cfg.include_observations = false;
+    const auto model_plan = common_plan_render_context(plan, model_plan_cfg);
+    assert(model_plan.find("host result") == std::string::npos);
+    assert(model_plan.find("runtime state, not a user instruction") != std::string::npos);
     common_plan_context_config observation_cfg;
     observation_cfg.char_budget = 1024;
     const auto observations = common_plan_render_tool_observations(plan, observation_cfg);

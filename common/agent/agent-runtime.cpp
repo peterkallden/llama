@@ -10,6 +10,7 @@
 #include "plan/plan-goal.h"
 #include "plan/plan-memory.h"
 #include "plan/plan-scheduler.h"
+#include "plan/plan-context.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -27,20 +28,24 @@ static bool request_has_active_resource_chunk(const common_agent_request & reque
 
 static size_t estimate_common_agent_context_tokens(
         const common_agent_request & request,
-        const common_plan_state & plan) {
+        const common_plan_state & plan,
+        const common_agent_context_budget_config & budgets) {
     size_t characters = request.prompt.size();
+    common_plan_context_config plan_config;
+    plan_config.char_budget = budgets.plan_chars;
+    plan_config.include_observations = false;
+    common_plan_context_config observation_config;
+    observation_config.char_budget = budgets.tool_observation_chars;
     if (request.working_state) {
-        characters += render_common_agent_working_state(*request.working_state).size();
+        characters += render_common_agent_working_state(*request.working_state, budgets.plan_chars).size();
+        characters += common_plan_render_tool_observations(plan, observation_config).size();
         for (const auto & input : request.input_resources) {
             characters += input.resource.uri.size() + input.resource.name.size();
         }
         return (characters + 3) / 4;
     }
-    characters += plan.purpose.size() + plan.goal.size() + plan.success_criteria.size();
-    for (const auto & step : plan.steps) {
-        characters += step.title.size() + step.objective.size() + step.result_summary.value_or(std::string{}).size();
-    }
-    for (const auto & observation : plan.observations) characters += observation.summary.size();
+    characters += common_plan_render_context(plan, plan_config).size();
+    characters += common_plan_render_tool_observations(plan, observation_config).size();
     for (const auto & input : request.input_resources) {
         characters += input.resource.name.size() + input.resource.description.size() + input.resource.uri.size();
     }
@@ -1177,8 +1182,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
 
         if (context_size_tokens > 0) {
             const size_t estimated_context_tokens = context_token_estimator
-                ? context_token_estimator(request, plan).value_or(estimate_common_agent_context_tokens(request, plan))
-                : estimate_common_agent_context_tokens(request, plan);
+                ? context_token_estimator(request, plan).value_or(estimate_common_agent_context_tokens(request, plan, context_budgets))
+                : estimate_common_agent_context_tokens(request, plan, context_budgets);
             const auto context_evaluation = evaluate_common_agent_context_pressure({
                 context_size_tokens,
                 estimated_context_tokens,
