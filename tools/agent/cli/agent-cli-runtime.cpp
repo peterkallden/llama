@@ -276,6 +276,7 @@ public:
             "Steps chain after the previous step by default. Omit a dataflow input when exactly one compatible preceding output can be inferred; use a bare typed alias such as $orders when the target input identifies the intended type, or use $name.field/$previous.field when selecting or disambiguating a source. A bare name such as \"table\" is a literal, not an alias. The host canonicalizes references to the strict $from_step/$json_pointer binding. Do not invent placeholder values such as resolved table or previous_result. Resource handles (r1) and dataset results (d1) are different types. "
             "A tool step has mode tool. A reasoning step has mode reasoning. The runtime adds the final answer step automatically, so do not emit one unless you need a custom final dependency shape. "
             "Dataset repair contract: dataset.list returns datasets:dataset_ref[] and names:string[]; dataset.select(name:string) selects one registered dataset and returns dataset:dataset_ref; dataset.inspect, dataset.schema and dataset.sample consume one dataset_ref. Use dataset.select for a named dataset. A bare alias such as $orders is shorthand for its unique compatible dataset_ref output when a dataset input is expected. Use $alias.datasets[index] only when a declared alias produces a typed collection; $datasets[0] is not a valid reference. "
+            "An alias declared with as is available only to later steps: never use $orders or $orders.dataset as input to the same step that declares as:'orders'. For an initial query, select or list the source dataset first, then run data.query using that earlier result. "
             "The runtime supplies IDs, titles, objectives, empty evidence lists, operation metadata, and safe defaults. Keep values under twelve words.";
         common_chat_msg user;
         user.role = "user";
@@ -295,7 +296,8 @@ public:
                     "\n[Regeneration]\nThe previous response was incomplete or structurally invalid. "
                     "Regenerate the complete JSON object from the beginning. Do not continue partial JSON, "
                     "add commentary, or emit tool calls outside the requested plan object. "
-                    "For dataset repair, choose dataset.select(name) or dataset.list before dataset.inspect; use a bare alias only for a unique compatible typed output; preserve typed collection references as $alias.datasets[index].";
+                    "For dataset repair, choose dataset.select(name) or dataset.list before dataset.inspect; use a bare alias only for a unique compatible typed output; preserve typed collection references as $alias.datasets[index]. "
+                    "Never use an alias as input to the same step that declares it; create or select the source first.";
             }
             return inference.generate_result(make_agent_cli_generation_request(
                 request,
@@ -495,6 +497,7 @@ public:
             "selects one registered dataset and returns dataset:dataset_ref; dataset.inspect, dataset.schema "
             "and dataset.sample consume dataset_ref. Use dataset.select for a named dataset. "
             "Use a bare alias only when the target input has one compatible typed output; use $alias.datasets[index] only for a declared typed collection; $datasets[0] is invalid. "
+            "An alias declared with as is available only to later steps. If a step uses $orders or $orders.dataset while also declaring as:'orders', repair it by selecting or listing the source dataset first and then consuming that earlier result. "
             "For data.join always use left:$left.dataset, right:$right.dataset and on:[{left:column,right:column}]. "
             "For data.aggregate use measures:[{function:sum|count|avg|min|max,column?:column}], not SQL select text. "
             "Use the exact registered tool name shown in the compact contracts; never invent names such as dataset.aggregate. "

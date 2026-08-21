@@ -664,6 +664,15 @@ Join repair instead reports the required
 `left`/`right` inputs and declared aliases such as `$orders.dataset` and
 `$customers.dataset`, so the model makes that semantic choice explicitly.
 
+A self-reference is a separate planner error. A step such as
+`data.query(dataset=$orders.dataset, as=orders)` is invalid because the alias
+is created by that same step and therefore cannot be its input. Repair must
+create or select the source dataset first, for example with
+`dataset.select(name="orders")` (or `dataset.list` followed by
+`dataset.select`), and only then run `data.query` against the earlier result.
+The host reports this as `plan.binding.self_alias`; it does not silently turn
+the circular reference into a literal or guess a dataset name.
+
 When a request is marked as requiring tool execution, a rejected planner JSON
 object is a bounded planner failure. The runtime must not turn it into an
 answer-only fallback, because that would make an ungrounded answer look like a

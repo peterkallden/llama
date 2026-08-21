@@ -15,6 +15,25 @@ json normalize_safe_integer_arguments(json arguments);
 
 enum class model_binding_parse_result { literal, binding, invalid };
 
+bool contains_model_alias_reference(const json & value, const std::string & alias) {
+    if (value.is_array()) {
+        for (const auto & item : value) {
+            if (contains_model_alias_reference(item, alias)) return true;
+        }
+        return false;
+    }
+    if (value.is_object()) {
+        for (const auto & item : value.items()) {
+            if (contains_model_alias_reference(item.value(), alias)) return true;
+        }
+        return false;
+    }
+    if (!value.is_string()) return false;
+    const auto & text = value.get_ref<const std::string &>();
+    const std::string prefix = "$" + alias;
+    return text == prefix || text.rfind(prefix + ".", 0) == 0 || text.rfind(prefix + "[", 0) == 0;
+}
+
 model_binding_parse_result model_output_binding(const std::string & value, json & binding) {
     if (value.empty() || value.front() != '$') return model_binding_parse_result::literal;
     if (value.size() >= 2 && value.find('.', 1) == std::string::npos) {
@@ -392,6 +411,15 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
         if (!operations.empty() && operations.back().step) binding_aliases["previous"] = operations.back().step->id;
         if (!host_owned_dependencies) {
             for (const auto & known_id : seen_step_ids) binding_aliases.emplace(known_id, known_id);
+        }
+        if (source.is_object() && source.contains("as") && source["as"].is_string()) {
+            const auto alias = source["as"].get<std::string>();
+            if (!alias.empty() && contains_model_alias_reference(source, alias)) {
+                error = "plan.binding.self_alias: step alias '$" + alias +
+                    "' cannot be used as an input to the step that declares it; "
+                    "select or resolve the source dataset before using the alias";
+                return false;
+            }
         }
         common_plan_step step;
         if (!parse_step(source, plan.goal, fallback_id, step, error, &binding_aliases,

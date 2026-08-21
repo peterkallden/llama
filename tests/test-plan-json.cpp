@@ -125,6 +125,10 @@ int main() {
     assert(!common_plan_parse_proposal_json(unknown_alias, plan, operations, error));
     assert(error.find("plan.binding.unknown_alias") != std::string::npos);
 
+    const auto self_alias_reference = R"({"goal":"query orders","steps":[{"tool":"data.query","args":{"dataset":"$orders.dataset","query":"select * from orders"},"as":"orders"}]})";
+    assert(!common_plan_parse_proposal_json(self_alias_reference, plan, operations, error));
+    assert(error.find("plan.binding.self_alias") != std::string::npos);
+
     const auto invalid_reference = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$tables[0].dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(!common_plan_parse_proposal_json(invalid_reference, plan, operations, error));
     assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
