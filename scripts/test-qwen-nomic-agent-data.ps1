@@ -135,7 +135,7 @@ Invoke-LoggedCommand -Name "Qwen/Nomic $ThinkingMode data research" -LogPath $ag
     "--plan-backend", "cozo", "--plan-db", $planDb,
     "--data-backend", "cozo", "--data-db", $dataDb,
     "--model", $ChatModel, "--embedding-model", $EmbeddingModel,
-    "--agent-profile", "research", "--tool-profile", "all-configured",
+    "--agent-profile", "research", "--tool-profile", "analysis",
     "--thinking-mode", $ThinkingMode, "--max-reflection-rounds", "1",
     "--max-research-iterations", "1", "--agent-plan", "auto",
     "--max-plan-revisions", "2",

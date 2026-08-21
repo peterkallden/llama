@@ -23,6 +23,28 @@ std::string normalized_table_name(const std::string & value) {
     return result;
 }
 
+std::string trim_copy(const std::string & value) {
+    size_t first = 0;
+    while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first]))) ++first;
+    size_t last = value.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1]))) --last;
+    return value.substr(first, last - first);
+}
+
+bool parse_aggregate_expression(const std::string & expression, nlohmann::ordered_json & measure) {
+    const auto text = trim_copy(expression);
+    const auto open = text.find('(');
+    if (open == std::string::npos || text.empty() || text.back() != ')' ||
+            text.find('(', open + 1) != std::string::npos) return false;
+    const auto function = normalized_table_name(text.substr(0, open));
+    const auto column = trim_copy(text.substr(open + 1, text.size() - open - 2));
+    if (column.empty() || (function != "count" && function != "sum" && function != "avg" &&
+            function != "min" && function != "max") || (function == "count" && column != "*")) return false;
+    measure = {{"function", function}};
+    measure["column"] = function == "count" ? "*" : column;
+    return true;
+}
+
 } // namespace
 
 bool resolve_common_agent_document_table(
@@ -407,6 +429,13 @@ bool normalize_common_agent_dataset_tool_arguments(
     } else if (tool_name == "data.aggregate") {
         if (arguments.contains("group_by") && arguments["group_by"].is_string()) {
             arguments["group_by"] = nlohmann::ordered_json::array({arguments["group_by"]});
+        }
+        if (!arguments.contains("measures") && arguments.contains("select") && arguments["select"].is_string()) {
+            nlohmann::ordered_json measure;
+            if (parse_aggregate_expression(arguments["select"].get<std::string>(), measure)) {
+                arguments["measures"] = nlohmann::ordered_json::array({std::move(measure)});
+                arguments.erase("select");
+            }
         }
         if (!arguments.contains("measures")) {
             nlohmann::ordered_json measures = nlohmann::ordered_json::array();

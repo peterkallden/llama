@@ -130,6 +130,9 @@ struct common_plan_step {
     common_plan_step_mode mode = common_plan_step_mode::final_response;
     bool optional = false, generated_from_memory = false;
     int64_t created_at = 0, updated_at = 0;
+    // Retain the semantic name so repair can explain typed choices without
+    // exposing host-owned step IDs as the model-facing contract.
+    std::optional<std::string> semantic_alias;
 };
 
 inline common_plan_step_mode common_plan_step_effective_mode(const common_plan_step & step) {

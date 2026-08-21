@@ -246,6 +246,23 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
     return value.dump();
 }
 
+static std::string dataset_join_repair_hint(const common_plan_state & plan) {
+    std::string hint = "data.join requires left and right dataset_ref inputs and on:[{left:column,right:column}].";
+    std::vector<std::string> aliases;
+    for (const auto & step : plan.steps) {
+        if (step.semantic_alias && step.tool_call) aliases.push_back(*step.semantic_alias);
+    }
+    if (!aliases.empty()) {
+        hint += " Declared dataset aliases: ";
+        for (size_t index = 0; index < aliases.size(); ++index) {
+            if (index) hint += ", ";
+            hint += "$" + aliases[index] + ".dataset";
+        }
+        hint += ".";
+    }
+    return hint;
+}
+
 static bool normalize_agent_tool_call(
         common_agent_tool_call & call,
         const common_agent_tool_runtime * tools = nullptr,
@@ -1005,6 +1022,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 auto repair = tools->make_repair_context(*tool_call, validation_error);
+                if (tool_call->name == "data.join") {
+                    repair.validation_error += " " + dataset_join_repair_hint(plan);
+                }
                 repair.candidate_tools = std::move(name_candidates);
                 repair.normalized_arguments = tool_call->arguments_json;
                 repair.normalization_applied = normalization_applied || name_normalization_applied || defaults_applied;

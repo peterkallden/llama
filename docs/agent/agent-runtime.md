@@ -611,6 +611,30 @@ only for an explicitly named collection result, for example
 been introduced as an alias. The host still validates the resulting typed
 binding and owns the canonical step/pointer representation.
 
+The compact data contracts include complete examples because small models can
+carry SQL-like syntax into structured tool arguments:
+
+```text
+data.join
+  left: dataset_ref
+  right: dataset_ref
+  on: [{left: column, right: column}]
+  -> dataset: dataset_ref
+
+data.aggregate
+  dataset?: dataset_ref [may be inferred]
+  measures: [{function: sum|count|avg|min|max, column?: column}]
+  -> dataset?: dataset_ref
+  -> rows
+```
+
+During bounded repair the host may normalize an unambiguous expression such
+as `select: "sum(amount)"` into
+`measures: [{function: sum, column: amount}]`. It does not silently turn bare
+dataset names into bindings. Join repair instead reports the required
+`left`/`right` inputs and declared aliases such as `$orders.dataset` and
+`$customers.dataset`, so the model makes that semantic choice explicitly.
+
 When a request is marked as requiring tool execution, a rejected planner JSON
 object is a bounded planner failure. The runtime must not turn it into an
 answer-only fallback, because that would make an ungrounded answer look like a

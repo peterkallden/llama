@@ -354,6 +354,10 @@ int main() {
     assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("function":"sum","column":"amount")" ) != std::string::npos);
+    result = foundation_registry.execute({"data.aggregate", R"json({"dataset":"a","select":"sum(amount)"})json"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
+           foundation_data.last_request.find(R"("measures":[{"function":"sum","column":"amount"}])") != std::string::npos &&
+           foundation_data.last_request.find(R"("select")") == std::string::npos);
     result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":"id"})"});
     assert(result.ok && foundation_data.last_operation == "data.join" &&
            foundation_data.last_request.find(R"("left":"id","right":"id")" ) != std::string::npos);

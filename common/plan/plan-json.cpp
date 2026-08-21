@@ -398,6 +398,7 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
                 return false;
             }
             aliases[alias] = step.id;
+            step.semantic_alias = alias;
         }
         has_final = has_final || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
         common_plan_operation operation;

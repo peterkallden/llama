@@ -112,6 +112,8 @@ int main() {
     // same host-owned step IDs and supports a later multi-input join.
     const auto aliased_dataflow = R"({"goal":"join tables","steps":[{"as":"budget","tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"as":"forecast","tool":"document.table","args":{"resource":"r1","table":"Forecast"}},{"tool":"data.join","args":{"left":"$budget.dataset","right":"$forecast.dataset"}}]})";
     assert(common_plan_parse_proposal_json(aliased_dataflow, plan, operations, error));
+    assert(operations[0].step->semantic_alias && *operations[0].step->semantic_alias == "budget");
+    assert(operations[1].step->semantic_alias && *operations[1].step->semantic_alias == "forecast");
     assert(operations[0].step->id == "step_1");
     assert(operations[1].step->id == "step_2");
     assert(operations[2].step->id == "step_3");

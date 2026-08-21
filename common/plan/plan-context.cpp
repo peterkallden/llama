@@ -42,6 +42,7 @@ std::string common_plan_render_context(const common_plan_state & plan, const com
             << common_plan_escape_context_text(step.title) << " ("
             << (int) step.status << ", "
             << step_mode_name(common_plan_step_effective_mode(step)) << ")";
+        if (step.semantic_alias) out << " as=" << common_plan_escape_context_text(*step.semantic_alias);
         if (!step.intended_contribution.empty()) out << " contribution=" << common_plan_escape_context_text(step.intended_contribution);
         if (step.tool_call) out << " tool=" << common_plan_escape_context_text(step.tool_call->name);
         out << "\n";

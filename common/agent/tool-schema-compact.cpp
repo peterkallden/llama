@@ -148,5 +148,10 @@ std::string common_render_compact_tool_description(
     out << name << "\n" << description << "\n";
     out << "args: " << (args.empty() ? "object" : args) << "\n";
     out << "returns: " << render_returns(result_schema_json);
+    if (name == "data.join") {
+        out << "\nexample: args:{left:$orders.dataset; right:$customers.dataset; on:[{left:customer_id; right:customer_id}]}";
+    } else if (name == "data.aggregate") {
+        out << "\nexample: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}";
+    }
     return out.str();
 }

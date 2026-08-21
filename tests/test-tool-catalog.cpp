@@ -177,6 +177,18 @@ int main() {
     assert(aggregate_compact.find("materialized") == std::string::npos);
     assert(aggregate_compact.find("scan_truncated") == std::string::npos);
     assert(aggregate_compact.find("returns: rows:object[], dataset:dataset_ref") != std::string::npos);
+    assert(aggregate_compact.find("example: args:{dataset:$joined.dataset; measures:[{function:sum; column:amount}]}") != std::string::npos);
+    const auto * data_join = catalog.find_definition("data.join");
+    assert(data_join != nullptr);
+    const auto join_compact = common_render_compact_tool_description(
+        data_join->name,
+        data_join->description,
+        common_tool_model_input_schema(*data_join),
+        common_tool_model_result_schema(*data_join),
+        compact_error);
+    assert(compact_error.empty());
+    assert(join_compact.find("left:$orders.dataset; right:$customers.dataset") != std::string::npos);
+    assert(join_compact.find("on:[{left:customer_id; right:customer_id}]") != std::string::npos);
     assert(build->policy_json.find("execution_class\":\"developer-build\"") != std::string::npos);
     assert(test->policy_json.find("filesystem\":\"workspace-write\"") != std::string::npos);
 
