@@ -611,6 +611,30 @@ bounded before exact tool contracts are rendered. This ordering keeps broad
 tools such as `data.query` from overwhelming a small model before it has first
 chosen a suitable composition pattern.
 
+The selected recipe also provides a small host-side ordering contract. The
+host does not silently reorder or invent model steps, but it rejects a plan
+that uses model aliases before their producer slots exist and sends the plan
+through bounded repair. For example, a `dataset.join` recipe requires two
+`dataset.select` steps before `data.join` when the join arguments use
+`$left.dataset` and `$right.dataset`. A direct host-owned dataset reference
+may satisfy the join without those select slots. The same rule requires
+`dataset.list` before indexed discovery and `dataset.select` before
+`dataset.inspect`.
+
+Conceptually the host validates this small skeleton:
+
+```text
+workflow: dataset.join
+  slot 1: dataset.select -> left
+  slot 2: dataset.select -> right
+  slot 3: data.join(left=$left.dataset, right=$right.dataset)
+```
+
+The model still chooses names, columns and other semantic arguments. The host
+owns slot order, generated step identity and canonical bindings. This keeps
+workflow recipes useful without introducing a second scheduler or allowing a
+repair to turn an invalid plan into an unrelated plan.
+
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.

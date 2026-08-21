@@ -363,6 +363,20 @@ public:
             parse_error.clear();
                 parsed = common_plan_parse_proposal_json(
                     candidate.content, proposal.plan, proposal.operations, parse_error, 6);
+                if (parsed && !selected_workflow_ids.empty()) {
+                    std::vector<common_tool_workflow_step_view> workflow_steps;
+                    for (const auto & operation : proposal.operations) {
+                        if (!operation.step || !operation.step->tool_call) continue;
+                        workflow_steps.push_back({
+                            operation.step->tool_call->name,
+                            operation.step->tool_call->arguments_json});
+                    }
+                    parsed = common_validate_tool_workflow_plan(
+                        workflow_catalog,
+                        selected_workflow_ids,
+                        workflow_steps,
+                        parse_error);
+                }
                 return parsed;
             });
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);

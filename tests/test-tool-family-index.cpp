@@ -61,5 +61,24 @@ int main() {
     assert(workflow_selection.workflow_ids.size() == 2);
     assert(!common_parse_tool_workflow_selection(
         R"({"workflows":["dataset.join","dataset.join"]})", workflow_selection, error));
+
+    const std::vector<common_tool_workflow_step_view> valid_join = {
+        {"dataset.select", R"({"name":"orders"})"},
+        {"dataset.select", R"({"name":"customers"})"},
+        {"data.join", R"({"left":"$left.dataset","right":"$right.dataset"})"},
+    };
+    assert(common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, valid_join, error));
+    const std::vector<common_tool_workflow_step_view> invalid_join = {
+        {"data.join", R"({"left":"$left.dataset","right":"$right.dataset"})"},
+    };
+    assert(!common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, invalid_join, error));
+    assert(error.find("required_producer_missing") != std::string::npos);
+    const std::vector<common_tool_workflow_step_view> direct_join = {
+        {"data.join", R"({"left":"dataset://orders","right":"dataset://customers"})"},
+    };
+    assert(common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, direct_join, error));
     return 0;
 }

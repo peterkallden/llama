@@ -132,3 +132,60 @@ bool common_parse_tool_workflow_selection(
     error.clear();
     return true;
 }
+
+bool common_validate_tool_workflow_plan(
+        const std::vector<common_tool_workflow> & workflows,
+        const std::vector<std::string> & workflow_ids,
+        const std::vector<common_tool_workflow_step_view> & steps,
+        std::string & error) {
+    auto first_index = [&](const std::string & tool, size_t start = 0U) -> size_t {
+        for (size_t i = start; i < steps.size(); ++i) {
+            if (steps[i].tool_name == tool) return i;
+        }
+        return steps.size();
+    };
+    auto selected = [&](const std::string & id) {
+        return std::find(workflow_ids.begin(), workflow_ids.end(), id) != workflow_ids.end();
+    };
+
+    if (selected("dataset.discover")) {
+        const size_t list = first_index("dataset.list");
+        const size_t select = first_index("dataset.select");
+        if (list == steps.size() || select == steps.size() || list > select) {
+            error = "workflow.required_producer_missing: dataset.discover requires dataset.list before dataset.select";
+            return false;
+        }
+    }
+    if (selected("dataset.inspect_named")) {
+        const size_t select = first_index("dataset.select");
+        const size_t inspect = first_index("dataset.inspect");
+        if (select == steps.size() || inspect == steps.size() || select > inspect) {
+            error = "workflow.required_producer_missing: dataset.inspect_named requires dataset.select before dataset.inspect";
+            return false;
+        }
+    }
+    if (selected("dataset.join")) {
+        const size_t join = first_index("data.join");
+        const size_t first_select = first_index("dataset.select");
+        const size_t second_select = first_select == steps.size()
+            ? steps.size() : first_index("dataset.select", first_select + 1);
+        if (join == steps.size()) {
+            error = "workflow.required_consumer_missing: dataset.join requires data.join";
+            return false;
+        }
+        // Direct dataset identifiers can satisfy a join without select slots.
+        // Model references require the two semantic source slots first.
+        const bool has_model_reference = std::any_of(
+            steps.begin(), steps.end(), [](const auto & step) {
+                return step.arguments_json.find("\"$") != std::string::npos;
+            });
+        if (has_model_reference &&
+                (first_select == steps.size() || second_select == steps.size() || second_select > join)) {
+            error = "workflow.required_producer_missing: dataset.join requires two dataset.select steps before data.join, unless direct dataset references were supplied";
+            return false;
+        }
+    }
+    (void) workflows;
+    error.clear();
+    return true;
+}
