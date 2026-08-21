@@ -129,9 +129,11 @@ int main() {
     assert(!common_plan_parse_proposal_json(invalid_reference, plan, operations, error));
     assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
 
-    const auto invalid_reference_shape = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"}},{"tool":"data.aggregate","args":{"dataset":"$table","measures":[{"function":"sum","column":"amount"}]}}]})";
-    assert(!common_plan_parse_proposal_json(invalid_reference_shape, plan, operations, error));
-    assert(error.find("plan.binding.invalid_syntax") != std::string::npos);
+    const auto invalid_reference_shape = R"({"goal":"aggregate a table","steps":[{"tool":"document.table","args":{"resource":"r1","table":"Budget"},"as":"table"},{"tool":"data.aggregate","args":{"dataset":"$table","measures":[{"function":"sum","column":"amount"}]}}]})";
+    assert(common_plan_parse_proposal_json(invalid_reference_shape, plan, operations, error));
+    const auto bare_alias_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
+    assert(bare_alias_args["dataset"].value("$from_step", "") == "step_1");
+    assert(bare_alias_args["dataset"].value("$json_pointer", "missing") == "");
     const auto indexed_reference = R"({"goal":"select the first dataset","steps":[{"tool":"dataset.list","args":{},"as":"candidates"},{"tool":"dataset.inspect","args":{"dataset":"$candidates.datasets[0]"}}]})";
     assert(common_plan_parse_proposal_json(indexed_reference, plan, operations, error));
     const auto indexed_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);
@@ -235,6 +237,20 @@ int main() {
         materialize_plan,
         aggregate_step,
         aggregate_step.tool_call->arguments_json,
+        materialized_arguments_json,
+        error,
+        dataflow_resolver));
+    assert(nlohmann::json::parse(materialized_arguments_json, nullptr, false).value("dataset", "") == "d1");
+
+    common_plan_step bare_aggregate_step{"bare-aggregate", "Aggregate", "Use a bare typed alias"};
+    bare_aggregate_step.depends_on = {"table"};
+    bare_aggregate_step.tool_call = common_plan_tool_call{
+        "data.aggregate",
+        R"({"dataset":{"$from_step":"table","$json_pointer":""},"measures":[{"function":"sum","column":"amount"}]})"};
+    assert(common_plan_materialize_tool_arguments(
+        materialize_plan,
+        bare_aggregate_step,
+        bare_aggregate_step.tool_call->arguments_json,
         materialized_arguments_json,
         error,
         dataflow_resolver));

@@ -657,7 +657,10 @@ data.aggregate
 During bounded repair the host may normalize an unambiguous expression such
 as `select: "sum(amount)"` into
 `measures: [{function: sum, column: amount}]`. It does not silently turn bare
-dataset names into bindings. Join repair instead reports the required
+dataset names into bindings. For typed inputs, a bare alias such as `$orders`
+is valid shorthand when the source has exactly one compatible output; the host
+resolves it to `$orders.dataset` and stores the canonical `/dataset` binding.
+Join repair instead reports the required
 `left`/`right` inputs and declared aliases such as `$orders.dataset` and
 `$customers.dataset`, so the model makes that semantic choice explicitly.
 

@@ -119,6 +119,57 @@ bool add_unambiguous_typed_binding(
     return true;
 }
 
+bool resolve_bare_alias_bindings(
+        const common_plan_state & plan,
+        nlohmann::ordered_json & arguments,
+        const common_plan_tool_dataflow_contract & target,
+        const common_plan_tool_dataflow_contract_resolver & resolver,
+        std::string & error) {
+    if (!resolver || !arguments.is_object()) return true;
+    for (const auto & input : target.inputs) {
+        if (!arguments.contains(input.name) || !arguments[input.name].is_object()) continue;
+        auto & value = arguments[input.name];
+        if (!value.contains("$from_step") || !value.contains("$json_pointer") ||
+                !value["$from_step"].is_string() || !value["$json_pointer"].is_string() ||
+                !value["$json_pointer"].get<std::string>().empty()) continue;
+        const auto * source_step = find_step(plan, value["$from_step"].get<std::string>());
+        if (!source_step || !source_step->tool_call) {
+            error = "plan.binding.bare_alias_source_unavailable: bare alias source is not a tool step";
+            return false;
+        }
+        common_plan_tool_dataflow_contract source;
+        std::string contract_error;
+        if (!resolver(source_step->tool_call->name, source, contract_error)) {
+            error = "plan.binding.bare_alias_source_contract_unavailable: cannot inspect bare alias source";
+            return false;
+        }
+        const auto * observation = find_step_observation(plan, source_step->id);
+        if (!observation) {
+            error = "plan.binding.bare_alias_source_unavailable: bare alias source has no completed observation";
+            return false;
+        }
+        std::vector<std::string> candidates;
+        for (const auto & output : source.outputs) {
+            if (!output.collection && common_plan_semantic_types_compatible(output.semantic_type, input.semantic_type) &&
+                    observation_has_field(*observation, output.name)) {
+                candidates.push_back(output.name);
+            }
+        }
+        if (candidates.empty()) {
+            error = "plan.binding.bare_alias_no_compatible_output: bare alias '$" +
+                value["$from_step"].get<std::string>() + "' has no compatible output for '" + input.name + "'";
+            return false;
+        }
+        if (candidates.size() != 1) {
+            error = "plan.binding.ambiguous_bare_alias: bare alias '$" +
+                value["$from_step"].get<std::string>() + "' has multiple compatible outputs for '" + input.name + "'";
+            return false;
+        }
+        value["$json_pointer"] = "/" + candidates.front();
+    }
+    return true;
+}
+
 bool resolve_value(
         const common_plan_state & plan,
         nlohmann::ordered_json & value,
@@ -186,6 +237,8 @@ bool common_plan_materialize_tool_arguments_contract(
     common_plan_tool_dataflow_contract target;
     if (dataflow_resolver && step.tool_call &&
             dataflow_resolver(step.tool_call->name, target, error)) {
+        if (!resolve_bare_alias_bindings(
+                plan, materialized_contract.value, target, dataflow_resolver, error)) return false;
         if (!validate_explicit_binding_types(
                 plan, materialized_contract.value, target, dataflow_resolver, error)) return false;
         if (!add_unambiguous_typed_binding(

@@ -17,6 +17,21 @@ enum class model_binding_parse_result { literal, binding, invalid };
 
 model_binding_parse_result model_output_binding(const std::string & value, json & binding) {
     if (value.empty() || value.front() != '$') return model_binding_parse_result::literal;
+    if (value.size() >= 2 && value.find('.', 1) == std::string::npos) {
+        const std::string step_id = value.substr(1);
+        const auto valid_identifier = [](const std::string & part) {
+            return !part.empty() && std::all_of(part.begin(), part.end(), [](unsigned char ch) {
+                return std::isalnum(ch) != 0 || ch == '_' || ch == '-';
+            });
+        };
+        // A bare alias is a typed shorthand. The binding resolver supplies
+        // the output field later, once the target input contract is known.
+        if (valid_identifier(step_id)) {
+            binding = json{{"$from_step", step_id}, {"$json_pointer", ""}};
+            return model_binding_parse_result::binding;
+        }
+        return model_binding_parse_result::invalid;
+    }
     if (value.size() < 5) return model_binding_parse_result::invalid;
     const auto separator = value.find('.', 1);
     if (separator == std::string::npos || separator == 1 || separator + 1 >= value.size()) return model_binding_parse_result::invalid;
@@ -76,7 +91,7 @@ bool normalize_model_output_bindings(
             const auto parsed = model_output_binding(shorthand, binding);
             if (parsed == model_binding_parse_result::invalid && strict_model_references) {
                 error = "plan.binding.invalid_syntax: '" + shorthand +
-                    "' is not a valid model reference; expected '$previous.field', '$alias.field' or '$alias.field[index]'";
+                    "' is not a valid model reference; expected '$alias', '$previous.field', '$alias.field' or '$alias.field[index]'";
                 return false;
             }
             if (parsed == model_binding_parse_result::literal && strict_model_references && aliases != nullptr) {
