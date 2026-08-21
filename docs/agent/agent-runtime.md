@@ -188,6 +188,12 @@ All mode budgets are host-resolved. A user or caller may request a mode and
 bounded limits, but host policy remains the upper bound for reflection rounds,
 plan revisions, tool rounds, research iterations, tokens, and time.
 
+The default host budget is 16 tool rounds. This is a safety bound, not a
+requirement to use 16 rounds: a model may finish earlier, and callers may set
+a smaller explicit limit for a particular request. The same default applies to
+the CLI, chat runtime, daemon and MCP stdio server; explicit request or host
+configuration limits remain authoritative.
+
 ## Multimodal inference boundary
 
 Multimodal support follows the same host-owned runtime boundary. The agent

@@ -41,7 +41,7 @@ struct args {
     float weight = 1.0f;
     size_t limit = 8;
     size_t memory_token_budget = 768;
-    size_t max_tool_rounds = 1;
+    size_t max_tool_rounds = 16;
     int n_predict = 128;
     int n_threads = 2;
     int context_size = 0;

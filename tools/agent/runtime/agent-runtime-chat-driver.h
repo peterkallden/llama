@@ -8,7 +8,7 @@
 #include <vector>
 
 struct common_agent_chat_runtime_policy {
-    size_t max_tool_rounds = 1;
+    size_t max_tool_rounds = 16;
     size_t max_continuations = 2;
 };
 

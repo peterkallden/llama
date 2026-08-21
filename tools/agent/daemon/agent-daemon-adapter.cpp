@@ -343,8 +343,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--agent-blueprint must be off, auto, or a blueprint id\n");
         return false;
     }
-    if (options.max_tool_rounds > 4) {
-        std::fprintf(stderr, "--max-tool-rounds must be between 0 and 4\n");
+    if (options.max_tool_rounds > 16) {
+        std::fprintf(stderr, "--max-tool-rounds must be between 0 and 16\n");
         return false;
     }
     if (options.queue_capacity == 0) {

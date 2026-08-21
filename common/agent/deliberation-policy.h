@@ -39,7 +39,7 @@ struct common_agent_deliberation_policy {
 
     int max_reflection_rounds = 1;
     int max_plan_revisions = 0;
-    int max_tool_rounds = 4;
+    int max_tool_rounds = 16;
     int max_research_iterations = 0;
 
     bool require_plan = false;

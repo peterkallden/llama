@@ -312,7 +312,7 @@ bool parse_server_args(
     options.memory_namespace = "local";
     options.memory_session = "default";
     options.tool_profile = "minimal";
-    options.max_tool_rounds = 8;
+    options.max_tool_rounds = 16;
     options.memory_token_budget = 768;
 
     const char * explicit_config_path = find_server_config_path(argc, argv);

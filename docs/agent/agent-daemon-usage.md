@@ -520,7 +520,7 @@ The intended host configuration shape is:
   "limits": {
     "worker_count": 2,
     "inference_max_active": 1,
-    "max_tool_rounds": 4
+    "max_tool_rounds": 16
   }
 }
 ```
