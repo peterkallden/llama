@@ -146,13 +146,16 @@ std::string build_memory_prompt_context(
 std::string render_plan_prompt_context(
         const common_agent_request & request,
         const common_plan_state & plan,
-        size_t char_budget) {
+        size_t char_budget,
+        size_t tool_observation_budget) {
+    const auto observations = common_plan_render_tool_observations(
+        plan, {tool_observation_budget});
     if (request.working_state) {
         return "<compact_working_state>\n" +
             render_common_agent_working_state(*request.working_state, char_budget) +
-            "</compact_working_state>\n";
+            "</compact_working_state>\n" + observations;
     }
-    return common_plan_render_context(plan, {char_budget});
+    return common_plan_render_context(plan, {char_budget}) + observations;
 }
 
 common_memory_context_config make_memory_context_config(
@@ -814,7 +817,7 @@ public:
             derive_plan_policy_pack(plan),
             request.memories,
             common_memory_overlay_stage::general) +
-            "\n" + render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars) + "\n[User request]\n" + request.prompt +
+            "\n" + render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars, generation_config.context_budgets.tool_observation_chars) + "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars);
         if (!guidance.empty()) {
             user.content += "\n[Revision guidance]\n";
@@ -937,7 +940,7 @@ public:
             derive_plan_policy_pack(plan),
             request.memories,
             common_memory_overlay_stage::reflection) +
-            "\n" + render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars) + "\n[User request]\n" + request.prompt +
+            "\n" + render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars, generation_config.context_budgets.tool_observation_chars) + "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n[Draft]\n" + draft;
         const std::string reflection_schema = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":["accept","revise","abort"]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
         auto generate_reflection = [&](bool regeneration) {
@@ -1052,7 +1055,7 @@ public:
             common_memory_overlay_stage::memory_learning) +
             "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars) + "\n" +
-            render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars) + "\n[Final response]\n" + result.response;
+            render_plan_prompt_context(request, plan, generation_config.context_budgets.plan_chars, generation_config.context_budgets.tool_observation_chars) + "\n[Final response]\n" + result.response;
         if (!result.learning_signals.empty()) {
             user.content += "\n[Native learning signals]\n";
             for (const auto & signal : result.learning_signals) {

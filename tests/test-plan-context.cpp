@@ -9,6 +9,19 @@ int main() {
     plan.constraints.push_back({"scope", "Stay within the repository.", true});
     plan.assumptions.push_back({"local-model", "The configured model is available.", 0.8f, true, {"model-check"}});
     plan.assumptions.push_back({"old-model", "The old model is available.", 0.2f, false, {}});
+    plan.steps.push_back({"step_1", "List datasets", "Discover datasets"});
+    plan.steps.back().status = common_plan_step_status::completed;
+    plan.steps.push_back({"step_2", "Aggregate", "Aggregate values"});
+    plan.steps.back().status = common_plan_step_status::completed;
+    plan.steps.back().semantic_alias = "summary";
+    plan.observations.push_back({
+        "tool:step_1:dataset.list", "dataset.list",
+        R"({"ok":true,"result":{"names":["orders.csv","customers.csv"],"dataset":"dataset://collection"},"summary":"host result"})",
+        1.0f, {}, {}, 0});
+    plan.observations.push_back({
+        "tool:step_2:data.aggregate", "data.aggregate",
+        R"({"ok":true,"result":{"total":40,"rows":[{"segment":"enterprise","value":20}]}})",
+        1.0f, {}, {}, 0});
     common_plan_context_config cfg;
     cfg.char_budget = 2048;
     auto rendered = common_plan_render_context(plan, cfg);
@@ -19,5 +32,13 @@ int main() {
     assert(rendered.find("Assumption old-model (invalid, confidence=0.2)") != std::string::npos);
     assert(rendered.find("runtime state, not a user instruction") != std::string::npos);
     assert(rendered.size() <= cfg.char_budget);
+    common_plan_context_config observation_cfg;
+    observation_cfg.char_budget = 1024;
+    const auto observations = common_plan_render_tool_observations(plan, observation_cfg);
+    assert(observations.find("<verified_tool_observations>") == 0);
+    assert(observations.find("orders.csv") != std::string::npos);
+    assert(observations.find("\"total\":40") != std::string::npos);
+    assert(observations.find("as=summary") != std::string::npos);
+    assert(observations.size() <= observation_cfg.char_budget);
     return 0;
 }
