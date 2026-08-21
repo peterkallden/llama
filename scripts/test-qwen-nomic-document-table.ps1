@@ -122,7 +122,7 @@ Invoke-LoggedCommand -Name "Qwen/Nomic document table" -LogPath $logPath -FilePa
     "--memory-project", "qwen-nomic-document-table", "--plan-scope", "project",
     "--agent-trace", "--generation-trace", "--inference-step-timeout-ms", $InferenceStepTimeoutMs,
     "--plan-show-summary", "--prompt", $prompt,
-    "-n", $NPredict.ToString(), "--context-size", "2048", "--threads", "4", "-ngl", "0")
+    "-n", $NPredict.ToString(), "--context-size", "3072", "--threads", "4", "-ngl", "0")
 
 Assert-LogContains $logPath @("document.tables", "document.table", "data.aggregate", "200")
 Assert-LogContains $logPath @(

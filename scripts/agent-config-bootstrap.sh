@@ -296,7 +296,7 @@ cat > "$output" <<EOF
 {
   "schema_version": 1,
   "model": {"backend":"server-context","path":"$model","embedding_model":"$embedding_model"},
-  "runtime": {"context_size":0,"n_predict":128,"n_threads":$threads,"n_gpu_layers":$gpu_layers,"default_mode":"$default_mode","thinking_mode":"$thinking_mode","max_reflection_rounds":2,"max_plan_revisions":3,"max_research_iterations":4,"memory_learn":"post-turn","agent_plan":"auto","agent_trace":true},
+  "runtime": {"context_size":3072,"n_predict":128,"n_threads":$threads,"n_gpu_layers":$gpu_layers,"default_mode":"$default_mode","thinking_mode":"$thinking_mode","max_reflection_rounds":2,"max_plan_revisions":3,"max_research_iterations":4,"memory_learn":"post-turn","agent_plan":"auto","agent_trace":true},
   "stores": {
     "memory":{"backend":"cozo","path":"$cozo_root/memory.cozo"},
     "plan":{"backend":"cozo","path":"$cozo_root/plan.cozo"},

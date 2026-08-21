@@ -517,7 +517,7 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[1].options.n_predict == 512);
     assert(inference.seen[2].options.n_predict == 64);
     assert(inference.seen[3].options.n_predict == 64);
-    assert(inference.seen[4].options.n_predict == 256);
+    assert(inference.seen[4].options.n_predict == 384);
     assert(inference.seen[5].options.n_predict == 256);
     assert(inference.queued.empty());
 }

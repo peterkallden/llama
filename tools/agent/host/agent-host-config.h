@@ -28,7 +28,7 @@ struct agent_host_config {
     std::string mmproj_path;
     std::string embedding_model;
 
-    int runtime_context_size = 0;
+    int runtime_context_size = 3072;
     int n_predict = 64;
     int n_threads = 2;
     common_agent_context_budget_config context_budgets;

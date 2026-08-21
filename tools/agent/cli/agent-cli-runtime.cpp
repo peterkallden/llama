@@ -955,7 +955,9 @@ public:
                 request,
                 common_agent_generation_purpose::reflection,
                 {system, attempt},
-                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 256)),
+                // Reflection must have enough output room to finish its
+                // bounded JSON contract when the plan contains repairs.
+                make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 384)),
                 reflection_schema));
         };
         bool parsed = false;

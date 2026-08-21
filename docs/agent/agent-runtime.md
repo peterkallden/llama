@@ -1359,7 +1359,10 @@ two; zero disables automatic continuation. It is an operation limit, not a
 second queue or session, and the host rejects values above 16.
 
 `context_size` is the model token context and should be configured separately
-from the character budgets. The runtime still applies hard host-owned limits
+from the character budgets. CLI and daemon defaults use `3072` tokens so the
+compact plan, verified observations and one bounded reflection response have
+reasonable headroom; smaller models or longer tool workflows may still need a
+larger value. The runtime still applies hard host-owned limits
 for transport, resources, sandbox requests and result sizes; these budgets do
 not allow a client to exceed those limits.
 
@@ -1370,7 +1373,11 @@ the model call. `compact_recommended` is recorded as bounded runtime guidance;
 `compact_required` and `continuation_required` stop before draft inference and
 use the existing continuation/checkpoint path. The estimate is intentionally
 not tokenizer-precise and does not claim that full conversation compaction is
-implemented.
+implemented. Resource chunking is for large resource payloads and is not used
+to split a reflection response: a reflection JSON object must remain one
+complete structured generation. Existing compaction is limited to bounded
+memory/policy overlays and continuation working state; it does not yet compact
+the complete plan and tool-observation history before reflection.
 
 ## Thinking-mode escalation
 
