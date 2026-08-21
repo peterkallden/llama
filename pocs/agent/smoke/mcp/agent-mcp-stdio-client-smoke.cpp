@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <csignal>
 #include <string>
 
 namespace {
@@ -37,6 +38,11 @@ bool contains(const std::string & haystack, const std::string & needle) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    // The smoke deliberately terminates fake servers while requests and
+    // shutdown notifications may still be in flight. Treat a closed pipe as
+    // transport data so CTest timing cannot turn it into a process-level
+    // SIGPIPE failure.
+    std::signal(SIGPIPE, SIG_IGN);
     const auto server_path = get_fake_server_path(argc > 0 ? argv[0] : nullptr);
     if (!std::filesystem::exists(server_path)) {
         std::fprintf(stderr, "fake MCP stdio server not found: %s\n", server_path.string().c_str());
