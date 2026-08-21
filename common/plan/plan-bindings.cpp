@@ -335,7 +335,7 @@ bool common_plan_dataflow_contract_from_schemas(
             bool collection = property.value("type", std::string()) == "array";
             std::string semantic_type;
             if (property.contains("x-agent-type") && property["x-agent-type"].is_string()) semantic_type = property["x-agent-type"].get<std::string>();
-            else if (collection && property.value("items", json::object()).is_object() &&
+            else if (collection && property.contains("items") && property["items"].is_object() &&
                     property["items"].contains("x-agent-type") && property["items"]["x-agent-type"].is_string()) {
                 semantic_type = property["items"]["x-agent-type"].get<std::string>();
             }

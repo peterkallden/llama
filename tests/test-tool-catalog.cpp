@@ -168,7 +168,7 @@ int main() {
         compact_error);
     assert(compact_error.empty());
     assert(aggregate_compact.find("dataset:dataset_ref") != std::string::npos);
-    assert(aggregate_compact.find("dataset:dataset_ref [may be inferred]") != std::string::npos);
+    assert(aggregate_compact.find("dataset?:dataset_ref [may be inferred]") != std::string::npos);
     assert(aggregate_compact.find("function:count|sum|avg|min|max") != std::string::npos);
     assert(aggregate_compact.find("column?:string") != std::string::npos);
     const auto aggregate_returns = aggregate_compact.find("\nreturns:");

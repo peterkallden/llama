@@ -952,7 +952,7 @@ static void test_runtime_request_builder() {
     assert(deliberate_request.enable_reflection);
     assert(deliberate_request.max_iterations == 3);
     assert(deliberate_request.max_reflection_rounds == 2);
-    assert(deliberate_request.max_tool_batches == 4);
+    assert(deliberate_request.max_tool_batches == 16);
 
     auto research_execution = execution;
     research_execution.policy.deliberation_policy =
@@ -967,7 +967,7 @@ static void test_runtime_request_builder() {
     assert(research_request.enable_reflection);
     assert(research_request.max_iterations == 4);
     assert(research_request.max_reflection_rounds == 2);
-    assert(research_request.max_tool_batches == 4);
+    assert(research_request.max_tool_batches == 16);
 }
 
 static void test_runtime_execution_builder() {

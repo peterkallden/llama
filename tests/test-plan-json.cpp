@@ -174,7 +174,12 @@ int main() {
     const auto model_schema = nlohmann::json::parse(
         common_plan_model_facing_json_schema({"document.table", "data.aggregate"}), nullptr, false);
     assert(model_schema.is_object());
+    assert(model_schema.contains("properties"));
+    assert(model_schema["properties"].contains("steps"));
+    assert(model_schema["properties"]["steps"].contains("items"));
     const auto model_step_schema = model_schema["properties"]["steps"]["items"];
+    assert(model_step_schema.is_object());
+    assert(model_step_schema.contains("properties"));
     assert(model_step_schema["properties"].contains("as"));
     assert(!model_step_schema["properties"].contains("id"));
     assert(!model_step_schema["properties"].contains("depends_on"));

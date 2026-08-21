@@ -1251,7 +1251,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-mcp-stdio-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-client-smoke>)
     set_property(TEST llama-agent-mcp-stdio-client-ctest PROPERTY LABELS agent)
-    set_tests_properties(llama-agent-mcp-stdio-client-ctest PROPERTIES TIMEOUT 120)
+    # The fake stdio server deliberately exercises process shutdown and pipe
+    # diagnostics. Run it serially so concurrent MCP smoke processes cannot
+    # turn the child-side close into a nondeterministic SIGPIPE.
+    set_tests_properties(llama-agent-mcp-stdio-client-ctest PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
     add_test(NAME llama-agent-daemon-protocol-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)

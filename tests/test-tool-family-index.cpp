@@ -14,7 +14,12 @@ int main() {
 
     const auto families = common_generate_tool_family_index(tools);
     assert(families.size() == 4);
-    assert(families[0].description == "Query and transform datasets");
+    const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == id) return &family;
+        return nullptr;
+    };
+    const auto * data_family = find_family("data");
+    assert(data_family && data_family->description == "Query and transform datasets");
     const auto rendered = common_render_tool_family_index(families);
     assert(rendered.find("data: Query and transform datasets") != std::string::npos);
     assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);
@@ -47,7 +52,7 @@ int main() {
     const auto workflow_view = common_render_tool_workflow_index(workflows, {"dataset", "data", "statistics"});
     assert(workflow_view.find("dataset.discover") != std::string::npos);
     assert(workflow_view.find("dataset.list() as=candidates") != std::string::npos);
-    assert(workflow_view.find("dataset.select(name=$candidates.names[index])") != std::string::npos);
+    assert(workflow_view.find("dataset.select(name=<unique name from $candidates.names> or $candidates.names[index])") != std::string::npos);
     assert(workflow_view.find("dataset.join") != std::string::npos);
     assert(workflow_view.find("dataset.select(name=<left_name>) as=left") != std::string::npos);
     assert(workflow_view.find("data.join(left=$left.dataset, right=$right.dataset") != std::string::npos);

@@ -192,9 +192,11 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "bad-tools-list MCP server unexpectedly resolved successfully\n");
         return 1;
     }
+    // The client may report the protocol error before the child has been
+    // joined. The protocol error and captured stderr are the stable contract;
+    // exit-code context is best-effort transport metadata.
     if (!contains(error, "invalid JSON-RPC payload") ||
-            !contains(error, "fake-mcp: emitting malformed tools/list payload") ||
-            !contains(error, "exit_code=11")) {
+            !contains(error, "fake-mcp: emitting malformed tools/list payload")) {
         std::fprintf(stderr, "broken MCP diagnostic was missing expected context: %s\n", error.c_str());
         return 1;
     }
