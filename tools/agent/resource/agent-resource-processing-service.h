@@ -1,7 +1,7 @@
 #pragma once
 
 #include "resource/resource-contract.h"
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-events.h"
 
 #include <string>
 

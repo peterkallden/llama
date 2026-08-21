@@ -1,8 +1,8 @@
 #include "plan/plan-bindings.h"
+#include "plan/plan-contract.h"
 
 #include <nlohmann/json.hpp>
 
-#include <set>
 
 namespace {
 
@@ -111,8 +111,14 @@ bool add_unambiguous_typed_binding(
                 required_ambiguity = required_ambiguity || (input != nullptr && input->required);
             }
             if (required_ambiguity) {
+                std::string details;
+                for (const auto & item : candidates) {
+                    if (!details.empty()) details += ", ";
+                    details += item.input + "<-" + source_step->id + "." + item.output;
+                }
                 error = "plan.binding.ambiguous_autowire: tool '" + step.tool_call->name +
-                    "' has multiple unresolved inputs compatible with completed outputs; explicit bindings are required";
+                    "' has multiple unresolved inputs compatible with completed outputs (" + details +
+                    "); explicit bindings are required";
                 return false;
             }
         }
@@ -157,9 +163,7 @@ bool resolve_bare_alias_bindings(
         std::vector<std::string> candidates;
         for (const auto & output : source.outputs) {
             if (!output.collection && common_plan_semantic_types_compatible(output.semantic_type, input.semantic_type) &&
-                    observation_has_field(*observation, output.name)) {
-                candidates.push_back(output.name);
-            }
+                    observation_has_field(*observation, output.name)) candidates.push_back(output.name);
         }
         if (candidates.empty()) {
             error = "plan.binding.bare_alias_no_compatible_output: bare alias '$" +
@@ -234,7 +238,6 @@ bool common_plan_materialize_tool_arguments_contract(
         common_plan_tool_arguments_contract & materialized_contract,
         std::string & error,
         const common_plan_tool_dataflow_contract_resolver & dataflow_resolver) {
-    (void) step;
     materialized_contract = contract;
     if (!materialized_contract.value.is_object()) {
         error = "tool arguments must be a JSON object";
@@ -314,37 +317,21 @@ bool common_plan_dataflow_contract_from_schemas(
         const std::string & result_schema_json,
         common_plan_tool_dataflow_contract & contract,
         std::string & error) {
-    const auto input = json::parse(input_schema_json, nullptr, false);
-    const auto result = json::parse(result_schema_json, nullptr, false);
-    if (!input.is_object() || !result.is_object()) {
-        error = "tool dataflow contract requires object input and result schemas";
-        return false;
-    }
+    std::vector<common_plan_schema_field> input_fields;
+    std::vector<common_plan_schema_field> result_fields;
+    if (!common_plan_extract_schema_fields(input_schema_json, input_fields, error) ||
+            !common_plan_extract_schema_fields(result_schema_json, result_fields, error)) return false;
     contract = {};
     contract.tool_name = tool_name;
-    const auto collect = [](const json & schema, std::vector<common_plan_tool_field_contract> & fields) {
-        const auto properties = schema.value("properties", json::object());
-        if (!properties.is_object()) return;
-        std::set<std::string> required;
-        for (const auto & item : schema.value("required", json::array())) {
-            if (item.is_string()) required.insert(item.get<std::string>());
-        }
-        for (const auto & item : properties.items()) {
-            const auto & property = item.value();
-            if (!property.is_object()) continue;
-            bool collection = property.value("type", std::string()) == "array";
-            std::string semantic_type;
-            if (property.contains("x-agent-type") && property["x-agent-type"].is_string()) semantic_type = property["x-agent-type"].get<std::string>();
-            else if (collection && property.contains("items") && property["items"].is_object() &&
-                    property["items"].contains("x-agent-type") && property["items"]["x-agent-type"].is_string()) {
-                semantic_type = property["items"]["x-agent-type"].get<std::string>();
-            }
-            if (semantic_type.empty()) continue;
-            fields.push_back({item.key(), semantic_type, required.count(item.key()) != 0, collection});
+    const auto collect = [](const std::vector<common_plan_schema_field> & source,
+            std::vector<common_plan_tool_field_contract> & fields) {
+        for (const auto & item : source) {
+            if (item.semantic_type.empty()) continue;
+            fields.push_back({item.name, item.semantic_type, item.required});
         }
     };
-    collect(input, contract.inputs);
-    collect(result, contract.outputs);
+    collect(input_fields, contract.inputs);
+    collect(result_fields, contract.outputs);
     error.clear();
     return true;
 }

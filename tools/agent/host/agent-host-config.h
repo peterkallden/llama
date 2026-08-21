@@ -2,9 +2,9 @@
 
 #include "tools/agent/cli/agent-cli-options.h"
 #include "../host/agent-host-mcp-provider-config.h"
-#include "agent/tool-catalog.h"
-#include "agent/sandbox-host-config.h"
-#include "agent/sandbox-policy.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/sandbox/sandbox-host-config.h"
+#include "agent/sandbox/sandbox-policy.h"
 #include "agent/workspace-contract.h"
 #include "agent-diagnostics-config.h"
 #include "resource/resource-contract.h"

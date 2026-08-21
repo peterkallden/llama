@@ -1,9 +1,9 @@
 #include "tools/agent/resource/agent-resource-processing-service.h"
 #include "tools/agent/resource/agent-resource-store.h"
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
-#include "agent/sandbox-local-runtime.h"
-#include "agent/sandbox-docker-runtime.h"
-#include "agent/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-local-runtime.h"
+#include "agent/sandbox/sandbox-docker-runtime.h"
+#include "agent/sandbox/sandbox-kubernetes-runtime.h"
 
 #include <cassert>
 #include <cstdlib>

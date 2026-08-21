@@ -1,7 +1,7 @@
 #include "agent-mcp-server-tool-registry.h"
 
 #include "agent/dataset-contracts.h"
-#include "agent/schema-contract.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <nlohmann/json.hpp>
 

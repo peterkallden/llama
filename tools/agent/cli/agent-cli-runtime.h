@@ -4,7 +4,7 @@
 
 #include "agent/agent-inference.h"
 #include "agent/agent-runtime.h"
-#include "agent/memory-learning.h"
+#include "agent/learning/memory-learning.h"
 
 #include <memory>
 #include <vector>

@@ -1,4 +1,4 @@
-#include "agent/reflection-json.h"
+#include "agent/thinking/reflection-json.h"
 
 #include <cassert>
 #include <nlohmann/json.hpp>

@@ -5,7 +5,7 @@
 #include "../resource/agent-resource-store.h"
 #include "agent-cli-selection.h"
 
-#include "agent/deliberation-policy.h"
+#include "agent/thinking/deliberation-policy.h"
 
 #include <ctime>
 #include <cctype>

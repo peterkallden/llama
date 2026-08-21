@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent/agent-runtime.h"
-#include "agent/tool-registry.h"
+#include "agent/tooling/registry/tool-registry.h"
 
 class test_tool_runtime_registry_adapter : public common_agent_tool_runtime {
 public:

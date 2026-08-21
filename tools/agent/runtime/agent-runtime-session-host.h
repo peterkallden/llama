@@ -3,7 +3,9 @@
 #include "../runtime/agent-runtime-control.h"
 #include "../runtime/agent-runtime-tooling.h"
 #include "../runtime/agent-runtime-turn.h"
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-events.h"
+#include "agent/contracts/agent-failures.h"
+#include "agent/contracts/agent-result.h"
 
 #include <functional>
 #include <memory>

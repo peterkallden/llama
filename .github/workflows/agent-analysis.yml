@@ -6,7 +6,7 @@ on:
     branches:
       - feature/llama-agent
     paths:
-      - '.github/workflows/agent-dynamic-analysis.yml'
+      - '.github/workflows/agent-analysis.yml'
       - 'common/agent/**'
       - 'common/memory/**'
       - 'common/plan/**'
@@ -24,7 +24,7 @@ on:
     branches:
       - feature/llama-agent
     paths:
-      - '.github/workflows/agent-dynamic-analysis.yml'
+      - '.github/workflows/agent-analysis.yml'
       - 'common/agent/**'
       - 'common/memory/**'
       - 'common/plan/**'

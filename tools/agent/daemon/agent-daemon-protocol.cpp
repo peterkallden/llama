@@ -1,6 +1,6 @@
 #include "agent-daemon-adapter.h"
 
-#include "agent/tool-result-contracts.h"
+#include "agent/tooling/contracts/tool-result-contracts.h"
 #include "../cli/agent-cli-selection.h"
 
 #include <limits>

@@ -1,10 +1,10 @@
 #include "agent/agent-runtime.h"
 #include "agent/agent-runtime-context.h"
 #include "agent/context-pressure.h"
-#include "agent/memory-learning.h"
-#include "agent/research/research-runner.h"
+#include "agent/learning/memory-learning.h"
+#include "agent/thinking/research/research-runner.h"
 #include "agent/runtime-json-contracts.h"
-#include "agent/tool-navigation.h"
+#include "agent/tooling/routing/tool-navigation.h"
 #include "plan/plan-bindings.h"
 #include "plan/plan-json.h"
 #include "plan/plan-goal.h"
@@ -230,6 +230,16 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
         classification, result.retryable, result.safe_summary.empty() ? "The tool failed." : result.safe_summary);
 }
 
+static std::string tool_observation_payload(const common_tool_execution_result & result) {
+    // Structured output is the binding source. A summary-only result is still
+    // recorded as JSON, but deliberately has no typed fields to autowire.
+    if (!result.output.empty()) return result.output;
+    json fallback = json::object();
+    if (!result.content_summary.empty()) fallback["summary"] = result.content_summary;
+    else if (!result.safe_summary.empty()) fallback["summary"] = result.safe_summary;
+    return fallback.dump();
+}
+
 static std::string tool_repair_context_json(const common_agent_tool_repair_context & context) {
     json available = json::array();
     for (const auto & name : context.available_tools) available.push_back(name);
@@ -250,23 +260,6 @@ static std::string tool_repair_context_json(const common_agent_tool_repair_conte
         {"compact_contract", context.compact_contract},
     };
     return value.dump();
-}
-
-static std::string dataset_join_repair_hint(const common_plan_state & plan) {
-    std::string hint = "data.join requires left and right dataset_ref inputs and on:[{left:column,right:column}].";
-    std::vector<std::string> aliases;
-    for (const auto & step : plan.steps) {
-        if (step.semantic_alias && step.tool_call) aliases.push_back(*step.semantic_alias);
-    }
-    if (!aliases.empty()) {
-        hint += " Declared dataset aliases: ";
-        for (size_t index = 0; index < aliases.size(); ++index) {
-            if (index) hint += ", ";
-            hint += "$" + aliases[index] + ".dataset";
-        }
-        hint += ".";
-    }
-    return hint;
 }
 
 static bool normalize_agent_tool_call(
@@ -334,6 +327,72 @@ static bool merge_reflection_tool_repair_arguments(
     }
     operation.step->tool_call->arguments_json = std::move(merged);
     return true;
+}
+
+static bool reflection_operation_has_active_tool_failure(
+        const common_plan_state & plan,
+        const common_plan_operation & operation) {
+    const auto failed_step = [&](const std::string & step_id) {
+        for (const auto & step : plan.steps) {
+            if (step.id == step_id) {
+                return step.status == common_plan_step_status::failed &&
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::tool;
+            }
+        }
+        return false;
+    };
+
+    if (operation.kind == common_plan_operation_kind::add_step) {
+        if (!operation.step || !operation.step->tool_call) return true;
+        bool completed_same_tool = false;
+        for (const auto & step : plan.steps) {
+            if (step.status == common_plan_step_status::failed && step.tool_call &&
+                    step.tool_call->name == operation.step->tool_call->name) {
+                return true;
+            }
+            completed_same_tool = completed_same_tool ||
+                (step.status == common_plan_step_status::completed && step.tool_call &&
+                 step.tool_call->name == operation.step->tool_call->name);
+        }
+        // A new tool operation can be a legitimate reflection extension. It
+        // becomes stale only when reflection tries to schedule another call
+        // for a tool that has already completed successfully.
+        return !completed_same_tool;
+    }
+
+    if (operation.kind == common_plan_operation_kind::replace_step && operation.step) {
+        return failed_step(operation.step->id);
+    }
+    if (operation.kind == common_plan_operation_kind::activate_step ||
+            operation.kind == common_plan_operation_kind::reset_step ||
+            operation.kind == common_plan_operation_kind::unblock_step) {
+        return operation.step_id && failed_step(*operation.step_id);
+    }
+    return true;
+}
+
+static void discard_stale_reflection_repairs(
+        const common_plan_state & plan,
+        common_reflection_result & reflection,
+        common_agent_result & result) {
+    std::vector<common_plan_operation> retained;
+    retained.reserve(reflection.proposed_plan_operations.size());
+    for (auto & operation : reflection.proposed_plan_operations) {
+        const bool repair_operation = operation.kind == common_plan_operation_kind::add_step ||
+            operation.kind == common_plan_operation_kind::replace_step ||
+            operation.kind == common_plan_operation_kind::activate_step ||
+            operation.kind == common_plan_operation_kind::reset_step ||
+            operation.kind == common_plan_operation_kind::unblock_step;
+        if (repair_operation && !reflection_operation_has_active_tool_failure(plan, operation)) {
+            append_trace(result, common_runtime_trace_stage::reflection,
+                common_runtime_trace_kind::skipped,
+                "stale reflection repair ignored: no active failed tool step", plan.id,
+                operation.step_id.value_or(operation.step ? operation.step->id : std::string()));
+            continue;
+        }
+        retained.push_back(std::move(operation));
+    }
+    reflection.proposed_plan_operations = std::move(retained);
 }
 
 static std::string next_tool_observation_id(const common_plan_state & plan, const std::string & step_id, const std::string & tool_name) {
@@ -483,9 +542,7 @@ static bool is_incomplete_tool_call(
     return false;
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens, common_agent_context_token_estimator context_token_estimator) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens), context_token_estimator(std::move(context_token_estimator)) {
-    planner.set_tool_runtime(tools);
-}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens, common_agent_context_token_estimator context_token_estimator) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens), context_token_estimator(std::move(context_token_estimator)) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & input_request) {
     common_agent_request request = input_request;
@@ -1030,9 +1087,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 const auto validation_error = error;
                 auto failure = tool_failure(tool_call->name, tool_step_id, failure_observation_id, "tool.invalid_arguments", common_agent_failure_class::validation, false, "Tool arguments do not satisfy the registered contract: " + validation_error);
                 auto repair = tools->make_repair_context(*tool_call, validation_error);
-                if (tool_call->name == "data.join") {
-                    repair.validation_error += " " + dataset_join_repair_hint(plan);
-                }
                 repair.candidate_tools = std::move(name_candidates);
                 repair.normalized_arguments = tool_call->arguments_json;
                 repair.normalization_applied = normalization_applied || name_normalization_applied || defaults_applied;
@@ -1132,7 +1186,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
-            std::string tool_result = execution.output;
+            std::string tool_result = tool_observation_payload(execution);
             if (tool_result.size() > context_budgets.tool_observation_chars) tool_result.resize(context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
             common_plan_operation observed;
@@ -1350,12 +1404,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 }
                 if ((op.kind == common_plan_operation_kind::add_step ||
                         op.kind == common_plan_operation_kind::replace_step) &&
-                        op.step && op.step->tool_call && tools &&
-                        !tools->is_read_only(op.step->tool_call->name) &&
+                        op.step && tools && !tools->is_read_only(op.step->tool_call ? op.step->tool_call->name : std::string()) &&
                         !(request.allow_policy_gated_tool_proposals &&
-                          tools->is_policy_gated(op.step->tool_call->name))) {
-                    // Let the normal policy gate below produce the canonical
-                    // policy failure.  Closure must not hide that diagnostic.
+                          op.step->tool_call && tools->is_policy_gated(op.step->tool_call->name))) {
                     policy_violation = true;
                 }
             }
@@ -1378,6 +1429,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
         }
+        discard_stale_reflection_repairs(plan, reflection, result);
         const bool deeper_deliberation =
             request.deliberation_policy.mode != common_agent_thinking_mode::reflective;
         const auto reflection_escalation = handle_common_agent_reflection_escalation(

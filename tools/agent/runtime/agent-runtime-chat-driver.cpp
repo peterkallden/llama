@@ -2,7 +2,7 @@
 
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/resource/agent-resource-processing-service.h"
-#include "agent/tool-chat-bridge.h"
+#include "agent/tooling/bridge/tool-chat-bridge.h"
 
 #include <ctime>
 

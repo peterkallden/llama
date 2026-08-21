@@ -1,5 +1,5 @@
-#include "agent/tool-adapters.h"
-#include "agent/tool-chat-bridge.h"
+#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/bridge/tool-chat-bridge.h"
 
 #include <cassert>
 

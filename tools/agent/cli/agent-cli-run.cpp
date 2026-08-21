@@ -16,9 +16,9 @@
 #include "../runtime/agent-runtime-session.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/agent-runtime.h"
-#include "agent/memory-learning.h"
-#include "agent/reflection-json.h"
-#include "agent/schema-contract.h"
+#include "agent/learning/memory-learning.h"
+#include "agent/thinking/reflection-json.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
 #endif

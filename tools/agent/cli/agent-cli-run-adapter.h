@@ -6,7 +6,7 @@
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
-#include "agent/agent-contract.h"
+#include "agent/agent-scope.h"
 #include "resource/resource-contract.h"
 
 #include <memory>

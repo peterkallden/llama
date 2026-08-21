@@ -12,7 +12,9 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
+    ../../tools/agent/host/agent-sandbox-assembly.cpp
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
+    ../../tools/agent/mcp/agent-mcp-client-factory.cpp
     ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     ../../tools/agent/tooling/agent-tool-provider.cpp
@@ -31,8 +33,8 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
     ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/resource/agent-resource-processing-cache.cpp
-    ../../common/agent/sandbox-local-runtime.cpp
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/data/agent-dataset-importer.cpp
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
@@ -46,7 +48,6 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-host-adapter.cpp
     ../../tools/agent/cli/agent-cli-inference.cpp
     ../../tools/agent/runtime/agent-plan-orchestration.cpp
-    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
     ../../tools/agent/runtime/agent-runtime-host.cpp
     ../../tools/agent/runtime/agent-runtime-resident.cpp
     ../../tools/agent/runtime/agent-runtime-session-host.cpp
@@ -71,6 +72,450 @@ set(AGENT_RUNTIME_SOURCES
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SOURCES
         ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+    )
+endif()
+
+# Runtime execution is a separate build seam from host assembly. Keep the
+# session/turn/inference implementation together so changes there do not
+# recompile CLI, daemon and MCP host code unnecessarily.
+set(AGENT_RUNTIME_ENGINE_SOURCES
+    ../../tools/agent/runtime/agent-runtime-event-projector.cpp
+    ../../tools/agent/runtime/agent-inference-capacity-gate.cpp
+    ../../tools/agent/runtime/agent-runtime-session.cpp
+    ../../tools/agent/runtime/agent-server-context-host.cpp
+    ../../tools/agent/runtime/agent-server-generation.cpp
+    ../../tools/agent/runtime/agent-server-inference.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
+
+# The host facade is the seam above the execution engine. Keep runtime
+# execution, orchestration and the CLI-facing assembly glue here as one
+# dependency direction; these pieces compose the engine and CLI providers and
+# must not be split back across support in static builds.
+set(AGENT_RUNTIME_HOST_SOURCES
+    ../../tools/agent/runtime/agent-runtime-chat-driver.cpp
+    ../../tools/agent/runtime/agent-runtime-host.cpp
+    ../../tools/agent/runtime/agent-runtime-resident.cpp
+    ../../tools/agent/runtime/agent-runtime-session-host.cpp
+    ../../tools/agent/runtime/agent-runtime-turn-driver.cpp
+    ../../tools/agent/runtime/agent-inference-executor.cpp
+    ../../tools/agent/runtime/agent-runtime-session-manager.cpp
+    ../../tools/agent/runtime/agent-runtime-execution.cpp
+    ../../tools/agent/runtime/agent-runtime-assembly.cpp
+    ../../tools/agent/runtime/agent-plan-orchestration.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
+
+# Model-backed implementations of the agent interfaces.  These are runtime
+# adapters, not CLI frontend code; resident, daemon and MCP hosts may use them
+# without depending on command parsing or process entrypoints.
+set(AGENT_RUNTIME_ADAPTER_SOURCES
+    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/cli/agent-cli-generation.cpp
+    ../../tools/agent/cli/agent-cli-inference.cpp
+    ../../tools/agent/cli/agent-cli-runtime.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
+
+set(AGENT_RUNTIME_SELECTION_SOURCES
+    ../../tools/agent/cli/agent-cli-selection.cpp
+    ../../tools/agent/tooling/agent-selection-contracts.cpp
+)
+
+set(AGENT_RUNTIME_PACKAGE_SOURCES
+    ../../tools/agent/runtime/agent-runtime-package-io.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
+    ${AGENT_RUNTIME_SELECTION_SOURCES}
+    ${AGENT_RUNTIME_PACKAGE_SOURCES}
+)
+
+set(AGENT_TOOL_PROVIDER_SOURCES
+    ../../tools/agent/tooling/agent-tool-provider.cpp
+    ../../tools/agent/tooling/agent-tool-result-json-contracts.cpp
+    ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_TOOL_PROVIDER_SOURCES})
+
+set(AGENT_CLI_SOURCES
+    ../../tools/agent/cli/agent-cli-config.cpp
+    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/cli/agent-cli-inference.cpp
+    ../../tools/agent/cli/agent-cli-memory-tools.cpp
+    ../../tools/agent/cli/agent-cli-options.cpp
+    ../../tools/agent/cli/agent-cli-generation.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_CLI_SOURCES})
+list(REMOVE_ITEM AGENT_CLI_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
+
+set(AGENT_DAEMON_SOURCES
+    ../../tools/agent/daemon/agent-daemon-client-admin.cpp
+    ../../tools/agent/daemon/agent-daemon-client-status.cpp
+    ../../tools/agent/daemon/agent-daemon-client.cpp
+    ../../tools/agent/daemon/agent-daemon-event-collector.cpp
+    ../../tools/agent/daemon/agent-daemon-adapter.cpp
+    ../../tools/agent/daemon/agent-daemon-protocol.cpp
+    ../../tools/agent/daemon/agent-daemon-runtime.cpp
+    ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
+    ../../tools/agent/daemon/agent-daemon-service.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_DAEMON_SOURCES})
+
+set(AGENT_MCP_CLIENT_SOURCES
+    ../../tools/agent/mcp/agent-mcp-http-client.cpp
+    ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
+    ../../tools/agent/mcp/agent-mcp-client-factory.cpp
+)
+
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_MCP_CLIENT_SOURCES})
+
+# Keep the host/runtime assembly independent from the high-churn resource,
+# data and diagnostics implementations. These are agent-only libraries; the
+# upstream llama.cpp targets remain untouched.
+list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
+    ../../tools/agent/resource/agent-resource-catalog.cpp
+    ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-media-type.cpp
+    ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/agent-resource-processing-cache.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
+    ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-pandoc-command.cpp
+    ../../tools/agent/resource/processors/agent-docx-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
+    ../../tools/agent/data/agent-data-store-factory.cpp
+    ../../tools/agent/data/agent-dataset-importer.cpp
+    ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
+    ../../tools/agent/diagnostics/agent-clangd-session.cpp
+    ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+    ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+)
+
+add_library(llama-agent-resource
+    ../../tools/agent/resource/agent-resource-catalog.cpp
+    ../../tools/agent/resource/agent-resource-chunker.cpp
+    ../../tools/agent/resource/agent-resource-media-type.cpp
+    ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/agent-resource-processing-service.cpp
+    ../../tools/agent/resource/agent-resource-processing-cache.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
+    ../../tools/agent/resource/processors/agent-pdf-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-pandoc-command.cpp
+    ../../tools/agent/resource/processors/agent-docx-text-processor.cpp
+    ../../tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-command.cpp
+    ../../tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
+    ../../tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
+)
+if (LLAMA_MEMORY_COZO)
+    target_sources(llama-agent-resource PRIVATE
+        ../../tools/agent/resource/agent-resource-catalog-cozo.cpp
+    )
+endif()
+target_include_directories(llama-agent-resource PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+)
+target_compile_features(llama-agent-resource PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-resource PUBLIC
+    llama-common
+    llama-agent-core
+    Threads::Threads
+)
+if (LLAMA_MEMORY_COZO)
+    target_include_directories(llama-agent-resource PRIVATE ${COZO_INCLUDE_DIR})
+    llama_link_cozo(llama-agent-resource)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-resource PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-data
+    ../../tools/agent/data/agent-data-store-factory.cpp
+    ../../tools/agent/data/agent-dataset-importer.cpp
+)
+target_include_directories(llama-agent-data PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_compile_features(llama-agent-data PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-data PUBLIC llama-agent-core)
+if (LLAMA_MEMORY_COZO)
+    target_link_libraries(llama-agent-data PUBLIC llama-agent-storage-cozo)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-data PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-diagnostics
+    ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
+    ../../tools/agent/diagnostics/agent-clangd-session.cpp
+    ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+)
+target_include_directories(llama-agent-diagnostics PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+)
+target_compile_features(llama-agent-diagnostics PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-diagnostics PUBLIC
+    llama-common
+    llama-agent-core
+    Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-diagnostics PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+# Provider and runtime-adapter implementation is shared by the host, CLI,
+# daemon and MCP layers. Keep it below the common tool contracts and above
+# runtime assembly so host libraries do not have to depend on one another.
+add_library(llama-agent-tool-provider ${AGENT_TOOL_PROVIDER_SOURCES})
+target_include_directories(llama-agent-tool-provider
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-tool-provider PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-tool-provider
+    PUBLIC
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-tool-provider PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-cli-library ${AGENT_CLI_SOURCES})
+set_target_properties(llama-agent-cli-library PROPERTIES OUTPUT_NAME llama-agent-cli)
+target_include_directories(llama-agent-cli-library
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-cli-library PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-cli-library
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-cli-library
+    PUBLIC
+        llama-agent-core
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        llama
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-cli-library PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-adapters ${AGENT_RUNTIME_ADAPTER_SOURCES})
+set_target_properties(llama-agent-runtime-adapters PROPERTIES OUTPUT_NAME llama-agent-runtime-adapters)
+target_include_directories(llama-agent-runtime-adapters
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-runtime-adapters PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-runtime-adapters
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-runtime-adapters
+    PUBLIC
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        llama
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-adapters PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-selection ${AGENT_RUNTIME_SELECTION_SOURCES})
+set_target_properties(llama-agent-runtime-selection PROPERTIES OUTPUT_NAME llama-agent-runtime-selection)
+target_include_directories(llama-agent-runtime-selection
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+)
+target_compile_features(llama-agent-runtime-selection PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-selection
+    PUBLIC
+        llama-agent-runtime-adapters
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-selection PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-packages ${AGENT_RUNTIME_PACKAGE_SOURCES})
+set_target_properties(llama-agent-runtime-packages PROPERTIES OUTPUT_NAME llama-agent-runtime-packages)
+target_include_directories(llama-agent-runtime-packages
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_compile_features(llama-agent-runtime-packages PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-packages
+    PUBLIC
+        llama-agent-core
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-packages PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-engine ${AGENT_RUNTIME_ENGINE_SOURCES})
+target_include_directories(llama-agent-runtime-engine
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
+        ${PROJECT_SOURCE_DIR}/tools/mtmd
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-runtime-engine PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-runtime-engine
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+)
+target_link_libraries(llama-agent-runtime-engine
+    PUBLIC
+        llama-agent-memory
+        llama-common
+        llama
+        llama-agent-core
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
+        llama-agent-runtime-adapters
+        server-context
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (WIN32)
+    target_link_libraries(llama-agent-runtime-engine PUBLIC ws2_32)
+endif()
+if (LLAMA_MEMORY_COZO)
+    target_include_directories(llama-agent-runtime-engine PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(llama-agent-runtime-engine PUBLIC llama-agent-storage-cozo)
+    llama_link_cozo(llama-agent-runtime-engine)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-engine PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-runtime-host ${AGENT_RUNTIME_HOST_SOURCES})
+target_include_directories(llama-agent-runtime-host
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+)
+target_compile_features(llama-agent-runtime-host PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-runtime-host
+    PUBLIC
+        llama-agent-runtime-engine
+        llama-agent-memory
+        llama-agent-plan
+        llama-common
+        llama-agent-core
+        llama-agent-tool-provider
+        llama-agent-cli-library
+        llama-agent-runtime-adapters
+        llama-agent-runtime-selection
+        llama-agent-runtime-packages
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-runtime-host PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
 endif()
 
@@ -104,6 +549,13 @@ target_link_libraries(llama-agent-runtime-support
         llama-common
         llama
         llama-agent-core
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
+        llama-agent-runtime-engine
+        llama-agent-runtime-host
+        llama-agent-tool-provider
+        llama-agent-cli-library
         server-context
         Threads::Threads
     PRIVATE
@@ -119,6 +571,38 @@ if (LLAMA_MEMORY_COZO)
 endif()
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-runtime-support PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-daemon-library ${AGENT_DAEMON_SOURCES})
+set_target_properties(llama-agent-daemon-library PROPERTIES OUTPUT_NAME llama-agent-daemon)
+target_include_directories(llama-agent-daemon-library
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/cli
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/agent/host
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/resource
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-daemon-library PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-daemon-library
+    PUBLIC LLAMA_MEMORY_POC_USE_AGENT_TOOLS
+        LLAMA_AGENT_SYSCONFDIR="${LLAMA_AGENT_SYSCONFDIR}"
+)
+target_link_libraries(llama-agent-daemon-library
+    PUBLIC
+        llama-agent-runtime-support
+        Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-daemon-library PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
@@ -147,6 +631,34 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-mcp-client-library ${AGENT_MCP_CLIENT_SOURCES})
+set_target_properties(llama-agent-mcp-client-library PROPERTIES OUTPUT_NAME llama-agent-mcp-client)
+target_include_directories(llama-agent-mcp-client-library
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/mcp
+        ${PROJECT_SOURCE_DIR}/tools/agent/tooling
+        ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+        ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_compile_features(llama-agent-mcp-client-library PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-mcp-client-library
+    PUBLIC
+        llama-agent-mcp-core
+        llama-agent-tool-provider
+        llama-common
+        Threads::Threads
+    PRIVATE
+        cpp-httplib
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-mcp-client-library PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-mcp-client-library)
+
 add_library(llama-agent-daemon-protocol STATIC
     ../../tools/agent/daemon/agent-daemon-jsonl-protocol.cpp
 )
@@ -168,8 +680,7 @@ endif()
 target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-daemon-protocol)
 
 set(AGENT_MCP_SERVER_SOURCES
-    ../../common/agent/dataset-contracts.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
     ../../tools/agent/mcp/agent-mcp-server-protocol.cpp
     ../../tools/agent/mcp/agent-mcp-server-tool-registry.cpp
     ../../tools/agent/mcp/agent-mcp-http-server.cpp
@@ -192,6 +703,7 @@ target_link_libraries(llama-agent-mcp-server
     PUBLIC
         llama-common
         Threads::Threads
+        llama-agent-dataset-contracts
         llama-agent-mcp-core
     PRIVATE
         cpp-httplib
@@ -210,12 +722,24 @@ endif()
 # binaries into the runtime package.
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     set(AGENT_PACKAGE_LIBRARY_TARGETS
+        llama-agent-dataset-contracts
         llama-agent-memory
         llama-agent-plan
+        llama-agent-sandbox
+        llama-agent-tooling
         llama-agent-core
         llama-agent-mcp-core
         llama-agent-mcp-server
+        llama-agent-tool-provider
+        llama-agent-cli-library
+        llama-agent-daemon-library
+        llama-agent-mcp-client-library
+        llama-agent-runtime-engine
+        llama-agent-runtime-host
         llama-agent-runtime-support
+        llama-agent-resource
+        llama-agent-data
+        llama-agent-diagnostics
     )
     if(TARGET llama-agent-storage-cozo)
         list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-storage-cozo)
@@ -244,7 +768,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
@@ -364,7 +888,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-core
+    llama-agent-sandbox
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
@@ -376,15 +900,15 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
 )
 target_link_libraries(${TARGET} PRIVATE
-    llama-agent-core
+    llama-agent-sandbox
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-workspace-operation-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-workspace-operation-smoke.cpp
-    ../../common/agent/research/research-workspace-factory.cpp
-    ../../common/agent/research/research-workspace.cpp
+    ../../common/agent/thinking/research/research-workspace-factory.cpp
+    ../../common/agent/thinking/research/research-workspace.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}
@@ -450,7 +974,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-http-inbound-dispatcher-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-http-server-smoke.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -460,7 +984,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-mcp-http-vertical-smoke)
@@ -475,13 +999,13 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-mcp-agent-tools-smoke)
 add_executable(${TARGET}
     smoke/mcp/agent-mcp-agent-tools-smoke.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -523,7 +1047,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 set(TARGET llama-agent-mcp-stdio-fake-server)
 add_executable(${TARGET}
     ../../tools/agent/mcp/agent-mcp-stdio-fake-server.cpp
-    ../../common/agent/schema-contract.cpp
+    ../../common/agent/tooling/contracts/schema-contract.cpp
 )
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -556,7 +1080,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-daemon-protocol-smoke)
@@ -569,7 +1093,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-daemon-jsonl-protocol-smoke)
@@ -631,7 +1155,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-daemon-wait-events-smoke)
@@ -644,7 +1168,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-daemon-mcp-config-smoke)
@@ -657,7 +1181,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-config-discovery-smoke)
@@ -1008,7 +1532,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
@@ -1102,11 +1626,13 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-runtime-session-host-tooling-smoke
     llama-agent-runtime-session-manager-smoke
     llama-agent-runtime-operation-manager-smoke
+    llama-agent-deliberation-policy-smoke
     llama-agent-resource-store-smoke
     llama-agent-resource-chunker-smoke
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
     llama-agent-resource-backend-smoke
+    llama-agent-resource-processor-dispatch-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
@@ -1180,6 +1706,7 @@ set(AGENT_RUNTIME_SMOKE_RESOURCE_TARGETS
     llama-agent-resource-range-chunker-smoke
     llama-agent-resource-processing-contract-smoke
     llama-agent-resource-backend-smoke
+    llama-agent-resource-processor-dispatch-smoke
     llama-agent-resource-media-type-smoke
     llama-agent-resource-processing-service-smoke
     llama-agent-pdf-text-processor-smoke
@@ -1247,6 +1774,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-cli-document-table-ctest
         COMMAND $<TARGET_FILE:llama-agent-cli-document-table-smoke>)
     set_property(TEST llama-agent-cli-document-table-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-deliberation-policy-ctest
+        COMMAND $<TARGET_FILE:llama-agent-deliberation-policy-smoke>)
+    set_property(TEST llama-agent-deliberation-policy-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-mcp-stdio-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-client-smoke>)

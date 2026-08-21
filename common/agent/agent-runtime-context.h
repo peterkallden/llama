@@ -1,8 +1,8 @@
 #pragma once
 
 #include "agent-runtime.h"
-#include "research/research-assessor.h"
-#include "research/research-runner.h"
+#include "agent/thinking/research/research-assessor.h"
+#include "agent/thinking/research/research-runner.h"
 
 #include <functional>
 #include <memory>

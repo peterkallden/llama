@@ -4,7 +4,7 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-context-budgets.h"
 #include "agent/agent-runtime.h"
-#include "agent/memory-learning.h"
+#include "agent/learning/memory-learning.h"
 
 #include "chat.h"
 #include "llama.h"

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "agent/agent-scope.h"
-#include "agent/tool-adapters.h"
-#include "agent/tool-catalog.h"
-#include "agent/tool-chat-bridge.h"
+#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "../../../common/runtime/runtime-operation.h"
 #include "../runtime/agent-runtime-control.h"
 #include "chat.h"

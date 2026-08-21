@@ -1,5 +1,5 @@
 set(TARGET llama-agent-plan)
-add_library(${TARGET} plan-bindings.cpp plan-bindings.h plan-blueprint.cpp plan-blueprint.h plan-context.cpp plan-context.h plan-goal.cpp plan-goal.h plan-in-memory.cpp plan-in-memory.h plan-json.cpp plan-json.h plan-memory.cpp plan-memory.h plan-policy.cpp plan-policy.h plan-scheduler.cpp plan-scheduler.h plan-selection.cpp plan-store.h plan-template.cpp plan-template.h plan-types.h)
+add_library(${TARGET} plan-bindings.cpp plan-bindings.h plan-contract.cpp plan-contract.h plan-blueprint.cpp plan-blueprint.h plan-context.cpp plan-context.h plan-goal.cpp plan-goal.h plan-in-memory.cpp plan-in-memory.h plan-json.cpp plan-json.h plan-memory.cpp plan-memory.h plan-policy.cpp plan-policy.h plan-scheduler.cpp plan-scheduler.h plan-selection.cpp plan-store.h plan-template.cpp plan-template.h plan-types.h)
 add_library(llama-plan ALIAS ${TARGET})
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)

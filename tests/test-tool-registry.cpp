@@ -1,4 +1,4 @@
-#include "agent/tool-registry.h"
+#include "agent/tooling/registry/tool-registry.h"
 
 #include <cassert>
 

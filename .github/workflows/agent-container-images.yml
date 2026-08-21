@@ -43,7 +43,6 @@ jobs:
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
        github.event.workflow_run.event != 'pull_request' &&
-       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
        inputs.image_channel == 'dev' &&
@@ -54,7 +53,7 @@ jobs:
       - name: Check out image definition
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
 
       - name: Download development package
         id: package
@@ -129,7 +128,9 @@ jobs:
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
             org.opencontainers.image.version=${{ steps.package.outputs.package_id }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   build-release:
     name: Build and publish ${{ matrix.backend }} release image
@@ -243,4 +244,6 @@ jobs:
             io.llama-agent.backend.version=${{ matrix.backend_version }}
             io.llama-agent.backend.label=${{ matrix.backend_label }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache export is an optimization; a temporary GitHub cache outage
+          # must not prevent the image itself from being published.
+          cache-to: type=gha,mode=max,ignore-error=true

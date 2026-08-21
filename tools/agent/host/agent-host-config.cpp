@@ -1,6 +1,6 @@
 #include "agent-host-config.h"
 #include "../daemon/agent-daemon-adapter.h"
-#include "agent/deliberation-policy.h"
+#include "agent/thinking/deliberation-policy.h"
 
 #include <fstream>
 #include <nlohmann/json.hpp>

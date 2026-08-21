@@ -1,6 +1,6 @@
 #include "agent/agent-runtime.h"
-#include "agent/tool-registry.h"
-#include "agent/memory-learning.h"
+#include "agent/tooling/registry/tool-registry.h"
+#include "agent/learning/memory-learning.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "test-tool-runtime-registry-adapter.h"

@@ -3,7 +3,7 @@
 #include "tools/agent/tooling/agent-tool-runtime-adapter.h"
 
 #include "agent/agent-runtime.h"
-#include "agent/tool-catalog.h"
+#include "agent/tooling/catalog/tool-catalog.h"
 #include "memory/memory-context.h"
 #include "plan/plan-in-memory.h"
 

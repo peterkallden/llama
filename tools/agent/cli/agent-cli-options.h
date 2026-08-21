@@ -1,9 +1,9 @@
 #pragma once
 
 #include "memory/memory-retrieval.h"
-#include "agent/tool-catalog.h"
+#include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/agent-context-budgets.h"
-#include "agent/sandbox-host-config.h"
+#include "agent/sandbox/sandbox-host-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-store.h"

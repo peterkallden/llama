@@ -9,7 +9,9 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-client.cpp
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
+    ../../tools/agent/host/agent-sandbox-assembly.cpp
     ../../tools/agent/mcp/agent-mcp-protocol.cpp
+    ../../tools/agent/mcp/agent-mcp-client-factory.cpp
     ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     ../../tools/agent/tooling/agent-tool-provider.cpp
@@ -17,6 +19,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/tooling/agent-tool-runtime-adapter.cpp
     ../../tools/agent/resource/agent-resource-catalog.cpp
     ../../tools/agent/resource/agent-resource-store.cpp
+    ../../tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
@@ -87,6 +90,7 @@ if (LLAMA_AGENT_RUNTIME)
     target_link_libraries(${TARGET} PRIVATE
         llama-agent-core
         llama-agent-runtime-support
+        llama-agent-daemon-library
         server-context
     )
     target_compile_definitions(${TARGET} PRIVATE LLAMA_MEMORY_POC_USE_AGENT_TOOLS)

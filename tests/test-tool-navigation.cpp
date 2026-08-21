@@ -1,4 +1,4 @@
-#include "agent/tool-navigation.h"
+#include "agent/tooling/routing/tool-navigation.h"
 
 #include <cassert>
 

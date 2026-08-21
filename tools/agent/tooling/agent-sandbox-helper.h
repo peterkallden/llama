@@ -1,10 +1,10 @@
 #pragma once
 
-#include "agent/sandbox-contract.h"
-#include "agent/sandbox-policy.h"
-#include "agent/sandbox-runtime.h"
+#include "agent/sandbox/sandbox-contract.h"
+#include "agent/sandbox/sandbox-policy.h"
+#include "agent/sandbox/sandbox-runtime.h"
 #include "agent/workspace-manager.h"
-#include "agent/tool-runtime-contract.h"
+#include "agent/tooling/contracts/tool-runtime-contract.h"
 
 #include <nlohmann/json.hpp>
 

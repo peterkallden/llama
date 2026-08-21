@@ -2,6 +2,7 @@
 
 #include "common/resource/resource-contract.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -23,30 +24,31 @@ struct agent_resource_processor_dispatch_request {
 };
 
 struct agent_resource_processor_dispatch_selection {
-    bool has_page_policy = false;
-    bool has_ocr_policy = false;
-    bool has_selected_pandoc_policy = false;
-    bool has_selected_xlsx_policy = false;
-
-    bool wants_page_local = false;
-    bool wants_page_sandbox = false;
-    bool wants_ocr_local = false;
-    bool wants_ocr_sandbox = false;
-    bool wants_pandoc_local = false;
-    bool wants_pandoc_sandbox = false;
-    bool wants_xlsx_local = false;
-    bool wants_xlsx_sandbox = false;
-
-    std::optional<agent_resource_processor_execution_policy> page_policy;
-    std::optional<agent_resource_processor_execution_policy> ocr_policy;
-    std::optional<agent_resource_processor_execution_policy> selected_pandoc_policy;
-    std::optional<agent_resource_processor_execution_policy> selected_xlsx_policy;
+    std::array<std::optional<agent_resource_processor_execution_policy>, 4> policies;
+    std::array<bool, 4> wants_local{};
+    std::array<bool, 4> wants_sandbox{};
 
     bool selected = false;
     agent_resource_processor_kind kind = agent_resource_processor_kind::page_image;
     std::string execution_backend;
     std::string execution_class;
     agent_resource_processor_execution_policy policy;
+
+    static constexpr size_t index(agent_resource_processor_kind kind) {
+        return static_cast<size_t>(kind);
+    }
+    const auto & policy_for(agent_resource_processor_kind kind) const {
+        return policies[index(kind)];
+    }
+    bool has_policy(agent_resource_processor_kind kind) const {
+        return policy_for(kind).has_value();
+    }
+    bool wants_local_for(agent_resource_processor_kind kind) const {
+        return wants_local[index(kind)];
+    }
+    bool wants_sandbox_for(agent_resource_processor_kind kind) const {
+        return wants_sandbox[index(kind)];
+    }
 };
 
 inline bool agent_resource_processor_policy_allows_local(
@@ -75,56 +77,37 @@ inline agent_resource_processor_dispatch_selection resolve_agent_resource_proces
             : std::optional<agent_resource_processor_execution_policy>(it->second);
     };
 
-    result.page_policy = find_policy("pdf.page_image");
-    result.ocr_policy = find_policy("ocr.tesseract");
+    result.policies[result.index(agent_resource_processor_kind::page_image)] = find_policy("pdf.page_image");
+    result.policies[result.index(agent_resource_processor_kind::ocr)] = find_policy("ocr.tesseract");
     const auto docx_policy = find_policy("docx.text");
     const auto odt_policy = find_policy("odt.text");
     const auto html_policy = find_policy("html.text");
     const auto xlsx_policy = find_policy("xlsx.workbook");
-    result.has_page_policy = result.page_policy.has_value();
-    result.has_ocr_policy = result.ocr_policy.has_value();
-
     if (request.source_type == "application/vnd.oasis.opendocument.text") {
-        result.selected_pandoc_policy = odt_policy;
+        result.policies[result.index(agent_resource_processor_kind::pandoc)] = odt_policy;
     } else if (request.source_type == "text/html") {
-        result.selected_pandoc_policy = html_policy;
+        result.policies[result.index(agent_resource_processor_kind::pandoc)] = html_policy;
     } else if (request.source_type ==
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
             request.source_type.empty()) {
-        result.selected_pandoc_policy = docx_policy;
+        result.policies[result.index(agent_resource_processor_kind::pandoc)] = docx_policy;
     }
-    result.selected_xlsx_policy = request.source_type ==
+    result.policies[result.index(agent_resource_processor_kind::xlsx)] = request.source_type ==
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ? xlsx_policy
         : std::nullopt;
-    result.has_selected_pandoc_policy = result.selected_pandoc_policy.has_value();
-    result.has_selected_xlsx_policy = result.selected_xlsx_policy.has_value();
-
-    if (result.page_policy) {
-        result.wants_page_local = agent_resource_processor_policy_allows_local(*result.page_policy);
-        result.wants_page_sandbox = agent_resource_processor_policy_allows_sandbox(
-            *result.page_policy, request.sandbox_backend);
-    }
-    if (result.ocr_policy) {
-        result.wants_ocr_local = agent_resource_processor_policy_allows_local(*result.ocr_policy);
-        result.wants_ocr_sandbox = agent_resource_processor_policy_allows_sandbox(
-            *result.ocr_policy, request.sandbox_backend);
-    }
-    if (result.selected_pandoc_policy) {
-        result.wants_pandoc_local = agent_resource_processor_policy_allows_local(
-            *result.selected_pandoc_policy);
-        result.wants_pandoc_sandbox = agent_resource_processor_policy_allows_sandbox(
-            *result.selected_pandoc_policy, request.sandbox_backend);
-    }
-    if (result.selected_xlsx_policy) {
-        result.wants_xlsx_local = agent_resource_processor_policy_allows_local(
-            *result.selected_xlsx_policy);
-        result.wants_xlsx_sandbox = agent_resource_processor_policy_allows_sandbox(
-            *result.selected_xlsx_policy, request.sandbox_backend);
+    for (size_t i = 0; i < result.policies.size(); ++i) {
+        if (!result.policies[i]) continue;
+        result.wants_local[i] = agent_resource_processor_policy_allows_local(*result.policies[i]);
+        result.wants_sandbox[i] = agent_resource_processor_policy_allows_sandbox(
+            *result.policies[i], request.sandbox_backend);
     }
 
     const auto select = [&result, &request](agent_resource_processor_kind kind,
-            bool local, bool sandbox, const auto & policy, const char * execution_class) {
+            const char * execution_class) {
+        const auto & policy = result.policy_for(kind);
+        const bool local = result.wants_local_for(kind);
+        const bool sandbox = result.wants_sandbox_for(kind);
         if (!local && !sandbox) return;
         result.selected = true;
         result.kind = kind;
@@ -138,25 +121,17 @@ inline agent_resource_processor_dispatch_selection resolve_agent_resource_proces
     // Preserve the existing deterministic priority: page image, OCR, Pandoc,
     // then XLSX. A future registry can replace this ordering with explicit
     // priorities without changing the processor implementations.
-    if (result.page_policy) {
-        select(agent_resource_processor_kind::page_image,
-            result.wants_page_local, result.wants_page_sandbox,
-            result.page_policy, "resource.processor.pdf.page_image");
+    if (result.has_policy(agent_resource_processor_kind::page_image)) {
+        select(agent_resource_processor_kind::page_image, "resource.processor.pdf.page_image");
     }
-    if (!result.selected && result.ocr_policy) {
-        select(agent_resource_processor_kind::ocr,
-            result.wants_ocr_local, result.wants_ocr_sandbox,
-            result.ocr_policy, "resource.processor.ocr.tesseract");
+    if (!result.selected && result.has_policy(agent_resource_processor_kind::ocr)) {
+        select(agent_resource_processor_kind::ocr, "resource.processor.ocr.tesseract");
     }
-    if (!result.selected && result.selected_pandoc_policy) {
-        select(agent_resource_processor_kind::pandoc,
-            result.wants_pandoc_local, result.wants_pandoc_sandbox,
-            result.selected_pandoc_policy, "resource.processor.pandoc");
+    if (!result.selected && result.has_policy(agent_resource_processor_kind::pandoc)) {
+        select(agent_resource_processor_kind::pandoc, "resource.processor.pandoc");
     }
-    if (!result.selected && result.selected_xlsx_policy) {
-        select(agent_resource_processor_kind::xlsx,
-            result.wants_xlsx_local, result.wants_xlsx_sandbox,
-            result.selected_xlsx_policy, "resource.processor.xlsx");
+    if (!result.selected && result.has_policy(agent_resource_processor_kind::xlsx)) {
+        select(agent_resource_processor_kind::xlsx, "resource.processor.xlsx");
     }
     return result;
 }

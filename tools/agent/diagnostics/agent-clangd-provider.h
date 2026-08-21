@@ -1,7 +1,7 @@
 #pragma once
 
 #include "agent-clangd-session.h"
-#include "agent/tool-runtime-contract.h"
+#include "agent/tooling/contracts/tool-runtime-contract.h"
 
 #include <memory>
 

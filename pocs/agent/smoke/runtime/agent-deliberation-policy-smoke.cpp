@@ -1,4 +1,4 @@
-#include "agent/deliberation-policy.h"
+#include "agent/thinking/deliberation-policy.h"
 
 #include <cstdio>
 

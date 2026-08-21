@@ -1,6 +1,7 @@
 #pragma once
 
-#include "agent/agent-contract.h"
+#include "agent/contracts/agent-request.h"
+#include "agent/contracts/agent-result.h"
 #include "agent/agent-inference.h"
 #include "../runtime/agent-runtime-tooling.h"
 

@@ -1,5 +1,5 @@
 #include "agent/agent-inference.h"
-#include "agent/tool-registry.h"
+#include "agent/tooling/registry/tool-registry.h"
 #include "memory/memory-candidate.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"

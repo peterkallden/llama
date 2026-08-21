@@ -1,5 +1,5 @@
-#include "agent/research/research-runner.h"
-#include "agent/research/research-workspace.h"
+#include "agent/thinking/research/research-runner.h"
+#include "agent/thinking/research/research-workspace.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "runtime/runtime-operation.h"

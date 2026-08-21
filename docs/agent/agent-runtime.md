@@ -61,7 +61,7 @@ remote MCP tools. Its temporary workspace composes existing plans,
 observations, resource references, trace entries, and turn/session state. It
 does not create a parallel persistence model.
 
-The first research contract slice now exists in `common/agent/research`. It is
+The first research contract slice now exists in `common/agent/thinking/research`. It is
 an ephemeral, scope-bound workspace model for objectives, gaps, tasks, sources,
 evidence, budgets, coverage, and a normalized result. Sources may point at the
 existing resource store through `common_runtime_resource_ref`; the workspace
@@ -276,7 +276,84 @@ and `1Gi` for artifacts; an empty storage class uses the cluster default. PVC id
 Operation directories are created below that PVC. Clients cannot choose PVC
 names, mount paths or Kubernetes Job details.
 
+## Incremental build boundaries
+
+The agent build keeps high-churn implementation areas in separate libraries.
+This is an agent-only build boundary; it does not split or replace any
+upstream llama.cpp target:
+
+```text
+llama-agent-sandbox
+    local, Docker/Podman and Kubernetes sandbox backends
+
+llama-agent-tooling
+    tool catalog, schema projection, registry, bridge and adapter families
+
+llama-agent-core
+    common/agent contracts, planning, adapters and runtime policy
+    -> links tooling and the sandbox contract/backend library
+
+llama-agent-resource
+    resource store, chunking, MIME handling and resource processors
+
+llama-agent-data
+    data-store selection and dataset import
+
+llama-agent-diagnostics
+    clangd protocol, sessions and diagnostics provider
+
+llama-agent-runtime-support
+    CLI, daemon, host/session assembly, MCP and runtime executors
+    -> links the focused agent libraries above
+```
+
+The focused libraries are installed together with the runtime support library
+and retain the same public agent behavior. A change to a resource processor,
+dataset importer or clangd integration can therefore rebuild and relink its
+focused library without compiling the host assembly. Changes to broad headers,
+especially shared contract headers, can still invalidate several libraries;
+those headers are kept as an explicit later optimization target rather than
+being duplicated between libraries.
+
+The intended direction is to introduce further stable boundaries under
+`common/agent` (tooling/adapters, thinking, sandbox and runtime) only when the
+header dependencies support it. A target split must follow an existing
+responsibility boundary and must not create parallel implementations or alter
+the upstream build graph.
+
 ## Tool execution boundaries
+
+### Adapter family layout
+
+Native tool registration is kept as one routing seam, while implementation is
+grouped by responsibility under `common/agent/tooling/adapters/families/`.
+The current families are deliberately narrow:
+
+| Family | Owns |
+| --- | --- |
+| `memory-adapters` | memory search, retrieval and mutation policy |
+| `data-adapters` | dataset inspection plus data/statistics operations |
+| `document-adapters` | document table discovery and table extraction |
+| `repository-adapters` | workspace/repository filesystem and Git operations |
+| `diagnostics-adapters` | compiler output, symbol/reference lookup, formatting and test-failure analysis |
+| `resource-adapters` | resource inspection, bounded reads and processor-backed representation materialization |
+
+`tool-adapters.cpp` remains the routing and compatibility seam. It should not
+become a second implementation of a family. Shared registration and failure
+helpers live in `tooling/adapters/support/adapter-support.h`; family-specific contracts remain
+with the family. Artifact export is still at the resource/artifact boundary in
+the routing seam because it also owns dataset-to-CSV export and provenance;
+that is an intentional next extraction, not a second resource-read path.
+
+Family headers consume the small `tooling/adapters/adapter-bindings.h` contract
+for host-owned stores, processors, diagnostics and sandbox callbacks. They do
+not include the complete router header merely to name their bindings. The
+router header remains the public registration entry point; the bindings header
+is the lower-level dependency seam used by individual families.
+
+The rule for future extraction is: move a coherent executor family together,
+preserve its host-owned bindings and tests, then leave one explicit family call
+in the router. Do not split a family merely to reduce line count.
 
 Tools are classified by where their work is performed and which host-owned
 authority they use. The classification is a runtime design constraint, not a
@@ -933,6 +1010,13 @@ This makes repair a bounded normalization and validation path, not a second
 tool-discovery protocol. The model is used only when deterministic matching is
 ambiguous or when the arguments need semantic correction. The same path is
 available to all thinking modes; the mode changes only the repair budget.
+
+Reflection repair is also failure-aware. A repair, reset, replacement, or
+retry operation must correspond to an active failed tool step. A newly added
+tool step may still be a legitimate reflection extension, but a second call
+to a tool that already completed successfully is treated as stale repair and
+is ignored with a trace entry. This prevents a late reflection pass from
+reopening a verified result while preserving ordinary plan extensions.
 
 The mode controls only the bounded budget around this common path: reflective
 gets the minimum repair/reflection pass, while deliberate and research may
@@ -1766,10 +1850,11 @@ URIs before the document representation binding is called.
 ### Compact tool notation
 
 The runtime generates a compact, line-oriented model description from the
-strict input and result schemas. This is a presentation projection only. It is
-not a second tool contract and the model still returns JSON tool arguments.
-The strict schema remains the source of truth for validation, bounds, enum
-values, defaults, and host dispatch.
+model projections of the host input and result schemas. If no projection is
+provided, the full schema is used as the fallback. This is a presentation
+projection only. It is not a second execution contract and the model still
+returns JSON tool arguments. The full host schema remains the source of truth
+for validation, bounds, enum values, defaults, and host dispatch.
 
 For example, the strict resource_read input schema is projected to:
 
@@ -1815,19 +1900,147 @@ The same separation applies to results. A tool may provide a
 `model_result_schema_json` projection alongside `result_schema_json`. The
 full result schema remains authoritative for execution, typed dataflow and
 binding validation; the model projection only exposes outputs useful for
-chaining or evidence. If no result projection is supplied, the full result
-schema is used as the model fallback. This keeps fields such as materialization
-flags, scan limits and truncation diagnostics out of the ordinary planner view
-without hiding them from the host or runtime diagnostics.
+chaining or evidence. If no explicit result projection is supplied, the
+catalog first attempts its conservative default projection and falls back to
+the full result schema only when no safe projection can be generated. This
+keeps fields such as materialization flags, scan limits and truncation
+diagnostics out of the ordinary planner view without hiding them from the host
+or runtime diagnostics.
 
-Model input projections may mark fields with the schema extension
-`x-agent-autowire-fields`. These fields remain host-required when execution
-needs them, but the compact model contract renders them as `may be inferred`.
-That statement is deliberately conditional: the planner may omit the field
-only when the current plan has exactly one compatible completed predecessor;
-zero candidates leave the input unresolved and multiple candidates require an
-explicit `$previous.field` or `$alias.field` reference. The host contract and
-repair diagnostics continue to use the full input schema.
+Simple model input projections derive their inference hints from the full host
+contract. A typed input may opt in with field-level `x-agent-inferable: true`
+metadata; the model projection then carries the model-facing
+`x-agent-autowire-fields` hint and the compact contract renders `may be
+inferred`. This is deliberately field metadata, not a second list of tool
+names. A field can therefore be both host-required and model-optional: the
+host must receive it before execution, but the model need not provide it when
+the plan makes the source unambiguous.
+
+`typed` and `inferable` are different properties. `x-agent-type` says that a
+field participates in typed dataflow. `x-agent-inferable` says that the host
+may attempt to fill the field when the plan context proves that there is one
+compatible completed source. It does not promise that inference will succeed.
+Zero candidates leave the input unresolved and multiple candidates require an
+explicit `$previous.field` or `$alias.field` reference. Semantic choices such
+as `data.join.left` and `data.join.right` should remain explicit even though
+they are typed. Alternative schemas such as `anyOf` remain explicit until
+their binding semantics are modeled separately.
+
+When no explicit `model_result_schema_json` is supplied, the catalog creates a
+conservative default result projection from the full result contract. It keeps
+typed dataflow fields and a small set of evidence fields such as `rows`,
+`columns`, `values`, `count` and `valid`, while leaving runtime and diagnostic
+fields such as `materialized`, `scan_truncated` and `elapsed_ms` out of the
+ordinary planner view. An explicit result projection remains the override for
+tools with special evidence or branching semantics. The host result schema
+remains authoritative for execution, diagnostics and typed dataflow.
+
+Result fields may also declare an `x-agent-role`:
+
+    dataflow    values that can feed a later typed binding
+    evidence    useful result data for reasoning or synthesis
+    diagnostic  host/runtime information, normally hidden from the planner
+
+Roles are semantic metadata, not permissions. The runtime still validates the
+full result contract and applies scope and policy checks before a value can be
+used as a binding. Field-name defaults remain conservative compatibility
+fallbacks for older definitions; new tools should prefer explicit roles.
+
+The compact renderer now projects the model schema into a small internal
+model-tool contract before rendering text. This keeps semantic fields such as
+`may_be_inferred` separate from JSON Schema syntax and leaves room for the
+same projection to provide repair hints or tool-selection metadata later.
+The full host schema remains authoritative for execution and diagnostics.
+
+Schema field extraction is shared with the plan binding layer through the
+small `common_plan_schema_field` contract seam. Required state, semantic type,
+role and inferability are extracted once; the model renderer and typed
+dataflow resolver then build their narrower views from that result. This is
+intentional: model rendering and execution remain separate, but they no
+longer maintain independent interpretations of the same schema metadata.
+
+Arguments follow one normalization pipeline wherever possible:
+
+    raw model/reflection arguments
+        -> wrapper and alias normalization
+        -> canonical tool arguments
+        -> typed/reference normalization
+        -> strict schema validation
+        -> execution
+
+Plan parsing, reflection repair and the native registry reuse the same plan
+argument normalizer. Normalization must be bounded and idempotent; it may
+recognize compatibility aliases but must not silently choose between
+ambiguous semantic values.
+
+The contract rule of thumb is:
+
+    host contract  = everything execution, validation and dataflow need
+    model contract = the smallest semantic choice the model must make
+    model IR       = the derived bridge used to render the model contract
+
+For example, a host contract may contain:
+
+    dataset: dataset_ref
+    measures: measure[]
+    max_scan_rows: integer
+    materialize: boolean
+    result_dataset: dataset_ref
+
+while the model contract can expose only:
+
+    dataset?: dataset_ref [may be inferred]
+    measures: measure[]
+
+The model IR records the field name, semantic type, display type, whether the
+model must provide it, and whether the host may infer it. It does not replace
+the host schema and it must not become a second source of truth.
+
+The inference rule is deliberately narrow:
+
+    optional typed input
+        + simple contract
+        + exactly one compatible completed predecessor output
+            => host may insert the binding
+
+Zero candidates leave the input unresolved. Multiple candidates are an
+ambiguity and require an explicit model reference. A typed field is therefore
+not automatically a semantic choice for the model, and `may be inferred` does
+not mean that inference will always succeed. The first generated input
+projections cover explicitly inferable simple data inputs; explicit overrides
+and more complex alternatives remain available for cases such as `data.join`
+or `anyOf` contracts.
+
+Autowire diagnostics include the producing step and output field when an
+inference is ambiguous. For example:
+
+    plan.binding.ambiguous_autowire:
+      data.join has multiple candidates
+      left<-step_1.dataset, right<-step_1.dataset
+
+This provenance is diagnostic information only. The model must still provide
+explicit semantic references such as `$orders.dataset` and
+`$customers.dataset` when selecting between sources.
+
+Tool results have two distinct uses: a bounded summary may be shown to the
+model, while the structured JSON result is the source for typed bindings when
+the tool provides one. A text-only or unknown result contract must never cause
+the host to fabricate typed outputs. In that case the tool remains usable, but
+its result is not a candidate for implicit dataflow.
+
+The runtime records a summary-only result as a JSON object containing only a
+`summary` field when no structured output exists. This keeps observations
+uniform for context and persistence while ensuring that summary text cannot be
+mistaken for a typed dataflow result.
+
+When adding a new tool, define the complete host input/result schemas and
+their `x-agent-type` values first. Mark an input `x-agent-inferable` only when
+the host is allowed to infer it in an unambiguous dataflow context. Add a
+model projection only when the default compact view exposes too much or too
+little. Treat `left`/`right`, source selection and other semantic choices as
+explicit until the plan context can prove them unambiguously. This keeps a
+new simple dataset tool from needing a new renderer special case while
+avoiding unsafe automatic wiring for branching operations.
 
 Native repair diagnostics use the full host input schema even when the model
 view hides host-owned controls or an autowire-capable input. Providers without
@@ -2699,6 +2912,21 @@ tools/
     resource/  resource-store implementation and host-owned resource plumbing
     ...        future CLI, daemon, MCP host/server implementation modules
 
+common/agent/tooling/
+  adapters/         native tool-family registration and execution adapters
+    families/        family-specific adapters, starting with memory
+    support/         shared registration, JSON and failure helpers
+  catalog/           tool definitions and model projections
+  contracts/         tool/runtime/schema result contracts
+  registry/          registered native tool handlers
+  bridge/            chat/tool bridge contracts
+  routing/           tool navigation and routing
+  schema/            compact schema rendering
+
+common/agent/sandbox/   sandbox policy, backends and runtime contracts
+common/agent/thinking/  reflection, deliberation, research and phases
+common/agent/learning/  memory learning and blueprint selection
+
 pocs/
   archive/     older experiments and superseded slices
 ```
@@ -2710,6 +2938,27 @@ Short responsibility summary:
 - `common/resource`: host-neutral resource references, authority descriptors, and later broader resource contracts for larger working material.
 - `common/runtime`: neutral runtime-facing envelopes such as traces, resource refs, turn/result DTOs, and other contracts that should not be owned by one PoC host adapter.
 - `common/agent`: agent orchestration contracts and logic that explain how memory, plan, resources, tools, and reasoning fit together.
+- `common/agent/tooling`: the reusable tool layer. `catalog` describes tools,
+  `contracts` owns neutral result/schema contracts, `registry` owns installed
+  handlers, `bridge` adapts tool calls to runtime surfaces, `routing` and
+  `schema` own navigation and compact rendering, and `adapters` owns native
+  execution.
+- `common/agent/tooling/adapters/families`: family-specific registration and
+  execution code. The memory family is the first extracted family; its
+  service/policy behavior stays together while the top-level adapter remains
+  responsible for catalog iteration and result accounting. New families
+  should be extracted only when the boundary is real, not merely to create
+  smaller files.
+- `common/agent/tooling/adapters/support`: small internal adapter helpers used
+  by multiple families. Registration and result construction belong here;
+  domain-specific validation and bindings remain in the owning family.
+- `common/agent/sandbox`: sandbox contracts, policy, runtime selection and
+  concrete local/container/Kubernetes backends.
+- `common/agent/thinking`: reflection, deliberation, research orchestration
+  and thinking phases; `thinking/research` contains research-specific seams.
+- `common/agent/learning`: durable learning decisions and blueprint selection;
+  it is separate from thinking because learning persists or promotes outcomes
+  after execution rather than selecting the current reasoning phase.
 - `tools/agent`: operational host code for running the agent as CLI, daemon, MCP host, or MCP server.
 - `tools/agent/cli`: command-line entrypoints, selection/config parsing, and CLI-specific host adapters.
 - `tools/agent/daemon`: daemon-facing transport, JSONL protocol shaping, lifecycle/event/dispatcher/service code, and daemon entrypoints.
@@ -2721,6 +2970,48 @@ Short responsibility summary:
 - `pocs/archive`: retired or superseded experiments that are still worth keeping as reference.
 
 The practical rule is simple: reusable contracts move downward; executable host assembly moves upward; old experiments move aside.
+
+### Header dependency rule
+
+The same rule applies inside `common/agent`: an umbrella header is a
+compatibility boundary, not the normal dependency for every implementation.
+Prefer the narrowest contract header that provides the type being used. This
+keeps a change to events, learning, requests or results from invalidating all
+agent consumers unnecessarily.
+
+The planned contract split is:
+
+```text
+common/agent/contracts/
+  agent-events.h       event types and event sinks
+  agent-failures.h     stable failure classifications and diagnostics
+  agent-learning.h     learning signals and explicit user corrections
+  agent-request.h      host-owned request, objective and input resources
+  agent-result.h       turn result, generation, research and trace outputs
+  agent-contract.h     compatibility umbrella for legacy callers
+```
+
+`agent-contract.h` may include the narrower headers so existing callers remain
+source-compatible. New code should include a specific contract instead. The
+runtime interfaces follow the same direction and are grouped under
+`common/agent/runtime`:
+
+```text
+common/agent/runtime/
+  agent-tool-runtime.h       validation, policy and tool execution
+  agent-planner.h             plan proposal contract
+  agent-action-executor.h     draft and reasoning generation contract
+  agent-reflection-engine.h   reflection result and review contract
+  agent-runtime.h             small runtime facade and composition seam
+```
+
+`common/agent/agent-runtime.h` remains a compatibility umbrella for callers
+that need the complete runtime contract. New implementation code should use
+the narrow runtime header matching its seam. This is an include/build
+boundary, not a new runtime subsystem: behavior and ownership remain in the
+existing implementation. A split is worthwhile only when it removes a real
+include dependency; creating more files without migrating consumers does not
+improve incremental builds.
 
 ## Refactor Status and Migration Notes
 
@@ -2773,6 +3064,24 @@ The command-line entrypoints and adapters now live under
 
 Tool-provider/view logic, tool-runtime adapters and host-owned tool
 selection/result contracts now live under `tools/agent/tooling`.
+
+The native adapter cleanup has started without introducing a second
+registration pipeline. `common/agent/tooling/adapters/tool-adapters.cpp`
+remains the composition seam and delegates complete families to
+`tooling/adapters/families/`; the memory family is now in
+`memory-adapters.{h,cpp}`. This keeps catalog iteration, availability
+accounting and registry ownership in one place while allowing a family to
+own its bindings, validation and policy behavior. Future repository, data,
+resource or web families should follow this pattern only when their boundary
+is genuinely independent.
+
+The data sweep is complete as well. Dataset validation/list/inspect/schema/
+sample, data manipulation and statistics executors now live in
+`families/data-adapters.{h,cpp}`. They share the data-store, dataset-reference
+and resource-to-dataset boundaries without pulling document, repository,
+diagnostics or resource-store registration into the same family. The compact
+top-level adapter still owns profile iteration and registered/unavailable
+accounting.
 
 That compatibility-header bridge has now effectively been retired for the active agent path. The branch no longer keeps a forwarder header layer under `pocs/agent`; active code, tests, and smoke binaries now include the concrete `tools/agent/...` locations directly. In practice that means `pocs/agent` is now much closer to its intended role in this phase: smoke harnesses, a few helper binaries, and migration-era build glue, rather than a second include tree pretending to own the runtime.
 
@@ -4007,11 +4316,46 @@ within normal plan and policy validation.
 ### Agent build and library structure
 
 The agent build keeps reusable implementation out of individual smoke
-executables. The current first extraction is `llama-agent-runtime-support`, an
-internal library containing the shared implementation used by the CLI, daemon,
-resource, runtime, and MCP-client targets. Smoke executables should normally
-compile only their focused `pocs/agent/smoke/<area>/*.cpp` source and link the
-library they exercise.
+executables. The remaining `llama-agent-runtime-support` target is a
+compatibility assembly for older CLI/daemon/MCP targets; it is not the
+architectural owner of the runtime.
+
+The current runtime seams are:
+
+```text
+llama-agent-runtime-engine
+    execution-facing session, generation/inference and event code
+
+llama-agent-runtime-adapters
+    llama-backed inference, generation, planner, action and reflection
+    implementations used by non-CLI hosts as well as the CLI
+
+llama-agent-runtime-selection
+    model-backed plan/blueprint selection and blueprint tool binding
+
+llama-agent-runtime-packages
+    bootstrap import/export and plan-scope parsing
+
+llama-agent-runtime-host
+    lifecycle, assembly, orchestration and host-facing execution
+
+llama-agent-runtime-support
+    transitional compatibility assembly for remaining frontends
+```
+
+The provider-facing implementation is isolated in
+`llama-agent-tool-provider`; runtime host code links that provider seam
+without making the execution engine depend on higher-level tool assembly. The
+support target still links the already separated resource/data/diagnostics
+libraries. Smoke executables should normally compile only their focused
+`pocs/agent/smoke/<area>/*.cpp` source and link the library they exercise.
+
+Static builds are intentionally treated as an architecture check. A missing
+symbol that only appears in a static archive usually means that an
+implementation was placed in the wrong seam or that two libraries depend on
+each other's implementation. The preferred fix is to move the implementation
+to the layer that owns the dependency, not to hide the cycle with a linker
+rescan group or a new catch-all `common/shared` library.
 
 The dependency direction is intentionally one-way:
 
@@ -4019,9 +4363,110 @@ The dependency direction is intentionally one-way:
 common/*
     -> llama-agent-core
     -> llama-agent-memory / llama-agent-plan
-    -> llama-agent-runtime-support
-    -> CLI, daemon, MCP, and smoke targets
+    -> llama-agent-tooling
+
+llama-agent-tool-provider
+    -> common contracts and tooling
+
+llama-agent-runtime-engine
+    -> common runtime contracts
+
+llama-agent-runtime-adapters
+    -> common contracts, memory/plan/tooling and llama inference
+
+llama-agent-runtime-selection
+    -> runtime-adapters, plan and tooling
+
+llama-agent-runtime-packages
+    -> core, memory, plan and package contracts
+
+llama-agent-runtime-host
+    -> runtime-engine, runtime-adapters, runtime-selection,
+       runtime-packages and tool-provider
+
+llama-agent-runtime-support
+        -> runtime-host, tool-provider, resource/data/diagnostics
+        -> transitional CLI, daemon, MCP and smoke targets
+
+llama-agent-mcp-client.so
+    -> llama-agent-mcp-core, tool-provider
+
+llama-agent-daemon.so
+    -> runtime-support
+        -> daemon executable and daemon smokes
 ```
+
+#### Long-term shared-library backlog
+
+The next library split should follow execution seams rather than create one
+library per directory. Several execution slices are now implemented; the
+remaining order is:
+
+```text
+1. llama-agent-runtime-engine.so (implemented)
+   execution-facing session state, server generation/inference adapters and
+   capacity/event projection code. It must remain independent of provider and
+   host assembly.
+
+2. llama-agent-runtime-host.so (initial lifecycle slice implemented)
+   runtime/resident lifecycle plus session host, turn driver, inference
+   executor and session manager. This is the host-owned lifecycle seam above
+   the engine.
+
+3. llama-agent-tool-provider.so (implemented)
+   native/provider selection, provider runtime adapters and tool-result
+   contracts. This is a reusable seam for host, CLI, daemon and MCP-facing
+   assembly; it is not a second tool registry.
+
+4. llama-agent-runtime-adapters.so (implemented)
+   llama-backed inference, generation helpers and model-facing
+   planner/action/reflection implementations. These are runtime adapters, not
+   CLI frontend code.
+
+5. llama-agent-runtime-selection.so and
+   llama-agent-runtime-packages.so (initial slices implemented)
+   Selection owns plan/blueprint decisions and blueprint tool binding.
+   Packages owns bootstrap import/export and scope parsing. The compatibility
+   header under `tools/agent/cli` may still expose both APIs to old callers,
+   but the implementations and link ownership are separate.
+
+6. llama-agent-daemon.so (initial implementation slice implemented)
+   daemon service, dispatcher, runtime adapter, protocol adapter, client and
+   administration code. The executable-only TCP/Unix entrypoints remain in the
+   daemon executable target.
+
+7. llama-agent-mcp-client.so (initial client slice implemented)
+   MCP HTTP/stdio client and client-factory code. MCP server/transport
+   assembly remains in the support/server seam.
+```
+
+The existing libraries remain the foundation of that plan, together with the
+two newly extracted runtime libraries:
+
+```text
+llama-agent-core.so
+llama-agent-dataset-contracts.so
+llama-agent-memory.so
+llama-agent-plan.so
+llama-agent-sandbox.so
+llama-agent-tooling.so
+llama-agent-resource.so
+llama-agent-data.so
+llama-agent-diagnostics.so
+llama-agent-runtime-engine.so
+llama-agent-runtime-host.so
+llama-agent-tool-provider.so
+llama-agent-cli.so
+```
+
+This is a build-isolation backlog, not a requirement to expose every library
+as a public ABI. A candidate split must first have an acyclic target graph,
+stable narrow headers and a measurable recompilation benefit. The first
+implementation slices are therefore `llama-agent-runtime-engine`, the
+runtime-host lifecycle facade, the CLI core, the daemon implementation and
+the MCP client transport seam. `llama-agent-dataset-contracts` is deliberately
+small and sits below both core/tooling and MCP server code; it prevents the
+dataset contract implementation from creating a core/tooling cycle.
 
 `common/agent` must not depend on implementation under `tools/agent`. Daemon
 services, MCP servers, and optional Cozo storage may be split into narrower
@@ -4038,9 +4483,50 @@ is enabled. The runtime-support library links both narrow libraries where
 needed; tests and seed tools link the Cozo library directly rather than
 compiling the same data sources again.
 
-Daemon service and host-configuration sources remain in the runtime-support
-library. The narrow libraries therefore reduce repeated compilation without
-moving orchestration or ownership into a lower-level utility target.
+The daemon service, client and host-facing protocol adapters now live in
+`llama-agent-daemon.so`; only the executable-specific TCP/Unix entrypoints
+remain in the executable target. The reusable JSONL protocol remains the
+separate static `llama-agent-daemon-protocol` target because subprocess
+fixtures can copy it without requiring a DLL staging step. These boundaries
+reduce repeated compilation without moving orchestration or ownership into a
+lower-level utility target.
+
+The current runtime split deliberately stops at a measured dependency seam:
+
+```text
+runtime-support
+    CLI/MCP assembly and remaining orchestration
+        ├── runtime-host
+        │     session/turn/inference lifecycle and resident forwarding
+        │         └── runtime-engine
+        │               execution state, server adapters, capacity and event projection
+        └── tool-provider
+              provider selection, runtime adapters and result contracts
+
+mcp-client
+    HTTP/stdio transport clients and factory
+        ├── mcp-core
+        └── tool-provider
+
+daemon
+    daemon service/client/dispatcher implementation
+        └── runtime-support
+```
+
+The CLI split follows the same rule. The current `llama-agent-cli.so` is the
+low-level CLI implementation slice consumed by runtime support; the executable
+target keeps its historical name `llama-agent-cli`. The remaining CLI assembly
+(`agent-cli-host-adapter`, `agent-cli-runtime`, `agent-cli-selection` and the
+top-level run path) stays in support until runtime assembly has a lower-level
+seam that can be reused without a cycle. This is intentional partial
+extraction, not a duplicated CLI implementation.
+
+The branches describe the intended link direction from the higher-level
+assembly to the lower-level implementation it consumes. In particular,
+`runtime-engine` must not grow dependencies on `runtime-support` or on
+provider selection. A future CLI/daemon/MCP split should reuse the same rule:
+extract a seam only when its headers are narrow, the target graph remains
+acyclic, and a clean rebuild demonstrates a useful recompilation boundary.
 
 Agent support libraries follow the repository's `BUILD_SHARED_LIBS` policy. They
 use target-scoped include directories, compile definitions, and link libraries;
@@ -4582,3 +5068,95 @@ cleanup, session lanes are removed on session close, resources follow their
 scope and expiry metadata, plans and memory follow their stores' retention
 policy, and event history remains bounded by the collector. Checkpointing a
 research workspace is deliberately left for a later step.
+## Processor selection seam
+
+Resource processors are selected by the host, never by model arguments. The
+dispatch seam combines the normalized source media type, configured processor
+policies and the available sandbox backend. The result is indexed by the
+processor kind (`page_image`, `ocr`, `pandoc` or `xlsx`) and exposes one policy
+and two capability decisions (`wants_local_for` and `wants_sandbox_for`) for
+each kind. This keeps processor selection data-driven and avoids a separate
+`wants_<processor>_<backend>` field for every new processor.
+
+The existing deterministic priority is preserved:
+
+```text
+pdf.page_image -> ocr.tesseract -> pandoc -> xlsx.workbook
+```
+
+The selected execution backend remains host-owned. A processor policy may
+allow local execution or the configured sandbox backend; the model cannot
+select an executable, image, workspace, or backend. Adding a processor should
+therefore require a descriptor/registration entry and a processor factory,
+not another parallel set of model-facing arguments or runtime policy flags.
+
+The CLI keeps this boundary in four small stages: normalized host
+configuration, processor dispatch, operation-scoped assembly, and processing
+service execution. The dispatch code chooses a policy; the resource
+processor factory creates the sandbox host, registry and processor instances;
+the service then executes through the resource-processing contract. This keeps
+selection tests independent of process construction and keeps the CLI host
+adapter from owning every processor-specific `make_shared` branch.
+
+Sandbox construction follows the same seam. The host configuration, scope and
+resource store are passed to one sandbox assembly function, which owns backend
+runtime construction, workspace binding, policy resolution and the final
+`sandbox_execute` callback. The CLI therefore routes sandbox work through an
+execution seam instead of constructing Docker, Kubernetes and unavailable
+runtimes in parallel branches. MCP transport selection follows the same
+principle: the host supplies a normalized provider request and a small factory
+selects the stdio or HTTP client; transport-specific construction stays out of
+the host adapter. These seams preserve host ownership of executable details
+while making the assembly paths independently testable.
+
+The catalog projection code now lives under `common/agent/tooling/catalog/`. Its
+responsibility is limited to deriving conservative model input/result views
+from full tool definitions. Catalog bootstrap and profile resolution remain in
+`tooling/catalog/tool-catalog.cpp`; projection rules are kept separate so model visibility
+does not become mixed with registration and policy loading.
+
+## Agent source layout
+
+The common agent code is organized by responsibility rather than by the
+alphabetical origin of a file:
+
+```text
+common/agent/
+  thinking/   reflective/deliberate/research mode semantics
+  learning/   durable memory learning and procedural blueprint reuse
+  tooling/    tool contracts, catalog, registry, routing and adapters
+  sandbox/    backend-neutral sandbox contracts and runtimes
+
+  (core, context, runtime and data files remain at this level for now;
+   they are later candidates only when a clear maintenance boundary exists)
+
+common/plan/
+  ...         plan IR, persistence, scheduling and canonical bindings
+```
+
+`common/agent/tooling/` is intentionally separate from `common/plan/`.
+Tools describe capabilities and execute semantic requests; plan bindings
+translate those requests into host-owned step identities and JSON pointers.
+The binding layer therefore remains part of the plan IR and must not be
+duplicated in tool adapters.
+
+The `thinking` layer may emit bounded reflection or learning signals, but it
+does not own persistence. `learning` owns candidate extraction, durable memory
+decisions and verified procedure/blueprint reuse. `research` is a thinking
+mode with a substantial workspace/controller/verification subsystem and may
+therefore have its own child directory under `thinking`.
+
+When adding code, prefer the following seams:
+
+* model/tool contracts and projections belong under `tooling`;
+* backend execution policies and runtimes belong under `sandbox`;
+* host-specific composition belongs under `tools/agent/host`;
+* plan normalization, dependency inference and binding materialization belong
+  under `common/plan`;
+* persistent cross-turn reuse belongs under `learning`, not under a thinking
+  mode.
+
+Directories should be introduced when a responsibility has several cohesive
+  files. A new directory should not be used merely to hide one unrelated
+  implementation file, and a tool family should not acquire a separate
+  adapter until the shared adapter file has a real maintenance boundary.

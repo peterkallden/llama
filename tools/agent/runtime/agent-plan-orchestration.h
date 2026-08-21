@@ -2,11 +2,13 @@
 
 #include "../runtime/agent-runtime-tooling.h"
 
-#include "agent/agent-contract.h"
+#include "agent/agent-scope.h"
+#include "agent/contracts/agent-events.h"
 #include "agent/agent-inference.h"
-#include "agent/blueprint-selector.h"
+#include "agent/learning/blueprint-selector.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
+#include "runtime/runtime-trace.h"
 
 #include <functional>
 #include <string>
