@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -24,7 +25,21 @@ struct common_tool_workflow_step_view {
     std::string arguments_json;
 };
 
+// Host-owned execution slot. The model fills only arguments not present in
+// fixed_arguments; tool name, ordering and aliases belong to the host.
+struct common_tool_workflow_slot {
+    std::string id;
+    std::string tool_name;
+    std::string description;
+    std::string alias;
+    std::map<std::string, std::string> fixed_arguments;
+};
+
 std::vector<common_tool_workflow> common_generate_tool_workflow_index();
+
+std::vector<common_tool_workflow_slot> common_expand_tool_workflow_slots(
+        const std::vector<common_tool_workflow> & workflows,
+        const std::vector<std::string> & workflow_ids);
 
 std::string common_render_tool_workflow_index(
         const std::vector<common_tool_workflow> & workflows,

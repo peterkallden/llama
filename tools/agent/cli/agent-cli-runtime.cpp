@@ -18,7 +18,9 @@
 #include <atomic>
 #include <cstdio>
 #include <ctime>
+#include <nlohmann/json.hpp>
 #include <set>
+#include <sstream>
 
 namespace {
 
@@ -46,6 +48,62 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
         names += tool.name;
     }
     return names.empty() ? "none" : names;
+}
+
+const common_chat_tool * find_planning_tool(
+        const std::vector<common_chat_tool> & tools,
+        const std::string & name) {
+    const auto it = std::find_if(tools.begin(), tools.end(), [&](const auto & tool) {
+        return tool.name == name;
+    });
+    return it == tools.end() ? nullptr : &*it;
+}
+
+std::string workflow_slot_schema(
+        const common_chat_tool & tool,
+        const common_tool_workflow_slot & slot,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    json schema = json::parse(tool.parameters.empty() ? "{}" : tool.parameters, nullptr, false);
+    if (schema.is_discarded() || !schema.is_object()) {
+        error = "invalid input schema for workflow slot tool '" + tool.name + "'";
+        return {};
+    }
+    auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) properties = json::object();
+    for (const auto & fixed : slot.fixed_arguments) properties.erase(fixed.first);
+    // Dataset inspection tools expose several mutually exclusive addressing
+    // forms. Once the workflow has fixed one form, do not leave the other
+    // host/legacy forms visible to the slot model; otherwise it can invent a
+    // second selector instead of filling the intended slot.
+    if ((tool.name == "dataset.inspect" || tool.name == "dataset.schema" || tool.name == "dataset.sample") &&
+            slot.fixed_arguments.count("dataset")) {
+        properties.erase("resource");
+        properties.erase("path");
+    }
+    schema["properties"] = properties;
+    auto required = schema.value("required", json::array());
+    if (required.is_array()) {
+        json filtered = json::array();
+        for (const auto & item : required) {
+            if (!item.is_string() || !slot.fixed_arguments.count(item.get<std::string>())) filtered.push_back(item);
+        }
+        if (filtered.empty()) schema.erase("required");
+        else schema["required"] = std::move(filtered);
+    }
+    schema["additionalProperties"] = false;
+    error.clear();
+    return schema.dump();
+}
+
+std::string render_slot_fixed_arguments(const common_tool_workflow_slot & slot) {
+    std::ostringstream rendered;
+    if (slot.fixed_arguments.empty()) return {};
+    rendered << "\nHost-filled arguments:";
+    for (const auto & fixed : slot.fixed_arguments) {
+        rendered << "\n- " << fixed.first << "=" << fixed.second;
+    }
+    return rendered.str();
 }
 
 std::string render_reflection_tool_contracts(
@@ -276,17 +334,19 @@ public:
                 {workflow_system, workflow_user},
                 make_agent_cli_generation_options(generation_config, 96),
                 common_tool_workflow_selection_schema()));
-            common_tool_workflow_selection workflow_selection;
+                common_tool_workflow_selection workflow_selection;
             std::string workflow_error;
             if (common_agent_generation_succeeded(workflow_generation) &&
                     common_parse_tool_workflow_selection(workflow_generation.content, workflow_selection, workflow_error)) {
                 for (const auto & workflow_id : workflow_selection.workflow_ids) {
+                    const std::string canonical_workflow_id = workflow_id == "data.aggregate"
+                        ? "dataset.summarize" : workflow_id;
                     const auto it = std::find_if(workflow_catalog.begin(), workflow_catalog.end(), [&](const auto & workflow) {
-                        return workflow.id == workflow_id && std::any_of(workflow.family_ids.begin(), workflow.family_ids.end(), [&](const auto & family) {
-                            return std::find(selected_family_ids.begin(), selected_family_ids.end(), family) != selected_family_ids.end();
-                        });
+                        return workflow.id == canonical_workflow_id;
                     });
-                    if (it != workflow_catalog.end()) selected_workflow_ids.push_back(workflow_id);
+                    if (it != workflow_catalog.end() && std::find(selected_workflow_ids.begin(), selected_workflow_ids.end(), canonical_workflow_id) == selected_workflow_ids.end()) {
+                        selected_workflow_ids.push_back(canonical_workflow_id);
+                    }
                 }
             }
         }
@@ -296,9 +356,31 @@ public:
                 if (std::find(selected_workflow_ids.begin(), selected_workflow_ids.end(), workflow.id) == selected_workflow_ids.end()) continue;
                 workflow_tools.insert(workflow.tool_names.begin(), workflow.tool_names.end());
             }
-            planning_tools.erase(std::remove_if(planning_tools.begin(), planning_tools.end(), [&](const auto & tool) {
-                return !workflow_tools.count(tool.name);
-            }), planning_tools.end());
+            // A workflow may cross family boundaries: data.join consumes
+            // data but needs dataset.select producers. Rebuild from the full
+            // host tool view so selected workflow dependencies are restored.
+            planning_tools.clear();
+            for (const auto & tool : tools) {
+                if (workflow_tools.count(tool.name)) planning_tools.push_back(tool);
+            }
+        }
+
+        if (generation_config.generation_trace) {
+            fprintf(stderr, "agent workflow trace: before_slots require_tools=%s selected_workflows=%zu planning_tools=%zu\n",
+                request.require_tool_execution ? "true" : "false",
+                selected_workflow_ids.size(), planning_tools.size());
+        }
+
+        if (!selected_workflow_ids.empty()) {
+            if (generation_config.generation_trace) {
+                fprintf(stderr, "agent workflow trace: require_tools=%s selected_workflows=%zu planning_tools=%zu\n",
+                    request.require_tool_execution ? "true" : "false",
+                    selected_workflow_ids.size(), planning_tools.size());
+            }
+            if (create_slot_plan(request, planning_tools, workflow_catalog, selected_workflow_ids, proposal, error)) {
+                return proposal;
+            }
+            if (!error.empty()) return proposal;
         }
         std::vector<std::string> allowed_tools;
         for (const auto & tool : planning_tools) allowed_tools.push_back(tool.name);
@@ -324,7 +406,7 @@ public:
             "Use tool only when it is one of the registered tools. For calculator use args:{expression:'17 * 23'}; for time_now use args:{}. "
             "Steps chain after the previous step by default. Omit a dataflow input when exactly one compatible preceding output can be inferred; use a bare typed alias such as $orders when the target input identifies the intended type, or use $name.field/$previous.field when selecting or disambiguating a source. A bare name such as \"table\" is a literal, not an alias. The host canonicalizes references to the strict $from_step/$json_pointer binding. Do not invent placeholder values such as resolved table or previous_result. Resource handles (r1) and dataset results (d1) are different types. "
             "A tool step has mode tool. A reasoning step has mode reasoning. The runtime adds the final answer step automatically, so do not emit one unless you need a custom final dependency shape. "
-            "Dataset repair contract: dataset.list returns datasets:dataset_ref[] and names:string[]; dataset.select(name:string) selects one registered dataset and returns dataset:dataset_ref; dataset.inspect, dataset.schema and dataset.sample consume one dataset_ref. When names are not already known, use dataset.list() as candidates followed by dataset.select(name=$candidates.names[index]) as a semantic alias. A bare alias such as $orders is shorthand for its unique compatible dataset_ref output when a dataset input is expected. Use $alias.datasets[index] only when a declared alias produces a typed collection; $datasets[0] is not a valid reference without a prior as:datasets. "
+            "Dataset repair contract: dataset.list returns datasets:dataset_ref[] and names:string[]; dataset.select(name:string) selects one registered dataset and returns dataset:dataset_ref; dataset.inspect, dataset.schema and dataset.sample consume one dataset_ref. When names are not already known, use dataset.list() as candidates followed by dataset.select(name=<exact unique name from $candidates.names>) or dataset.select(name=$candidates.names[index]) as a semantic alias. A bare alias such as $orders is shorthand for its unique compatible dataset_ref output when a dataset input is expected. Use $alias.datasets[index] only when a declared alias produces a typed collection; $datasets[0] is not a valid reference without a prior as:datasets. "
             "An alias declared with as is available only to later steps: never use $orders or $orders.dataset as input to the same step that declares as:'orders'. For an initial query, select or list the source dataset first, then run data.query using that earlier result. "
             "The runtime supplies IDs, titles, objectives, empty evidence lists, operation metadata, and safe defaults. Keep values under twelve words.";
         common_chat_msg user;
@@ -421,6 +503,147 @@ public:
     }
 
 private:
+    bool create_slot_plan(
+            const common_agent_request & request,
+            const std::vector<common_chat_tool> & planning_tools,
+            const std::vector<common_tool_workflow> & workflow_catalog,
+            const std::vector<std::string> & selected_workflow_ids,
+            common_plan_proposal & proposal,
+            std::string & error) {
+        using json = nlohmann::ordered_json;
+        const auto slots = common_expand_tool_workflow_slots(workflow_catalog, selected_workflow_ids);
+        if (generation_config.generation_trace) {
+            fprintf(stderr, "agent workflow trace: expanded_slots=%zu\n", slots.size());
+        }
+        if (slots.empty()) {
+            error.clear();
+            return false;
+        }
+
+        json steps = json::array();
+        std::string available_aliases;
+        common_agent_generation_result last_generation;
+        for (const auto & slot : slots) {
+            const common_chat_tool * tool = find_planning_tool(planning_tools, slot.tool_name);
+            if (!tool) {
+                error = "workflow slot tool is not available: " + slot.tool_name;
+                return false;
+            }
+            std::string schema_error;
+            const std::string slot_schema = workflow_slot_schema(*tool, slot, schema_error);
+            if (slot_schema.empty() && !schema_error.empty()) {
+                error = schema_error;
+                return false;
+            }
+
+            json fixed = json::object();
+            for (const auto & item : slot.fixed_arguments) fixed[item.first] = item.second;
+            json generated = json::object();
+            const auto schema = json::parse(slot_schema.empty() ? "{}" : slot_schema, nullptr, false);
+            const auto properties = schema.is_object()
+                ? schema.value("properties", json::object()) : json::object();
+            const bool needs_model_arguments = properties.is_object() && !properties.empty();
+            if (needs_model_arguments) {
+                auto generate_slot = [&](bool regeneration) {
+                    common_chat_msg system;
+                    system.role = "system";
+                    std::string compact_error;
+                    const std::string compact = common_render_compact_tool_description(
+                        tool->name,
+                        tool->description,
+                        slot_schema,
+                        tool->result_schema.empty() ? "{}" : tool->result_schema,
+                        compact_error);
+                    system.content = "Return only one JSON object containing arguments for the current workflow slot. "
+                        "The host owns the tool, slot order, aliases, dependencies and fixed arguments. "
+                        "Fill only the remaining semantic arguments; do not emit a tool name or a plan.\n"
+                        "Current slot: " + slot.id + "\nPurpose: " + slot.description +
+                        render_slot_fixed_arguments(slot) +
+                        "\nAvailable prior aliases: " + (available_aliases.empty() ? "none" : available_aliases) +
+                        "\nTool contract:\n" + (compact.empty() ? tool->name : compact) +
+                        (tool->name == "dataset.select"
+                            ? "\nThe name must be exactly one registered dataset name mentioned by the user or returned by dataset.list. A short name is valid only when it is an exact unique list name. Never combine names with commas, and never use the slot id, alias or a placeholder as the dataset name."
+                            : "") +
+                        (tool->name == "dataset.select" && available_aliases.find("$candidates") != std::string::npos
+                            ? " The previous dataset.list result is available as $candidates; use either an exact unique name copied from $candidates.names (for example \"orders.csv\") or a reference such as $candidates.names[0]. Never invent a dataset name."
+                            : "") +
+                        (regeneration ? "\nPrevious arguments were rejected. Return corrected arguments only." : "");
+                    common_chat_msg user;
+                    user.role = "user";
+                    user.content = "[User request]\n" + request.prompt +
+                        "\nFill the current slot only. Keep the response as a JSON object.";
+                    return inference.generate_result(make_agent_cli_generation_request(
+                        request,
+                        common_agent_generation_purpose::planner,
+                        {system, user},
+                        make_agent_cli_generation_options(generation_config, 160),
+                        slot_schema));
+                };
+                std::string slot_error;
+                last_generation = common_agent_bounded_structured_regeneration(
+                    generate_slot,
+                    [&](const auto & candidate) {
+                        const auto value = json::parse(candidate.content, nullptr, false);
+                        if (value.is_discarded() || !value.is_object()) {
+                            slot_error = "workflow slot arguments must be a JSON object";
+                            return false;
+                        }
+                        generated = value;
+                        if (tool->name == "dataset.select" && generated.contains("name") &&
+                                generated["name"].is_string() &&
+                                generated["name"].get<std::string>().find(',') != std::string::npos) {
+                            slot_error = "dataset.select requires exactly one dataset name; do not combine names with commas";
+                            return false;
+                        }
+                        json merged = fixed;
+                        for (const auto & item : generated.items()) merged[item.key()] = item.value();
+                        common_plan_tool_arguments_contract contract;
+                        if (!common_plan_parse_tool_arguments_contract_value(
+                                tool->name, merged, contract, slot_error)) return false;
+                        return true;
+                    });
+                if (!common_agent_generation_succeeded(last_generation)) {
+                    error = describe_agent_cli_generation_failure("workflow slot generation", last_generation);
+                    return false;
+                }
+                if (generated.empty() && !slot_error.empty()) {
+                    error = "workflow slot '" + slot.id + "' rejected: " + slot_error;
+                    return false;
+                }
+                proposal.generation = common_agent_generated_text_result_from_generation_result(last_generation);
+            }
+
+            json merged = fixed;
+            for (const auto & item : generated.items()) merged[item.key()] = item.value();
+            json step = {{"tool", slot.tool_name}, {"args", merged}};
+            if (!slot.alias.empty()) step["as"] = slot.alias;
+            steps.push_back(std::move(step));
+            if (!slot.alias.empty()) {
+                if (!available_aliases.empty()) available_aliases += ", ";
+                available_aliases += "$" + slot.alias;
+            }
+        }
+
+        json plan = {
+            {"goal", request.prompt},
+            {"steps", std::move(steps)},
+        };
+        std::vector<common_plan_operation> operations;
+        if (!common_plan_parse_proposal_json(plan.dump(), proposal.plan, operations, error, 8)) {
+            return false;
+        }
+        std::vector<common_tool_workflow_step_view> views;
+        for (const auto & operation : operations) {
+            if (!operation.step || !operation.step->tool_call) continue;
+            views.push_back({operation.step->tool_call->name, operation.step->tool_call->arguments_json});
+        }
+        if (!common_validate_tool_workflow_plan(
+                workflow_catalog, selected_workflow_ids, views, error)) return false;
+        proposal.operations = std::move(operations);
+        error.clear();
+        return true;
+    }
+
     common_agent_inference & inference;
     common_agent_generation_config generation_config;
     std::vector<common_chat_tool> tools;

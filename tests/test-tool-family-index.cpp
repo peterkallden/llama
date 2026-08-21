@@ -80,5 +80,19 @@ int main() {
     };
     assert(common_validate_tool_workflow_plan(
         workflows, {"dataset.join"}, direct_join, error));
+
+    const auto slots = common_expand_tool_workflow_slots(
+        workflows, {"dataset.discover", "dataset.inspect_named", "dataset.join", "dataset.summarize"});
+    assert(slots.size() == 8);
+    assert(slots[0].tool_name == "dataset.list");
+    assert(slots[1].tool_name == "dataset.select");
+    assert(slots[1].alias == "left");
+    assert(slots[2].tool_name == "dataset.select");
+    assert(slots[3].tool_name == "dataset.inspect");
+    assert(slots[3].fixed_arguments.at("dataset") == "$left.dataset");
+    assert(slots[5].tool_name == "data.join");
+    assert(slots[5].fixed_arguments.at("left") == "$left.dataset");
+    assert(slots[6].tool_name == "data.aggregate");
+    assert(slots[6].fixed_arguments.at("dataset") == "$joined.dataset");
     return 0;
 }

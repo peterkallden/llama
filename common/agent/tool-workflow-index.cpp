@@ -30,8 +30,8 @@ common_tool_workflow discover() {
         "List available datasets and select them by returned name.",
         {"dataset"},
         {"dataset.list", "dataset.select"},
-        {"dataset.list() as=candidates", "dataset.select(name=$candidates.names[index]) as=<dataset>"},
-        {"Use names[index] after dataset.list.", "Do not use $datasets[index] without a prior as:datasets."}
+        {"dataset.list() as=candidates", "dataset.select(name=<unique name from $candidates.names> or $candidates.names[index]) as=<dataset>"},
+        {"Use an exact unique name from names or names[index] after dataset.list.", "Do not use $datasets[index] without a prior as:datasets."}
     };
 }
 
@@ -61,6 +61,64 @@ common_tool_workflow summarize() {
 
 std::vector<common_tool_workflow> common_generate_tool_workflow_index() {
     return {discover(), inspect_named(), join(), summarize()};
+}
+
+std::vector<common_tool_workflow_slot> common_expand_tool_workflow_slots(
+        const std::vector<common_tool_workflow> & workflows,
+        const std::vector<std::string> & workflow_ids) {
+    (void) workflows;
+    const auto selected = [&](const std::string & id) {
+        return std::find(workflow_ids.begin(), workflow_ids.end(), id) != workflow_ids.end();
+    };
+    const bool want_discovery = selected("dataset.discover");
+    const bool want_inspection = selected("dataset.inspect_named");
+    const bool want_join = selected("dataset.join");
+    const bool want_summary = selected("dataset.summarize");
+
+    std::vector<common_tool_workflow_slot> slots;
+    if (want_discovery) {
+        slots.push_back({
+            "discover", "dataset.list", "List the available registered datasets.", "candidates", {}});
+    }
+
+    if (want_join) {
+        slots.push_back({
+            "left_source", "dataset.select", "Select the left dataset by name or candidates index.", "left", {}});
+        slots.push_back({
+            "right_source", "dataset.select", "Select the right dataset by name or candidates index.", "right", {}});
+    } else if (want_inspection || want_summary) {
+        slots.push_back({
+            "source", "dataset.select", "Select the dataset to inspect or summarize.", "source", {}});
+    }
+
+    if (want_inspection) {
+        if (want_join) {
+            slots.push_back({
+                "inspect_left", "dataset.inspect", "Inspect the selected left dataset.", "", {{"dataset", "$left.dataset"}}});
+            slots.push_back({
+                "inspect_right", "dataset.inspect", "Inspect the selected right dataset.", "", {{"dataset", "$right.dataset"}}});
+        } else {
+            slots.push_back({
+                "inspect_source", "dataset.inspect", "Inspect the selected dataset.", "", {{"dataset", "$source.dataset"}}});
+        }
+    }
+
+    if (want_join) {
+        slots.push_back({
+            "join", "data.join", "Join the selected datasets on matching columns.", "joined",
+                {{"left", "$left.dataset"}, {"right", "$right.dataset"}}});
+    }
+
+    if (want_summary) {
+        const std::string source = want_join ? "$joined.dataset" : "$source.dataset";
+        slots.push_back({
+            "aggregate", "data.aggregate", "Aggregate values from the selected dataset.", "aggregated",
+                {{"dataset", source}}});
+        slots.push_back({
+            "describe", "statistics.describe", "Describe the relevant numeric columns.", "",
+                {{"dataset", source}}});
+    }
+    return slots;
 }
 
 std::string common_render_tool_workflow_index(

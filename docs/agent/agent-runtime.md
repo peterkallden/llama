@@ -567,7 +567,7 @@ IDs, dependencies or canonical bindings. The current data recipes are:
 ```text
 dataset.discover
   dataset.list() as=candidates
-  dataset.select(name=$candidates.names[index]) as=<dataset>
+  dataset.select(name=<unique name from $candidates.names> or $candidates.names[index]) as=<dataset>
 
 dataset.inspect_named
   dataset.select(name=<name>) as=<dataset>
@@ -593,13 +593,21 @@ Discovery can use either a known name or a name returned by `dataset.list`:
 
 ```text
 dataset.select(name="orders") as=orders
+dataset.select(name="orders.csv") as=orders
 dataset.select(name=$candidates.names[0]) as=orders
 ```
+
+The name form is valid when the value is copied exactly from the list result
+and resolves uniquely. This includes a short registered name such as `orders`
+as well as a full name such as `orders.csv`; the host, not the model, decides
+whether the value is unique. An indexed reference is useful when the model
+does not need to repeat the returned name.
 
 The discovery recipe must precede indexed selection. `$datasets[index]` is not
 an implicit catalog variable; it is valid only when an earlier step declared
 `as: datasets` and produced that collection. Prefer `$candidates.names[index]`
-when the model is choosing a registered dataset by name.
+when the model is choosing a registered dataset by name. Never invent a short
+name or treat a slot/alias such as `left` as a dataset name.
 
 Several selects may be used before inspection or joining. `as` makes a result
 available to later steps; it does not fill both semantic sides of a join. The
@@ -634,6 +642,45 @@ The model still chooses names, columns and other semantic arguments. The host
 owns slot order, generated step identity and canonical bindings. This keeps
 workflow recipes useful without introducing a second scheduler or allowing a
 repair to turn an invalid plan into an unrelated plan.
+
+### Slot-driven workflow filling
+
+When tool execution is required, the host can expand the selected workflow
+into host-owned slots before creating the normal plan IR. Each slot has one
+fixed tool, an optional semantic alias and a set of host-filled arguments. The
+model receives only the current slot's compact input contract and returns an
+argument object. It does not return a tool name, a complete plan or
+dependencies.
+
+The loop is:
+
+```text
+workflow selection
+  -> host expands slots
+  -> model fills current slot arguments
+  -> host validates and repairs the same slot if needed
+  -> host adds the slot to the plan
+  -> next slot
+```
+
+For a join, the model therefore fills `dataset.select.name` for the left
+source, then the right source, and finally the `on` mapping for `data.join`.
+`left`, `right`, `$left.dataset`, `$right.dataset` and the step order remain
+host-owned. A slot with no remaining semantic arguments, such as an inspect
+step whose dataset binding is already fixed, is materialized directly by the
+host without an unnecessary model round.
+
+Repair is local to the current slot. The repair context contains the slot
+purpose, its compact tool contract, host-filled inputs, available typed aliases
+and the validation error. It does not repeat the complete workflow or tool
+catalog. Only a successfully validated slot allows the host to advance.
+
+The current CLI implementation validates and materializes the complete slot
+plan before tool execution begins. Consequently, a later slot cannot yet see
+the concrete result of an earlier `dataset.list` call during the same planning
+round. Exact names already supplied by the user, and exact unique names from a
+list result in an ordinary plan, are valid; execution-interleaved list-to-select
+slot filling remains a follow-up improvement.
 
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
