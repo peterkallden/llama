@@ -75,6 +75,24 @@ public:
     }
 };
 
+class reopening_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state & plan, const std::string &, std::string & error) override {
+        error.clear();
+        assert(plan.observations.size() == 2);
+        common_reflection_result result;
+        result.decision = common_reflection_decision::replan;
+        common_plan_operation add;
+        add.kind = common_plan_operation_kind::add_step;
+        common_plan_step step{"rediscovery", "Rediscover", "Incorrectly restart tool acquisition"};
+        step.selected_tool = "lookup";
+        step.tool_call = common_plan_tool_call{"lookup", R"({"id":"duplicate"})"};
+        add.step = std::move(step);
+        result.proposed_plan_operations.push_back(std::move(add));
+        return result;
+    }
+};
+
 int main() {
     common_plan_in_memory_store store;
     std::string error;
@@ -100,6 +118,28 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+
+    common_plan_in_memory_store closed_store;
+    assert(closed_store.open("", error));
+    reopening_reflector reopening;
+    common_agent_runtime closed_runtime(closed_store, p, e, reopening, &tool_runtime);
+    common_agent_request closed_request;
+    closed_request.prompt = "two rounds with a closed tool phase";
+    closed_request.max_iterations = 2;
+    closed_request.max_reflection_rounds = 2;
+    closed_request.max_tool_batches = 2;
+    const auto closed_result = closed_runtime.run(closed_request);
+    assert(closed_result.error.empty());
+    assert(closed_result.response == "observations=2");
+    auto closed_plan = closed_store.get("two-rounds", error);
+    assert(closed_plan && closed_plan->steps.size() == 3);
+    bool saw_closed_guard = false;
+    for (const auto & trace : closed_result.trace) {
+        saw_closed_guard = saw_closed_guard ||
+            (trace.stage == common_runtime_trace_stage::reflection &&
+             trace.detail.find("tool execution closed") != std::string::npos);
+    }
+    assert(saw_closed_guard);
 
     class repair_planner final : public common_planner {
     public:

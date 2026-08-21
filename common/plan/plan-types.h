@@ -162,6 +162,32 @@ struct common_plan_state {
     int64_t created_at = 0, updated_at = 0;
 };
 
+// Tool acquisition is closed only after every non-optional tool step has
+// completed and has a host-recorded observation.  This is deliberately
+// derived from the plan rather than persisted as a mutable flag: reflection
+// must not be able to reopen a completed acquisition phase by adding a new
+// tool step.  Failed or incomplete steps keep the phase open for repair.
+inline bool common_plan_tool_execution_closed(const common_plan_state & plan) {
+    bool has_tool_step = false;
+    for (const auto & step : plan.steps) {
+        if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool) continue;
+        has_tool_step = true;
+        if (step.optional) continue;
+        if (step.status != common_plan_step_status::completed || !step.tool_call) return false;
+        const std::string prefix = "tool:" + step.id + ":";
+        bool observed = false;
+        for (const auto & observation : plan.observations) {
+            if (observation.source == step.tool_call->name &&
+                    observation.id.compare(0, prefix.size(), prefix) == 0) {
+                observed = true;
+                break;
+            }
+        }
+        if (!observed) return false;
+    }
+    return has_tool_step;
+}
+
 inline common_agent_state_descriptor describe_common_plan(
         const common_plan_state & plan) {
     common_agent_state_descriptor descriptor;

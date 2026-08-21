@@ -899,6 +899,36 @@ approved for the request, the repair itself is marked failed. It is not
 degraded into a reasoning step, since that would silently remove the required
 operation and could permit an answer to proceed without the requested tool.
 
+### Closed tool execution before synthesis
+
+Tool acquisition has a host-owned closing boundary. Once every non-optional
+tool step in the current plan is completed and each step has a matching
+host-recorded tool observation, the runtime considers tool execution closed:
+
+```text
+tool step pending/active/failed
+    -> execution remains open; repair may retry the step
+
+all required tool steps completed
+and observations verified
+    -> execution closed; synthesis may proceed
+```
+
+After this boundary, reflection may still revise or accept the answer, but it
+may not add, reset, replace, activate or otherwise restart tool work. This
+prevents a completed dataset workflow from being reopened by a reflection
+round that proposes another `dataset.list` or `dataset.select` merely because
+the model believes more discovery would be useful. A policy-denied tool still
+passes through the normal policy guard so that the specific `not allowed`
+diagnostic is preserved.
+
+The closing state is derived from the plan and observations rather than stored
+as a model-controlled flag. This keeps the execution boundary deterministic:
+reflection cannot create a new step in order to make the definition of
+completion move forward. A genuine validation or execution failure keeps the
+phase open and uses the existing bounded repair path. Ordinary answer revision
+remains allowed after closure.
+
 This makes repair a bounded normalization and validation path, not a second
 tool-discovery protocol. The model is used only when deterministic matching is
 ambiguous or when the arguments need semantic correction. The same path is

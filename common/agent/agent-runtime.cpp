@@ -1329,6 +1329,50 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             result.error = "reflection failed safely: " + error;
             break;
         }
+        const bool tool_execution_closed = common_plan_tool_execution_closed(plan);
+        if (tool_execution_closed) {
+            bool attempted_reopen = reflection.decision == common_reflection_decision::replan;
+            bool policy_violation = false;
+            for (const auto & op : reflection.proposed_plan_operations) {
+                if (op.kind == common_plan_operation_kind::request_replan ||
+                        op.kind == common_plan_operation_kind::add_step ||
+                        op.kind == common_plan_operation_kind::replace_step ||
+                        op.kind == common_plan_operation_kind::activate_step ||
+                        op.kind == common_plan_operation_kind::unblock_step ||
+                        op.kind == common_plan_operation_kind::reset_step ||
+                        op.kind == common_plan_operation_kind::remove_step) {
+                    attempted_reopen = true;
+                }
+                if ((op.kind == common_plan_operation_kind::add_step ||
+                        op.kind == common_plan_operation_kind::replace_step) &&
+                        op.step && op.step->tool_call && tools &&
+                        !tools->is_read_only(op.step->tool_call->name) &&
+                        !(request.allow_policy_gated_tool_proposals &&
+                          tools->is_policy_gated(op.step->tool_call->name))) {
+                    // Let the normal policy gate below produce the canonical
+                    // policy failure.  Closure must not hide that diagnostic.
+                    policy_violation = true;
+                }
+            }
+            if (attempted_reopen && !policy_violation) {
+                append_event(result, request, {
+                    common_agent_event_type::plan_revision_requested,
+                    "reflection plan revision rejected after tool execution closed", {}, plan.id});
+                append_trace(result, common_runtime_trace_stage::reflection,
+                    common_runtime_trace_kind::failed,
+                    "tool execution closed; reflection cannot add or restart tool steps",
+                    plan.id);
+                if (block_unrepaired_tool_failure()) break;
+                if (!complete_active_synthesis_step()) { result.error = error; return result; }
+                result.response = draft;
+                result.revised = false;
+                append_trace(result, common_runtime_trace_stage::response,
+                    common_runtime_trace_kind::completed,
+                    "response accepted from verified tool observations after closed-plan guard",
+                    plan.id);
+                break;
+            }
+        }
         const bool deeper_deliberation =
             request.deliberation_policy.mode != common_agent_thinking_mode::reflective;
         const auto reflection_escalation = handle_common_agent_reflection_escalation(
