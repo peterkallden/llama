@@ -95,6 +95,7 @@ bool seed_file(
         return false;
     }
 
+    const std::string dataset_uri = "dataset://seed/" + dataset;
     count = 0;
     while (std::getline(input, line)) {
         if (line.empty()) continue;
@@ -104,9 +105,25 @@ bool seed_file(
             row[columns[i]] = typed_value(i < fields.size() ? fields[i] : std::string());
         }
         const std::string row_id = id_index < fields.size() ? fields[id_index] : std::to_string(count + 1);
-        if (row_id.empty() || !store.put_row(dataset, row_id, row.dump(), error)) return false;
+        if (row_id.empty() || !store.put_row(dataset_uri, row_id, row.dump(), error)) return false;
         ++count;
     }
+    common_agent_dataset_descriptor descriptor;
+    descriptor.ref.uri = dataset_uri;
+    descriptor.ref.name = dataset;
+    descriptor.ref.row_count = count;
+    descriptor.ref.column_count = columns.size();
+    descriptor.ref.source_resource_uri = "resource://seed/" + dataset;
+    descriptor.ref.source_representation = path;
+    descriptor.import_processor_id = "smoke.csv-seed";
+    descriptor.import_processor_version = "1";
+    for (const auto & column : columns) {
+        descriptor.columns.push_back({
+            column,
+            common_agent_dataset_column_type::unknown,
+            true});
+    }
+    if (!store.put_dataset_descriptor(descriptor, error)) return false;
     return true;
 }
 

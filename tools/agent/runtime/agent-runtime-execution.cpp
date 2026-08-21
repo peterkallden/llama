@@ -526,6 +526,21 @@ bool run_agent_runtime_driver(
         const common_agent_request request = make_agent_runtime_driver_request(execution);
         const auto slice = assembly.runtime->run(request);
         if (!slice.error.empty()) {
+            if (execution.policy.agent_trace) {
+                for (const auto & failure : slice.failures) {
+                    fprintf(stderr,
+                        "agent: failure code=%s class=%s stage=%s step=%s tool=%s evidence=%s retryable=%s summary=%s repair_context=%s\n",
+                        failure.code.c_str(),
+                        common_agent_failure_class_name(failure.classification),
+                        failure.stage.c_str(),
+                        failure.step_id.c_str(),
+                        failure.tool_name.c_str(),
+                        failure.evidence_id.c_str(),
+                        failure.retryable ? "true" : "false",
+                        failure.safe_summary.c_str(),
+                        failure.repair_context_json.c_str());
+                }
+            }
             error = "agent runtime failed: " + slice.error;
             return false;
         }
