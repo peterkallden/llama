@@ -218,6 +218,31 @@ static common_agent_failure tool_failure(
     return {code, classification, "tool_execution", tool_name, step_id, evidence_id, retryable, safe_summary};
 }
 
+static bool plan_has_completed_tool_step(const common_plan_state & plan) {
+    return std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+        return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
+            step.status == common_plan_step_status::completed &&
+            step.tool_call.has_value();
+    });
+}
+
+static bool plan_has_pending_mandatory_tool_step(const common_plan_state & plan) {
+    return std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+        return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
+            !step.optional &&
+            (step.status == common_plan_step_status::pending ||
+             step.status == common_plan_step_status::active);
+    });
+}
+
+static bool plan_has_failed_mandatory_tool_step(const common_plan_state & plan) {
+    return std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+        return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
+            !step.optional &&
+            step.status == common_plan_step_status::failed;
+    });
+}
+
 static common_agent_failure structured_tool_failure(const std::string & tool_name, const std::string & step_id,
         const std::string & evidence_id, const common_tool_execution_result & result) {
     const auto classification = result.failure_class == common_tool_failure_class::validation ? common_agent_failure_class::validation :
@@ -936,6 +961,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     size_t runtime_iteration_limit = request.max_iterations;
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
         size_t tool_batches = 0;
+        bool defer_draft_for_required_tools = false;
         // Execute the contiguous, dependency-ready tool chain before drafting.
         // This makes normal plan progression deterministic; reflection remains
         // reserved for repair or replanning.
@@ -1233,6 +1259,32 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
         }
+
+        if (request.require_tool_execution) {
+            if (!plan_has_completed_tool_step(plan) &&
+                    !plan_has_failed_mandatory_tool_step(plan)) {
+                result.error = "required tool execution did not complete before draft fallback";
+                error = result.error;
+                append_trace(result, common_runtime_trace_stage::tool,
+                    common_runtime_trace_kind::failed,
+                    result.error,
+                    plan.id);
+                return result;
+            }
+            if (plan_has_pending_mandatory_tool_step(plan)) {
+                result.limit_reached = true;
+                result.response_generation_status = common_agent_generation_status::completed;
+                result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                append_trace(result, common_runtime_trace_stage::tool,
+                    common_runtime_trace_kind::decided,
+                    "required tool execution is incomplete; draft deferred until pending tool steps complete",
+                    plan.id);
+                defer_draft_for_required_tools = true;
+                break;
+            }
+        }
+
+        if (defer_draft_for_required_tools) continue;
 
         if (context_size_tokens > 0) {
             const size_t estimated_context_tokens = context_token_estimator

@@ -119,6 +119,31 @@ int main() {
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
 
+    // A caller that requires tool execution must never receive a plain draft
+    // when the runtime has no tool budget left to execute the planned step.
+    common_plan_in_memory_store required_store;
+    assert(required_store.open("", error));
+    common_agent_runtime required_runtime(required_store, p, e, r, &tool_runtime);
+    common_agent_request required_request;
+    required_request.prompt = "tool execution is required";
+    required_request.max_iterations = 1;
+    required_request.max_reflection_rounds = 0;
+    required_request.max_tool_batches = 0;
+    required_request.require_tool_execution = true;
+    const auto required_result = required_runtime.run(required_request);
+    assert(!required_result.error.empty());
+    assert(required_result.error.find("required tool execution") != std::string::npos);
+    assert(required_result.response.empty());
+
+    common_plan_in_memory_store deferred_store;
+    assert(deferred_store.open("", error));
+    common_agent_runtime deferred_runtime(deferred_store, p, e, r, &tool_runtime);
+    required_request.max_tool_batches = 1;
+    const auto deferred_result = deferred_runtime.run(required_request);
+    assert(deferred_result.error.empty());
+    assert(deferred_result.limit_reached);
+    assert(deferred_result.response.empty());
+
     common_plan_in_memory_store closed_store;
     assert(closed_store.open("", error));
     reopening_reflector reopening;
