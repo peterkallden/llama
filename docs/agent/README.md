@@ -90,6 +90,18 @@ evidence-based milestone record is maintained in
   Development CUDA and Vulkan images are not published yet; those backends
   currently belong to the release-image matrix.
 
+  The development image also contains the external tools used by the current
+  local processors and diagnostics: C/C++ build tools, Clang/clangd, GDB,
+  Pandoc, Python 3, Tesseract, MuPDF (`mutool`) and Ghostscript (`gs`). The
+  image build runs a capability smoke that verifies these commands and a
+  small C++/Pandoc operation. It deliberately does not install nested
+  Docker, Podman, LXC or Kubernetes runtimes.
+
+  The development image uses `sandbox.backend: none` because the container is
+  itself the development environment. Trusted local processors remain
+  available; tools that require an actual sandbox backend stay unavailable
+  until the host supplies Docker/Podman, Kubernetes or LXC outside the image.
+
   Podman uses the same image names; replace `docker pull` with `podman pull`.
 
   The release image labels use the short backend labels `cuda13` and

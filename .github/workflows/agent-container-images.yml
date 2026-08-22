@@ -78,6 +78,7 @@ jobs:
           cp "$archive" docker-context/agent-package.tar.gz
           cp docker/agent/Dockerfile docker-context/Dockerfile
           cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
+          cp docker/agent/capability-smoke.sh docker-context/capability-smoke.sh
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
           package_id="$(basename "$archive" .tar.gz)"
@@ -118,6 +119,7 @@ jobs:
           build-args: |
             BACKEND=cpu
             BASE_IMAGE=ubuntu:24.04
+            INSTALL_DEV_TOOLS=true
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.tags }}
@@ -188,6 +190,7 @@ jobs:
           cp "$archive" docker-context/agent-package.tar.gz
           cp docker/agent/Dockerfile docker-context/Dockerfile
           cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
+          cp docker/agent/capability-smoke.sh docker-context/capability-smoke.sh
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
           archive_id="$(basename "$archive" .tar.gz)"
@@ -230,6 +233,7 @@ jobs:
           build-args: |
             BACKEND=${{ matrix.backend }}
             BASE_IMAGE=${{ matrix.base_image }}
+            INSTALL_DEV_TOOLS=false
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.tags }}
