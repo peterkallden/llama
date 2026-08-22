@@ -352,7 +352,10 @@ public:
             request,
             common_agent_generation_purpose::draft,
             {system, user},
-            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 96))));
+            // Drafts must be able to state the completed tool-backed result;
+            // a short cap can end mid-sentence and trigger an unnecessary
+            // reflection/re-draft cycle on small CPU models.
+            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_agent_cli_generation_failure("model draft generation", generation_result);
             return common_agent_generated_text_result_from_generation_result(generation_result);
