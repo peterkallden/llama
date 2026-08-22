@@ -1,0 +1,14 @@
+description: >-
+  TEMPLATE ONLY. Attach this profile to a host-side network policy that has
+  been verified to enforce the declared egress scope before using it with
+  llama-agent.
+config:
+  security.nesting: "false"
+  security.privileged: "false"
+devices:
+  eth0:
+    name: eth0
+    nictype: bridged
+    parent: REPLACE_WITH_VERIFIED_HOST_BRIDGE
+    type: nic
+

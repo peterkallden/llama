@@ -134,6 +134,10 @@ as `none`. The focused
 selects Docker and therefore demonstrates `memory_bytes` and `process_count`.
 Do not copy that process limit unchanged to a Kubernetes configuration; the
 host will reject it because Kubernetes does not advertise that capability.
+Importable LXC/Incus profile examples are in
+[examples/lxc-profiles](../examples/lxc-profiles/README.md). The networkless
+profile is the ready-to-use example; broader network profiles remain templates
+until their host-side enforcement has been verified.
 
 Processor execution modes have deterministic fallback semantics. With
 `backend: auto`, `local_preferred` tries local then sandbox, while

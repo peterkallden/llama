@@ -109,6 +109,8 @@ use `--lxc-network-mode profile` together with a profile and one of
 advertises only the declared scope and rejects requests that it cannot prove
 the profile enforces; CPU, memory and process limits are applied with LXC
 instance limits and failure to set any requested limit aborts the operation.
+Ready-to-import profile examples and the restricted-network template are in
+[`docs/examples/lxc-profiles`](../examples/lxc-profiles/README.md).
 
 Resource processors remain sandboxed unless explicitly selected. For trusted
 hosts with MuPDF and Tesseract installed locally, local execution can be

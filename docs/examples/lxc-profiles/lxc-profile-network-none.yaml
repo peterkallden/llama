@@ -1,0 +1,8 @@
+description: >-
+  llama-agent networkless sandbox. No NIC is defined; workspace devices are
+  injected by the llama-agent LXC runtime for each ephemeral execution.
+config:
+  security.nesting: "false"
+  security.privileged: "false"
+devices: {}
+
