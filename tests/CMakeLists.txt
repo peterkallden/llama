@@ -376,6 +376,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-clangd-protocol.cpp
         test-agent-native-crash.cpp
         test-agent-native-crash-smoke.cpp
+        test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
         test-agent-bootstrap.cpp
     )
@@ -395,6 +396,11 @@ if (LLAMA_AGENT_RUNTIME)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
         endif()
         if (TEST_NAME STREQUAL "test-agent-native-crash-smoke")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
+            set_property(TEST ${TEST_NAME} PROPERTY SKIP_RETURN_CODE 77)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-native-crash-cdb-smoke")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
             set_property(TEST ${TEST_NAME} PROPERTY SKIP_RETURN_CODE 77)

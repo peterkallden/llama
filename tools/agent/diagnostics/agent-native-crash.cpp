@@ -63,6 +63,16 @@ std::string line_value(const std::string & text, const char * label) {
     return trim(text.substr(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start));
 }
 
+std::string first_line_after(const std::string & text, const char * label) {
+    const auto start = text.find(label);
+    if (start == std::string::npos) return {};
+    const auto value_start = text.find('\n', start);
+    if (value_start == std::string::npos) return {};
+    const auto value_end = text.find('\n', value_start + 1);
+    return trim(text.substr(value_start + 1,
+        value_end == std::string::npos ? std::string::npos : value_end - value_start - 1));
+}
+
 bool resolve_input_path(const std::string & root, const std::string & value, std::string & path, std::string & error) {
     if (root.empty() || value.empty()) { error = "native crash diagnostics requires host-owned paths"; return false; }
     std::error_code fs_error;
@@ -163,8 +173,8 @@ std::vector<std::string> agent_gdb_mi_argv(const std::string & executable, const
 
 std::vector<std::string> agent_cdb_argv(const std::string & executable, const std::string & dump_file) {
     return {
-        "cdb.exe", "-z", dump_file, executable,
-        "-c", "!analyze -v; kv; q",
+        "cdb.exe", "-z", dump_file,
+        "-c", "!analyze -v; kv; q", executable,
     };
 }
 
@@ -214,6 +224,13 @@ agent_native_crash_result agent_parse_cdb_output(const std::string & output, con
     result.signal_or_exception = line_value(output, "ExceptionCode:");
     result.failure_bucket = line_value(output, "FAILURE_BUCKET_ID:");
     result.faulting_module = line_value(output, "MODULE_NAME:");
+    const auto faulting_ip = first_line_after(output, "FAULTING_IP:");
+    if (!faulting_ip.empty()) result.fault_address = trim(faulting_ip.substr(0, faulting_ip.find_first_of(" \t")));
+    const auto attempted_address = output.find("Attempt to ");
+    if (attempted_address != std::string::npos) {
+        const auto address = output.find("address ", attempted_address);
+        if (address != std::string::npos) result.fault_address = trim(output.substr(address + 8, output.find('\n', address) == std::string::npos ? std::string::npos : output.find('\n', address) - address - 8));
+    }
 
     const auto stack = output.find("STACK_TEXT:");
     if (stack != std::string::npos) {
@@ -243,6 +260,7 @@ agent_native_crash_result agent_parse_cdb_output(const std::string & output, con
     result.status = agent_native_crash_status::analyzed;
     result.symbol_quality = result.stack.empty() ? "none" : "partial";
     if (!result.stack.empty()) result.faulting_function = result.stack.front().function;
+    if (result.faulting_function.empty() && !result.stack.empty()) result.faulting_function = result.stack.front().module;
     result.summary = result.signal_or_exception.empty()
         ? "Native dump analyzed by CDB."
         : result.signal_or_exception + " analyzed by CDB.";

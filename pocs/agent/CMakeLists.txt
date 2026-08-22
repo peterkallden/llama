@@ -1965,6 +1965,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-clangd-protocol
     test-agent-native-crash
     test-agent-native-crash-smoke
+    test-agent-native-crash-cdb-smoke
     test-agent-config-bootstrap
     test-memory-store
     test-memory-retrieval

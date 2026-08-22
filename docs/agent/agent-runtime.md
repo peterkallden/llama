@@ -1311,8 +1311,9 @@ exception, fault location, bounded stack frames, symbol quality and a concise
 summary.
 
 The first providers are GDB on Linux and CDB on Windows. GDB uses a
-machine-oriented command path where practical; CDB uses its native dump
-analysis commands and a bounded structured/text parser. Provider-specific
+machine-oriented command path where practical; CDB (`cdb.exe`) uses the same
+WinDbg debugger engine in command-line mode, with native dump analysis
+commands and a bounded structured/text parser. Provider-specific
 output is retained only as bounded host diagnostic evidence and is not part of
 the normal model-facing result.
 
@@ -1367,6 +1368,22 @@ ctest --test-dir build -R test-agent-native-crash-smoke --output-on-failure
 
 Without these host-owned paths the smoke is reported as not run rather than
 pretending that a debugger backend was tested.
+
+On Windows the CDB provider smoke uses the same executable/dump contract:
+
+```powershell
+$env:LLAMA_AGENT_NATIVE_CRASH_SMOKE_ROOT = 'C:\agent-test'
+$env:LLAMA_AGENT_NATIVE_CRASH_SMOKE_EXECUTABLE = 'bin\crash-fixture.exe'
+$env:LLAMA_AGENT_NATIVE_CRASH_SMOKE_DUMP = 'artifacts\crash.dmp'
+$env:LLAMA_AGENT_CDB_EXECUTABLE = 'C:\Program Files\Windows Kits\10\Debuggers\x64\cdb.exe'
+ctest --test-dir build -R test-agent-native-crash-cdb-smoke --output-on-failure
+```
+
+The first CDB command set is deliberately small and bounded: `!analyze -v`,
+`kv`, and quit. It normalizes the exception code, faulting module/function,
+failure bucket and stack into the same result contract as GDB. XML output can
+be added later as a stricter parser input; it is not required for the initial
+provider.
 
 ### Optional clang tool support
 

@@ -16,7 +16,9 @@ int main() {
     assert(cdb.size() == 6);
     assert(cdb[0] == "cdb.exe");
     assert(cdb[2] == "artifacts/crash.dmp");
-    assert(cdb[3] == "llama-agent.exe");
+    assert(cdb[3] == "-c");
+    assert(cdb[4] == "!analyze -v; kv; q");
+    assert(cdb[5] == "llama-agent.exe");
 
     const auto gdb_result = agent_parse_gdb_mi(
         R"(^done,signal-name="SIGSEGV",signal-meaning="Segmentation fault",stack=[frame={level="0",addr="0x1234",func="crash_here",file="crash.cpp",line="42"},frame={level="1",addr="0x5678",func="main",file="main.cpp",line="17"}])");
@@ -29,6 +31,8 @@ int main() {
     const auto cdb_result = agent_parse_cdb_output(
         "ExceptionCode:    c0000005 (Access violation)\n"
         "MODULE_NAME: llama_agent\n"
+        "FAULTING_IP:\n"
+        "llama_agent!crash_here+0x23\n"
         "FAILURE_BUCKET_ID: NULL_POINTER_READ_c0000005\n"
         "STACK_TEXT:\n"
         "00000000 00000000 00000000 llama_agent!crash_here+0x23\n"
@@ -37,6 +41,7 @@ int main() {
     assert(cdb_result.signal_or_exception == "c0000005 (Access violation)");
     assert(cdb_result.faulting_module == "llama_agent");
     assert(cdb_result.faulting_function == "crash_here+0x23");
+    assert(cdb_result.fault_address == "llama_agent!crash_here+0x23");
     assert(cdb_result.failure_bucket == "NULL_POINTER_READ_c0000005");
     assert(cdb_result.stack.size() == 2);
 
