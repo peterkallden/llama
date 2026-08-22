@@ -127,6 +127,14 @@ It does not advertise a per-pod process limit because `podPidsLimit` is a
 kubelet/node setting outside this runtime. Broader network scopes remain
 unavailable for those backends until explicit allowlist enforcement exists.
 
+The general [agent-config.example.json](../examples/agent-config.example.json)
+shows all backend configuration sections while keeping the selected backend
+as `none`. The focused
+[agent-host-config-capabilities.json](../examples/agent-host-config-capabilities.json)
+selects Docker and therefore demonstrates `memory_bytes` and `process_count`.
+Do not copy that process limit unchanged to a Kubernetes configuration; the
+host will reject it because Kubernetes does not advertise that capability.
+
 Processor execution modes have deterministic fallback semantics. With
 `backend: auto`, `local_preferred` tries local then sandbox, while
 `sandbox_preferred` tries sandbox then local. `local_required` and

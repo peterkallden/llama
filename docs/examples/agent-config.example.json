@@ -106,19 +106,30 @@
   "sandbox": {
     "backend": "none",
     "docker": {
+      "executable": "docker",
       "default_image": "llama-agent-dev:latest"
     },
     "lxc": {
       "executable": "lxc",
       "default_image": "ubuntu:24.04",
       "network_mode": "none",
-      "network_profile": "",
+      "network_profile": "llama-agent-network-none",
+      "network_profile_scope": "none",
       "cleanup": true
     },
     "kubernetes": {
+      "executable": "kubectl",
+      "kubeconfig": "",
+      "context": "",
+      "insecure_skip_tls_verify": false,
       "namespace": "llama-agent",
       "service_account": "llama-agent-runner",
       "runtime_class": "standard",
+      "workspace_storage_size": "4Gi",
+      "artifact_storage_size": "1Gi",
+      "staging_image": "alpine:3.20",
+      "pvc_retention": "project",
+      "staging_timeout_ms": 120000,
       "cleanup": true
     },
     "workspace": {
@@ -130,6 +141,7 @@
     "defaults": {
       "timeout_ms": 60000,
       "cpu_count": 1,
+      "memory_bytes": 1073741824,
       "max_output_bytes": 65536,
       "network": "none",
       "filesystem": "readonly",
@@ -140,6 +152,7 @@
         "timeout_ms": 120000,
         "cpu_count": 1,
         "max_output_bytes": 67108864,
+        "memory_bytes": 2147483648,
         "network": "none",
         "filesystem": "artifact_write",
         "allow_artifacts": true

@@ -51,6 +51,8 @@
     "defaults": {
       "timeout_ms": 60000,
       "cpu_count": 1,
+      "memory_bytes": 1073741824,
+      "process_count": 128,
       "max_output_bytes": 65536,
       "network": "none",
       "filesystem": "readonly",
@@ -62,6 +64,7 @@
         "timeout_ms": 1200000,
         "cpu_count": 4,
         "memory_bytes": 8589934592,
+        "process_count": 256,
         "filesystem": "workspace_write"
       }
     }
