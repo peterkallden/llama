@@ -27,7 +27,7 @@ std::string family_description_for_id(const std::string & id) {
     static const std::unordered_map<std::string, std::string> descriptions = {
         {"data",       "Query and transform datasets"},
         {"dataset",    "Choose and inspect datasets for analysis"},
-        {"diagnostics", "Explain failures and inspect execution evidence"},
+        {"diagnostics", "Analyze compiler and test failures, native crashes and debugger dumps"},
         {"document",   "Extract structured content from documents"},
         {"mcp",        "Discover and invoke MCP resources and tools"},
         {"repository", "Search and inspect repository-backed content"},
