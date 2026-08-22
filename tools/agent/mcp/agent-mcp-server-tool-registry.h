@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-mcp-server-protocol.h"
+#include "chat.h"
 
 #include <functional>
 #include <string>
@@ -55,7 +56,17 @@ private:
 };
 
 agent_mcp_json agent_mcp_render_tools_list_result(
-    const agent_mcp_server_tool_registry & registry);
+        const agent_mcp_server_tool_registry & registry);
+
+// Injects the current native model-facing tool view into the MCP registry.
+// Execution remains owned by the daemon dispatcher; the registry handler is
+// only a fallback for direct registry calls without that dispatcher seam.
+bool agent_mcp_register_native_tool_view(
+        const std::vector<common_chat_tool> & tools,
+        const std::function<bool(const std::string &)> & is_read_only,
+        const std::function<bool(const std::string &)> & is_policy_gated,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error);
 
 agent_mcp_json agent_mcp_render_tool_call_result(
-    const agent_mcp_server_tool_result & result);
+        const agent_mcp_server_tool_result & result);

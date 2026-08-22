@@ -43,24 +43,28 @@ int main() {
             return 1;
         }
     }
+    std::vector<common_chat_tool> catalog_chat_tools;
     for (const auto & name : catalog_tools) {
         const auto * definition = catalog.find_definition(name);
-        if (definition == nullptr || !registry.register_tool({
-                definition->name,
-                definition->description,
-                common_tool_model_input_schema(*definition),
-                true,
-                false,
-                false,
-                false,
-                false,
-                [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) {
-                    return true;
-                },
-            }, error)) {
-            std::fprintf(stderr, "failed to inject catalog tool into MCP registry: %s\n", error.c_str());
+        if (definition == nullptr) {
+            std::fprintf(stderr, "catalog tool definition is unavailable: %s\n", name.c_str());
             return 1;
         }
+        catalog_chat_tools.push_back({
+            definition->name,
+            definition->description,
+            common_tool_model_input_schema(*definition),
+            common_tool_model_result_schema(*definition),
+        });
+    }
+    if (!agent_mcp_register_native_tool_view(
+            catalog_chat_tools,
+            [](const std::string &) { return true; },
+            [](const std::string &) { return false; },
+            registry,
+            error)) {
+        std::fprintf(stderr, "failed to inject catalog tool view into MCP registry: %s\n", error.c_str());
+        return 1;
     }
     if (!registry.register_tool({
             "echo",

@@ -268,25 +268,17 @@ int main(int argc, char ** argv) {
             catalog_error = "daemon HTTP catalog resolved no tool view";
             return false;
         }
-        for (const auto & tool : catalog_tooling.tool_view->chat_tools()) {
-            const bool read_only = catalog_tooling.tool_view->is_read_only(tool.name);
-            const bool policy_gated = catalog_tooling.tool_view->is_policy_gated(tool.name);
-            if (!registry.register_tool({
-                    tool.name,
-                    tool.description,
-                    tool.parameters,
-                    read_only,
-                    policy_gated,
-                    false,
-                    false,
-                    false,
-                    [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string & handler_error) {
-                        handler_error = "daemon HTTP catalog tools require the dispatcher executor";
-                        return false;
-                    },
-                }, catalog_error)) {
-                return false;
-            }
+        if (!agent_mcp_register_native_tool_view(
+                catalog_tooling.tool_view->chat_tools(),
+                [&tool_view = catalog_tooling.tool_view](const std::string & name) {
+                    return tool_view->is_read_only(name);
+                },
+                [&tool_view = catalog_tooling.tool_view](const std::string & name) {
+                    return tool_view->is_policy_gated(name);
+                },
+                registry,
+                catalog_error)) {
+            return false;
         }
         catalog_error.clear();
         return true;

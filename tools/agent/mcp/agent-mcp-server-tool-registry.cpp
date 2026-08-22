@@ -136,6 +136,38 @@ agent_mcp_json agent_mcp_render_tools_list_result(
     return {{"tools", std::move(tools)}};
 }
 
+bool agent_mcp_register_native_tool_view(
+        const std::vector<common_chat_tool> & tools,
+        const std::function<bool(const std::string &)> & is_read_only,
+        const std::function<bool(const std::string &)> & is_policy_gated,
+        agent_mcp_server_tool_registry & registry,
+        std::string & error) {
+    for (const auto & tool : tools) {
+        if (tool.name.empty()) {
+            error = "native MCP tool view contains an unnamed tool";
+            return false;
+        }
+        if (!registry.register_tool({
+                tool.name,
+                tool.description,
+                tool.parameters,
+                is_read_only ? is_read_only(tool.name) : true,
+                is_policy_gated ? is_policy_gated(tool.name) : false,
+                false,
+                false,
+                false,
+                [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string & handler_error) {
+                    handler_error = "native MCP tool requires the host dispatcher executor";
+                    return false;
+                },
+            }, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 agent_mcp_json agent_mcp_render_tool_call_result(
         const agent_mcp_server_tool_result & result) {
     agent_mcp_json rendered = {
