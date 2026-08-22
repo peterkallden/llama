@@ -49,6 +49,12 @@ param(
     [string]$OcrTesseractBackend = 'auto',
     [string]$OcrTesseractExecutable = 'tesseract',
     [string]$OcrTesseractExpectedVersion = '',
+    [ValidateSet('disabled', 'local_preferred', 'local_required', 'sandbox_preferred', 'sandbox_required')]
+    [string]$PandocExecution = 'disabled',
+    [ValidateSet('auto', 'local', 'docker', 'kubernetes', 'lxc')]
+    [string]$PandocBackend = 'auto',
+    [string]$PandocExecutable = 'pandoc',
+    [string]$PandocExpectedVersion = '',
     [string]$ProvidersFile
 )
 
@@ -97,6 +103,14 @@ if ($OcrTesseractExecution -ne 'disabled') {
     $processorPolicies['ocr.tesseract'] = [ordered]@{
         execution = $OcrTesseractExecution; backend = $OcrTesseractBackend
         executable = $OcrTesseractExecutable; expected_version = $OcrTesseractExpectedVersion
+    }
+}
+if ($PandocExecution -ne 'disabled') {
+    foreach ($policyId in @('docx.text', 'odt.text', 'html.text')) {
+        $processorPolicies[$policyId] = [ordered]@{
+            execution = $PandocExecution; backend = $PandocBackend
+            executable = $PandocExecutable; expected_version = $PandocExpectedVersion
+        }
     }
 }
 

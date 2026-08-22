@@ -122,13 +122,16 @@ enabled as follows:
   --pdf-page-image-backend auto \
   --ocr-tesseract-execution local_preferred \
   --ocr-tesseract-backend auto \
+  --pandoc-execution local_preferred \
+  --pandoc-backend auto \
   --output agent-daemon-config.json
 ```
 
 The backend values are `auto`, `local`, `docker`, `kubernetes` and `lxc`.
 The PowerShell names are `-PdfPageImageExecution`,
 `-PdfPageImageBackend`, `-OcrTesseractExecution` and
-`-OcrTesseractBackend`. Use `local_required` when silently falling back to a
+`-OcrTesseractBackend`, `-PandocExecution` and `-PandocBackend`. Use
+`local_required` when silently falling back to a
 sandbox is not acceptable.
 
 The generated file can then be used by the daemon:

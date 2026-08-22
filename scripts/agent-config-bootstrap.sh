@@ -49,6 +49,10 @@ Usage: agent-config-bootstrap.sh [options]
   --ocr-tesseract-backend BACKEND   auto, local, docker, kubernetes or lxc
   --ocr-tesseract-executable PATH   OCR executable (default: tesseract)
   --ocr-tesseract-version VERSION   Expected OCR version
+  --pandoc-execution MODE           disabled, local_preferred, local_required, sandbox_preferred or sandbox_required
+  --pandoc-backend BACKEND          auto, local, docker, kubernetes or lxc
+  --pandoc-executable PATH          Pandoc executable (default: pandoc)
+  --pandoc-version VERSION          Expected Pandoc version
   --help                     Show this help
 EOF
 }
@@ -106,6 +110,10 @@ ocr_tesseract_execution=disabled
 ocr_tesseract_backend=auto
 ocr_tesseract_executable=tesseract
 ocr_tesseract_version=
+pandoc_execution=disabled
+pandoc_backend=auto
+pandoc_executable=pandoc
+pandoc_version=
 
 list_tools() {
     cat <<'EOF'
@@ -190,6 +198,10 @@ while (($# > 0)); do
         --ocr-tesseract-backend) ocr_tesseract_backend=$2 ;;
         --ocr-tesseract-executable) ocr_tesseract_executable=$2 ;;
         --ocr-tesseract-version) ocr_tesseract_version=$2 ;;
+        --pandoc-execution) pandoc_execution=$2 ;;
+        --pandoc-backend) pandoc_backend=$2 ;;
+        --pandoc-executable) pandoc_executable=$2 ;;
+        --pandoc-version) pandoc_version=$2 ;;
         *) echo "Unknown option: $option" >&2; usage >&2; exit 2 ;;
     esac
     [[ $option == --help || $option == -h ]] || { [[ $# -ge 2 ]] || exit 2; shift 2; }
@@ -217,6 +229,8 @@ case $pdf_page_image_execution in disabled|local_preferred|local_required|sandbo
 case $ocr_tesseract_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
 case $pdf_page_image_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $ocr_tesseract_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
+case $pandoc_execution in disabled|local_preferred|local_required|sandbox_preferred|sandbox_required) ;; *) exit 2 ;; esac
+case $pandoc_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $lxc_network_mode in none|profile) ;; *) exit 2 ;; esac
 case $lxc_network_profile_scope in none|dns_only|allowlisted|package_registry|research_web) ;; *)
     echo "--lxc-network-profile-scope must be none, dns_only, allowlisted, package_registry or research_web" >&2
@@ -267,6 +281,8 @@ pdf_page_image_executable=$(escape_json "$pdf_page_image_executable")
 pdf_page_image_version=$(escape_json "$pdf_page_image_version")
 ocr_tesseract_executable=$(escape_json "$ocr_tesseract_executable")
 ocr_tesseract_version=$(escape_json "$ocr_tesseract_version")
+pandoc_executable=$(escape_json "$pandoc_executable")
+pandoc_version=$(escape_json "$pandoc_version")
 
 processor_policies_json=''
 if [[ $pdf_page_image_execution != disabled ]]; then
@@ -275,6 +291,13 @@ fi
 if [[ $ocr_tesseract_execution != disabled ]]; then
     [[ -n $processor_policies_json ]] && processor_policies_json+=', '
     processor_policies_json+="\"ocr.tesseract\":{\"execution\":\"$ocr_tesseract_execution\",\"backend\":\"$ocr_tesseract_backend\",\"executable\":\"$ocr_tesseract_executable\",\"expected_version\":\"$ocr_tesseract_version\"}"
+fi
+if [[ $pandoc_execution != disabled ]]; then
+    [[ -n $processor_policies_json ]] && processor_policies_json+=', '
+    for pandoc_policy_id in docx.text odt.text html.text; do
+        [[ $pandoc_policy_id != docx.text ]] && processor_policies_json+=', '
+        processor_policies_json+="\"$pandoc_policy_id\":{\"execution\":\"$pandoc_execution\",\"backend\":\"$pandoc_backend\",\"executable\":\"$pandoc_executable\",\"expected_version\":\"$pandoc_version\"}"
+    done
 fi
 processor_policies_suffix=
 if [[ -n $processor_policies_json ]]; then

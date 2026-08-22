@@ -24,6 +24,15 @@ if [[ ! -s "$config_file" ]]; then
         --default-mode "${LLAMA_AGENT_DEFAULT_MODE:-agent}" \
         --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-auto}" \
         --sandbox "${LLAMA_AGENT_SANDBOX:-none}" \
+        --pdf-page-image-execution "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTION:-local_preferred}" \
+        --pdf-page-image-backend "${LLAMA_AGENT_PDF_PAGE_IMAGE_BACKEND:-local}" \
+        --pdf-page-image-executable "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTABLE:-mutool}" \
+        --ocr-tesseract-execution "${LLAMA_AGENT_OCR_TESSERACT_EXECUTION:-local_preferred}" \
+        --ocr-tesseract-backend "${LLAMA_AGENT_OCR_TESSERACT_BACKEND:-local}" \
+        --ocr-tesseract-executable "${LLAMA_AGENT_OCR_TESSERACT_EXECUTABLE:-tesseract}" \
+        --pandoc-execution "${LLAMA_AGENT_PANDOC_EXECUTION:-local_preferred}" \
+        --pandoc-backend "${LLAMA_AGENT_PANDOC_BACKEND:-local}" \
+        --pandoc-executable "${LLAMA_AGENT_PANDOC_EXECUTABLE:-pandoc}" \
         --transport stdio
 fi
 
