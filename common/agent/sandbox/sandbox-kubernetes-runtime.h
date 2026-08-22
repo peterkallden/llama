@@ -39,7 +39,10 @@ public:
         result.network_none = true;
         result.cpu_limit = true;
         result.memory_limit = true;
-        result.process_limit = true;
+        // Kubernetes resource limits cover CPU and memory here. A portable
+        // per-pod process-count limit is not part of the Job manifest; the
+        // kubelet's podPidsLimit is a node-level setting outside this runtime.
+        result.process_limit = false;
         result.artifact_collection = true;
         return result;
     }

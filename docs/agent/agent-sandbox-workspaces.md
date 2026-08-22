@@ -40,7 +40,8 @@ Workspace roots and execution classes belong in host configuration:
       "executable": "lxc",
       "default_image": "ubuntu:24.04",
       "network_mode": "none",
-      "network_profile": "",
+      "network_profile": "llama-agent-network-none",
+      "network_profile_scope": "none",
       "cleanup": true
     },
     "workspace": {
@@ -102,12 +103,29 @@ honoured.
 LXC is an optional lightweight fallback for Linux hosts with LXC/Incus. It
 creates an ephemeral container, mounts the host-created source, writable and
 artifact directories at the standard workspace paths, and removes the container
-after completion when `cleanup` is enabled. The default `network_mode: none`
-exposes only the networkless capability. Set `network_mode: profile` together
-with an operator-managed `network_profile` to allow network use; the profile is
-host configuration and is never chosen by a tool or model. This is a capability
-declaration, not a promise that arbitrary LXC profiles provide the same network
-isolation as Kubernetes NetworkPolicy.
+after completion when `cleanup` is enabled. LXC limits are applied explicitly
+with `limits.cpu`, `limits.memory` and `limits.processes`; if LXC rejects one of
+those settings, execution fails closed instead of reporting an unenforced
+limit.
+
+LXC also requires an operator-managed profile for every execution. The profile
+must be named in `network_profile`, and `network_profile_scope` must describe
+the scope that profile actually enforces: `none`, `dns_only`, `allowlisted`,
+`package_registry` or `research_web`. A profile name by itself grants no
+network capability. The default example uses a profile that removes network
+access. A profile that permits network access must be configured with the
+matching declared scope; the model and tool cannot select or broaden it. This
+is an operator assertion about a separately managed LXC/Incus profile, not a
+claim that LXC provides Kubernetes NetworkPolicy semantics.
+
+Docker and Kubernetes advertise only capabilities backed by their generated
+runtime arguments/manifests. Docker currently supports `network=none`; its
+CPU, memory and process limits map to `--cpus`, `--memory` and `--pids-limit`.
+Kubernetes currently supports `network=none`; its Job manifest sets CPU and
+memory limits, read-only/security constraints and a deny-egress NetworkPolicy.
+It does not advertise a per-pod process limit because `podPidsLimit` is a
+kubelet/node setting outside this runtime. Broader network scopes remain
+unavailable for those backends until explicit allowlist enforcement exists.
 
 Processor execution modes have deterministic fallback semantics. With
 `backend: auto`, `local_preferred` tries local then sandbox, while

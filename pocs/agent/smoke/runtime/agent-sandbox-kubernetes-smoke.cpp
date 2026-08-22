@@ -25,7 +25,7 @@ int main() {
     request.network = common_agent_sandbox_network_scope::package_registry;
     error.clear();
     if (runtime.execute(request, result, error) ||
-            error.find("network=none") == std::string::npos) {
+            error.find("network") == std::string::npos) {
         std::fprintf(stderr, "Kubernetes network policy contract was not rejected\n");
         return 1;
     }

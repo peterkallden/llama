@@ -21,6 +21,8 @@ param(
     [string]$LxcImage = 'ubuntu:24.04',
     [ValidateSet('none', 'profile')] [string]$LxcNetworkMode = 'none',
     [string]$LxcNetworkProfile = '',
+    [ValidateSet('none', 'dns_only', 'allowlisted', 'package_registry', 'research_web')]
+    [string]$LxcNetworkProfileScope = 'none',
     [ValidateSet('stdio', 'mcp-http', 'jsonl-tcp', 'jsonl-unix')] [string]$Transport = 'stdio',
     [string]$Listen = '127.0.0.1',
     [ValidateRange(1, 65535)] [int]$Port = 8080,
@@ -74,8 +76,14 @@ if ($AuthMode -eq 'jwt' -and ([string]::IsNullOrWhiteSpace($JwtIssuer) -or [stri
 if ($EnableTools -and $AuthMode -eq 'none') {
     throw 'EnableTools requires AuthMode opaque or jwt'
 }
+if ($Sandbox -eq 'lxc' -and [string]::IsNullOrWhiteSpace($LxcNetworkProfile)) {
+    throw 'LxcNetworkProfile is required when Sandbox is lxc'
+}
 if ($LxcNetworkMode -eq 'profile' -and [string]::IsNullOrWhiteSpace($LxcNetworkProfile)) {
     throw 'LxcNetworkProfile is required when LxcNetworkMode is profile'
+}
+if ($LxcNetworkMode -eq 'none' -and $LxcNetworkProfileScope -ne 'none') {
+    throw 'LxcNetworkMode none requires LxcNetworkProfileScope none'
 }
 
 $processorPolicies = [ordered]@{}
@@ -125,7 +133,7 @@ $config = [ordered]@{
     sandbox = [ordered]@{
         backend = $Sandbox
         docker = [ordered]@{ executable = $SandboxExecutable; default_image = 'llama-agent-dev:latest' }
-        lxc = [ordered]@{ executable = $LxcExecutable; default_image = $LxcImage; network_mode = $LxcNetworkMode; network_profile = $LxcNetworkProfile; cleanup = $true }
+        lxc = [ordered]@{ executable = $LxcExecutable; default_image = $LxcImage; network_mode = $LxcNetworkMode; network_profile = $LxcNetworkProfile; network_profile_scope = $LxcNetworkProfileScope; cleanup = $true }
         kubernetes = [ordered]@{ namespace = 'llama-agent'; service_account = 'llama-agent-runner'; runtime_class = 'standard'; cleanup = $true }
         workspace = [ordered]@{
             root = "$CozoRoot/workspaces"; artifact_root = "$CozoRoot/artifacts"

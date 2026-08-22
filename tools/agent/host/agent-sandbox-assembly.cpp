@@ -74,6 +74,7 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
             config.lxc_default_image,
             config.lxc_network_mode,
             config.lxc_network_profile,
+            config.lxc_network_profile_scope,
             config.lxc_cleanup,
         });
 

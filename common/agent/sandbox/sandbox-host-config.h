@@ -17,6 +17,7 @@ struct common_agent_sandbox_host_config {
     std::string lxc_default_image = "ubuntu:24.04";
     std::string lxc_network_mode = "none";
     std::string lxc_network_profile;
+    std::string lxc_network_profile_scope = "none";
     bool lxc_cleanup = true;
     std::string kubernetes_executable = "kubectl";
     std::string kubernetes_kubeconfig;

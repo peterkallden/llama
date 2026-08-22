@@ -25,7 +25,8 @@ Usage: agent-config-bootstrap.sh [options]
   --lxc-executable PATH      LXC/Incus executable (default: lxc)
   --lxc-image IMAGE          Default LXC image (default: ubuntu:24.04)
   --lxc-network-mode MODE    none or profile (default: none)
-  --lxc-network-profile NAME Explicit LXC network profile when mode=profile
+  --lxc-network-profile NAME Explicit operator-managed LXC profile (required for LXC)
+  --lxc-network-profile-scope SCOPE  none, dns_only, allowlisted, package_registry or research_web
   --transport NAME           stdio, mcp-http, jsonl-tcp or jsonl-unix (default: stdio)
   --listen ADDRESS           Bind address (default: 127.0.0.1)
   --port N                   MCP/JSONL TCP port (default: 8080)
@@ -82,6 +83,7 @@ lxc_executable=lxc
 lxc_image=ubuntu:24.04
 lxc_network_mode=none
 lxc_network_profile=
+lxc_network_profile_scope=none
 transport=stdio
 listen=127.0.0.1
 port=8080
@@ -166,6 +168,7 @@ while (($# > 0)); do
         --lxc-image) lxc_image=$2 ;;
         --lxc-network-mode) lxc_network_mode=$2 ;;
         --lxc-network-profile) lxc_network_profile=$2 ;;
+        --lxc-network-profile-scope) lxc_network_profile_scope=$2 ;;
         --transport) transport=$2 ;;
         --listen) listen=$2 ;;
         --port) port=$2 ;;
@@ -215,8 +218,20 @@ case $ocr_tesseract_execution in disabled|local_preferred|local_required|sandbox
 case $pdf_page_image_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $ocr_tesseract_backend in auto|local|docker|kubernetes|lxc) ;; *) exit 2 ;; esac
 case $lxc_network_mode in none|profile) ;; *) exit 2 ;; esac
+case $lxc_network_profile_scope in none|dns_only|allowlisted|package_registry|research_web) ;; *)
+    echo "--lxc-network-profile-scope must be none, dns_only, allowlisted, package_registry or research_web" >&2
+    exit 2
+esac
+if [[ $sandbox == lxc && -z $lxc_network_profile ]]; then
+    echo "--lxc-network-profile is required when --sandbox=lxc" >&2
+    exit 2
+fi
 if [[ $lxc_network_mode == profile && -z $lxc_network_profile ]]; then
     echo "--lxc-network-profile is required when --lxc-network-mode=profile" >&2
+    exit 2
+fi
+if [[ $lxc_network_mode == none && $lxc_network_profile_scope != none ]]; then
+    echo "--lxc-network-mode=none requires --lxc-network-profile-scope=none" >&2
     exit 2
 fi
 if [[ $auth_mode == opaque && ( -z $token_env || -z $token_profile ) ]]; then exit 2; fi
@@ -247,6 +262,7 @@ lxc_executable=$(escape_json "$lxc_executable")
 lxc_image=$(escape_json "$lxc_image")
 lxc_network_mode=$(escape_json "$lxc_network_mode")
 lxc_network_profile=$(escape_json "$lxc_network_profile")
+lxc_network_profile_scope=$(escape_json "$lxc_network_profile_scope")
 pdf_page_image_executable=$(escape_json "$pdf_page_image_executable")
 pdf_page_image_version=$(escape_json "$pdf_page_image_version")
 ocr_tesseract_executable=$(escape_json "$ocr_tesseract_executable")
@@ -329,7 +345,7 @@ cat > "$output" <<EOF
   },
   "resources": {"blob_backend":"fs","blob_root":"$cozo_root/resources","metadata_backend":"cozo","metadata_db":"$cozo_root/resources.cozo"$processor_policies_suffix},
   "tools": {"profile":"$tool_profile","repository_root":"$repository_root","providers":$providers_json},
-  "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"lxc":{"executable":"$lxc_executable","default_image":"$lxc_image","network_mode":"$lxc_network_mode","network_profile":"$lxc_network_profile","cleanup":true},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
+  "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"lxc":{"executable":"$lxc_executable","default_image":"$lxc_image","network_mode":"$lxc_network_mode","network_profile":"$lxc_network_profile","network_profile_scope":"$lxc_network_profile_scope","cleanup":true},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
   "diagnostics": {"semantic_backend":"auto","clang_executable":"clang","clangd_executable":"clangd","compile_commands":"auto"},
   "mcp": {"inbound":{"enabled":$inbound,"listen":"$listen","port":$port,"path":"/mcp","agent_tools":false,"max_delegation_depth":1,$authorization}},
   "jsonl": {"tcp":{"enabled":$jsonl_tcp,"listen":"$listen","port":$port,"max_line_bytes":1048576,"idle_timeout_seconds":300},"unix_socket":{"enabled":$jsonl_unix,"path":"$unix_socket","mode":432}},

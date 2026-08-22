@@ -96,12 +96,19 @@ Podman or Kubernetes is unavailable:
   --sandbox lxc \
   --lxc-executable lxc \
   --lxc-image ubuntu:24.04 \
+  --lxc-network-profile llama-agent-network-none \
+  --lxc-network-profile-scope none \
   --output agent-daemon-config.json
 ```
 
-The LXC default is networkless. An operator-managed network profile can be
-enabled explicitly with `--lxc-network-mode profile --lxc-network-profile
-<profile>`.
+LXC requires an operator-managed profile on every execution. The profile name
+does not prove what the profile enforces, so its declared scope is explicit.
+Use `none` for a networkless profile. For a deliberately restricted network,
+use `--lxc-network-mode profile` together with a profile and one of
+`dns_only`, `allowlisted`, `package_registry` or `research_web`. The host
+advertises only the declared scope and rejects requests that it cannot prove
+the profile enforces; CPU, memory and process limits are applied with LXC
+instance limits and failure to set any requested limit aborts the operation.
 
 Resource processors remain sandboxed unless explicitly selected. For trusted
 hosts with MuPDF and Tesseract installed locally, local execution can be

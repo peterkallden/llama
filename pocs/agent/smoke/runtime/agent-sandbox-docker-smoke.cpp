@@ -37,7 +37,7 @@ int main() {
             result.exit_code != 0 || result.stdout_excerpt.find("docker-ok") == std::string::npos ||
             result.artifacts.empty()) {
         const std::string diagnostic = error + "\n" + result.error;
-        if (diagnostic == "unable to start Docker process" ||
+        if (diagnostic.find("unable to start Docker process") != std::string::npos ||
                 diagnostic.find("permission denied while trying to connect") != std::string::npos ||
                 diagnostic.find("Cannot connect to the Docker daemon") != std::string::npos ||
                 diagnostic.find("Access is denied") != std::string::npos ||

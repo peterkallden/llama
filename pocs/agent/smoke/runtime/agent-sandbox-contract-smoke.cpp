@@ -1,4 +1,6 @@
 #include "tools/agent/tooling/agent-sandbox-helper.h"
+#include "agent/sandbox/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-lxc-runtime.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -39,6 +41,52 @@ int main() {
     if (common_agent_sandbox_validate_capabilities(
             capability_request, docker_capabilities, capability_error)) {
         std::fprintf(stderr, "Unsupported Docker network scope was accepted\n");
+        return 1;
+    }
+
+    common_agent_sandbox_kubernetes_runtime kubernetes_runtime;
+    const auto kubernetes_capabilities = kubernetes_runtime.capabilities();
+    if (!kubernetes_capabilities.process_isolation ||
+            !kubernetes_capabilities.network_none ||
+            !kubernetes_capabilities.cpu_limit ||
+            !kubernetes_capabilities.memory_limit ||
+            kubernetes_capabilities.process_limit ||
+            kubernetes_capabilities.network_package_registry) {
+        std::fprintf(stderr, "Kubernetes capability declaration is inconsistent\n");
+        return 1;
+    }
+
+    common_agent_sandbox_lxc_runtime lxc_without_profile({
+        "lxc", "ubuntu:24.04", "none", "", "none", true,
+    });
+    const auto lxc_without_profile_capabilities = lxc_without_profile.capabilities();
+    if (!lxc_without_profile_capabilities.process_isolation ||
+            !lxc_without_profile_capabilities.cpu_limit ||
+            !lxc_without_profile_capabilities.memory_limit ||
+            !lxc_without_profile_capabilities.process_limit ||
+            lxc_without_profile_capabilities.network_none ||
+            lxc_without_profile_capabilities.network_allowlisted) {
+        std::fprintf(stderr, "LXC capability declaration overstates an unconfigured profile\n");
+        return 1;
+    }
+
+    common_agent_sandbox_lxc_runtime lxc_allowlisted({
+        "lxc", "ubuntu:24.04", "profile", "agent-network-allowlisted", "allowlisted", true,
+    });
+    const auto lxc_allowlisted_capabilities = lxc_allowlisted.capabilities();
+    if (!lxc_allowlisted_capabilities.network_allowlisted ||
+            lxc_allowlisted_capabilities.network_none ||
+            lxc_allowlisted_capabilities.network_research_web) {
+        std::fprintf(stderr, "LXC network profile capability declaration is inconsistent\n");
+        return 1;
+    }
+    capability_request.network = common_agent_sandbox_network_scope::allowlisted;
+    capability_request.limits.memory_bytes = 1024 * 1024;
+    capability_request.limits.process_count = 8;
+    if (!common_agent_sandbox_validate_capabilities(
+            capability_request, lxc_allowlisted_capabilities, capability_error)) {
+        std::fprintf(stderr, "LXC resource/network capability check unexpectedly failed: %s\n",
+            capability_error.c_str());
         return 1;
     }
 

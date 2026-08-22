@@ -10,6 +10,9 @@ struct common_agent_lxc_sandbox_config {
     std::string default_image = "ubuntu:24.04";
     std::string network_mode = "none";
     std::string network_profile;
+    // The operator declares which network scope the named profile actually
+    // enforces. An arbitrary profile name must not imply every network scope.
+    std::string network_profile_scope = "none";
     bool cleanup = true;
 };
 

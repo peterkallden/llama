@@ -32,7 +32,8 @@
       "executable": "lxc",
       "default_image": "ubuntu:24.04",
       "network_mode": "none",
-      "network_profile": "",
+      "network_profile": "llama-agent-network-none",
+      "network_profile_scope": "none",
       "cleanup": true
     },
     "kubernetes": {

@@ -16,10 +16,18 @@ int main() {
     std::filesystem::create_directories(root / "artifacts");
     const char * executable = std::getenv("LLAMA_AGENT_LXC_EXECUTABLE");
     const char * image = std::getenv("LLAMA_AGENT_LXC_IMAGE");
+    const char * network_profile = std::getenv("LLAMA_AGENT_LXC_NETWORK_PROFILE");
+    if (network_profile == nullptr || *network_profile == '\0') {
+        std::printf("lxc_sandbox_smoke=skipped\n");
+        return 77;
+    }
+    const char * network_scope = std::getenv("LLAMA_AGENT_LXC_NETWORK_PROFILE_SCOPE");
     common_agent_sandbox_lxc_runtime runtime({
         executable != nullptr && *executable != '\0' ? executable : "lxc",
         image != nullptr && *image != '\0' ? image : "ubuntu:24.04",
-        "none", {}, true,
+        "none", network_profile,
+        network_scope != nullptr && *network_scope != '\0' ? network_scope : "none",
+        true,
     });
     common_agent_sandbox_request request;
     request.operation_id = "lxc-smoke-1";

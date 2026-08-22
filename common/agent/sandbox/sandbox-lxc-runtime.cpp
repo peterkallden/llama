@@ -100,6 +100,27 @@ bool add_mount(
     return run_command(args, timeout_ms, 4096, output, error);
 }
 
+bool set_limit(
+        const std::string & executable,
+        const std::string & container,
+        const char * key,
+        const std::string & value,
+        uint32_t timeout_ms,
+        std::string & error) {
+    std::string output;
+    return run_command({executable, "config", "set", container, key, value},
+        timeout_ms, 4096, output, error);
+}
+
+void cleanup_container(
+        const std::string & executable,
+        const std::string & container) {
+    std::string output;
+    std::string ignored_error;
+    run_command({executable, "stop", container, "--force"}, 30000, 4096, output, ignored_error);
+    run_command({executable, "delete", container}, 30000, 4096, output, ignored_error);
+}
+
 void collect_artifacts(
         const common_agent_sandbox_request & request,
         common_agent_sandbox_result & result) {
@@ -133,15 +154,24 @@ common_agent_sandbox_capabilities common_agent_sandbox_lxc_runtime::capabilities
     result.filesystem_readonly = true;
     result.filesystem_workspace_write = true;
     result.filesystem_artifact_write = true;
-    result.network_none = config.network_mode == "none";
-    const bool configured_network = config.network_mode == "profile" && !config.network_profile.empty();
-    result.network_dns_only = configured_network;
-    result.network_allowlisted = configured_network;
-    result.network_package_registry = configured_network;
-    result.network_research_web = configured_network;
+    // A profile name alone says nothing about what it enforces. Only the
+    // operator-declared scope of a configured profile becomes a capability.
+    if (!config.network_profile.empty()) {
+        if (config.network_profile_scope == "none") {
+            result.network_none = true;
+        } else if (config.network_profile_scope == "dns_only") {
+            result.network_dns_only = true;
+        } else if (config.network_profile_scope == "allowlisted") {
+            result.network_allowlisted = true;
+        } else if (config.network_profile_scope == "package_registry") {
+            result.network_package_registry = true;
+        } else if (config.network_profile_scope == "research_web") {
+            result.network_research_web = true;
+        }
+    }
     result.cpu_limit = true;
     result.memory_limit = true;
-    result.process_limit = false;
+    result.process_limit = true;
     result.artifact_collection = true;
     return result;
 }
@@ -169,15 +199,38 @@ bool common_agent_sandbox_lxc_runtime::execute(
         result.error = error;
         return false;
     }
+    if (config.network_profile.empty()) {
+        error = "LXC sandbox requires an explicit operator-managed network profile";
+        result.error = error;
+        return false;
+    }
 
     std::vector<std::string> launch{executable, "launch", image, container};
-    if (config.network_mode == "profile" && !config.network_profile.empty()) {
+    if (!config.network_profile.empty()) {
         launch.push_back("--profile");
         launch.push_back(config.network_profile);
     }
     std::string output;
     if (!run_command(launch, request.limits.timeout_ms, request.limits.max_output_bytes, output, error)) {
         result.error = error;
+        return false;
+    }
+
+    // LXC/Incus resource limits are instance configuration, not properties of
+    // the host request. Apply every requested limit and fail closed if the
+    // runtime cannot enforce one.
+    if (!set_limit(executable, container, "limits.cpu",
+            std::to_string(request.limits.cpu_count), request.limits.timeout_ms, error) ||
+            (request.limits.memory_bytes != 0 && !set_limit(
+                executable, container, "limits.memory",
+                std::to_string(request.limits.memory_bytes) + "B",
+                request.limits.timeout_ms, error)) ||
+            (request.limits.process_count != 0 && !set_limit(
+                executable, container, "limits.processes",
+                std::to_string(request.limits.process_count),
+                request.limits.timeout_ms, error))) {
+        result.error = error;
+        if (config.cleanup) cleanup_container(executable, container);
         return false;
     }
 
@@ -193,8 +246,7 @@ bool common_agent_sandbox_lxc_runtime::execute(
             request.limits.timeout_ms, error)) {
         result.error = error;
         if (config.cleanup) {
-            run_command({executable, "stop", container, "--force"}, 30000, 4096, output, error);
-            run_command({executable, "delete", container}, 30000, 4096, output, error);
+            cleanup_container(executable, container);
         }
         return false;
     }
@@ -210,9 +262,7 @@ bool common_agent_sandbox_lxc_runtime::execute(
     const bool ok = run_command(exec, request.limits.timeout_ms, request.limits.max_output_bytes,
         result.stdout_excerpt, error);
     if (config.cleanup) {
-        std::string cleanup_error;
-        run_command({executable, "stop", container, "--force"}, 30000, 4096, output, cleanup_error);
-        run_command({executable, "delete", container}, 30000, 4096, output, cleanup_error);
+        cleanup_container(executable, container);
     }
     if (!ok) {
         result.error = error;

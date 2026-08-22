@@ -396,6 +396,7 @@ bool parse_agent_host_config_json(
             read_optional(lxc, "default_image", config.sandbox.lxc_default_image);
             read_optional(lxc, "network_mode", config.sandbox.lxc_network_mode);
             read_optional(lxc, "network_profile", config.sandbox.lxc_network_profile);
+            read_optional(lxc, "network_profile_scope", config.sandbox.lxc_network_profile_scope);
             read_optional(lxc, "cleanup", config.sandbox.lxc_cleanup);
         }
         if (sandbox.contains("kubernetes")) {
@@ -870,6 +871,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"default_image", config.sandbox.lxc_default_image},
                 {"network_mode", config.sandbox.lxc_network_mode},
                 {"network_profile", config.sandbox.lxc_network_profile},
+                {"network_profile_scope", config.sandbox.lxc_network_profile_scope},
                 {"cleanup", config.sandbox.lxc_cleanup},
             }},
             {"kubernetes", {
@@ -1182,9 +1184,23 @@ bool validate_agent_host_config(
         error = "sandbox.lxc.network_mode must be none or profile";
         return false;
     }
-    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode == "profile" &&
-            config.sandbox.lxc_network_profile.empty()) {
-        error = "sandbox.lxc.network_profile is required when network_mode is profile";
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_profile.empty()) {
+        error = "sandbox.lxc.network_profile is required; use an operator-managed profile that enforces the declared network scope";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" &&
+            config.sandbox.lxc_network_profile_scope != "none" &&
+            config.sandbox.lxc_network_profile_scope != "dns_only" &&
+            config.sandbox.lxc_network_profile_scope != "allowlisted" &&
+            config.sandbox.lxc_network_profile_scope != "package_registry" &&
+            config.sandbox.lxc_network_profile_scope != "research_web") {
+        error = "sandbox.lxc.network_profile_scope must be none, dns_only, allowlisted, package_registry or research_web";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode == "none" &&
+            !config.sandbox.lxc_network_profile.empty() &&
+            config.sandbox.lxc_network_profile_scope != "none") {
+        error = "sandbox.lxc network_mode none requires a network_profile_scope of none";
         return false;
     }
     if (config.sandbox.backend == "kubernetes" && config.sandbox.kubernetes_namespace.empty()) {

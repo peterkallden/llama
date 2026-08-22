@@ -590,6 +590,37 @@ duplicate normalized names fail with an ambiguity error rather than selecting
 arbitrarily. The catalog can therefore expose both `Budget summary` and table
 index `1` without making a display name part of the canonical dataset URI.
 
+### Family, workflow, blueprint and procedure
+
+These four terms are deliberately different and must not become four names
+for the same execution object:
+
+| Concept | Purpose | Model-facing? | Owns execution identity? |
+| --- | --- | --- | --- |
+| **Family** | A bounded catalog namespace such as `dataset`, `data` or `statistics`; used to stage tool exposure. | Yes, as a short description and selection target. | No. |
+| **Workflow** | A compact recipe describing a useful order of semantic operations and optional slots. | Yes, as assistance for choosing a plan. | No. It expands into the ordinary plan model. |
+| **Blueprint** | A host-owned reusable task template with fixed intent, constraints, success criteria and, where applicable, plan structure. | Indirectly; the model may select or parameterize one. | Yes, after host instantiation into a normal plan. |
+| **Procedure** | Durable learned or curated guidance about how to approach a task. | As guidance or memory. | No. It never grants a tool or schedules execution. |
+
+The staged path is therefore:
+
+```text
+request
+  -> select families
+  -> optionally select a workflow
+  -> expose compact contracts for the selected scope
+  -> generate the ordinary plan
+  -> host validates and executes that plan
+```
+
+Families and workflows are projections over the already authorized host tool
+view. They can reduce context and guide composition, but they cannot grant
+permissions, create a second scheduler or introduce a second execution IR.
+Workflow expansion must end at the same normal plan representation used by a
+direct model-generated plan. Blueprints are the appropriate host-owned place
+for durable templates; procedures remain advice and memory rather than hidden
+plan steps.
+
 ### Generated tool-family index
 
 The host can generate a compact family index from the already resolved
