@@ -34,6 +34,7 @@ struct common_native_tool_bindings {
     std::function<common_tool_execution_result(const std::string &)> diagnostics_symbol;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_references;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_call_hierarchy;
+    std::function<common_tool_execution_result(const std::string &)> diagnostics_native_crash;
     std::function<bool(const std::string &, std::vector<float> &, std::string &)> embed_memory_query;
     std::function<common_tool_execution_result(const std::string &)> memory_remember_proposal;
     std::function<common_tool_execution_result(common_agent_sandbox_request)> sandbox_execute;

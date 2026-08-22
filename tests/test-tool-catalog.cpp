@@ -79,7 +79,14 @@ int main() {
     const auto * dataset_validate = catalog.find_definition("dataset.validate");
     const auto * artifact_export = catalog.find_definition("artifact.export");
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
-    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && value_counts);
+    const auto * native_crash = catalog.find_definition("diagnostics.native_crash");
+    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && value_counts && native_crash);
+    const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);
+    const auto native_crash_model_result = nlohmann::json::parse(native_crash->result_schema_json);
+    assert(native_crash_input["required"].size() == 2);
+    assert(native_crash_input["properties"]["executable"].value("x-agent-type", "") == "resource_ref");
+    assert(native_crash_input["properties"]["dump"].value("x-agent-type", "") == "resource_ref");
+    assert(!native_crash_model_result["properties"].contains("raw_output"));
     const auto document_tables_result = nlohmann::json::parse(document_tables->result_schema_json);
     const auto document_table_result = nlohmann::json::parse(document_table->result_schema_json);
     const auto document_tables_input = nlohmann::json::parse(document_tables->input_schema_json);

@@ -452,6 +452,7 @@ do not select implementations or host paths.
 | `diagnostics.test_failures` | Host-native analysis | Groups normalized failures and classifies common causes | Limited | CTest/JUnit/JSON parsers, stack traces and cross-run grouping |
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
+| `diagnostics.native_crash` | Host-native analysis | Analyzes an executable plus a post-mortem core/dump through the configured debugger provider | Contract-level | GDB/MI and CDB providers, symbol quality, bounded stacks and crash smokes |
 | `artifact.export` | Store-backed artifact | Publishes bounded text or dataset results through the host resource store | Limited | Binary formats and richer provenance/retention policy |
 
 Maturity is a capability status, not a quality rating:
@@ -1299,6 +1300,73 @@ references, but should not become the canonical source for project symbols.
 Clang/clangd is an optional host capability: its absence does not disable the
 diagnostic contracts, but limits results to the explicit fallback backend until
 a semantic provider is configured.
+
+### Native crash diagnostics
+
+`diagnostics.native_crash` is a backend-neutral post-mortem contract. The model
+provides host-owned references to an executable and a core/dump; it never
+selects GDB, CDB, debugger commands, symbol servers or a process identifier.
+The host selects the provider and normalizes its output into signal or
+exception, fault location, bounded stack frames, symbol quality and a concise
+summary.
+
+The first providers are GDB on Linux and CDB on Windows. GDB uses a
+machine-oriented command path where practical; CDB uses its native dump
+analysis commands and a bounded structured/text parser. Provider-specific
+output is retained only as bounded host diagnostic evidence and is not part of
+the normal model-facing result.
+
+The host configuration is:
+
+```json
+{
+  "diagnostics": {
+    "native_crash_backend": "auto",
+    "gdb_executable": "gdb",
+    "cdb_executable": "cdb.exe",
+    "native_crash_timeout_ms": 30000,
+    "native_crash_max_frames": 64,
+    "native_crash_max_threads": 16,
+    "native_crash_max_output_bytes": 262144
+  }
+}
+```
+
+`auto` selects the platform provider, while `none` disables native crash
+analysis. The debugger is invoked with argument-separated process parameters,
+bounded time/output limits and host-owned paths. It must not become a shell
+escape hatch. Live attach, arbitrary execution under a debugger and hang
+analysis are separate follow-up contracts; the initial contract is only
+`executable + dump` post-mortem analysis.
+
+The provider seam is deliberately independent from the tool adapter:
+
+```text
+diagnostics.native_crash
+        -> host resource/path validation
+        -> debugger provider (GDB or CDB)
+        -> bounded parser
+        -> native-crash result contract
+        -> compact tool observation
+```
+
+Without a configured provider the tool fails closed with
+`tool.diagnostics.native_crash.backend_unavailable`; it never falls back to an
+unsandboxed arbitrary debugger command.
+
+The model-free contract smoke always runs with fixture output. The optional
+provider smoke is environment-gated and can be run with a prepared executable
+and dump:
+
+```bash
+LLAMA_AGENT_NATIVE_CRASH_SMOKE_ROOT=/workspace/project \
+LLAMA_AGENT_NATIVE_CRASH_SMOKE_EXECUTABLE=bin/llama-agent \
+LLAMA_AGENT_NATIVE_CRASH_SMOKE_DUMP=artifacts/core \
+ctest --test-dir build -R test-agent-native-crash-smoke --output-on-failure
+```
+
+Without these host-owned paths the smoke is reported as not run rather than
+pretending that a debugger backend was tested.
 
 ### Optional clang tool support
 

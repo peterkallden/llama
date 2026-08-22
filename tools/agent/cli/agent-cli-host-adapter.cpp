@@ -15,6 +15,7 @@
 #include "agent/sandbox/sandbox-local-runtime.h"
 #include "agent/sandbox/sandbox-runtime.h"
 #include "../diagnostics/agent-clangd-provider.h"
+#include "../diagnostics/agent-native-crash.h"
 #include "../data/agent-data-store-factory.h"
 #include "../data/agent-dataset-importer.h"
 #include "../tooling/agent-sandbox-helper.h"
@@ -514,6 +515,22 @@ bool resolve_agent_host_tool_selection(
             bindings.diagnostics_call_hierarchy = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };
         }
 #endif
+        if (request.diagnostics.native_crash_backend != "none") {
+            const auto native_crash_limits = agent_native_crash_limits{
+                request.diagnostics.native_crash_timeout_ms,
+                request.diagnostics.native_crash_max_frames,
+                request.diagnostics.native_crash_max_threads,
+                request.diagnostics.native_crash_max_output_bytes,
+            };
+            bindings.diagnostics_native_crash = [
+                    backend = request.diagnostics.native_crash_backend,
+                    gdb = request.diagnostics.gdb_executable,
+                    cdb = request.diagnostics.cdb_executable,
+                    repository_root = request.repository_root,
+                    native_crash_limits](const std::string & input) {
+                return agent_execute_native_crash(input, backend, gdb, cdb, repository_root, native_crash_limits);
+            };
+        }
         if (embedding_provider != nullptr) {
             bindings.embed_memory_query = [provider = embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
                 return provider != nullptr &&

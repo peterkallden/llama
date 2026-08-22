@@ -539,6 +539,13 @@ bool parse_agent_host_config_json(
         read_optional(diagnostics, "clang_executable", config.diagnostics.clang_executable);
         read_optional(diagnostics, "clangd_executable", config.diagnostics.clangd_executable);
         read_optional(diagnostics, "compile_commands", config.diagnostics.compile_commands);
+        read_optional(diagnostics, "native_crash_backend", config.diagnostics.native_crash_backend);
+        read_optional(diagnostics, "gdb_executable", config.diagnostics.gdb_executable);
+        read_optional(diagnostics, "cdb_executable", config.diagnostics.cdb_executable);
+        read_optional(diagnostics, "native_crash_timeout_ms", config.diagnostics.native_crash_timeout_ms);
+        read_optional(diagnostics, "native_crash_max_frames", config.diagnostics.native_crash_max_frames);
+        read_optional(diagnostics, "native_crash_max_threads", config.diagnostics.native_crash_max_threads);
+        read_optional(diagnostics, "native_crash_max_output_bytes", config.diagnostics.native_crash_max_output_bytes);
     }
 
     if (parsed.contains("mcp") && parsed["mcp"].is_object()) {
@@ -859,6 +866,13 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"clang_executable", config.diagnostics.clang_executable},
             {"clangd_executable", config.diagnostics.clangd_executable},
             {"compile_commands", config.diagnostics.compile_commands},
+            {"native_crash_backend", config.diagnostics.native_crash_backend},
+            {"gdb_executable", config.diagnostics.gdb_executable},
+            {"cdb_executable", config.diagnostics.cdb_executable},
+            {"native_crash_timeout_ms", config.diagnostics.native_crash_timeout_ms},
+            {"native_crash_max_frames", config.diagnostics.native_crash_max_frames},
+            {"native_crash_max_threads", config.diagnostics.native_crash_max_threads},
+            {"native_crash_max_output_bytes", config.diagnostics.native_crash_max_output_bytes},
         }},
         {"sandbox", {
             {"backend", config.sandbox.backend},
@@ -1048,12 +1062,30 @@ bool validate_agent_host_config(
         error = "diagnostics.semantic_backend must be auto, text, clang, or clangd";
         return false;
     }
+    if (config.diagnostics.native_crash_backend != "auto" &&
+            config.diagnostics.native_crash_backend != "gdb" &&
+            config.diagnostics.native_crash_backend != "cdb" &&
+            config.diagnostics.native_crash_backend != "none") {
+        error = "diagnostics.native_crash_backend must be auto, gdb, cdb, or none";
+        return false;
+    }
     if (config.diagnostics.clang_executable.empty() || config.diagnostics.clangd_executable.empty()) {
         error = "diagnostics clang executable names must not be empty";
         return false;
     }
     if (config.diagnostics.compile_commands.empty()) {
         error = "diagnostics.compile_commands must not be empty";
+        return false;
+    }
+    if (config.diagnostics.gdb_executable.empty() || config.diagnostics.cdb_executable.empty()) {
+        error = "diagnostics native crash debugger executable names must not be empty";
+        return false;
+    }
+    if (config.diagnostics.native_crash_timeout_ms < 100 || config.diagnostics.native_crash_timeout_ms > 600000 ||
+            config.diagnostics.native_crash_max_frames < 1 || config.diagnostics.native_crash_max_frames > 1024 ||
+            config.diagnostics.native_crash_max_threads < 1 || config.diagnostics.native_crash_max_threads > 256 ||
+            config.diagnostics.native_crash_max_output_bytes < 4096 || config.diagnostics.native_crash_max_output_bytes > 16 * 1024 * 1024) {
+        error = "diagnostics native crash limits are out of bounds";
         return false;
     }
     if (config.inbound_mcp_enabled) {

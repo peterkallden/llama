@@ -40,6 +40,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
     ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+    ../../tools/agent/diagnostics/agent-native-crash.cpp
     ../../tools/agent/daemon/agent-daemon-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
@@ -272,6 +273,7 @@ add_library(llama-agent-diagnostics
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
     ../../tools/agent/diagnostics/agent-clangd-provider.cpp
+    ../../tools/agent/diagnostics/agent-native-crash.cpp
 )
 target_include_directories(llama-agent-diagnostics PUBLIC
     ${PROJECT_SOURCE_DIR}
@@ -1961,6 +1963,8 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-continuation
     test-agent-research-contract
     test-agent-clangd-protocol
+    test-agent-native-crash
+    test-agent-native-crash-smoke
     test-agent-config-bootstrap
     test-memory-store
     test-memory-retrieval

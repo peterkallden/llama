@@ -220,6 +220,7 @@ int main() {
         {"diagnostics.call_hierarchy", 1, true, "{}"},
         {"diagnostics.format", 1, true, "{}"},
         {"diagnostics.include_graph", 1, true, "{}"},
+        {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
     };
     foundation_profile.allow_policy_gated_writes = true;
@@ -263,6 +264,8 @@ int main() {
     assert(result.ok && result.output.find("\"references\"") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.call_hierarchy", R"({"symbol":"needle"})"});
     assert(!result.ok && result.failure_code == "tool.diagnostics.call_hierarchy.unavailable");
+    result = foundation_registry.execute({"diagnostics.native_crash", R"({"executable":"bin/agent","dump":"artifacts/core"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.native_crash.backend_unavailable");
     result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"FAILED src/a.cpp:42 assertion expected 1\nFAILED src/b.cpp:42 assertion expected 2\nctest: timeout after 120000ms\n"})"});
     assert(result.ok && result.output.find("assertion_failure") != std::string::npos && result.output.find("timeout") != std::string::npos && result.output.find("\"count\":2") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});

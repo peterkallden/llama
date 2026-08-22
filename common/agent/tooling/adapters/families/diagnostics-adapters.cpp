@@ -103,7 +103,7 @@ bool common_try_register_diagnostics_tool_adapter(
         std::string & error) {
     installed = false;
     const auto id = definition.executor_id;
-    const bool is_diagnostics = id == "builtin.diagnostics.compile" || id == "builtin.diagnostics.symbol" || id == "builtin.diagnostics.references" || id == "builtin.diagnostics.call_hierarchy" || id == "builtin.diagnostics.test_failures" || id == "builtin.diagnostics.format" || id == "builtin.diagnostics.include_graph";
+    const bool is_diagnostics = id == "builtin.diagnostics.compile" || id == "builtin.diagnostics.symbol" || id == "builtin.diagnostics.references" || id == "builtin.diagnostics.call_hierarchy" || id == "builtin.diagnostics.test_failures" || id == "builtin.diagnostics.format" || id == "builtin.diagnostics.include_graph" || id == "builtin.diagnostics.native_crash";
     if (!is_diagnostics) return false;
     if (id == "builtin.diagnostics.compile") {
         installed = common_adapter_register_definition(definition, registry, [](const std::string & input) {
@@ -137,6 +137,16 @@ bool common_try_register_diagnostics_tool_adapter(
             json groups = json::array(); std::map<std::string, size_t> indices; std::istringstream lines(args["result"].get<std::string>()); std::string line;
             while (std::getline(lines, line)) { const auto lower = lower_copy(line); if (lower.find("failed") == std::string::npos && lower.find("failure") == std::string::npos && lower.find("error") == std::string::npos && lower.find("timeout") == std::string::npos && lower.find("assert") == std::string::npos) continue; const auto classification = classify_failure(line); const auto normalized = normalize_failure_message(line); const auto key = classification + "|" + normalized; const auto found = indices.find(key); if (found == indices.end()) { if (groups.size() >= 64) continue; indices.emplace(key, groups.size()); groups.push_back({{"classification", classification}, {"message", normalized}, {"count", 1}, {"examples", json::array({line.substr(0, 1024)})}}); } else { auto & group = groups[found->second]; group["count"] = group["count"].get<size_t>() + 1; if (group["examples"].size() < 3) group["examples"].push_back(line.substr(0, 1024)); } }
             return common_adapter_success_json({{"failure_groups", groups}, {"count", groups.size()}, {"backend", "bounded-text"}});
+        }, error);
+    } else if (id == "builtin.diagnostics.native_crash") {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            std::string error; json args;
+            if (!common_adapter_parse_object(input, args, error) || !args.contains("executable") || !args["executable"].is_string() || !args.contains("dump") || !args["dump"].is_string())
+                return common_adapter_validation_failure("tool.diagnostics.native_crash.invalid_arguments", "diagnostics.native_crash requires executable and dump resources");
+            if (args["executable"].get<std::string>().empty() || args["executable"].get<std::string>().size() > 1024 || args["dump"].get<std::string>().empty() || args["dump"].get<std::string>().size() > 1024)
+                return common_adapter_validation_failure("tool.diagnostics.native_crash.invalid_arguments", "diagnostics.native_crash resource references are out of bounds");
+            if (bindings.diagnostics_native_crash) return bindings.diagnostics_native_crash(input);
+            return common_adapter_execution_failure("tool.diagnostics.native_crash.backend_unavailable", "native crash diagnostics provider is not configured", "Native crash analysis is unavailable on this host.");
         }, error);
     } else if (id == "builtin.diagnostics.format") {
         installed = common_adapter_register_definition(definition, registry, [](const std::string & input) { std::string error; json args; if (!common_adapter_parse_object(input, args, error) || !args.contains("output") || !args["output"].is_string()) return common_adapter_validation_failure("tool.diagnostics.format.invalid_output", "diagnostics.format requires formatter output"); const auto text = args["output"].get<std::string>(); json files = json::array(); std::istringstream lines(text); std::string line; while (std::getline(lines, line) && files.size() < 256) if (line.find("would reformat") != std::string::npos || line.find("needs formatting") != std::string::npos) files.push_back(line); return common_adapter_success_json({{"formatted", files.empty()}, {"files", files}, {"raw_output", text.substr(0, 65536)}}); }, error);

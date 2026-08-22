@@ -171,7 +171,14 @@
     "semantic_backend": "auto",
     "clang_executable": "clang",
     "clangd_executable": "clangd",
-    "compile_commands": "auto"
+    "compile_commands": "auto",
+    "native_crash_backend": "auto",
+    "gdb_executable": "gdb",
+    "cdb_executable": "cdb.exe",
+    "native_crash_timeout_ms": 30000,
+    "native_crash_max_frames": 64,
+    "native_crash_max_threads": 16,
+    "native_crash_max_output_bytes": 262144
   },
   "mcp": {
     "inbound": {
