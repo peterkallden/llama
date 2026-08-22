@@ -1,21 +1,67 @@
 #include "tools/agent/mcp/agent-mcp-http-server.h"
 #include "tools/agent/daemon/agent-daemon-dispatcher.h"
 #include "tools/agent/daemon/agent-daemon-event-collector.h"
+#include "agent/tooling/catalog/model-projection.h"
+#include "agent/tooling/catalog/tool-catalog.h"
 
 #include <cpp-httplib/httplib.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <atomic>
 #include <thread>
+#include <vector>
 
 using json = nlohmann::ordered_json;
 
 int main() {
     agent_mcp_server_tool_registry registry;
     std::string error;
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    if (!catalog.bootstrap("all-configured", bootstrap, error)) {
+        std::fprintf(stderr, "failed to bootstrap catalog for MCP exposure smoke: %s\n", error.c_str());
+        return 1;
+    }
+
+    const std::vector<std::string> catalog_tools = {
+        "diagnostics.native_crash",
+        "dataset.select",
+        "data.aggregate",
+        "document.table",
+        "artifact.export",
+    };
+    const auto profile_tools = catalog.load_profile("all-configured", error);
+    for (const auto & name : catalog_tools) {
+        if (std::find_if(profile_tools.begin(), profile_tools.end(), [&name](const auto & definition) {
+                return definition.name == name;
+            }) == profile_tools.end()) {
+            std::fprintf(stderr, "catalog tool is missing from all-configured MCP profile: %s\n", name.c_str());
+            return 1;
+        }
+    }
+    for (const auto & name : catalog_tools) {
+        const auto * definition = catalog.find_definition(name);
+        if (definition == nullptr || !registry.register_tool({
+                definition->name,
+                definition->description,
+                common_tool_model_input_schema(*definition),
+                true,
+                false,
+                false,
+                false,
+                false,
+                [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) {
+                    return true;
+                },
+            }, error)) {
+            std::fprintf(stderr, "failed to inject catalog tool into MCP registry: %s\n", error.c_str());
+            return 1;
+        }
+    }
     if (!registry.register_tool({
             "echo",
             "HTTP inbound smoke echo",
@@ -54,7 +100,8 @@ int main() {
 
     auto authenticator = std::make_shared<agent_mcp_opaque_token_authenticator>();
     if (!authenticator->register_token("http-smoke-token-a", {
-            "caller-a", "llama-agent", "namespace-a", "project-a", "minimal", {"echo"}, false,
+            "caller-a", "llama-agent", "namespace-a", "project-a", "minimal",
+            {"echo", "diagnostics.native_crash", "dataset.select", "data.aggregate", "document.table", "artifact.export"}, false,
         }, error) ||
             !authenticator->register_token("http-smoke-token-b", {
                 "caller-b", "llama-agent", "namespace-b", "project-b", "restricted", {"not-echo"}, false,
@@ -356,7 +403,18 @@ int main() {
     const auto other_listed_json = other_listed ? json::parse(other_listed->body, nullptr, false) : json();
     const auto other_called_json = other_called ? json::parse(other_called->body, nullptr, false) : json();
     const auto write_blocked_json = write_blocked ? json::parse(write_blocked->body, nullptr, false) : json();
-    const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 1 &&
+    const auto has_listed_tool = [&listed_json](const std::string & name) {
+        if (!listed_json.is_object() || !listed_json.contains("result") ||
+                !listed_json["result"].contains("tools") || !listed_json["result"]["tools"].is_array()) return false;
+        for (const auto & tool : listed_json["result"]["tools"]) {
+            if (tool.value("name", "") == name) return true;
+        }
+        return false;
+    };
+    const bool catalog_tools_exposed = std::all_of(
+        catalog_tools.begin(), catalog_tools.end(), has_listed_tool);
+    const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 6 &&
+        catalog_tools_exposed &&
         missing_protocol && missing_protocol->status == 400 &&
         invalid_cursor && invalid_cursor->status == 400 &&
         initialize_json["result"]["protocolVersion"] == "2025-11-25" &&
