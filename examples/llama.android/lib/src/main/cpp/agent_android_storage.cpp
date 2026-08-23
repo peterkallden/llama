@@ -6,6 +6,20 @@
 #include "memory/sqlite/memory-sqlite.h"
 #include "plan/plan-types.h"
 #include "plan/sqlite/plan-sqlite.h"
+#include "tools/agent/runtime/agent-runtime-assembly.h"
+
+namespace {
+
+class android_probe_inference final : public common_agent_inference {
+public:
+    bool generate(const common_agent_generation_request &, common_agent_generation_result & result) override {
+        result = {};
+        result.error_message = "Android runtime construction probe does not generate tokens";
+        return false;
+    }
+};
+
+}
 
 static std::string android_string(JNIEnv * env, jstring value) {
     if (!value) return {};
@@ -51,6 +65,25 @@ Java_com_arm_aichat_AgentStorage_selfTest(JNIEnv * env, jclass, jstring j_direct
     if (!plan.create(state, error) || !plan.get(state.id, error).has_value()) {
         return JNI_FALSE;
     }
+
+    android_probe_inference inference;
+    common_agent_runtime_build_config runtime_build;
+    runtime_build.generation_config.n_predict = 16;
+    runtime_build.generation_config.n_threads = 2;
+    const common_agent_runtime_config runtime_config = make_agent_runtime_config(runtime_build);
+    {
+        const auto assembly = make_agent_runtime_assembly(
+            memory,
+            plan,
+            inference,
+            runtime_config,
+            {},
+            nullptr);
+        if (!assembly.runtime || !assembly.planner || !assembly.executor || !assembly.reflector) {
+            return JNI_FALSE;
+        }
+    }
+
     plan.close();
     return JNI_TRUE;
 }

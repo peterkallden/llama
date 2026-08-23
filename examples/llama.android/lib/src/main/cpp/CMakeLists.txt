@@ -33,6 +33,37 @@ endif()
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../)
 add_subdirectory(${LLAMA_SRC} build-llama)
 
+# Android uses the model-backed agent runtime without the Linux host layers
+# (daemon, server-context and external sandbox processes). Keep this target
+# on the same planner/executor/reflection implementation used by the full
+# runtime so Android does not grow a second agent contract.
+add_library(llama-agent-android-runtime STATIC
+        ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation.cpp
+        ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation-utils.cpp
+        ${LLAMA_SRC}/tools/agent/cli/agent-cli-inference.cpp
+        ${LLAMA_SRC}/tools/agent/cli/agent-cli-runtime.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-assembly.cpp)
+
+target_include_directories(llama-agent-android-runtime PUBLIC
+        ${LLAMA_SRC}
+        ${LLAMA_SRC}/common
+        ${LLAMA_SRC}/tools/agent/cli
+        ${LLAMA_SRC}/tools/agent/runtime
+        ${LLAMA_SRC}/tools/agent/tooling
+        ${LLAMA_SRC}/tools/agent/resource
+        ${LLAMA_SRC}/tools/agent/data
+        ${LLAMA_SRC}/tools/server)
+
+target_compile_features(llama-agent-android-runtime PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-android-runtime PUBLIC
+        llama-agent-core
+        llama-agent-tooling
+        llama-agent-memory
+        llama-agent-plan
+        llama-agent-storage-sqlite
+        llama-common
+        llama)
+
 add_library(${CMAKE_PROJECT_NAME} SHARED
         ai_chat.cpp
         agent_android_storage.cpp)
@@ -56,5 +87,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         llama-agent-memory
         llama-agent-plan
         llama-agent-storage-sqlite
+        llama-agent-android-runtime
         android
         log)

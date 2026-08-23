@@ -513,6 +513,14 @@ local constrained deployments, not as a transparent replacement for Cozo.
 The native SQLite layer is kept separate so a later Cozo port can improve
 feature parity without changing model-facing tools or host configuration.
 
+The Android development profile now links the same model-backed planner,
+executor and reflection implementation through a small
+`llama-agent-android-runtime` target. It deliberately excludes the Linux host
+layers: daemon transport, server-context hosting, external processors and
+sandbox backends. Android therefore has the agent runtime contracts and local
+SQLite persistence without pretending that a mobile process can provide the
+host deployment facilities.
+
 #### Resource, dataset, tool and artifact boundaries
 
 These concepts intentionally remain separate:
