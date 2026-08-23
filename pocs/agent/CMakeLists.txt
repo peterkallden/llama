@@ -1422,6 +1422,17 @@ if (LLAMA_AGENT_STORAGE_SQLITE)
     )
     target_link_libraries(${TARGET} PRIVATE llama-agent-memory)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    set(TARGET llama-agent-plan-storage-sqlite-smoke)
+    add_executable(${TARGET}
+        smoke/storage/agent-sqlite-plan-smoke.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-plan)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
 endif()
 
 set(TARGET llama-agent-research-csv-smoke)
@@ -1754,6 +1765,9 @@ if (BUILD_TESTING)
         add_test(NAME llama-agent-storage-sqlite-ctest
             COMMAND $<TARGET_FILE:llama-agent-storage-sqlite-smoke>)
         set_property(TEST llama-agent-storage-sqlite-ctest PROPERTY LABELS agent-storage)
+        add_test(NAME llama-agent-plan-storage-sqlite-ctest
+            COMMAND $<TARGET_FILE:llama-agent-plan-storage-sqlite-smoke>)
+        set_property(TEST llama-agent-plan-storage-sqlite-ctest PROPERTY LABELS agent-storage)
     endif()
 
     add_test(NAME llama-agent-tool-provider-ctest
