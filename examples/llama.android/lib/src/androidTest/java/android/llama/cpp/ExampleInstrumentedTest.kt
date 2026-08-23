@@ -8,6 +8,9 @@ import org.junit.runner.RunWith
 
 import org.junit.Assert.*
 import com.arm.aichat.AgentStorage
+import com.arm.aichat.agent.AndroidModelManager
+import com.arm.aichat.agent.AndroidResourceStore
+import android.net.Uri
 import java.io.File
 
 /**
@@ -30,5 +33,26 @@ class ExampleInstrumentedTest {
         val directory = File(context.filesDir, "agent-storage-smoke")
         assertTrue(directory.mkdirs() || directory.isDirectory)
         assertTrue(AgentStorage.selfTest(directory.absolutePath))
+    }
+
+    @Test
+    fun contentResolverResourceImportUsesPrivateAgentStorage() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "resource-smoke.csv")
+        source.writeText("name,value\norders,1\n")
+        val imported = AndroidResourceStore(context).import(Uri.fromFile(source), "orders.csv")
+        assertEquals("name,value\norders,1\n", File(imported.path).readText())
+        assertTrue(imported.path.startsWith(context.filesDir.absolutePath))
+    }
+
+    @Test
+    fun contentResolverModelImportKeepsGgufOutsideApk() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "model-smoke.gguf")
+        source.writeBytes(byteArrayOf(0x47, 0x47, 0x55, 0x46))
+        val imported = AndroidModelManager(context).importGguf(Uri.fromFile(source))
+        assertEquals(4, imported.sizeBytes)
+        assertTrue(imported.path.startsWith(context.filesDir.absolutePath))
+        assertTrue(AndroidModelManager(context).installed().any { it.path == imported.path })
     }
 }

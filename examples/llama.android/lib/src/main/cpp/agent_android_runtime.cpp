@@ -30,7 +30,7 @@ struct android_agent_runtime_handle {
     common_plan_sqlite_store plan_store;
     std::unique_ptr<common_agent_runtime_session_host> session_host;
     bool storage_ready = false;
-    std::unique_ptr<agent_mcp_http_client> mcp_client;
+    std::shared_ptr<agent_mcp_http_client> mcp_client;
     std::mutex mcp_mutex;
     std::mutex turn_mutex;
     std::thread turn_worker;
@@ -142,6 +142,56 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
     host_build_config.resident_request.n_threads = 4;
     host_build_config.resident_request.context_size_tokens = 3072;
     host_build_config.resident_request.n_predict = 384;
+    const std::weak_ptr<android_agent_runtime_handle> weak_runtime = runtime;
+    host_build_config.tooling_resolver = [weak_runtime](
+            const common_agent_runtime_resident_runtime *,
+            const common_agent_runtime_session_host_turn_request & request,
+            common_agent_runtime_tooling & tooling,
+            std::string & error) {
+        const auto runtime = weak_runtime.lock();
+        if (!runtime) {
+            error = "Android agent runtime is no longer available";
+            return false;
+        }
+
+        std::shared_ptr<agent_mcp_http_client> client;
+        {
+            std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
+            client = runtime->mcp_client;
+        }
+        if (!client) {
+            tooling = {};
+            error.clear();
+            return true;
+        }
+
+        agent_tool_context context;
+        context.request_id = request.request_id.empty() ? request.turn_id : request.request_id;
+        context.turn_id = request.turn_id;
+        context.scope.namespace_id = request.namespace_id;
+        context.scope.session_id = request.session_id;
+        context.scope.project_id = request.project_id;
+        context.scope.turn_id = request.turn_id;
+        context.memory_scope = request.memory_scope;
+        context.plan_scope = request.plan_scope;
+        context.profile_id = "android-mcp";
+        context.allowed_exposed_tool_names = request.allowed_exposed_tool_names;
+        context.allow_network = true;
+        context.max_calls = 4;
+        context.execution_control = request.execution_control;
+
+        mcp_agent_tool_provider provider("android-mcp", *client);
+        auto view = provider.resolve_tools(context, error);
+        if (!view) return false;
+        auto shared_view = std::shared_ptr<agent_tool_view>(std::move(view));
+        tooling.tools = shared_view->chat_tools();
+        tooling.profile_tools_active = true;
+        tooling.tool_view = shared_view.get();
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(client));
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
+        error.clear();
+        return true;
+    };
     runtime->session_host = std::make_unique<common_agent_runtime_session_host>(
         make_agent_runtime_session_host_config(std::move(host_build_config)));
     runtime->storage_ready = true;
@@ -219,6 +269,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, 
         ",\"vulkan_loader_available\":" + (vulkan_loader_available ? "true" : "false") +
         ",\"sqlite_storage\":" + (runtime->storage_ready ? "true" : "false") +
         ",\"mcp_remote_configured\":" + (mcp_configured ? "true" : "false") +
+        ",\"mcp_https_supported\":false" +
         ",\"inference_backend\":\"cli\"}";
     return env->NewStringUTF(json.c_str());
 }
@@ -239,8 +290,11 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
             (endpoint.rfind("http://", 0) != 0 && endpoint.rfind("https://", 0) != 0)) {
         return JNI_FALSE;
     }
+    // The Android target deliberately builds cpp-httplib without OpenSSL.
+    // Do not advertise a transport that cannot enforce TLS.
+    if (endpoint.rfind("https://", 0) == 0) return JNI_FALSE;
     std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
-    runtime->mcp_client = std::make_unique<agent_mcp_http_client>(agent_mcp_http_client_config{
+    runtime->mcp_client = std::make_shared<agent_mcp_http_client>(agent_mcp_http_client_config{
         name, endpoint, token, {}, 5000, 30000, 2000, 256 * 1024});
     return JNI_TRUE;
 }

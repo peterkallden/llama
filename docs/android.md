@@ -47,11 +47,15 @@ URI handling does not leak into resource, planning or tool code.
 The JNI facade also exposes the existing native HTTP MCP transport through
 `configureMcp`, `mcpTools` and `mcpCall`. This reuses `agent_mcp_http_client`
 and does not duplicate an MCP parser in Kotlin. The current Android build has
-OpenSSL disabled, so HTTPS is not enabled by this target yet; use an HTTP
-endpoint for local development or add an Android TLS transport before treating
-remote HTTPS MCP as production-ready. These direct calls are a host transport
-seam, not a second planner or tool registry; wiring the same provider into
-model-facing session tooling remains a later integration step.
+OpenSSL disabled, so HTTPS is explicitly rejected by this target; use an HTTP
+endpoint for local development. A future Android TLS transport should be
+implemented behind the same MCP client seam, using Android's platform TLS
+stack, rather than copying MCP protocol parsing into Kotlin. These direct
+calls are a host transport seam, not a second planner or tool registry.
+When an endpoint is configured, the normal Android session `tooling_resolver`
+now reuses the existing `mcp_agent_tool_provider` and exposes its resolved
+tools to planning/execution. The capability snapshot reports both endpoint
+configuration and HTTPS availability separately.
 
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common
