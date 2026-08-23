@@ -1,6 +1,7 @@
 #include "agent_android_runtime.h"
 
 #include <memory>
+#include <dlfcn.h>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -160,6 +161,44 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeResetCancellation(JNIEnv *, jclass,
     }
     runtime->cancellation->reset();
     return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, jlong handle) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    {
+        std::lock_guard<std::mutex> lock(handles_mutex);
+        runtime = find_handle(handle);
+    }
+    if (!runtime) return nullptr;
+
+#if defined(__aarch64__)
+    constexpr const char * abi = "arm64-v8a";
+    constexpr bool neon = true;
+#elif defined(__x86_64__)
+    constexpr const char * abi = "x86_64";
+    constexpr bool neon = false;
+#else
+    constexpr const char * abi = "unknown";
+    constexpr bool neon = false;
+#endif
+#if LLAMA_AGENT_ANDROID_VULKAN_BUILT
+    constexpr bool vulkan_built = true;
+#else
+    constexpr bool vulkan_built = false;
+#endif
+    void * vulkan_loader = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    const bool vulkan_loader_available = vulkan_loader != nullptr;
+    if (vulkan_loader) dlclose(vulkan_loader);
+
+    const std::string json = "{\"abi\":\"" + std::string(abi) +
+        "\",\"cpu_neon\":" + (neon ? "true" : "false") +
+        "\",\"cpu_backend_built\":true" +
+        ",\"vulkan_backend_built\":" + (vulkan_built ? "true" : "false") +
+        ",\"vulkan_loader_available\":" + (vulkan_loader_available ? "true" : "false") +
+        ",\"sqlite_storage\":" + (runtime->storage_ready ? "true" : "false") +
+        ",\"inference_backend\":\"cli\"}";
+    return env->NewStringUTF(json.c_str());
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

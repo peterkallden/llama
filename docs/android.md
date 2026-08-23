@@ -53,6 +53,13 @@ the SQLite/session-host state opened successfully, and whether a turn is active.
 Android owns lifecycle and transport; the common runtime remains the owner of
 planning, tools, inference and event meaning.
 
+`capabilities()` returns a host snapshot rather than a promise based on the
+build alone. It reports the ABI, CPU/NEON support, whether the Vulkan backend
+was packaged, whether Android can currently load `libvulkan.so`, and whether
+SQLite storage is open. A packaged Vulkan backend is not the same as a usable
+Vulkan device; device enumeration and performance validation still belong to
+the Android host/device smoke tests.
+
 `com.arm.aichat.agent.AgentRuntimeService` is the optional Android lifecycle
 owner for that facade. It is non-exported, returns `START_NOT_STICKY`, and
 releases the native handle in `onDestroy`. An Activity or other UI component

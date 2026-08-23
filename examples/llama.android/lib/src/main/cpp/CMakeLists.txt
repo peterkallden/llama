@@ -143,7 +143,16 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         GGML_SYSTEM_ARCH=${GGML_SYSTEM_ARCH}
         GGML_CPU_KLEIDIAI=$<BOOL:${GGML_CPU_KLEIDIAI}>
         GGML_OPENMP=$<BOOL:${GGML_OPENMP}>
+        LLAMA_AGENT_ANDROID_CPU_CAPABILITY=1
 )
+
+if(GGML_VULKAN)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+            LLAMA_AGENT_ANDROID_VULKAN_BUILT=1)
+else()
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+            LLAMA_AGENT_ANDROID_VULKAN_BUILT=0)
+endif()
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         ${LLAMA_SRC}

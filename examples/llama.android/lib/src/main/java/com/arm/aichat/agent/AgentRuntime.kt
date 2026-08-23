@@ -17,6 +17,7 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativeCancel(handle: Long, reason: String?): Boolean
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
+        @JvmStatic private external fun nativeCapabilities(handle: Long): String?
         @JvmStatic private external fun nativeSubmitTurn(
             handle: Long,
             prompt: String,
@@ -40,6 +41,9 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
     /** Prepare the host-owned cancellation state for a subsequent turn. */
     fun resetCancellation(): Boolean =
         nativeHandle != 0L && nativeResetCancellation(nativeHandle)
+
+    /** Returns host capability facts; build capability and device availability are separate. */
+    fun capabilities(): String? = if (nativeHandle == 0L) null else nativeCapabilities(nativeHandle)
 
     /** Submit a non-blocking chat/agent turn owned by the native runtime worker. */
     fun submitTurn(
