@@ -8,12 +8,12 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         init { System.loadLibrary("ai-chat") }
 
         @JvmStatic
-        fun create(storageDirectory: String): AgentRuntime? {
-            val handle = nativeCreate(storageDirectory)
+        fun create(storageDirectory: String, modelPath: String? = null): AgentRuntime? {
+            val handle = nativeCreate(storageDirectory, modelPath)
             return if (handle == 0L) null else AgentRuntime(handle)
         }
 
-        @JvmStatic private external fun nativeCreate(storageDirectory: String): Long
+        @JvmStatic private external fun nativeCreate(storageDirectory: String, modelPath: String?): Long
         @JvmStatic private external fun nativeCancel(handle: Long, reason: String?): Boolean
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativePollEvent(handle: Long): String?

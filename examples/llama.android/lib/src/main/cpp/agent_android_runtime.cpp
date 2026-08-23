@@ -10,10 +10,12 @@
 
 namespace {
 struct android_agent_runtime_handle {
-    explicit android_agent_runtime_handle(std::string directory)
+    android_agent_runtime_handle(std::string directory, std::string model)
         : storage_directory(std::move(directory)),
+          model_path(std::move(model)),
           cancellation(std::make_shared<common_agent_runtime_cancellation_state>()) {}
     std::string storage_directory;
+    std::string model_path;
     std::shared_ptr<common_agent_runtime_cancellation_state> cancellation;
     common_agent_event_queue events;
 };
@@ -50,12 +52,13 @@ android_agent_runtime_handle * find_handle(jlong handle) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstring directory) {
+Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstring directory, jstring model) {
     const std::string storage_directory = to_string(env, directory);
     if (storage_directory.empty()) return 0;
     std::lock_guard<std::mutex> lock(handles_mutex);
     const jlong handle = next_handle++;
-    handles.emplace(handle, std::make_unique<android_agent_runtime_handle>(storage_directory));
+    handles.emplace(handle, std::make_unique<android_agent_runtime_handle>(
+        storage_directory, to_string(env, model)));
     return handle;
 }
 
@@ -89,6 +92,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeState(JNIEnv * env, jclass, jlong h
     auto * runtime = find_handle(handle);
     if (!runtime) return nullptr;
     const std::string state = "{\"storage_directory\":\"" + json_escape(runtime->storage_directory) +
+        "\",\"model_configured\":" + (runtime->model_path.empty() ? "false" : "true") +
         "\",\"cancelled\":" + (runtime->cancellation->is_cancelled() ? "true" : "false") +
         ",\"queued_events\":" + std::to_string(runtime->events.size()) + "}";
     return env->NewStringUTF(state.c_str());

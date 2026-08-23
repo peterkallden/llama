@@ -35,7 +35,10 @@ callbacks from threads whose lifetime is controlled by the native runtime.
 
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common
-event queue, and exposes `create`, `cancel`, `pollEvent`, `state` and `close`.
+event queue, and exposes `create(storageDirectory, modelPath?)`, `cancel`,
+`pollEvent`, `state` and `close`. The model path is optional at this stage so
+the Service can start before a model is selected; `state()` reports whether a
+model is configured.
 It deliberately does not invent an Android-specific turn executor or emit
 synthetic completion events. Turn submission will be connected to the common
 runtime/session host in a later step. Android owns lifecycle and transport;

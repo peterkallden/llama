@@ -12,6 +12,7 @@ import android.os.IBinder
 class AgentRuntimeService : Service() {
     companion object {
         const val EXTRA_STORAGE_DIRECTORY = "com.arm.aichat.agent.STORAGE_DIRECTORY"
+        const val EXTRA_MODEL_PATH = "com.arm.aichat.agent.MODEL_PATH"
     }
 
     inner class LocalBinder : Binder() {
@@ -23,8 +24,9 @@ class AgentRuntimeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val directory = intent?.getStringExtra(EXTRA_STORAGE_DIRECTORY)
+        val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH)
         if (!directory.isNullOrBlank() && runtime == null) {
-            runtime = AgentRuntime.create(directory)
+            runtime = AgentRuntime.create(directory, modelPath)
         }
         return START_NOT_STICKY
     }
