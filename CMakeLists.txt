@@ -37,6 +37,11 @@ message("CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 # Add path to modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
+if(ANDROID AND GGML_VULKAN)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/android-vulkan.cmake")
+    llama_android_prepare_vulkan()
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
