@@ -197,8 +197,20 @@ std::vector<common_memory_record> common_memory_sqlite_store::list(const common_
     std::vector<common_memory_record> result;
     if (!database_.is_open()) { error = "memory store is not open"; return result; }
     common_sqlite_statement statement;
-    if (!database_.prepare("SELECT id,kind,content,summary,embedding,importance,confidence,created_at,accessed_at,access_count,scope,namespace_id,session_id,project_id,turn_id,metadata_json FROM agent_memory WHERE scope = ? AND namespace_id = ? AND (session_id = ? OR project_id = ? OR turn_id = ? OR ? = 'global') ORDER BY created_at DESC;", statement, error)) return result;
-    if (!statement.bind_text(1, common_memory_scope_name(query.scope), error) || !statement.bind_text(2, query.namespace_id, error) || !statement.bind_text(3, query.session_id, error) || !statement.bind_text(4, query.project_id, error) || !statement.bind_text(5, query.turn_id, error) || !statement.bind_text(6, common_memory_scope_name(query.scope), error)) return result;
+    std::string sql = "SELECT id,kind,content,summary,embedding,importance,confidence,created_at,accessed_at,access_count,scope,namespace_id,session_id,project_id,turn_id,metadata_json FROM agent_memory WHERE scope = ? AND namespace_id = ?";
+    if (query.scope == common_memory_scope::turn) sql += " AND turn_id = ?";
+    if (query.scope == common_memory_scope::session) sql += " AND session_id = ?";
+    if (query.scope == common_memory_scope::project) sql += " AND project_id = ?";
+    if (query.scope == common_memory_scope::global && !query.global_opt_in) {
+        error.clear();
+        return result;
+    }
+    sql += " ORDER BY created_at DESC;";
+    if (!database_.prepare(sql, statement, error)) return result;
+    if (!statement.bind_text(1, common_memory_scope_name(query.scope), error) || !statement.bind_text(2, query.namespace_id, error)) return result;
+    if (query.scope == common_memory_scope::turn && !statement.bind_text(3, query.turn_id, error)) return result;
+    if (query.scope == common_memory_scope::session && !statement.bind_text(3, query.session_id, error)) return result;
+    if (query.scope == common_memory_scope::project && !statement.bind_text(3, query.project_id, error)) return result;
     bool row = false;
     while (statement.step(row, error) && row) {
         common_memory_record record;
