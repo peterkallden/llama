@@ -17,7 +17,17 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativeCancel(handle: Long, reason: String?): Boolean
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
+        @JvmStatic private external fun nativeSubmitTurn(
+            handle: Long,
+            prompt: String,
+            mode: String,
+            sessionId: String,
+            namespaceId: String,
+            projectId: String?,
+            turnId: String,
+        ): Boolean
         @JvmStatic private external fun nativePollEvent(handle: Long): String?
+        @JvmStatic private external fun nativePollResult(handle: Long): String?
         @JvmStatic private external fun nativeState(handle: Long): String?
         @JvmStatic private external fun nativeClose(handle: Long)
     }
@@ -31,8 +41,22 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
     fun resetCancellation(): Boolean =
         nativeHandle != 0L && nativeResetCancellation(nativeHandle)
 
+    /** Submit a non-blocking chat/agent turn owned by the native runtime worker. */
+    fun submitTurn(
+        prompt: String,
+        mode: String = "chat",
+        sessionId: String = "android",
+        namespaceId: String = "default",
+        projectId: String? = null,
+        turnId: String = "turn-${System.currentTimeMillis()}",
+    ): Boolean = nativeHandle != 0L && nativeSubmitTurn(
+        nativeHandle, prompt, mode, sessionId, namespaceId, projectId, turnId)
+
     /** Returns one queued structured event, or null when no event is available. */
     fun pollEvent(): String? = if (nativeHandle == 0L) null else nativePollEvent(nativeHandle)
+
+    /** Returns one completed turn result, or null while the worker is still running. */
+    fun pollResult(): String? = if (nativeHandle == 0L) null else nativePollResult(nativeHandle)
 
     fun state(): String? = if (nativeHandle == 0L) null else nativeState(nativeHandle)
 

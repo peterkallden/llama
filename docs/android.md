@@ -22,6 +22,11 @@ that both native backend libraries are produced and packaged. The host build
 needs the Android SDK/NDK and Vulkan host headers (`libvulkan-dev` on Ubuntu).
 The NDK supplies `glslc` and the SPIR-V headers used during shader generation.
 
+The Android agent host currently selects the common CLI inference backend for
+local GGUF execution. The desktop server-context backend and its server/mtmd
+dependencies are intentionally not part of this Android target; adding them
+later must be an explicit host capability, not an Android-specific fallback.
+
 The Android agent integration is being built as a host around the common agent
 runtime. The planned first functional path is a Service-owned local runtime
 with SQLite state, structured events and cancellation; the Activity/UI remains
@@ -35,24 +40,33 @@ callbacks from threads whose lifetime is controlled by the native runtime.
 
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common
-event queue, and exposes `create(storageDirectory, modelPath?)`, `cancel`,
-`resetCancellation`, `pollEvent`, `state` and `close`. Cancellation belongs to
-one turn: after a stopped turn has fully returned, the Service may explicitly
-reset it before starting the next turn. The model path is optional at this
-stage so the Service can start before a model is selected; `state()` reports
-whether a model is configured.
-It deliberately does not invent an Android-specific turn executor or emit
-synthetic completion events. Turn submission will be connected to the common
-runtime/session host in a later step. Android owns lifecycle and transport;
-the common runtime remains the owner of planning, tools, inference and event
-meaning.
+event queue, and exposes `create(storageDirectory, modelPath?)`,
+`submitTurn`, `cancel`, `resetCancellation`, `pollEvent`, `pollResult`,
+`state` and `close`. `submitTurn` is non-blocking: a native worker invokes the
+existing common session host, publishes the existing structured events, and
+places the completed turn result in a separate result queue. Cancellation
+belongs to one turn: after a stopped turn has fully returned, the Service may
+explicitly reset it before starting the next turn. The model path is optional
+so the Service can start before a model is selected; a turn is rejected until
+one is configured. `state()` reports whether a model is configured, whether
+the SQLite/session-host state opened successfully, and whether a turn is active.
+Android owns lifecycle and transport; the common runtime remains the owner of
+planning, tools, inference and event meaning.
 
 `com.arm.aichat.agent.AgentRuntimeService` is the optional Android lifecycle
 owner for that facade. It is non-exported, returns `START_NOT_STICKY`, and
 releases the native handle in `onDestroy`. An Activity or other UI component
 may bind to it as a client. The Service does not become a second planner or
 inference implementation; it only owns process/lifecycle concerns and forwards
-cancellation, state and event polling to the native runtime.
+submit, cancellation, state, event polling and result polling to the native
+runtime. `close()` waits for an active native turn to finish; callers should
+request cancellation first when leaving the Service.
+
+The JNI result is deliberately a small transport contract rather than a
+mirror of C++ classes. Events contain `type`, `detail` and only populated
+semantic identifiers. Completed results contain `request_id`, `ok`,
+`cancelled`, `response`, `plan_id`, `error`, `failure_class` and
+`event_count`.
 
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.

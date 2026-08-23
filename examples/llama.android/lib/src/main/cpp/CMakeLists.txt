@@ -95,7 +95,21 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation-utils.cpp
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-inference.cpp
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-runtime.cpp
+        ${LLAMA_SRC}/tools/agent/cli/agent-cli-selection.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-assembly.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-chat-driver.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-execution.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-host.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-plan-orchestration.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-resident.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session-host.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-turn-driver.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-package-io.cpp
+        ${LLAMA_SRC}/tools/agent/resource/agent-resource-chunker.cpp
+        ${LLAMA_SRC}/tools/agent/tooling/agent-tool-provider.cpp
+        ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
+        ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp)
 
 target_include_directories(llama-agent-android-runtime PUBLIC
@@ -109,6 +123,8 @@ target_include_directories(llama-agent-android-runtime PUBLIC
         ${LLAMA_SRC}/tools/server)
 
 target_compile_features(llama-agent-android-runtime PUBLIC cxx_std_17)
+target_compile_definitions(llama-agent-android-runtime PRIVATE
+        LLAMA_AGENT_ANDROID_CLI_ONLY=1)
 target_link_libraries(llama-agent-android-runtime PUBLIC
         llama-agent-core
         llama-agent-tooling

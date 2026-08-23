@@ -1,7 +1,9 @@
 #include "agent-runtime-session.h"
 
 #include "../cli/agent-cli-inference.h"
+#ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
 #include "../runtime/agent-server-context-host.h"
+#endif
 
 #include "chat.h"
 
@@ -54,6 +56,7 @@ bool build_agent_inference_session(
     session.backend = backend;
     session.model = model;
     session.templates = templates;
+#ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
     if (backend == agent_inference_backend::server_context) {
         if (!server_context_host) {
             error = "server_context host is not loaded";
@@ -66,6 +69,12 @@ bool build_agent_inference_session(
         error.clear();
         return true;
     }
+#else
+    if (backend == agent_inference_backend::server_context) {
+        error = "server-context inference backend is unavailable in this host";
+        return false;
+    }
+#endif
 
     session.inference = make_llama_cli_agent_inference(model, templates);
     error.clear();
@@ -171,6 +180,7 @@ bool initialize_agent_runtime_session(
             session.loaded_model.backend = backend;
             session.loaded_model.key = requested_model_key;
         }
+#ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
     } else if (backend == agent_inference_backend::server_context) {
         if (!session.loaded_model.loaded) {
             auto host = std::make_shared<common_agent_server_context_host>();
@@ -185,6 +195,9 @@ bool initialize_agent_runtime_session(
     } else {
         session.loaded_model.reset();
     }
+#else
+    }
+#endif
 
     if (!build_agent_inference_session(
             options,

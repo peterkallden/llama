@@ -37,7 +37,19 @@ class AgentRuntimeService : Service() {
 
     fun resetCancellation(): Boolean = runtime?.resetCancellation() ?: false
 
+    fun submitTurn(
+        prompt: String,
+        mode: String = "chat",
+        sessionId: String = "android",
+        namespaceId: String = "default",
+        projectId: String? = null,
+        turnId: String = "turn-${System.currentTimeMillis()}",
+    ): Boolean = runtime?.submitTurn(
+        prompt, mode, sessionId, namespaceId, projectId, turnId) ?: false
+
     fun pollEvent(): String? = runtime?.pollEvent()
+
+    fun pollResult(): String? = runtime?.pollResult()
 
     fun state(): String? = runtime?.state()
 
