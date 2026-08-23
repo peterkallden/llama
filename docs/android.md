@@ -22,6 +22,13 @@ that both native backend libraries are produced and packaged. The host build
 needs the Android SDK/NDK and Vulkan host headers (`libvulkan-dev` on Ubuntu).
 The NDK supplies `glslc` and the SPIR-V headers used during shader generation.
 
+The Android agent integration is being built as a host around the common agent
+runtime. The planned first functional path is a Service-owned local runtime
+with SQLite state, structured events and cancellation; the Activity/UI remains
+a client of that Service. The JNI boundary should stay small and must not
+expose planner or tool implementation classes. GGUF models remain outside the
+APK in app-private storage after import through `ContentResolver`.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.

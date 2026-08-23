@@ -4,6 +4,28 @@ This note describes the current resident-agent runtime direction. The main compl
 
 The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process, service, or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
 
+The Android work follows the same boundary. Model and inference settings that
+are needed to create a runtime session live in the host-neutral
+`agent/runtime/agent-inference-contracts.h` contract. CLI, daemon and Android
+adapters translate their own configuration into that contract; CLI argument
+parsing and Android/JNI types do not belong in it. The Android Service and JNI
+facade are host/application work and must drive the existing resident runtime,
+not create a second planner, tool runtime or memory implementation.
+
+The intended Android lifecycle is:
+
+```text
+Activity/UI -> Android Service -> small JNI facade -> resident agent runtime
+                                      |                    |
+                                      +-> events/cancel    +-> model, plan, memory
+```
+
+The first Android functional target is local inference with SQLite-backed
+state, structured events and cancellation. Remote MCP, Android permissions,
+secure credentials and OS-specific capabilities are added through host
+adapters after that path is stable. A platform capability is advertised only
+when the host can actually provide it.
+
 ## Agent runtime modes
 
 The agent runtime deliberately has a smaller mode vocabulary than ordinary

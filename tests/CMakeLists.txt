@@ -415,6 +415,20 @@ if (LLAMA_AGENT_RUNTIME)
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
 
+    # This contract intentionally has no llama/CLI dependency.  Keeping it as
+    # a header-only CTest makes the host-neutral boundary compile-testable on
+    # Android and desktop without relinking the full agent runtime.
+    add_executable(test-agent-runtime-contract test-agent-runtime-contract.cpp)
+    target_include_directories(test-agent-runtime-contract PRIVATE
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/common
+        ${PROJECT_SOURCE_DIR}/vendor
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_compile_features(test-agent-runtime-contract PRIVATE cxx_std_17)
+    add_test(NAME test-agent-runtime-contract COMMAND test-agent-runtime-contract)
+    set_property(TEST test-agent-runtime-contract PROPERTY LABELS agent)
+
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)
         target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)

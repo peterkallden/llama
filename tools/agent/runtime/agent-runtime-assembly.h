@@ -5,6 +5,7 @@
 #include "agent/agent-context-budgets.h"
 #include "agent/agent-runtime.h"
 #include "agent/learning/memory-learning.h"
+#include "agent/runtime/agent-inference-contracts.h"
 
 #include "chat.h"
 #include "llama.h"
@@ -14,11 +15,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-enum class agent_inference_backend {
-    cli,
-    server_context,
-};
 
 struct common_agent_inference_capabilities {
     bool text = true;
@@ -37,16 +33,6 @@ struct common_agent_generation_config {
     // Optional host-side preflight that narrows the model-facing tool view by
     // generated family before the planner sees individual tool contracts.
     bool enable_tool_family_routing = false;
-};
-
-struct common_agent_inference_options {
-    std::string model;
-    int n_predict = -1;
-    int n_gpu_layers = 0;
-    bool fit_params = true;
-    int n_threads = 2;
-    size_t context_size_tokens = 0;
-    std::string mmproj;
 };
 
 struct common_agent_runtime_config {

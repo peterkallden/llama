@@ -1,8 +1,7 @@
 #pragma once
 
-#include "tools/agent/cli/agent-cli-options.h"
-
 #include "../runtime/agent-runtime-assembly.h"
+#include "agent/runtime/agent-inference-contracts.h"
 
 #include "chat.h"
 #include "llama.h"
