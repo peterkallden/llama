@@ -1059,6 +1059,14 @@ bool validate_agent_host_config(
         error = "stores.data.backend must be auto, none, cozo, or sqlite";
         return false;
     }
+    if ((config.memory_backend == "cozo" || config.memory_backend == "sqlite") && config.memory_db.empty()) {
+        error = "stores.memory.path is required when stores.memory.backend is cozo or sqlite";
+        return false;
+    }
+    if ((config.plan_backend == "cozo" || config.plan_backend == "sqlite") && config.plan_db.empty()) {
+        error = "stores.plan.path is required when stores.plan.backend is cozo or sqlite";
+        return false;
+    }
     if ((config.data_backend == "cozo" || config.data_backend == "sqlite") && config.data_db.empty()) {
         error = "stores.data.path is required when stores.data.backend is cozo or sqlite";
         return false;

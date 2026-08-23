@@ -249,6 +249,22 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "unbounded continuation limit was accepted\n");
         return 1;
     }
+    agent_host_config invalid_sqlite_path_config = loaded_config;
+    invalid_sqlite_path_config.memory_backend = "sqlite";
+    invalid_sqlite_path_config.memory_db.clear();
+    if (validate_agent_host_config(invalid_sqlite_path_config, error) ||
+            error.find("stores.memory.path") == std::string::npos) {
+        std::fprintf(stderr, "SQLite memory backend without a path was accepted\n");
+        return 1;
+    }
+    invalid_sqlite_path_config = loaded_config;
+    invalid_sqlite_path_config.plan_backend = "sqlite";
+    invalid_sqlite_path_config.plan_db.clear();
+    if (validate_agent_host_config(invalid_sqlite_path_config, error) ||
+            error.find("stores.plan.path") == std::string::npos) {
+        std::fprintf(stderr, "SQLite plan backend without a path was accepted\n");
+        return 1;
+    }
     const json roundtrip = agent_host_config_to_json(loaded_config);
     if (!roundtrip.is_object() ||
             roundtrip.value("schema_version", 0) != 1 ||
