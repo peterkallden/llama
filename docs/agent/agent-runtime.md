@@ -521,6 +521,16 @@ sandbox backends. Android therefore has the agent runtime contracts and local
 SQLite persistence without pretending that a mobile process can provide the
 host deployment facilities.
 
+The profile expresses that separation explicitly in CMake. It enables
+`LLAMA_AGENT_RUNTIME` and `LLAMA_AGENT_STORAGE_SQLITE`, but sets
+`LLAMA_AGENT_SANDBOX=OFF` and `LLAMA_AGENT_BUILD_POCS=OFF`. The first flag
+controls the host sandbox implementations, while the second controls the
+optional POC/daemon/smoke target tree. Their headers and contracts remain
+available to shared agent tooling where needed; their process implementations
+are not linked into the Android library. This keeps mobile capability
+selection explicit instead of making Android compile or advertise a Linux
+execution backend.
+
 #### Resource, dataset, tool and artifact boundaries
 
 These concepts intentionally remain separate:

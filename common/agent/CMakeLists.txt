@@ -1,25 +1,27 @@
 set(TARGET llama-agent-core)
 
-add_library(llama-agent-sandbox
-    sandbox/sandbox-docker-runtime.cpp
-    sandbox/sandbox-docker-runtime.h
-    sandbox/sandbox-kubernetes-runtime.cpp
-    sandbox/sandbox-kubernetes-runtime.h
-    sandbox/sandbox-lxc-runtime.cpp
-    sandbox/sandbox-lxc-runtime.h
-    sandbox/sandbox-local-runtime.cpp
-    sandbox/sandbox-local-runtime.h
-)
-target_include_directories(llama-agent-sandbox PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_features(llama-agent-sandbox PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-sandbox PUBLIC llama-common PRIVATE cpp-httplib)
-if (WIN32)
-    target_compile_definitions(llama-agent-sandbox PRIVATE LLAMA_AGENT_WEB_USE_WINHTTP=1)
-    target_link_libraries(llama-agent-sandbox PRIVATE winhttp)
-endif()
-if (BUILD_SHARED_LIBS)
-    set_target_properties(llama-agent-sandbox PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    set_target_properties(llama-agent-sandbox PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+if (LLAMA_AGENT_SANDBOX)
+    add_library(llama-agent-sandbox
+        sandbox/sandbox-docker-runtime.cpp
+        sandbox/sandbox-docker-runtime.h
+        sandbox/sandbox-kubernetes-runtime.cpp
+        sandbox/sandbox-kubernetes-runtime.h
+        sandbox/sandbox-lxc-runtime.cpp
+        sandbox/sandbox-lxc-runtime.h
+        sandbox/sandbox-local-runtime.cpp
+        sandbox/sandbox-local-runtime.h
+    )
+    target_include_directories(llama-agent-sandbox PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_features(llama-agent-sandbox PUBLIC cxx_std_17)
+    target_link_libraries(llama-agent-sandbox PUBLIC llama-common PRIVATE cpp-httplib)
+    if (WIN32)
+        target_compile_definitions(llama-agent-sandbox PRIVATE LLAMA_AGENT_WEB_USE_WINHTTP=1)
+        target_link_libraries(llama-agent-sandbox PRIVATE winhttp)
+    endif()
+    if (BUILD_SHARED_LIBS)
+        set_target_properties(llama-agent-sandbox PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        set_target_properties(llama-agent-sandbox PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
 endif()
 
 add_library(llama-agent-dataset-contracts dataset-contracts.cpp dataset-contracts.h)
@@ -65,9 +67,12 @@ add_library(llama-agent-tooling ${AGENT_TOOLING_SOURCES})
 target_include_directories(llama-agent-tooling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-tooling
-    PUBLIC llama-common llama-agent-dataset-contracts llama-agent-plan llama-agent-memory llama-agent-sandbox
+    PUBLIC llama-common llama-agent-dataset-contracts llama-agent-plan llama-agent-memory
     PRIVATE cpp-httplib
 )
+if (LLAMA_AGENT_SANDBOX)
+    target_link_libraries(llama-agent-tooling PUBLIC llama-agent-sandbox)
+endif()
 if (LLAMA_AGENT_TOOLS_CLANG)
     target_compile_definitions(llama-agent-tooling PRIVATE LLAMA_AGENT_TOOLS_USE_CLANG=1)
 endif()

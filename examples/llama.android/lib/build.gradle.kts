@@ -28,6 +28,12 @@ android {
                 arguments += "-DLLAMA_BUILD_APP=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DLLAMA_OPENSSL=OFF"
+                // The Android runtime assembly links the shared agent contract
+                // and tooling targets. Keep the host-facing daemon/server
+                // layers disabled, but build the common agent library seam.
+                arguments += "-DLLAMA_AGENT_RUNTIME=ON"
+                arguments += "-DLLAMA_AGENT_SANDBOX=OFF"
+                arguments += "-DLLAMA_AGENT_BUILD_POCS=OFF"
                 arguments += "-DLLAMA_MEMORY=ON"
                 arguments += "-DLLAMA_PLAN=ON"
                 arguments += "-DLLAMA_AGENT_STORAGE_SQLITE=ON"
