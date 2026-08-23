@@ -1851,6 +1851,21 @@ runtime host
 
 What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, a bounded configurable dispatcher worker pool (default one worker), explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
+The dispatcher/service layer is the intended transport-independent orchestration
+core. It owns command execution, session routing, cancellation, lifecycle state,
+readiness, host-owned stores and event production. JSONL, TCP and Unix sockets
+are adapters around that core, not separate orchestration paths. An eventual
+Android Service should call the same core through JNI/Binder and provide only
+Android lifecycle, paths and IPC concerns. It must not introduce a second
+planner, scheduler or tool-execution implementation.
+
+The current preparation boundary is deliberately small: runtime/service
+configuration should be separable from daemon transport configuration, and the
+command/result/event contracts should remain reusable by every adapter. The
+existing daemon implementation is therefore the reference implementation while
+the neutral seams are extracted; a new directory or compatibility layer is not
+justified unless it removes a real platform or include dependency.
+
 That foreground daemon now also has a first explicit lifecycle-state contract above the worker/queue slice. The current state model is still intentionally small, but `starting`, `ready`, `draining`, `stopping`, `stopped`, and `failed` are now named service states instead of being inferred only from scattered booleans and transport-local status shaping.
 
 The JSONL administration path now has a first configuration-reload contract.
