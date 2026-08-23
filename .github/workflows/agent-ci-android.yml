@@ -142,7 +142,9 @@ jobs:
   agent-android-storage-smoke:
     name: Smoke test native SQLite storage (Android)
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    # This job performs a complete native/Gradle build before starting the
+    # emulator. Keep enough wall-clock budget for both phases on a cold runner.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -164,7 +166,9 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          force-avd-creation: true
+          disable-spellchecker: true
           disable-animations: true
           working-directory: examples/llama.android
           script: ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=4
