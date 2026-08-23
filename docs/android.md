@@ -42,6 +42,13 @@ runtime/session host in a later step. Android owns lifecycle and transport;
 the common runtime remains the owner of planning, tools, inference and event
 meaning.
 
+`com.arm.aichat.agent.AgentRuntimeService` is the optional Android lifecycle
+owner for that facade. It is non-exported, returns `START_NOT_STICKY`, and
+releases the native handle in `onDestroy`. An Activity or other UI component
+may bind to it as a client. The Service does not become a second planner or
+inference implementation; it only owns process/lifecycle concerns and forwards
+cancellation, state and event polling to the native runtime.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.
