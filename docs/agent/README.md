@@ -34,6 +34,11 @@ Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
 [Agent Assurance](agent-assurance.md).
 
+The Android development workflow currently validates the Android example and
+the arm64 native build on the agent branch. The agent's SQLite store is an
+optional native backend and is not yet wired into the example application's
+JNI surface; that integration is a later Android step.
+
 ## Distribution
 
 - [Agent releases](https://github.com/peterkallden/llama/releases) contain
