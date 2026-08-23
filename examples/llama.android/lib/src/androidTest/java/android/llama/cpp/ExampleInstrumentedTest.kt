@@ -7,6 +7,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 import org.junit.Assert.*
+import com.arm.aichat.AgentStorage
+import java.io.File
 
 /**
  * Instrumented test, which will execute on an Android device.
@@ -20,5 +22,13 @@ class ExampleInstrumentedTest {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("android.llama.cpp.test", appContext.packageName)
+    }
+
+    @Test
+    fun nativeSqliteStorageRoundTrip() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.filesDir, "agent-storage-smoke")
+        assertTrue(directory.mkdirs() || directory.isDirectory)
+        assertTrue(AgentStorage.selfTest(directory.absolutePath))
     }
 }

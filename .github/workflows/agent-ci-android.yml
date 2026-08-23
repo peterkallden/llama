@@ -135,3 +135,33 @@ jobs:
           path: build-agent-android/bin/**
           if-no-files-found: error
           retention-days: 14
+
+  agent-android-storage-smoke:
+    name: Smoke test native SQLite storage (Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Run Android SQLite instrumentation smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: examples/llama.android
+          script: ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=4

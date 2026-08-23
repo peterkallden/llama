@@ -28,6 +28,9 @@ android {
                 arguments += "-DLLAMA_BUILD_APP=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DLLAMA_OPENSSL=OFF"
+                arguments += "-DLLAMA_MEMORY=ON"
+                arguments += "-DLLAMA_PLAN=ON"
+                arguments += "-DLLAMA_AGENT_STORAGE_SQLITE=ON"
 
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_BACKEND_DL=ON"
