@@ -16,6 +16,7 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativeCreate(storageDirectory: String, modelPath: String?): Long
         @JvmStatic private external fun nativeCancel(handle: Long, reason: String?): Boolean
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
+        @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
         @JvmStatic private external fun nativePollEvent(handle: Long): String?
         @JvmStatic private external fun nativeState(handle: Long): String?
         @JvmStatic private external fun nativeClose(handle: Long)
@@ -25,6 +26,10 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         nativeHandle != 0L && nativeCancel(nativeHandle, reason)
 
     fun isCancelled(): Boolean = nativeHandle != 0L && nativeIsCancelled(nativeHandle)
+
+    /** Prepare the host-owned cancellation state for a subsequent turn. */
+    fun resetCancellation(): Boolean =
+        nativeHandle != 0L && nativeResetCancellation(nativeHandle)
 
     /** Returns one queued structured event, or null when no event is available. */
     fun pollEvent(): String? = if (nativeHandle == 0L) null else nativePollEvent(nativeHandle)

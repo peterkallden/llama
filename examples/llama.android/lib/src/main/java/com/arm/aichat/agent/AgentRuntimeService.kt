@@ -35,6 +35,8 @@ class AgentRuntimeService : Service() {
 
     fun cancel(reason: String = "cancelled"): Boolean = runtime?.cancel(reason) ?: false
 
+    fun resetCancellation(): Boolean = runtime?.resetCancellation() ?: false
+
     fun pollEvent(): String? = runtime?.pollEvent()
 
     fun state(): String? = runtime?.state()

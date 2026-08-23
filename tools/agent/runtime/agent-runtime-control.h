@@ -41,6 +41,17 @@ public:
         return cancelled.load();
     }
 
+    // Cancellation belongs to one turn. A resident host may explicitly
+    // prepare this control object for the next turn after the previous turn
+    // has stopped; it is never reset implicitly while work may be in flight.
+    void reset() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            reason_value.clear();
+        }
+        cancelled.store(false);
+    }
+
     std::string reason() const {
         std::lock_guard<std::mutex> lock(mutex);
         return reason_value;

@@ -76,6 +76,15 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeIsCancelled(JNIEnv *, jclass, jlong
     return runtime && runtime->cancellation->is_cancelled() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeResetCancellation(JNIEnv *, jclass, jlong handle) {
+    std::lock_guard<std::mutex> lock(handles_mutex);
+    auto * runtime = find_handle(handle);
+    if (!runtime) return JNI_FALSE;
+    runtime->cancellation->reset();
+    return JNI_TRUE;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_arm_aichat_agent_AgentRuntime_nativePollEvent(JNIEnv * env, jclass, jlong handle) {
     std::lock_guard<std::mutex> lock(handles_mutex);

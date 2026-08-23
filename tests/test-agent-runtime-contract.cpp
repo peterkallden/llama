@@ -1,4 +1,5 @@
 #include "agent/runtime/agent-inference-contracts.h"
+#include "tools/agent/runtime/agent-runtime-control.h"
 
 #include <cassert>
 
@@ -21,6 +22,13 @@ int main() {
     assert(android_request.n_threads == 4);
     assert(android_request.context_size_tokens == 3072);
     assert(android_request.n_gpu_layers == 99);
+
+    auto cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
+    assert(cancellation->request_cancel("android turn cancelled"));
+    assert(cancellation->is_cancelled());
+    cancellation->reset();
+    assert(!cancellation->is_cancelled());
+    assert(cancellation->reason().empty());
 
     assert(static_cast<int>(agent_inference_backend::cli) !=
         static_cast<int>(agent_inference_backend::server_context));
