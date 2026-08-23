@@ -29,6 +29,10 @@ a client of that Service. The JNI boundary should stay small and must not
 expose planner or tool implementation classes. GGUF models remain outside the
 APK in app-private storage after import through `ContentResolver`.
 
+Native worker threads should publish the existing agent events into a
+host-owned queue. Kotlin can poll or collect that queue without receiving
+callbacks from threads whose lifetime is controlled by the native runtime.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.

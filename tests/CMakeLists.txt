@@ -429,6 +429,17 @@ if (LLAMA_AGENT_RUNTIME)
     add_test(NAME test-agent-runtime-contract COMMAND test-agent-runtime-contract)
     set_property(TEST test-agent-runtime-contract PROPERTY LABELS agent)
 
+    add_executable(test-agent-event-queue test-agent-event-queue.cpp)
+    target_include_directories(test-agent-event-queue PRIVATE
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/common
+        ${PROJECT_SOURCE_DIR}/vendor
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_compile_features(test-agent-event-queue PRIVATE cxx_std_17)
+    add_test(NAME test-agent-event-queue COMMAND test-agent-event-queue)
+    set_property(TEST test-agent-event-queue PROPERTY LABELS agent)
+
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)
         target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)

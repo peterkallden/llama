@@ -26,6 +26,13 @@ secure credentials and OS-specific capabilities are added through host
 adapters after that path is stable. A platform capability is advertised only
 when the host can actually provide it.
 
+Native-to-UI event transport uses a host-owned queue seam rather than calling
+Kotlin callbacks directly from inference or tool worker threads. The queue
+carries the existing `common_agent_event` contract, preserves event order,
+wakes a waiting consumer and closes without accepting late events. Cancellation
+continues to use the existing shared runtime cancellation state; the Android
+host supplies the reason and the runtime propagates it to the active turn.
+
 ## Agent runtime modes
 
 The agent runtime deliberately has a smaller mode vocabulary than ordinary
