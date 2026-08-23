@@ -1,35 +1,5 @@
 set(TARGET llama-agent-core)
 
-if (LLAMA_AGENT_STORAGE_SQLITE)
-    if (NOT SQLITE3_INCLUDE_DIR)
-        find_path(SQLITE3_INCLUDE_DIR sqlite3.h)
-    endif()
-    if (NOT SQLITE3_LIBRARY)
-        find_library(SQLITE3_LIBRARY NAMES sqlite3)
-    endif()
-    if (NOT SQLITE3_INCLUDE_DIR OR NOT SQLITE3_LIBRARY)
-        message(FATAL_ERROR "LLAMA_AGENT_STORAGE_SQLITE=ON requires SQLite3 headers and library. Set SQLITE3_INCLUDE_DIR and SQLITE3_LIBRARY.")
-    endif()
-
-    add_library(llama-agent-storage-sqlite
-        storage/sqlite/sqlite-database.cpp
-        storage/sqlite/sqlite-database.h
-    )
-    target_include_directories(llama-agent-storage-sqlite
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..
-        PRIVATE ${SQLITE3_INCLUDE_DIR}
-    )
-    target_compile_features(llama-agent-storage-sqlite PUBLIC cxx_std_17)
-    target_link_libraries(llama-agent-storage-sqlite PUBLIC llama-common PRIVATE ${SQLITE3_LIBRARY})
-    target_compile_definitions(llama-agent-storage-sqlite PUBLIC LLAMA_AGENT_STORAGE_USE_SQLITE=1)
-    if (BUILD_SHARED_LIBS)
-        set_target_properties(llama-agent-storage-sqlite PROPERTIES
-            POSITION_INDEPENDENT_CODE ON
-            WINDOWS_EXPORT_ALL_SYMBOLS ON
-        )
-    endif()
-endif()
-
 add_library(llama-agent-sandbox
     sandbox/sandbox-docker-runtime.cpp
     sandbox/sandbox-docker-runtime.h

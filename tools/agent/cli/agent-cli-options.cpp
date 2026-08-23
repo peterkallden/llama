@@ -5,6 +5,9 @@
 #ifdef LLAMA_MEMORY_USE_COZO
 #include "memory/cozo/memory-cozo.h"
 #endif
+#ifdef LLAMA_MEMORY_USE_SQLITE
+#include "memory/sqlite/memory-sqlite.h"
+#endif
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-in-memory.h"
@@ -79,6 +82,20 @@ std::unique_ptr<common_memory_store> make_memory_store(const args & a, std::stri
         return nullptr;
 #endif
     }
+    if (backend == "sqlite") {
+#ifdef LLAMA_MEMORY_USE_SQLITE
+        if (a.memory_db.empty()) {
+            error = "--backend sqlite requires --memory-db PATH";
+            return nullptr;
+        }
+        auto store = std::make_unique<common_memory_sqlite_store>();
+        if (!store->open(a.memory_db, error)) return nullptr;
+        return store;
+#else
+        error = "this binary was built without LLAMA_AGENT_STORAGE_SQLITE";
+        return nullptr;
+#endif
+    }
     error = "unknown memory backend: " + backend;
     return nullptr;
 }
@@ -92,7 +109,7 @@ std::unique_ptr<common_plan_store> make_plan_store(const args & a, std::string &
     std::string backend = a.plan_backend;
     if (backend == "auto") backend = a.plan_db.empty() ? "in-memory" : "cozo";
     if (backend == "in-memory" && !a.plan_db.empty()) {
-        error = "--plan-db requires --plan-backend cozo or the default auto backend";
+        error = "--plan-db requires --plan-backend sqlite, cozo, or the default auto backend";
         return nullptr;
     }
     if (backend == "in-memory") {
