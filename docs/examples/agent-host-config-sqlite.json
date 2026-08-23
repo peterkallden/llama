@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "stores": {
+    "memory": {
+      "backend": "sqlite",
+      "path": "agent-memory.sqlite"
+    },
+    "plan": {
+      "backend": "sqlite",
+      "path": "agent-plan.sqlite"
+    },
+    "data": {
+      "backend": "sqlite",
+      "path": "agent-data.sqlite"
+    }
+  }
+}

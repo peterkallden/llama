@@ -164,6 +164,7 @@ Copyable configurations and protocol fixtures are available in
 [`docs/examples`](../examples):
 
 - [`agent-config.example.json`](../examples/agent-config.example.json)
+- [`agent-host-config-sqlite.json`](../examples/agent-host-config-sqlite.json)
 - [`agent-host-config-capabilities.json`](../examples/agent-host-config-capabilities.json)
 - [`agent-host-config-remote-http.json`](../examples/agent-host-config-remote-http.json)
 - [`agent-host-config-stdio.json`](../examples/agent-host-config-stdio.json)
