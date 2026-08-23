@@ -18,6 +18,12 @@
 #ifdef LLAMA_PLAN_USE_COZO
 #include "plan/cozo/plan-cozo.h"
 #endif
+#ifdef LLAMA_MEMORY_USE_SQLITE
+#include "memory/sqlite/memory-sqlite.h"
+#endif
+#ifdef LLAMA_PLAN_USE_SQLITE
+#include "plan/sqlite/plan-sqlite.h"
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -470,6 +476,14 @@ bool open_server_stores(
         error = "this binary was built without LLAMA_MEMORY_COZO";
         return false;
 #endif
+    } else if (memory_backend == "sqlite") {
+#ifdef LLAMA_MEMORY_USE_SQLITE
+        if (options.memory_db.empty()) { error = "--backend sqlite requires --memory-db PATH"; return false; }
+        memory_store = std::make_unique<common_memory_sqlite_store>();
+#else
+        error = "this binary was built without LLAMA_AGENT_STORAGE_SQLITE";
+        return false;
+#endif
     } else if (memory_backend == "in-memory") {
         memory_store = std::make_unique<common_memory_in_memory_store>();
     } else {
@@ -493,6 +507,14 @@ bool open_server_stores(
         plan_store = std::make_unique<common_plan_cozo_store>();
 #else
         error = "this binary was built without LLAMA_PLAN_COZO";
+        return false;
+#endif
+    } else if (plan_backend == "sqlite") {
+#ifdef LLAMA_PLAN_USE_SQLITE
+        if (options.plan_db.empty()) { error = "--plan-backend sqlite requires --plan-db PATH"; return false; }
+        plan_store = std::make_unique<common_plan_sqlite_store>();
+#else
+        error = "this binary was built without LLAMA_AGENT_STORAGE_SQLITE";
         return false;
 #endif
     } else if (plan_backend == "in-memory") {

@@ -311,12 +311,12 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
         std::fprintf(stderr, "--default-mode must be chat or agent\n");
         return false;
     }
-    if (options.backend != "auto" && options.backend != "in-memory" && options.backend != "cozo") {
-        std::fprintf(stderr, "--backend must be auto, in-memory, or cozo\n");
+    if (options.backend != "auto" && options.backend != "in-memory" && options.backend != "cozo" && options.backend != "sqlite") {
+        std::fprintf(stderr, "--backend must be auto, in-memory, cozo, or sqlite\n");
         return false;
     }
-    if (options.plan_backend != "auto" && options.plan_backend != "in-memory" && options.plan_backend != "cozo") {
-        std::fprintf(stderr, "--plan-backend must be auto, in-memory, or cozo\n");
+    if (options.plan_backend != "auto" && options.plan_backend != "in-memory" && options.plan_backend != "cozo" && options.plan_backend != "sqlite") {
+        std::fprintf(stderr, "--plan-backend must be auto, in-memory, cozo, or sqlite\n");
         return false;
     }
     common_agent_thinking_request thinking_request;

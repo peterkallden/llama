@@ -1047,12 +1047,20 @@ bool validate_agent_host_config(
         error = "runtime deliberation limits must not be negative";
         return false;
     }
-    if (config.data_backend != "auto" && config.data_backend != "none" && config.data_backend != "cozo") {
-        error = "stores.data.backend must be auto, none, or cozo";
+    if (config.memory_backend != "auto" && config.memory_backend != "in-memory" && config.memory_backend != "cozo" && config.memory_backend != "sqlite") {
+        error = "stores.memory.backend must be auto, in-memory, cozo, or sqlite";
         return false;
     }
-    if (config.data_backend == "cozo" && config.data_db.empty()) {
-        error = "stores.data.path is required when stores.data.backend is cozo";
+    if (config.plan_backend != "auto" && config.plan_backend != "in-memory" && config.plan_backend != "cozo" && config.plan_backend != "sqlite") {
+        error = "stores.plan.backend must be auto, in-memory, cozo, or sqlite";
+        return false;
+    }
+    if (config.data_backend != "auto" && config.data_backend != "none" && config.data_backend != "cozo" && config.data_backend != "sqlite") {
+        error = "stores.data.backend must be auto, none, cozo, or sqlite";
+        return false;
+    }
+    if ((config.data_backend == "cozo" || config.data_backend == "sqlite") && config.data_db.empty()) {
+        error = "stores.data.path is required when stores.data.backend is cozo or sqlite";
         return false;
     }
     if (config.diagnostics.semantic_backend != "auto" &&

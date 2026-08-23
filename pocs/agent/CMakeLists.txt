@@ -253,6 +253,12 @@ add_library(llama-agent-data
     ../../tools/agent/data/agent-data-store-factory.cpp
     ../../tools/agent/data/agent-dataset-importer.cpp
 )
+if (LLAMA_AGENT_STORAGE_SQLITE)
+    target_sources(llama-agent-data PRIVATE
+        ../../tools/agent/data/agent-data-store-sqlite.cpp
+        ../../tools/agent/data/agent-data-store-sqlite.h
+    )
+endif()
 target_include_directories(llama-agent-data PUBLIC
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/agent/data
@@ -261,6 +267,10 @@ target_compile_features(llama-agent-data PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-data PUBLIC llama-agent-core)
 if (LLAMA_MEMORY_COZO)
     target_link_libraries(llama-agent-data PUBLIC llama-agent-storage-cozo)
+endif()
+if (LLAMA_AGENT_STORAGE_SQLITE)
+    target_link_libraries(llama-agent-data PUBLIC llama-agent-storage-sqlite)
+    target_compile_definitions(llama-agent-data PUBLIC LLAMA_AGENT_DATA_USE_SQLITE)
 endif()
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-data PROPERTIES
@@ -1433,6 +1443,18 @@ if (LLAMA_AGENT_STORAGE_SQLITE)
     )
     target_link_libraries(${TARGET} PRIVATE llama-agent-plan)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+    set(TARGET llama-agent-data-storage-sqlite-smoke)
+    add_executable(${TARGET}
+        smoke/storage/agent-sqlite-data-smoke.cpp
+    )
+    target_include_directories(${TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tools/agent/data
+    )
+    target_link_libraries(${TARGET} PRIVATE llama-agent-data)
+    target_compile_features(${TARGET} PRIVATE cxx_std_17)
 endif()
 
 set(TARGET llama-agent-research-csv-smoke)
@@ -1768,6 +1790,9 @@ if (BUILD_TESTING)
         add_test(NAME llama-agent-plan-storage-sqlite-ctest
             COMMAND $<TARGET_FILE:llama-agent-plan-storage-sqlite-smoke>)
         set_property(TEST llama-agent-plan-storage-sqlite-ctest PROPERTY LABELS agent-storage)
+        add_test(NAME llama-agent-data-storage-sqlite-ctest
+            COMMAND $<TARGET_FILE:llama-agent-data-storage-sqlite-smoke>)
+        set_property(TEST llama-agent-data-storage-sqlite-ctest PROPERTY LABELS agent-storage)
     endif()
 
     add_test(NAME llama-agent-tool-provider-ctest
