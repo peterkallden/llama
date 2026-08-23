@@ -415,17 +415,6 @@ common_agent_event_stream_wait_status common_agent_daemon_service::wait_for_even
         : common_agent_event_stream_wait_status::not_found;
 }
 
-bool common_agent_daemon_service::build_http_tool_catalog(
-        const daemon_options & options,
-        agent_mcp_server_tool_registry & registry,
-        std::string & error) const {
-    if (!runtime.build_http_tool_catalog) {
-        error = "daemon HTTP tool catalog builder is not initialized";
-        return false;
-    }
-    return runtime.build_http_tool_catalog(options, registry, error);
-}
-
 void common_agent_daemon_service::initialize_command_outcome(
         const common_agent_daemon_command & command,
         common_agent_daemon_command_outcome & outcome) const {

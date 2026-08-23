@@ -240,7 +240,7 @@ int main(int argc, char ** argv) {
     common_memory_store * catalog_memory_store = runtime.memory_store.get();
     common_plan_store * catalog_plan_store = runtime.plan_store.get();
     agent_resource_store * catalog_resource_store = runtime.resource_store.get();
-    runtime.build_http_tool_catalog = [catalog_memory_store, catalog_plan_store, catalog_resource_store](
+    auto build_http_tool_catalog = [catalog_memory_store, catalog_plan_store, catalog_resource_store](
             const daemon_options & catalog_options,
             agent_mcp_server_tool_registry & registry,
             std::string & catalog_error) {
@@ -443,7 +443,7 @@ int main(int argc, char ** argv) {
     };
     agent_mcp_server_tool_registry http_registry;
     common_agent_daemon_dispatcher dispatcher(std::move(runtime), options.queue_capacity, options.worker_count);
-    if (options.http_enabled && !dispatcher.build_http_tool_catalog(options, http_registry, error)) {
+    if (options.http_enabled && !build_http_tool_catalog(options, http_registry, error)) {
         std::fprintf(stderr, "failed to resolve daemon MCP HTTP tool catalog: %s\n", error.c_str());
         return 2;
     }
@@ -685,11 +685,11 @@ int main(int argc, char ** argv) {
             return dispatcher.wait_for_event(subscription_id, delivery, timeout);
         };
         http_server = std::make_unique<agent_mcp_http_server>(std::move(http_registry), std::move(http_options));
-        *refresh_http_catalog = [&dispatcher, &http_server](
-                const daemon_options & current_options,
-                std::string & refresh_error) {
+        *refresh_http_catalog = [&dispatcher, &http_server, &build_http_tool_catalog](
+            const daemon_options & current_options,
+            std::string & refresh_error) {
             agent_mcp_server_tool_registry next_registry;
-            if (!dispatcher.build_http_tool_catalog(current_options, next_registry, refresh_error)) {
+            if (!build_http_tool_catalog(current_options, next_registry, refresh_error)) {
                 return false;
             }
             if (!http_server->replace_registry(std::move(next_registry), refresh_error)) {

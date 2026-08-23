@@ -737,7 +737,6 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-dataset-contracts
         llama-agent-memory
         llama-agent-plan
-        llama-agent-sandbox
         llama-agent-tooling
         llama-agent-core
         llama-agent-mcp-core
@@ -753,6 +752,9 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-data
         llama-agent-diagnostics
     )
+    if(TARGET llama-agent-sandbox)
+        list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-sandbox)
+    endif()
     if(TARGET llama-agent-storage-cozo)
         list(APPEND AGENT_PACKAGE_LIBRARY_TARGETS llama-agent-storage-cozo)
     endif()

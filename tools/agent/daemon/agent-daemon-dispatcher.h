@@ -11,7 +11,6 @@
 #include <string>
 #include <thread>
 
-class agent_mcp_server_tool_registry;
 struct daemon_options;
 
 class common_agent_daemon_dispatcher {
@@ -38,11 +37,6 @@ public:
         const std::string & subscription_id,
         common_agent_event_stream_delivery & delivery,
         std::chrono::milliseconds timeout);
-    bool build_http_tool_catalog(
-        const daemon_options & options,
-        agent_mcp_server_tool_registry & registry,
-        std::string & error) const;
-
 private:
     struct queued_result {
         bool ok = false;
