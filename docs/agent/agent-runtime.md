@@ -479,6 +479,40 @@ symbol analysis now has an explicit host-owned provider seam, while the default
 build uses a bounded text fallback when no semantic index is available. No data backend is implicitly selected when the
 host has not configured one.
 
+#### Optional SQLite backend
+
+SQLite is an optional storage side path for constrained platforms such as an
+Android build. It stays behind the existing memory, plan and data-store
+interfaces; it does not change their contracts and it is not the default
+backend. Cozo remains the full-featured backend, and `auto` keeps its existing
+selection rules.
+
+Enable it at build time with `LLAMA_AGENT_STORAGE_SQLITE=ON` and select it
+explicitly in host configuration:
+
+```json
+{
+  "stores": {
+    "memory": { "backend": "sqlite", "path": "agent-memory.sqlite" },
+    "plan":   { "backend": "sqlite", "path": "agent-plan.sqlite" },
+    "data":   { "backend": "sqlite", "path": "agent-data.sqlite" }
+  }
+}
+```
+
+Each persistent SQLite store owns its tables and uses the existing typed
+store API. The memory and plan implementations preserve the normal CRUD and
+event semantics. The initial data implementation deliberately supports
+bounded dataset discovery, `data.query` and `data.filter`; aggregation, joins,
+transforms and statistics remain unsupported there until they can be mapped
+without weakening the common contract. Unsupported operations fail clearly
+instead of silently falling back to Cozo or changing backend selection.
+
+SQLite is therefore suitable as an Android-compatible first backend and for
+local constrained deployments, not as a transparent replacement for Cozo.
+The native SQLite layer is kept separate so a later Cozo port can improve
+feature parity without changing model-facing tools or host configuration.
+
 #### Resource, dataset, tool and artifact boundaries
 
 These concepts intentionally remain separate:
