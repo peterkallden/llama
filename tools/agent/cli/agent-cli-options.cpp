@@ -86,20 +86,6 @@ std::unique_ptr<common_memory_store> make_memory_store(const args & a, std::stri
 #endif
     }
     if (backend == "sqlite") {
-#ifdef LLAMA_PLAN_USE_SQLITE
-        if (a.plan_db.empty()) {
-            error = "--plan-backend sqlite requires --plan-db PATH";
-            return nullptr;
-        }
-        auto store = std::make_unique<common_plan_sqlite_store>();
-        if (!store->open(a.plan_db, error)) return nullptr;
-        return store;
-#else
-        error = "this binary was built without LLAMA_AGENT_STORAGE_SQLITE";
-        return nullptr;
-#endif
-    }
-    if (backend == "sqlite") {
 #ifdef LLAMA_MEMORY_USE_SQLITE
         if (a.memory_db.empty()) {
             error = "--backend sqlite requires --memory-db PATH";
@@ -143,6 +129,20 @@ std::unique_ptr<common_plan_store> make_plan_store(const args & a, std::string &
         return std::make_unique<common_plan_cozo_store>();
 #else
         error = "this binary was built without LLAMA_PLAN_COZO";
+        return nullptr;
+#endif
+    }
+    if (backend == "sqlite") {
+#ifdef LLAMA_PLAN_USE_SQLITE
+        if (a.plan_db.empty()) {
+            error = "--plan-backend sqlite requires --plan-db PATH";
+            return nullptr;
+        }
+        auto store = std::make_unique<common_plan_sqlite_store>();
+        if (!store->open(a.plan_db, error)) return nullptr;
+        return store;
+#else
+        error = "this binary was built without LLAMA_AGENT_STORAGE_SQLITE";
         return nullptr;
 #endif
     }
