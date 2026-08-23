@@ -1,6 +1,7 @@
 # llama-agent
 
 [![Agent verification (Linux)](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-ci.yml)
+[![Agent verification (Android)](https://github.com/peterkallden/llama/actions/workflows/agent-ci-android.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-ci-android.yml)
 [![Agent verification (sanitizers)](https://github.com/peterkallden/llama/actions/workflows/agent-analysis.yml/badge.svg?branch=feature%2Fllama-agent)](https://github.com/peterkallden/llama/actions/workflows/agent-analysis.yml)
 [![Agent development package (.tar.gz)](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-archive.yml)
 [![Agent development package (Debian/Ubuntu)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml/badge.svg)](https://github.com/peterkallden/llama/actions/workflows/agent-package-debian.yml)
@@ -21,6 +22,7 @@ distribution readiness:
 | Workflow | State it represents |
 | --- | --- |
 | [Agent verification (Linux)](../../.github/workflows/agent-ci.yml) | Linux agent contracts, Cozo integration, and Kubernetes sandbox verification |
+| [Agent verification (Android)](../../.github/workflows/agent-ci-android.yml) | Android development app and arm64 native build; runs in parallel with Linux Agent CI |
 | [Agent verification (sanitizers)](../../.github/workflows/agent-analysis.yml) | Linux AddressSanitizer and UndefinedBehaviorSanitizer checks |
 | [Agent development package (.tar.gz)](../../.github/workflows/agent-package-archive.yml) | Verified development archive from the Linux staging package |
 | [Agent development package (Debian/Ubuntu)](../../.github/workflows/agent-package-debian.yml) | Native Ubuntu/Debian package after the verified development archive |
