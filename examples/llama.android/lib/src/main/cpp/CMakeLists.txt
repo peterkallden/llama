@@ -120,6 +120,7 @@ target_link_libraries(llama-agent-android-runtime PUBLIC
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
         ai_chat.cpp
+        agent_android_runtime.cpp
         agent_android_storage.cpp)
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE

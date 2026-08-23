@@ -33,6 +33,15 @@ Native worker threads should publish the existing agent events into a
 host-owned queue. Kotlin can poll or collect that queue without receiving
 callbacks from threads whose lifetime is controlled by the native runtime.
 
+The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
+lifecycle facade. It owns a native handle, cancellation state and the common
+event queue, and exposes `create`, `cancel`, `pollEvent`, `state` and `close`.
+It deliberately does not invent an Android-specific turn executor or emit
+synthetic completion events. Turn submission will be connected to the common
+runtime/session host in a later step. Android owns lifecycle and transport;
+the common runtime remains the owner of planning, tools, inference and event
+meaning.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.
