@@ -521,6 +521,14 @@ sandbox backends. Android therefore has the agent runtime contracts and local
 SQLite persistence without pretending that a mobile process can provide the
 host deployment facilities.
 
+The Android development artifact builds both the portable CPU/NEON backend and
+the optional Vulkan backend for `arm64-v8a`. CPU remains the fallback and is
+available on devices without a usable Vulkan driver; Vulkan is loaded only when
+the device supports it. This is a packaging/build choice, not a change to the
+agent contracts or model-facing tool views. A physical device is required to
+validate Vulkan execution and performance, while CI can validate shader
+generation and that both native backend libraries are packaged.
+
 The profile expresses that separation explicitly in CMake. It enables
 `LLAMA_AGENT_RUNTIME` and `LLAMA_AGENT_STORAGE_SQLITE`, but sets
 `LLAMA_AGENT_SANDBOX=OFF` and `LLAMA_AGENT_BUILD_POCS=OFF`. The first flag

@@ -46,7 +46,7 @@ jobs:
   agent-android-dev:
     name: Build agent development app (Android)
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -66,9 +66,20 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
 
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
       - name: Build Android development project
         working-directory: examples/llama.android
         run: ./gradlew build --no-daemon --max-workers=4
+
+      - name: Verify Android CPU and Vulkan backends
+        run: |
+          set -euo pipefail
+          aar=$(find examples/llama.android/lib/build/outputs/aar -name '*.aar' -print -quit)
+          test -n "${aar}"
+          unzip -l "${aar}" | grep -q 'jni/arm64-v8a/libggml-cpu-android_armv8.0_1.so'
+          unzip -l "${aar}" | grep -q 'jni/arm64-v8a/libggml-vulkan.so'
 
       - name: Upload Android development artifact
         uses: actions/upload-artifact@v6
@@ -83,7 +94,7 @@ jobs:
   agent-android-ndk:
     name: Build agent Android native target
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       NDK_VERSION: '29.0.14206865'
 
@@ -105,6 +116,9 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
 
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
       - name: Install Android NDK
         run: |
           sdkmanager "ndk;${NDK_VERSION}"
@@ -118,7 +132,12 @@ jobs:
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-28 \
             -DGGML_NATIVE=OFF \
+            -DGGML_VULKAN=ON \
+            -DGGML_BACKEND_DL=ON \
             -DGGML_OPENMP=OFF \
+            -DVulkan_GLSLC_EXECUTABLE="${ANDROID_NDK}/shader-tools/linux-x86_64/glslc" \
+            -DVulkan_GLSLANG_VALIDATOR_EXECUTABLE="${ANDROID_NDK}/shader-tools/linux-x86_64/glslc" \
+            -DSPIRV-Headers_DIR="${GITHUB_WORKSPACE}/examples/llama.android/lib/src/main/cpp/cmake/SPIRV-Headers" \
             -DLLAMA_OPENSSL=OFF \
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
@@ -158,6 +177,9 @@ jobs:
         with:
           java-version: 17
           distribution: temurin
+
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
 
       - name: Run Android SQLite instrumentation smoke
         uses: reactivecircus/android-emulator-runner@v2

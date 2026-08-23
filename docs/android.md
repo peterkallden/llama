@@ -9,6 +9,19 @@ Import the `examples/llama.android` directory into Android Studio, then perform 
 This Android binding supports hardware acceleration up to `SME2` for **Arm** and `AMX` for **x86-64** CPUs on Android and ChromeOS devices.
 It automatically detects the host's hardware to load compatible kernels. As a result, it runs seamlessly on both the latest premium devices and older devices that may lack modern CPU features or have limited RAM, without requiring any manual configuration.
 
+The llama-agent Android development build packages two complementary backends
+for `arm64-v8a`:
+
+* the portable CPU backend, including runtime-selected ARM/NEON kernels; and
+* the optional Vulkan backend, loaded dynamically when a compatible device and
+  Vulkan driver are available.
+
+The CPU backend remains the fallback. A physical device is needed to verify
+Vulkan execution and performance; CI can still verify shader generation and
+that both native backend libraries are produced and packaged. The host build
+needs the Android SDK/NDK and Vulkan host headers (`libvulkan-dev` on Ubuntu).
+The NDK supplies `glslc` and the SPIR-V headers used during shader generation.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.

@@ -40,6 +40,9 @@ android {
 
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_BACKEND_DL=ON"
+                // Keep the portable ARM64/NEON CPU backend and package the
+                // optional Vulkan GPU backend in the same dev AAR/APK.
+                arguments += "-DGGML_VULKAN=ON"
                 arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
             }
