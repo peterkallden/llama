@@ -72,7 +72,9 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-provider.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
-        ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp)
+        ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
+        ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-protocol.cpp
+        ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-client.cpp)
 
 target_include_directories(llama-agent-android-runtime PUBLIC
         ${LLAMA_SRC}
@@ -93,6 +95,7 @@ target_link_libraries(llama-agent-android-runtime PUBLIC
         llama-agent-memory
         llama-agent-plan
         llama-agent-storage-sqlite
+        cpp-httplib
         llama-common
         llama)
 

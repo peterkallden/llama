@@ -53,6 +53,19 @@ class AgentRuntimeService : Service() {
 
     fun state(): String? = runtime?.state()
 
+    fun capabilities(): String? = runtime?.capabilities()
+
+    fun configureMcp(
+        serverName: String,
+        url: String,
+        bearerToken: String? = null,
+    ): Boolean = runtime?.configureMcp(serverName, url, bearerToken) ?: false
+
+    fun mcpTools(): String? = runtime?.mcpTools()
+
+    fun mcpCall(toolName: String, argumentsJson: String = "{}"): String? =
+        runtime?.mcpCall(toolName, argumentsJson)
+
     override fun onDestroy() {
         runtime?.close()
         runtime = null

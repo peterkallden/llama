@@ -18,6 +18,9 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
         @JvmStatic private external fun nativeCapabilities(handle: Long): String?
+        @JvmStatic private external fun nativeConfigureMcp(handle: Long, serverName: String, url: String, bearerToken: String?): Boolean
+        @JvmStatic private external fun nativeMcpTools(handle: Long): String?
+        @JvmStatic private external fun nativeMcpCall(handle: Long, toolName: String, argumentsJson: String): String?
         @JvmStatic private external fun nativeSubmitTurn(
             handle: Long,
             prompt: String,
@@ -44,6 +47,17 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
 
     /** Returns host capability facts; build capability and device availability are separate. */
     fun capabilities(): String? = if (nativeHandle == 0L) null else nativeCapabilities(nativeHandle)
+
+    /** Configures an HTTP MCP endpoint using the shared native MCP transport. */
+    fun configureMcp(serverName: String, url: String, bearerToken: String? = null): Boolean =
+        nativeHandle != 0L && nativeConfigureMcp(nativeHandle, serverName, url, bearerToken)
+
+    /** Returns the remote MCP tool catalog as bounded JSON, or null when unavailable. */
+    fun mcpTools(): String? = if (nativeHandle == 0L) null else nativeMcpTools(nativeHandle)
+
+    /** Calls one tool from the configured remote MCP endpoint. */
+    fun mcpCall(toolName: String, argumentsJson: String = "{}"): String? =
+        if (nativeHandle == 0L) null else nativeMcpCall(nativeHandle, toolName, argumentsJson)
 
     /** Submit a non-blocking chat/agent turn owned by the native runtime worker. */
     fun submitTurn(

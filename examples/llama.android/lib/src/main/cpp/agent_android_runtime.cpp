@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <dlfcn.h>
+#include <algorithm>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -13,6 +14,7 @@
 #include "plan/sqlite/plan-sqlite.h"
 #include "tools/agent/runtime/agent-runtime-control.h"
 #include "tools/agent/runtime/agent-runtime-session-host.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 
 namespace {
 struct android_agent_runtime_handle {
@@ -28,6 +30,8 @@ struct android_agent_runtime_handle {
     common_plan_sqlite_store plan_store;
     std::unique_ptr<common_agent_runtime_session_host> session_host;
     bool storage_ready = false;
+    std::unique_ptr<agent_mcp_http_client> mcp_client;
+    std::mutex mcp_mutex;
     std::mutex turn_mutex;
     std::thread turn_worker;
     bool turn_active = false;
@@ -91,6 +95,18 @@ std::string result_json(uint64_t request_id, const common_agent_runtime_session_
         ",\"error\":\"" + json_escape(result.error) + "\"" +
         ",\"failure_class\":\"" + common_agent_failure_class_name(result.failure_class) + "\"" +
         ",\"event_count\":" + std::to_string(result.event_count) + "}";
+}
+
+std::string mcp_tools_json(const std::vector<mcp_agent_tool_definition> & tools) {
+    std::string result = "[";
+    for (size_t i = 0; i < tools.size(); ++i) {
+        if (i != 0) result += ",";
+        const auto & tool = tools[i];
+        result += "{\"name\":\"" + json_escape(tool.name) +
+            "\",\"description\":\"" + json_escape(tool.description) +
+            "\",\"input_schema\":" + tool.input_schema_json + "}";
+    }
+    return result + "]";
 }
 }
 
@@ -191,13 +207,89 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, 
     const bool vulkan_loader_available = vulkan_loader != nullptr;
     if (vulkan_loader) dlclose(vulkan_loader);
 
+    bool mcp_configured = false;
+    {
+        std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
+        mcp_configured = runtime->mcp_client != nullptr;
+    }
     const std::string json = "{\"abi\":\"" + std::string(abi) +
         "\",\"cpu_neon\":" + (neon ? "true" : "false") +
         "\",\"cpu_backend_built\":true" +
         ",\"vulkan_backend_built\":" + (vulkan_built ? "true" : "false") +
         ",\"vulkan_loader_available\":" + (vulkan_loader_available ? "true" : "false") +
         ",\"sqlite_storage\":" + (runtime->storage_ready ? "true" : "false") +
+        ",\"mcp_remote_configured\":" + (mcp_configured ? "true" : "false") +
         ",\"inference_backend\":\"cli\"}";
+    return env->NewStringUTF(json.c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
+        JNIEnv * env, jclass, jlong handle, jstring server_name, jstring url, jstring bearer_token) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    {
+        std::lock_guard<std::mutex> lock(handles_mutex);
+        runtime = find_handle(handle);
+    }
+    if (!runtime) return JNI_FALSE;
+    const std::string name = to_string(env, server_name);
+    const std::string endpoint = to_string(env, url);
+    const std::string token = to_string(env, bearer_token);
+    if (name.empty() || endpoint.empty() ||
+            (endpoint.rfind("http://", 0) != 0 && endpoint.rfind("https://", 0) != 0)) {
+        return JNI_FALSE;
+    }
+    std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
+    runtime->mcp_client = std::make_unique<agent_mcp_http_client>(agent_mcp_http_client_config{
+        name, endpoint, token, {}, 5000, 30000, 2000, 256 * 1024});
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeMcpTools(JNIEnv * env, jclass, jlong handle) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    {
+        std::lock_guard<std::mutex> lock(handles_mutex);
+        runtime = find_handle(handle);
+    }
+    if (!runtime) return nullptr;
+    std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
+    if (!runtime->mcp_client) return nullptr;
+    agent_tool_context context;
+    std::vector<mcp_agent_tool_definition> tools;
+    std::string error;
+    if (!runtime->mcp_client->list_tools(context, tools, error)) return nullptr;
+    const std::string json = mcp_tools_json(tools);
+    return env->NewStringUTF(json.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeMcpCall(
+        JNIEnv * env, jclass, jlong handle, jstring tool_name, jstring arguments_json) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    {
+        std::lock_guard<std::mutex> lock(handles_mutex);
+        runtime = find_handle(handle);
+    }
+    if (!runtime) return nullptr;
+    std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
+    if (!runtime->mcp_client) return nullptr;
+    agent_tool_context context;
+    std::vector<mcp_agent_tool_definition> tools;
+    std::string error;
+    if (!runtime->mcp_client->list_tools(context, tools, error)) return nullptr;
+    const std::string requested = to_string(env, tool_name);
+    const auto it = std::find_if(tools.begin(), tools.end(), [&requested](const auto & tool) {
+        return tool.name == requested;
+    });
+    if (it == tools.end()) return nullptr;
+    mcp_agent_tool_call_result result;
+    if (!runtime->mcp_client->call_tool(context, *it, to_string(env, arguments_json), result, error)) {
+        return nullptr;
+    }
+    const std::string json = "{\"ok\":" + std::string(result.ok ? "true" : "false") +
+        ",\"structured_content\":" + (result.structured_content_json.empty() ? "null" : result.structured_content_json) +
+        ",\"text\":\"" + json_escape(result.text_content) + "\"}";
     return env->NewStringUTF(json.c_str());
 }
 

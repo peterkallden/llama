@@ -38,6 +38,21 @@ Native worker threads should publish the existing agent events into a
 host-owned queue. Kotlin can poll or collect that queue without receiving
 callbacks from threads whose lifetime is controlled by the native runtime.
 
+`AndroidResourceStore` and `AndroidModelManager` reuse the existing path-based
+agent seams. They import a selected `content://` URI through Android's
+`ContentResolver` into app-private storage, then pass the resulting path to the
+common runtime. GGUF files therefore remain outside the APK and Android-specific
+URI handling does not leak into resource, planning or tool code.
+
+The JNI facade also exposes the existing native HTTP MCP transport through
+`configureMcp`, `mcpTools` and `mcpCall`. This reuses `agent_mcp_http_client`
+and does not duplicate an MCP parser in Kotlin. The current Android build has
+OpenSSL disabled, so HTTPS is not enabled by this target yet; use an HTTP
+endpoint for local development or add an Android TLS transport before treating
+remote HTTPS MCP as production-ready. These direct calls are a host transport
+seam, not a second planner or tool registry; wiring the same provider into
+model-facing session tooling remains a later integration step.
+
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common
 event queue, and exposes `create(storageDirectory, modelPath?)`,
@@ -55,8 +70,9 @@ planning, tools, inference and event meaning.
 
 `capabilities()` returns a host snapshot rather than a promise based on the
 build alone. It reports the ABI, CPU/NEON support, whether the Vulkan backend
-was packaged, whether Android can currently load `libvulkan.so`, and whether
-SQLite storage is open. A packaged Vulkan backend is not the same as a usable
+was packaged, whether Android can currently load `libvulkan.so`, whether
+SQLite storage is open, and whether an MCP endpoint has been configured. A
+configured MCP endpoint is not the same as reachable or authorized. A packaged Vulkan backend is not the same as a usable
 Vulkan device; device enumeration and performance validation still belong to
 the Android host/device smoke tests.
 
@@ -64,9 +80,9 @@ the Android host/device smoke tests.
 owner for that facade. It is non-exported, returns `START_NOT_STICKY`, and
 releases the native handle in `onDestroy`. An Activity or other UI component
 may bind to it as a client. The Service does not become a second planner or
-inference implementation; it only owns process/lifecycle concerns and forwards
-submit, cancellation, state, event polling and result polling to the native
-runtime. `close()` waits for an active native turn to finish; callers should
+inference implementation; it owns process/lifecycle concerns and forwards
+submit, cancellation, capability, MCP transport, state, event polling and
+result polling to the native runtime. `close()` waits for an active native turn to finish; callers should
 request cancellation first when leaving the Service.
 
 The JNI result is deliberately a small transport contract rather than a
