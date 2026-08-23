@@ -34,10 +34,11 @@ Workflow badges show the latest workflow result for the selected ref. The
 evidence-based milestone record is maintained in
 [Agent Assurance](agent-assurance.md).
 
-The Android development workflow currently validates the Android example and
-the arm64 native build on the agent branch. The agent's SQLite store is an
-optional native backend and is not yet wired into the example application's
-JNI surface; that integration is a later Android step.
+The Android development workflow currently validates the Android example, the
+arm64 native build and an emulator smoke for the native SQLite memory/plan
+stores on the agent branch. The SQLite store remains optional; the Android
+example uses it as its constrained native storage profile and does not enable
+Cozo, daemon or external sandbox backends.
 
 ## Distribution
 
