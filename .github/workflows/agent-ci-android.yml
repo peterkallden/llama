@@ -186,14 +186,14 @@ jobs:
       - name: Run Android SQLite instrumentation smoke
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -no-snapshot-save -no-metrics -gpu swiftshader_indirect
+          cores: 4
+          ram-size: 4096M
+          heap-size: 1024M
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect
           force-avd-creation: true
           disable-spellchecker: true
           disable-animations: true
@@ -215,4 +215,4 @@ jobs:
               fi
               sleep 2
             done
-            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=4
+            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
