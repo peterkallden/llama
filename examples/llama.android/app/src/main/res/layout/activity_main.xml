@@ -30,6 +30,12 @@
                 android:text="Agent runtime: connecting..." />
 
             <Button
+                android:id="@+id/mcp_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MCP" />
+
+            <Button
                 android:id="@+id/settings_button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

@@ -4,7 +4,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.app.AlertDialog
+import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
@@ -21,6 +23,8 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
 /** Minimal client for the Service-owned llama-agent runtime. */
@@ -66,9 +70,10 @@ class MainActivity : AppCompatActivity() {
         userInputEt = findViewById(R.id.user_input)
         userActionFab = findViewById(R.id.fab)
         runtimeStatusTv = findViewById(R.id.runtime_status)
-        findViewById<android.widget.Button>(R.id.settings_button).setOnClickListener {
+        findViewById<Button>(R.id.settings_button).setOnClickListener {
             showRuntimeStatus()
         }
+        findViewById<Button>(R.id.mcp_button).setOnClickListener { showMcpTools() }
         modelManager = AndroidModelManager(this)
         agentSession = AgentClientSession(this)
 
@@ -210,6 +215,89 @@ class MainActivity : AppCompatActivity() {
     private fun prettyJson(value: String): String = runCatching {
         org.json.JSONObject(value).toString(2)
     }.getOrDefault(if (value.isBlank()) "unavailable" else value)
+
+    private fun showMcpTools() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val raw = agentSession.mcpTools()
+            withContext(Dispatchers.Main) {
+                if (raw.isNullOrBlank()) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("MCP tools")
+                        .setMessage("No MCP endpoint is configured or reachable.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                    return@withContext
+                }
+                showMcpToolPicker(raw)
+            }
+        }
+    }
+
+    private fun showMcpToolPicker(raw: String) {
+        val tools = runCatching { JSONArray(raw) }.getOrNull()
+        if (tools == null || tools.length() == 0) {
+            Toast.makeText(this, "MCP returned no tools", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = Array(tools.length()) { index ->
+            tools.optJSONObject(index)?.optString("name", "tool-$index") ?: "tool-$index"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("MCP tools")
+            .setItems(names) { _, index ->
+                tools.optJSONObject(index)?.let { showMcpToolForm(it) }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showMcpToolForm(tool: JSONObject) {
+        val properties = tool.optJSONObject("input_schema")?.optJSONObject("properties")
+        val fields = linkedMapOf<String, EditText>()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 8, 48, 0)
+        }
+
+        if (properties == null || properties.length() == 0) {
+            container.addView(TextView(this).apply { text = "This tool has no arguments." })
+        } else {
+            for (name in properties.keys()) {
+                val property = properties.optJSONObject(name)
+                val input = EditText(this).apply {
+                    hint = property?.optString("description")?.ifBlank { name } ?: name
+                }
+                fields[name] = input
+                container.addView(input)
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(tool.optString("name", "MCP tool"))
+            .setView(container)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Call") { _, _ ->
+                val arguments = JSONObject()
+                fields.forEach { (name, input) ->
+                    if (input.text.isNotBlank()) arguments.put(name, input.text.toString())
+                }
+                callMcpTool(tool.optString("name"), arguments.toString())
+            }
+            .show()
+    }
+
+    private fun callMcpTool(toolName: String, argumentsJson: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = agentSession.mcpCall(toolName, argumentsJson)
+            withContext(Dispatchers.Main) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(toolName)
+                    .setMessage(prettyJson(result.orEmpty()))
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }
+    }
 
     private fun updateModelReadyUi() {
         userInputEt.hint = "Type and send a message!"

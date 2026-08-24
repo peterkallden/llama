@@ -64,6 +64,11 @@ class AgentClientSession(context: Context) : Closeable {
 
     fun state(): String? = service?.state()
 
+    fun mcpTools(): String? = service?.mcpTools()
+
+    fun mcpCall(toolName: String, argumentsJson: String): String? =
+        service?.mcpCall(toolName, argumentsJson)
+
     fun submitTurn(
         prompt: String,
         mode: String = "agent",
