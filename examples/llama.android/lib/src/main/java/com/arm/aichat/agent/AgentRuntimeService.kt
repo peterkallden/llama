@@ -91,8 +91,9 @@ class AgentRuntimeService : Service() {
         namespaceId: String = "default",
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
+        resourceRefs: List<String> = emptyList(),
     ): Boolean = runtime?.submitTurn(
-        prompt, mode, sessionId, namespaceId, projectId, turnId) ?: false
+        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs) ?: false
 
     fun pollEvent(): String? = runtime?.pollEvent()
 

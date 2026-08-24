@@ -11,7 +11,7 @@ JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilit
 JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(JNIEnv *, jclass, jlong, jstring, jstring, jstring, jstring);
 JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeMcpTools(JNIEnv *, jclass, jlong);
 JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeMcpCall(JNIEnv *, jclass, jlong, jstring, jstring);
-JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(JNIEnv *, jclass, jlong, jstring, jstring, jstring, jstring, jstring, jstring);
+JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(JNIEnv *, jclass, jlong, jstring, jstring, jstring, jstring, jstring, jstring, jstring);
 JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativePollEvent(JNIEnv *, jclass, jlong);
 JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativePollResult(JNIEnv *, jclass, jlong);
 JNIEXPORT jstring JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeState(JNIEnv *, jclass, jlong);

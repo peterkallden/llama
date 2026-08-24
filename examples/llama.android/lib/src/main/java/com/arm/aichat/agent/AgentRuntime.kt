@@ -1,6 +1,7 @@
 package com.arm.aichat.agent
 
 import java.io.Closeable
+import org.json.JSONArray
 
 /** Host-owned lifecycle facade; turn submission remains on the common runtime seam. */
 class AgentRuntime private constructor(private var nativeHandle: Long) : Closeable {
@@ -29,6 +30,7 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
             namespaceId: String,
             projectId: String?,
             turnId: String,
+            resourceRefsJson: String,
         ): Boolean
         @JvmStatic private external fun nativePollEvent(handle: Long): String?
         @JvmStatic private external fun nativePollResult(handle: Long): String?
@@ -76,8 +78,10 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         namespaceId: String = "default",
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
+        resourceRefs: List<String> = emptyList(),
     ): Boolean = nativeHandle != 0L && nativeSubmitTurn(
-        nativeHandle, prompt, mode, sessionId, namespaceId, projectId, turnId)
+        nativeHandle, prompt, mode, sessionId, namespaceId, projectId, turnId,
+        JSONArray(resourceRefs).toString())
 
     /** Returns one queued structured event, or null when no event is available. */
     fun pollEvent(): String? = if (nativeHandle == 0L) null else nativePollEvent(nativeHandle)

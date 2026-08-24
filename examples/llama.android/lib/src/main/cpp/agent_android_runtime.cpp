@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "agent/runtime/agent-event-queue.h"
+#include "agent/contracts/agent-request.h"
 #include "common/agent/protocol/agent-jsonl.h"
 #include "memory/sqlite/memory-sqlite.h"
 #include "plan/sqlite/plan-sqlite.h"
@@ -395,7 +396,8 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeMcpCall(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
         JNIEnv * env, jclass, jlong handle, jstring prompt, jstring mode,
-        jstring session_id, jstring namespace_id, jstring project_id, jstring turn_id) {
+        jstring session_id, jstring namespace_id, jstring project_id, jstring turn_id,
+        jstring resource_refs_json) {
     std::shared_ptr<android_agent_runtime_handle> runtime;
     {
         std::lock_guard<std::mutex> lock(handles_mutex);
@@ -423,6 +425,14 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     wire_request.turn_id = to_string(env, turn_id);
     wire_request.n_predict = 384;
 
+    const auto resource_refs = nlohmann::json::parse(
+        to_string(env, resource_refs_json), nullptr, false);
+    if (!resource_refs.is_array() || resource_refs.size() > 32) return JNI_FALSE;
+    for (const auto & value : resource_refs) {
+        if (!value.is_string() || value.get<std::string>().empty()) return JNI_FALSE;
+        wire_request.resource_refs.push_back(value.get<std::string>());
+    }
+
     common_agent_runtime_session_host_turn_request request;
     request.mode = wire_request.mode == "agent" ?
         common_agent_runtime_host_mode::agent : common_agent_runtime_host_mode::chat;
@@ -432,6 +442,13 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     request.project_id = wire_request.project_id;
     request.turn_id = wire_request.turn_id;
     request.n_predict = wire_request.n_predict;
+    for (const auto & uri : wire_request.resource_refs) {
+        common_agent_input_resource input;
+        input.resource.uri = uri;
+        input.resource.name = uri.substr(uri.find_last_of("/\\") + 1);
+        input.required = false;
+        request.input_resources.push_back(std::move(input));
+    }
     request.execution_control.cancellation = runtime->cancellation;
     request.event_sink = [runtime](const common_agent_event & event) {
         runtime->events.push(event);

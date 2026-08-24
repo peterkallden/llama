@@ -76,8 +76,9 @@ class AgentClientSession(context: Context) : Closeable {
         namespaceId: String = "default",
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
+        resourceRefs: List<String> = emptyList(),
     ): Boolean = service?.submitTurn(
-        prompt, mode, sessionId, namespaceId, projectId, turnId) ?: false
+        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs) ?: false
 
     fun cancel(reason: String = "cancelled"): Boolean = service?.cancel(reason) ?: false
 

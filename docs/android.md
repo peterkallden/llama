@@ -46,6 +46,15 @@ agent seams. They import a selected `content://` URI through Android's
 common runtime. GGUF files therefore remain outside the APK and Android-specific
 URI handling does not leak into resource, planning or tool code.
 
+The example client uses the same resource seam for user attachments. Selecting
+one or more files with **Attach** imports them into the private resource store;
+the next turn carries their imported paths as `resource_refs` in the shared
+turn request. The native host converts those references to
+`common_agent_input_resource` values, so normal resource discovery, MIME
+processing and tool input binding remain common code. The original Android
+`content://` URI is retained as import metadata, while native tools receive a
+stable app-private path that they can actually read.
+
 The JNI facade also exposes the common MCP HTTP transport through
 `configureMcp`, `mcpTools` and `mcpCall`. This reuses `agent_mcp_http_client`
 and does not duplicate an MCP parser in Kotlin. Desktop uses the injected
@@ -103,6 +112,13 @@ event polling and result polling to the native runtime. Runtime replacement for
 a newly selected model is also Service-owned. `close()` waits for an active
 native turn to finish; callers should
 request cancellation first when leaving the Service.
+
+The example Activity pauses the native model runtime when it leaves the
+foreground and resumes it when it returns. This releases model memory while
+keeping the Service's storage directory, session identity and imported
+resources intact. A running turn is cancelled before the pause; this is a
+deliberate test-client policy and can later be replaced by a foreground-service
+policy for long-running work.
 
 The JNI result is deliberately a small transport contract rather than a
 mirror of C++ classes. Its turn request, event envelope and terminal result

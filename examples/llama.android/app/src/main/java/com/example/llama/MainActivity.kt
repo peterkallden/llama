@@ -17,6 +17,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.arm.aichat.agent.AndroidModelManager
+import com.arm.aichat.agent.AndroidImportedResource
+import com.arm.aichat.agent.AndroidResourceStore
 import com.arm.aichat.gguf.GgufMetadata
 import com.arm.aichat.gguf.GgufMetadataReader
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -38,9 +40,11 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var agentSession: AgentClientSession
     private lateinit var modelManager: AndroidModelManager
+    private lateinit var resourceStore: AndroidResourceStore
     private var isModelReady = false
     private var turnActive = false
     private var pendingModelPath: String? = null
+    private val attachments = mutableListOf<AndroidImportedResource>()
 
     private val messages = mutableListOf<Message>()
     private val events = mutableListOf<AgentEventRow>()
@@ -74,7 +78,11 @@ class MainActivity : AppCompatActivity() {
             showRuntimeStatus()
         }
         findViewById<Button>(R.id.mcp_button).setOnClickListener { showMcpTools() }
+        findViewById<Button>(R.id.attachment_button).setOnClickListener {
+            getResources.launch(arrayOf("*/*"))
+        }
         modelManager = AndroidModelManager(this)
+        resourceStore = AndroidResourceStore(this)
         agentSession = AgentClientSession(this)
 
         agentSession.bind {
@@ -94,6 +102,31 @@ class MainActivity : AppCompatActivity() {
     private val getContent = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { handleSelectedModel(it) } }
+
+    private val getResources = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) importResources(uris)
+    }
+
+    private fun importResources(uris: List<Uri>) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val imported = uris.map { uri ->
+                resourceStore.import(uri, displayName(uri))
+            }
+            withContext(Dispatchers.Main) {
+                attachments.addAll(imported)
+                findViewById<Button>(R.id.attachment_button).text =
+                    "Attach (${attachments.size})"
+                Toast.makeText(this@MainActivity,
+                    "Attached ${imported.size} resource(s)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun displayName(uri: Uri): String =
+        uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
+            ?: "resource-${System.currentTimeMillis()}"
 
     private fun handleSelectedModel(uri: Uri) {
         userActionFab.isEnabled = false
@@ -152,7 +185,8 @@ class MainActivity : AppCompatActivity() {
         messageAdapter.notifyItemRangeInserted(messages.size - 2, 2)
         messagesRv.scrollToPosition(messages.lastIndex)
 
-        if (!agentSession.submitTurn(userMsg)) {
+        val resourceRefs = attachments.map { it.path }
+        if (!agentSession.submitTurn(userMsg, resourceRefs = resourceRefs)) {
             messages.removeAt(messages.lastIndex)
             messages.removeAt(messages.lastIndex)
             messageAdapter.notifyDataSetChanged()
@@ -204,6 +238,8 @@ class MainActivity : AppCompatActivity() {
             append(prettyJson(state))
             append("\n\nCapabilities\n")
             append(prettyJson(capabilities))
+            append("\n\nAttachments: ")
+            append(attachments.size)
         }
         AlertDialog.Builder(this)
             .setTitle("Agent runtime")
@@ -304,6 +340,29 @@ class MainActivity : AppCompatActivity() {
         userInputEt.isEnabled = true
         userActionFab.setImageResource(R.drawable.outline_send_24)
         userActionFab.isEnabled = true
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (::agentSession.isInitialized && pendingModelPath != null && !agentSession.hasRuntime()) {
+            isModelReady = agentSession.resumeModel()
+            if (isModelReady) updateModelReadyUi()
+            refreshRuntimeStatus()
+        }
+    }
+
+    override fun onStop() {
+        if (::agentSession.isInitialized && agentSession.hasRuntime()) {
+            if (turnActive) {
+                agentSession.cancel("activity_stopped")
+                turnActive = false
+            }
+            agentSession.pauseModel()
+            isModelReady = false
+            userInputEt.isEnabled = false
+            refreshRuntimeStatus()
+        }
+        super.onStop()
     }
 
     override fun onDestroy() {

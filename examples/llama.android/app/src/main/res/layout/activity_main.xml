@@ -36,6 +36,12 @@
                 android:text="MCP" />
 
             <Button
+                android:id="@+id/attachment_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Attach" />
+
+            <Button
                 android:id="@+id/settings_button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
