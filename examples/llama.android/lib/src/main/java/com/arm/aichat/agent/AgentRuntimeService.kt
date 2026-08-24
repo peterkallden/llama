@@ -53,6 +53,7 @@ class AgentRuntimeService : Service() {
             return true
         }
 
+        runtime?.cancel("model_reconfigured")
         runtime?.close()
         runtime = AgentRuntime.create(directory, selectedModelPath)
         storageDirectory = directory

@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var agentSession: AgentClientSession
     private lateinit var modelManager: AndroidModelManager
     private var isModelReady = false
+    private var turnActive = false
     private var pendingModelPath: String? = null
 
     private val messages = mutableListOf<Message>()
@@ -42,7 +43,12 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         onBackPressedDispatcher.addCallback {
-            Log.w(TAG, "Back press does not stop the Service-owned runtime")
+            if (turnActive) {
+                agentSession.cancel("activity_back")
+                Toast.makeText(this, "Cancelling agent turn", Toast.LENGTH_SHORT).show()
+            } else {
+                Log.w(TAG, "Back press does not stop the Service-owned runtime")
+            }
         }
 
         ggufTv = findViewById(R.id.gguf)
@@ -121,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         userInputEt.text = null
         userInputEt.isEnabled = false
         userActionFab.isEnabled = false
+        turnActive = true
         messages.add(Message(UUID.randomUUID().toString(), userMsg, true))
         messages.add(Message(UUID.randomUUID().toString(), "", false))
         messageAdapter.notifyItemRangeInserted(messages.size - 2, 2)
@@ -130,6 +137,7 @@ class MainActivity : AppCompatActivity() {
             messages.removeAt(messages.lastIndex)
             messages.removeAt(messages.lastIndex)
             messageAdapter.notifyDataSetChanged()
+            turnActive = false
             userInputEt.isEnabled = true
             userActionFab.isEnabled = true
             Toast.makeText(this, "Unable to start agent turn", Toast.LENGTH_SHORT).show()
@@ -150,6 +158,7 @@ class MainActivity : AppCompatActivity() {
             messageAdapter.notifyItemChanged(messages.lastIndex)
             messagesRv.scrollToPosition(messages.lastIndex)
         }
+        turnActive = false
         userInputEt.isEnabled = isModelReady
         userActionFab.isEnabled = true
     }
@@ -162,6 +171,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (::agentSession.isInitialized && turnActive) {
+            agentSession.cancel("activity_destroyed")
+        }
         if (::agentSession.isInitialized) agentSession.close()
         super.onDestroy()
     }
