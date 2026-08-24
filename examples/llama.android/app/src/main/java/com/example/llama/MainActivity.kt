@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback {
             if (turnActive) {
                 agentSession.cancel("activity_back")
-                Toast.makeText(this, "Cancelling agent turn", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Cancelling agent turn", Toast.LENGTH_SHORT).show()
             } else {
                 Log.w(TAG, "Back press does not stop the Service-owned runtime")
             }

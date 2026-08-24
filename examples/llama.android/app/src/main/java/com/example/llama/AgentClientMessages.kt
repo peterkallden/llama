@@ -1,6 +1,7 @@
 package com.example.llama
 
-import org.json.JSONObject
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 data class AgentClientResult(
     val ok: Boolean,
@@ -17,30 +18,39 @@ data class AgentClientEvent(
 /** Small, testable decoder for the common terminal event/result envelopes. */
 object AgentClientMessages {
     fun parseResult(message: String): AgentClientResult? = runCatching {
-        val json = JSONObject(message)
-        if (json.optString("message_type") != "response") return null
-        val ok = json.optBoolean("ok", false)
+        val json = JsonParser.parseString(message).asJsonObject
+        if (json.stringValue("message_type") != "response") return null
+        val ok = json.booleanValue("ok")
         AgentClientResult(
             ok = ok,
-            response = if (ok) json.optString("response") else "",
-            error = if (ok) "" else json.optString("error").ifBlank { "Agent turn failed" },
+            response = if (ok) json.stringValue("response") else "",
+            error = if (ok) "" else json.stringValue("error").ifBlank { "Agent turn failed" },
         )
     }.getOrNull()
 
     fun eventDetail(message: String): String? = runCatching {
-        val json = JSONObject(message)
-        if (json.optString("message_type") != "event") return null
-        json.optJSONObject("event")?.optString("detail")?.ifBlank { null }
+        val json = JsonParser.parseString(message).asJsonObject
+        if (json.stringValue("message_type") != "event") return null
+        json.objectValue("event")?.stringValue("detail")?.ifBlank { null }
     }.getOrNull()
 
     fun parseEvent(message: String): AgentClientEvent? = runCatching {
-        val json = JSONObject(message)
-        if (json.optString("message_type") != "event") return null
-        val event = json.optJSONObject("event") ?: return null
+        val json = JsonParser.parseString(message).asJsonObject
+        if (json.stringValue("message_type") != "event") return null
+        val event = json.objectValue("event") ?: return null
         AgentClientEvent(
-            type = event.optString("type").ifBlank { event.optString("event_type") },
-            detail = event.optString("detail"),
-            json = event.toString(2),
+            type = event.stringValue("type").ifBlank { event.stringValue("event_type") },
+            detail = event.stringValue("detail"),
+            json = event.toString(),
         )
     }.getOrNull()
+
+    private fun JsonObject.stringValue(name: String): String =
+        get(name)?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+
+    private fun JsonObject.booleanValue(name: String): Boolean =
+        get(name)?.takeUnless { it.isJsonNull }?.asBoolean ?: false
+
+    private fun JsonObject.objectValue(name: String): JsonObject? =
+        get(name)?.takeIf { it.isJsonObject }?.asJsonObject
 }

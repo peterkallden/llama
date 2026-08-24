@@ -47,11 +47,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    kotlin {
+        jvmToolchain(17)
+
+        compileOptions {
+            targetCompatibility = JavaVersion.VERSION_17
+        }
+    }
 }
 
 dependencies {
     implementation(libs.bundles.androidx)
     implementation(libs.material)
+    implementation("com.google.code.gson:gson:2.11.0")
 
     implementation(project(":lib"))
 
