@@ -15,14 +15,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <cstdio>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
-#include <map>
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <set>
@@ -255,93 +253,6 @@ bool register_definition(const common_tool_definition & definition, common_tool_
     return registry.register_tool(std::move(tool), error);
 }
 
-bool repository_path(const std::string & root, const std::string & relative, std::filesystem::path & out, std::string & error) {
-    if (root.empty()) { error = "repository tools require a runtime repository root"; return false; }
-    std::error_code fs_error;
-    const auto base = std::filesystem::weakly_canonical(root, fs_error);
-    if (fs_error) {
-        error = "repository root could not be resolved";
-        return false;
-    }
-    const auto requested = relative.empty()
-        ? base
-        : std::filesystem::weakly_canonical(base / relative, fs_error);
-    if (fs_error) {
-        error = "repository path could not be resolved";
-        return false;
-    }
-    const auto base_text = base.generic_string();
-    const auto requested_text = requested.generic_string();
-    if (requested_text != base_text && requested_text.rfind(base_text + "/", 0) != 0) { error = "repository path escapes the runtime root"; return false; }
-    out = requested; return true;
-}
-
-bool text_file(const std::filesystem::path & path);
-std::string lower_copy(std::string value);
-
-common_tool_execution_result fallback_diagnostics_symbol(
-        const common_native_tool_bindings & bindings,
-        const json & arguments,
-        bool references) {
-    if (bindings.repository_root.empty()) {
-        return tool_execution_failure("tool.diagnostics.repository_unavailable", "diagnostics requires a repository root", "Diagnostics are unavailable without a host-owned repository.");
-    }
-    const auto symbol = arguments.value("symbol", std::string{});
-    const int limit = arguments.value("max_results", references ? 128 : 64);
-    if (symbol.empty() || symbol.size() > 256 || limit < 1 || limit > (references ? 128 : 64)) {
-        return tool_validation_failure(references ? "tool.diagnostics.references.invalid_arguments" : "tool.diagnostics.symbol.invalid_arguments", "diagnostics symbol arguments are out of bounds");
-    }
-    std::filesystem::path root;
-    std::string path_error;
-    const auto path_hint = arguments.value(references ? "definition_path" : "path_hint", std::string{});
-    if (!repository_path(bindings.repository_root, path_hint, root, path_error)) return tool_validation_failure("tool.diagnostics.invalid_path", std::move(path_error));
-    if (std::filesystem::is_regular_file(root)) {
-        // Keep the path-hint contract useful for a single file as well.
-    } else if (!std::filesystem::is_directory(root)) {
-        return tool_not_found_failure("tool.diagnostics.path_not_found", "diagnostics path was not found", "The diagnostics path was not found.");
-    }
-    json matches = json::array();
-    auto scan = [&](const std::filesystem::path & file) {
-        std::error_code file_error;
-        if (matches.size() >= static_cast<size_t>(limit) || !std::filesystem::is_regular_file(file) || std::filesystem::file_size(file, file_error) > 512 * 1024 || file_error || !text_file(file)) return;
-        std::ifstream stream(file); std::string line;
-        for (int number = 1; std::getline(stream, line) && matches.size() < static_cast<size_t>(limit); ++number) {
-            size_t offset = line.find(symbol);
-            while (offset != std::string::npos && matches.size() < static_cast<size_t>(limit)) {
-                json item = {{"path", std::filesystem::relative(file, bindings.repository_root).generic_string()}, {"line", number}, {"column", offset + 1}, {"symbol", symbol}, {"kind", references ? "reference" : "text_match"}};
-                if (!references) item["kind"] = (line.find("class " + symbol) != std::string::npos || line.find("struct " + symbol) != std::string::npos || line.find("enum " + symbol) != std::string::npos) ? "definition" : "text_match";
-                matches.push_back(item);
-                offset = line.find(symbol, offset + symbol.size());
-            }
-        }
-    };
-    if (std::filesystem::is_regular_file(root)) scan(root);
-    else for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < static_cast<size_t>(limit); ++it) scan(it->path());
-    return tool_success_json({{"backend", "text-fallback"}, {"semantic", false}, {"symbol", symbol}, {references ? "references" : "definitions", matches}, {"count", matches.size()}, {"truncated", matches.size() >= static_cast<size_t>(limit)}});
-}
-
-std::string normalize_failure_message(std::string value) {
-    value = std::regex_replace(value, std::regex(R"([A-Za-z]:[\\/][^ :]+)"), "<path>");
-    value = std::regex_replace(value, std::regex(R"([^\s:]+\.(?:c|cc|cpp|cxx|h|hh|hpp):\d+(?::\d+)?)"), "<location>");
-    value = std::regex_replace(value, std::regex(R"((expected\s+)\d+)"), "$1<value>");
-    value = std::regex_replace(value, std::regex(R"(0x[0-9A-Fa-f]+|\b\d{4,}\b)"), "<number>");
-    value = std::regex_replace(value, std::regex(R"(\s+)"), " ");
-    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
-    return value;
-}
-
-std::string classify_failure(const std::string & line) {
-    const auto lower = lower_copy(line);
-    if (lower.find("timeout") != std::string::npos || lower.find("timed out") != std::string::npos) return "timeout";
-    if (lower.find("segmentation fault") != std::string::npos || lower.find("access violation") != std::string::npos || lower.find("crash") != std::string::npos) return "crash";
-    if (lower.find("linker") != std::string::npos || lower.find("undefined reference") != std::string::npos || lower.find("unresolved external") != std::string::npos) return "link_failure";
-    if (lower.find("compile") != std::string::npos || lower.find("compiler") != std::string::npos) return "compile_failure";
-    if (lower.find("permission") != std::string::npos || lower.find("access denied") != std::string::npos) return "permission";
-    if (lower.find("network") != std::string::npos || lower.find("connection") != std::string::npos) return "network";
-    if (lower.find("assert") != std::string::npos || lower.find("expect") != std::string::npos) return "assertion_failure";
-    return "test_failure";
-}
-
 bool make_sandbox_request(
         const std::string & tool_name,
         const std::string & input,
@@ -393,69 +304,6 @@ bool make_sandbox_request(
         }
     }
     error.clear();
-    return true;
-}
-
-bool text_file(const std::filesystem::path & path) {
-    std::ifstream input(path, std::ios::binary);
-    char buffer[1024]; input.read(buffer, sizeof(buffer));
-    return input.good() || input.eof() ? std::find(buffer, buffer + input.gcount(), '\0') == buffer + input.gcount() : false;
-}
-
-std::string workspace_content_token(const std::string & content) {
-    return "host:" + std::to_string(std::hash<std::string>{}(content));
-}
-
-std::string lower_copy(std::string value);
-
-std::vector<std::string> split_csv(const std::string & line) {
-    std::vector<std::string> fields;
-    std::string field;
-    bool quoted = false;
-    for (size_t i = 0; i < line.size(); ++i) {
-        const char c = line[i];
-        if (c == '"') {
-            if (quoted && i + 1 < line.size() && line[i + 1] == '"') { field += '"'; ++i; }
-            else quoted = !quoted;
-        } else if (c == ',' && !quoted) {
-            fields.push_back(field); field.clear();
-        } else field += c;
-    }
-    fields.push_back(std::move(field));
-    return fields;
-}
-
-bool dataset_file(const common_native_tool_bindings & bindings, const std::string & relative,
-        std::filesystem::path & path, std::string & error) {
-    if (!repository_path(bindings.repository_root, relative, path, error)) return false;
-    const auto extension = lower_copy(path.extension().string());
-    if (extension != ".csv" && extension != ".json" && extension != ".parquet") {
-        error = "dataset format is not supported by the host-native foundation tool";
-        return false;
-    }
-    if (extension != ".parquet" && !text_file(path)) {
-        error = "dataset path is not a readable regular text file";
-        return false;
-    }
-    return true;
-}
-
-bool git_read(const std::string & root, const std::string & arguments, std::string & output, std::string & error) {
-    if (root.find_first_of("\"&|;<>`") != std::string::npos) { error = "repository root cannot be represented safely for Git"; return false; }
-    const std::string command = "git -C \"" + root + "\" " + arguments + " 2>&1";
-#ifdef _WIN32
-    FILE * process = _popen(command.c_str(), "r");
-#else
-    FILE * process = popen(command.c_str(), "r");
-#endif
-    if (!process) { error = "unable to launch Git"; return false; }
-    char buffer[512]; output.clear(); while (fgets(buffer, sizeof(buffer), process) && output.size() < 16384) output += buffer;
-#ifdef _WIN32
-    const int status = _pclose(process);
-#else
-    const int status = pclose(process);
-#endif
-    if (status != 0) { error = output.empty() ? "Git command failed" : output; return false; }
     return true;
 }
 
@@ -596,42 +444,6 @@ common_tool_execution_result export_dataset_csv(
         json({{"resource", resource.uri}, {"name", resource.name}, {"mime_type", resource.mime_type},
               {"source_dataset", dataset_uri}, {"rows", result["rows"].size()}, {"columns", columns.size()}}).dump(),
         "Exported a bounded CSV artifact from the dataset.", {std::move(resource)});
-}
-
-bool select_dataset_reference(const json & arguments, std::string & dataset, std::string & error) {
-    const bool has_dataset = arguments.contains("dataset") && arguments["dataset"].is_string();
-    const bool has_path = arguments.contains("path") && arguments["path"].is_string();
-    if (has_dataset == has_path) { error = "dataset operation requires exactly one of dataset or path"; return false; }
-    dataset = has_dataset ? arguments["dataset"].get<std::string>() : std::string();
-    return true;
-}
-
-common_tool_execution_result execute_dataset_descriptor_tool(
-        const common_native_tool_bindings & bindings,
-        const json & arguments,
-        const char * operation) {
-    std::string dataset, error;
-    if (!select_dataset_reference(arguments, dataset, error)) return tool_validation_failure("tool.dataset.invalid_reference", error);
-    if (!dataset.empty()) {
-        if (!bindings.data_store) return tool_execution_failure("tool.dataset.backend_unavailable", "dataset descriptor backend is unavailable", "The dataset backend is unavailable.");
-        common_agent_dataset_descriptor descriptor;
-        if (!bindings.data_store->get_dataset_descriptor(dataset, descriptor, error)) return tool_not_found_failure("tool.dataset.unavailable", error, "The dataset reference is unavailable.");
-        if (std::string(operation) == "inspect") return tool_success_json({
-            {"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name}, {"rows", descriptor.ref.row_count},
-            {"columns", descriptor.ref.column_count}, {"source", descriptor.ref.source_resource_uri},
-            {"source_sheet", descriptor.source_sheet_name}, {"source_range", descriptor.source_range},
-            {"import_processor", descriptor.import_processor_id},
-            {"origin", {{"kind", descriptor.origin.kind}, {"semantic_resource", descriptor.origin.source_representation_uri},
-                         {"node_id", descriptor.origin.source_node_id}, {"table_index", descriptor.origin.table_index},
-                         {"caption", descriptor.origin.caption},
-                         {"header_mode", common_agent_table_header_mode_name(descriptor.origin.header_mode)},
-                         {"header_confidence", descriptor.origin.header_confidence}}}});
-        json columns = json::array();
-        for (const auto & column : descriptor.columns) columns.push_back({
-            {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)}, {"nullable", column.nullable}});
-        return tool_success_json({{"dataset", descriptor.ref.uri}, {"columns", columns}});
-    }
-    return tool_validation_failure("tool.dataset.legacy_path_required", "legacy dataset path handling must be provided by the existing adapter branch");
 }
 
 bool agent_resource_has_text_representation(const agent_resource_descriptor & descriptor) {
