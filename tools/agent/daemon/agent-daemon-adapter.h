@@ -11,6 +11,7 @@
 #include "../runtime/agent-runtime-resident.h"
 #include "agent-daemon-service.h"
 #include "../host/agent-diagnostics-config.h"
+#include "../../../common/agent/protocol/agent-jsonl.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -123,14 +124,7 @@ struct agent_daemon_foreground_response {
     bool shutdown_after = false;
 };
 
-class agent_daemon_jsonl_stream {
-public:
-    virtual ~agent_daemon_jsonl_stream() = default;
-
-    virtual bool read(nlohmann::ordered_json & message, std::string & error) = 0;
-    virtual bool write(const nlohmann::ordered_json & message, std::string & error) = 0;
-    virtual bool eof() const = 0;
-};
+using agent_daemon_jsonl_stream = common_agent_jsonl_stream;
 
 bool parse_mode(
     const std::string & value,

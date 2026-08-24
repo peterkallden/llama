@@ -44,14 +44,14 @@ int main() {
     assert(encoded_event["event"].value("sequence", 0U) == 7U);
 
     common_agent_jsonl_turn_result result;
-    result.request_id = 3;
+    result.request_id = "3";
     result.ok = true;
     result.response = "done";
     result.plan_id = "plan-1";
     result.event_count = 2;
     const auto encoded_result = common_agent_jsonl_make_turn_result(result);
     assert(encoded_result.value("message_type", "") == "response");
-    assert(encoded_result.value("request_id", 0U) == 3U);
+    assert(encoded_result.value("request_id", std::string()) == "3");
     assert(encoded_result.value("response", "") == "done");
 
     std::puts("agent_jsonl_wire_contract=ok");

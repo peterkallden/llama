@@ -96,7 +96,7 @@ std::string event_json(const common_agent_event & event) {
 
 std::string result_json(uint64_t request_id, const common_agent_runtime_session_host_turn_result & result) {
     common_agent_jsonl_turn_result wire_result;
-    wire_result.request_id = request_id;
+    wire_result.request_id = std::to_string(request_id);
     wire_result.ok = result.ok;
     wire_result.cancelled = result.cancelled;
     wire_result.response = result.response;
@@ -414,15 +414,24 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     }
     if (previous_worker.joinable()) previous_worker.join();
 
+    common_agent_jsonl_turn_request wire_request;
+    wire_request.prompt = to_string(env, prompt);
+    wire_request.mode = to_string(env, mode);
+    wire_request.session_id = to_string(env, session_id);
+    wire_request.namespace_id = to_string(env, namespace_id);
+    wire_request.project_id = to_string(env, project_id);
+    wire_request.turn_id = to_string(env, turn_id);
+    wire_request.n_predict = 384;
+
     common_agent_runtime_session_host_turn_request request;
-    request.mode = to_string(env, mode) == "agent" ?
+    request.mode = wire_request.mode == "agent" ?
         common_agent_runtime_host_mode::agent : common_agent_runtime_host_mode::chat;
-    request.prompt = to_string(env, prompt);
-    request.session_id = to_string(env, session_id);
-    request.namespace_id = to_string(env, namespace_id);
-    request.project_id = to_string(env, project_id);
-    request.turn_id = to_string(env, turn_id);
-    request.n_predict = 384;
+    request.prompt = wire_request.prompt;
+    request.session_id = wire_request.session_id;
+    request.namespace_id = wire_request.namespace_id;
+    request.project_id = wire_request.project_id;
+    request.turn_id = wire_request.turn_id;
+    request.n_predict = wire_request.n_predict;
     request.execution_control.cancellation = runtime->cancellation;
     request.event_sink = [runtime](const common_agent_event & event) {
         runtime->events.push(event);

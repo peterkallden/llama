@@ -1,14 +1,28 @@
 #pragma once
 
-#include "../../agent/agent-continuation.h"
-#include "../../agent/turn-summary.h"
-
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
 #include <optional>
 #include <string>
 #include <vector>
+
+class common_agent_jsonl_stream {
+public:
+    virtual ~common_agent_jsonl_stream() = default;
+
+    virtual bool read(nlohmann::ordered_json & message, std::string & error) = 0;
+    virtual bool write(const nlohmann::ordered_json & message, std::string & error) = 0;
+    virtual bool eof() const = 0;
+};
+
+bool common_agent_jsonl_parse_line(
+        const std::string & line,
+        nlohmann::ordered_json & out,
+        std::string & error);
+
+std::string common_agent_jsonl_make_line(
+        const nlohmann::ordered_json & message);
 
 // Transport-neutral wire contracts shared by daemon, TCP and Android hosts.
 // Daemon administration commands remain in tools/agent/daemon; this header
@@ -53,7 +67,7 @@ struct common_agent_jsonl_event_entry {
 };
 
 struct common_agent_jsonl_turn_result {
-    uint64_t request_id = 0;
+    std::string request_id;
     bool ok = false;
     bool cancelled = false;
     std::string response;
@@ -61,8 +75,6 @@ struct common_agent_jsonl_turn_result {
     std::string error;
     std::string failure_class;
     int event_count = 0;
-    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
-    std::optional<common_agent_turn_summary> turn_summary;
 };
 
 bool common_agent_jsonl_read_message(

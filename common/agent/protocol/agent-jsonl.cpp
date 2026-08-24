@@ -25,13 +25,7 @@ bool common_agent_jsonl_read_message(FILE * stream, json & out, std::string & er
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
         if (line.empty()) continue;
 
-        const auto parsed = json::parse(line, nullptr, false);
-        if (parsed.is_discarded() || !parsed.is_object()) {
-            error = "agent JSONL stream emitted a non-JSON object line";
-            return false;
-        }
-        out = parsed;
-        return true;
+        return common_agent_jsonl_parse_line(line, out, error);
     }
 
     error = "agent JSONL stream closed before returning a message";
@@ -40,7 +34,7 @@ bool common_agent_jsonl_read_message(FILE * stream, json & out, std::string & er
 
 bool common_agent_jsonl_write_message(FILE * stream, const json & message, std::string & error) {
     error.clear();
-    const std::string line = message.dump() + "\n";
+    const std::string line = common_agent_jsonl_make_line(message);
     if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
         error = "failed to write agent JSONL message";
         return false;
@@ -50,6 +44,21 @@ bool common_agent_jsonl_write_message(FILE * stream, const json & message, std::
         return false;
     }
     return true;
+}
+
+bool common_agent_jsonl_parse_line(const std::string & line, json & out, std::string & error) {
+    const auto parsed = json::parse(line, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+        error = "agent JSONL stream emitted a non-JSON object line";
+        return false;
+    }
+    out = parsed;
+    error.clear();
+    return true;
+}
+
+std::string common_agent_jsonl_make_line(const json & message) {
+    return message.dump() + "\n";
 }
 
 json common_agent_jsonl_make_turn_request(const common_agent_jsonl_turn_request & request) {

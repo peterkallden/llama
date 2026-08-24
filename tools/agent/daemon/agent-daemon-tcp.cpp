@@ -62,13 +62,7 @@ public:
             if (byte == '\n') {
                 while (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.empty()) continue;
-                const auto parsed = nlohmann::ordered_json::parse(line, nullptr, false);
-                if (parsed.is_discarded() || !parsed.is_object()) {
-                    error = "daemon received a non-JSON protocol line";
-                    return false;
-                }
-                message = parsed;
-                return true;
+                return common_agent_jsonl_parse_line(line, message, error);
             }
             if (line.size() >= max_line_bytes) {
                 error = "daemon TCP request exceeds configured max line bytes";
@@ -79,7 +73,7 @@ public:
     }
 
     bool write(const nlohmann::ordered_json & message, std::string & error) override {
-        const std::string line = message.dump() + "\n";
+        const std::string line = common_agent_jsonl_make_line(message);
         size_t sent = 0;
         while (sent < line.size()) {
 #ifdef _WIN32
