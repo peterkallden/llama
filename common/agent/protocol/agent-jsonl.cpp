@@ -99,6 +99,12 @@ json common_agent_jsonl_make_event_message(const common_agent_jsonl_event_entry 
     if (!event.session_id.empty()) payload["session_id"] = event.session_id;
     if (!event.operation_id.empty()) payload["operation_id"] = event.operation_id;
     if (!event.detail.empty()) payload["detail"] = event.detail;
+    if (!event.memory_id.empty()) payload["memory_id"] = event.memory_id;
+    if (!event.plan_id.empty()) payload["plan_id"] = event.plan_id;
+    if (!event.step_id.empty()) payload["step_id"] = event.step_id;
+    if (!event.observation_id.empty()) payload["observation_id"] = event.observation_id;
+    if (!event.tool_name.empty()) payload["tool_name"] = event.tool_name;
+    if (!event.resource_uri.empty()) payload["resource_uri"] = event.resource_uri;
     return {
         {"message_type", "event"},
         {"event", std::move(payload)},

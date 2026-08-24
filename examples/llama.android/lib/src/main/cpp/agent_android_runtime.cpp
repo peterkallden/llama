@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "agent/runtime/agent-event-queue.h"
+#include "common/agent/protocol/agent-jsonl.h"
 #include "memory/sqlite/memory-sqlite.h"
 #include "plan/sqlite/plan-sqlite.h"
 #include "tools/agent/runtime/agent-runtime-control.h"
@@ -80,27 +81,30 @@ std::shared_ptr<android_agent_runtime_handle> find_handle(jlong handle) {
 }
 
 std::string event_json(const common_agent_event & event) {
-    std::string result = "{\"type\":\"" +
-        json_escape(common_agent_event_type_name(event.type)) +
-        "\",\"detail\":\"" + json_escape(event.detail) + "\"";
-    if (!event.memory_id.empty()) result += ",\"memory_id\":\"" + json_escape(event.memory_id) + "\"";
-    if (event.plan_id.has_value()) result += ",\"plan_id\":\"" + json_escape(*event.plan_id) + "\"";
-    if (!event.step_id.empty()) result += ",\"step_id\":\"" + json_escape(event.step_id) + "\"";
-    if (!event.observation_id.empty()) result += ",\"observation_id\":\"" + json_escape(event.observation_id) + "\"";
-    if (!event.tool_name.empty()) result += ",\"tool_name\":\"" + json_escape(event.tool_name) + "\"";
-    if (!event.resource_uri.empty()) result += ",\"resource_uri\":\"" + json_escape(event.resource_uri) + "\"";
-    return result + "}";
+    common_agent_jsonl_event_entry wire_event;
+    wire_event.type = common_agent_event_type_name(event.type);
+    wire_event.event_type = wire_event.type;
+    wire_event.detail = event.detail;
+    wire_event.memory_id = event.memory_id;
+    if (event.plan_id.has_value()) wire_event.plan_id = *event.plan_id;
+    wire_event.step_id = event.step_id;
+    wire_event.observation_id = event.observation_id;
+    wire_event.tool_name = event.tool_name;
+    wire_event.resource_uri = event.resource_uri;
+    return common_agent_jsonl_make_event_message(wire_event).dump();
 }
 
 std::string result_json(uint64_t request_id, const common_agent_runtime_session_host_turn_result & result) {
-    return "{\"request_id\":" + std::to_string(request_id) +
-        ",\"ok\":" + (result.ok ? "true" : "false") +
-        ",\"cancelled\":" + (result.cancelled ? "true" : "false") +
-        ",\"response\":\"" + json_escape(result.response) + "\"" +
-        ",\"plan_id\":\"" + json_escape(result.plan_id) + "\"" +
-        ",\"error\":\"" + json_escape(result.error) + "\"" +
-        ",\"failure_class\":\"" + common_agent_failure_class_name(result.failure_class) + "\"" +
-        ",\"event_count\":" + std::to_string(result.event_count) + "}";
+    common_agent_jsonl_turn_result wire_result;
+    wire_result.request_id = request_id;
+    wire_result.ok = result.ok;
+    wire_result.cancelled = result.cancelled;
+    wire_result.response = result.response;
+    wire_result.plan_id = result.plan_id;
+    wire_result.error = result.error;
+    wire_result.failure_class = common_agent_failure_class_name(result.failure_class);
+    wire_result.event_count = result.event_count;
+    return common_agent_jsonl_make_turn_result(wire_result).dump();
 }
 
 std::string mcp_tools_json(const std::vector<mcp_agent_tool_definition> & tools) {

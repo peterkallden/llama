@@ -82,6 +82,12 @@ bool parse_event_entry_field(
     entry.detail = value.value("detail", std::string());
     entry.event_type = value.value("event_type", std::string());
     entry.sequence = value.value("sequence", uint64_t(0));
+    entry.memory_id = value.value("memory_id", std::string());
+    entry.plan_id = value.value("plan_id", std::string());
+    entry.step_id = value.value("step_id", std::string());
+    entry.observation_id = value.value("observation_id", std::string());
+    entry.tool_name = value.value("tool_name", std::string());
+    entry.resource_uri = value.value("resource_uri", std::string());
     return !entry.type.empty();
 }
 

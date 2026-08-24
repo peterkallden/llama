@@ -44,6 +44,12 @@ struct common_agent_jsonl_event_entry {
     std::string detail;
     std::string event_type;
     uint64_t sequence = 0;
+    std::string memory_id;
+    std::string plan_id;
+    std::string step_id;
+    std::string observation_id;
+    std::string tool_name;
+    std::string resource_uri;
 };
 
 struct common_agent_jsonl_turn_result {
