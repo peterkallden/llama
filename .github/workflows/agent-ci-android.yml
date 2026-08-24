@@ -71,7 +71,9 @@ jobs:
 
       - name: Build Android development project
         working-directory: examples/llama.android
-        run: ./gradlew build --no-daemon --max-workers=4
+        run: >-
+          ./gradlew :app:assembleDebug :lib:assembleRelease
+          :lib:testDebugUnitTest --no-daemon --max-workers=4
 
       - name: Verify Android CPU and Vulkan backends
         run: |

@@ -24,8 +24,11 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Development builds must remain debuggable and should not spend
+            // the CI heap on R8/resource shrinking. Release keeps the strict
+            // shrink/minify path below.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android.txt"),
                 "proguard-rules.pro"
