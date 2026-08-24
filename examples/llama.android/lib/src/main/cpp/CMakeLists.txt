@@ -76,6 +76,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-protocol.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-client.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-transport.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/agent_android_credentials.cpp
         ${CMAKE_CURRENT_LIST_DIR}/agent_android_mcp_transport.cpp)
 
 target_include_directories(llama-agent-android-runtime PUBLIC

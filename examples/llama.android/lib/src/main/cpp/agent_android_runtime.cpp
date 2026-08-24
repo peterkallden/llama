@@ -16,6 +16,7 @@
 #include "tools/agent/runtime/agent-runtime-session-host.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "agent_android_mcp_transport.h"
+#include "agent_android_credentials.h"
 
 namespace {
 struct android_agent_runtime_handle {
@@ -34,6 +35,8 @@ struct android_agent_runtime_handle {
     std::shared_ptr<agent_mcp_http_client> mcp_client;
     std::shared_ptr<agent_mcp_http_transport> android_https_transport;
     bool android_https_supported = false;
+    std::shared_ptr<common_agent_credential_provider> android_credential_provider;
+    bool android_credentials_supported = false;
     std::mutex mcp_mutex;
     std::mutex turn_mutex;
     std::thread turn_worker;
@@ -132,6 +135,19 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
                 runtime->android_https_supported = runtime->android_https_transport != nullptr;
             }
             env->DeleteLocalRef(transport_class);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        jclass credential_store_class = env->FindClass("com/arm/aichat/agent/AndroidCredentialStore");
+        if (credential_store_class) {
+            const jmethodID resolve_method = env->GetStaticMethodID(
+                credential_store_class, "resolve",
+                "(Ljava/lang/String;)Ljava/lang/String;");
+            if (resolve_method) {
+                runtime->android_credential_provider = make_agent_android_credential_provider(
+                    java_vm, credential_store_class, resolve_method);
+                runtime->android_credentials_supported = runtime->android_credential_provider != nullptr;
+            }
+            env->DeleteLocalRef(credential_store_class);
         }
         if (env->ExceptionCheck()) env->ExceptionClear();
     }
@@ -289,13 +305,15 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, 
         ",\"sqlite_storage\":" + (runtime->storage_ready ? "true" : "false") +
         ",\"mcp_remote_configured\":" + (mcp_configured ? "true" : "false") +
         ",\"mcp_https_supported\":" + (runtime->android_https_supported ? "true" : "false") +
+        ",\"credential_provider_supported\":" + (runtime->android_credentials_supported ? "true" : "false") +
         ",\"inference_backend\":\"cli\"}";
     return env->NewStringUTF(json.c_str());
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
-        JNIEnv * env, jclass, jlong handle, jstring server_name, jstring url, jstring bearer_token) {
+        JNIEnv * env, jclass, jlong handle, jstring server_name, jstring url, jstring bearer_token,
+        jstring credential_ref) {
     std::shared_ptr<android_agent_runtime_handle> runtime;
     {
         std::lock_guard<std::mutex> lock(handles_mutex);
@@ -305,6 +323,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
     const std::string name = to_string(env, server_name);
     const std::string endpoint = to_string(env, url);
     const std::string token = to_string(env, bearer_token);
+    const std::string credential = to_string(env, credential_ref);
     if (name.empty() || endpoint.empty() ||
             (endpoint.rfind("http://", 0) != 0 && endpoint.rfind("https://", 0) != 0)) {
         return JNI_FALSE;
@@ -314,6 +333,8 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
     agent_mcp_http_client_config config{
         name, endpoint, token, {}, 5000, 30000, 2000, 256 * 1024};
     if (https) config.transport = runtime->android_https_transport;
+    config.credential_ref = credential;
+    config.credential_provider = runtime->android_credential_provider;
     std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
     runtime->mcp_client = std::make_shared<agent_mcp_http_client>(std::move(config));
     return JNI_TRUE;

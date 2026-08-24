@@ -18,7 +18,7 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
         @JvmStatic private external fun nativeCapabilities(handle: Long): String?
-        @JvmStatic private external fun nativeConfigureMcp(handle: Long, serverName: String, url: String, bearerToken: String?): Boolean
+        @JvmStatic private external fun nativeConfigureMcp(handle: Long, serverName: String, url: String, bearerToken: String?, credentialRef: String?): Boolean
         @JvmStatic private external fun nativeMcpTools(handle: Long): String?
         @JvmStatic private external fun nativeMcpCall(handle: Long, toolName: String, argumentsJson: String): String?
         @JvmStatic private external fun nativeSubmitTurn(
@@ -50,7 +50,16 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
 
     /** Configures an HTTP MCP endpoint using the shared native MCP transport. */
     fun configureMcp(serverName: String, url: String, bearerToken: String? = null): Boolean =
-        nativeHandle != 0L && nativeConfigureMcp(nativeHandle, serverName, url, bearerToken)
+        configureMcp(serverName, url, bearerToken, null)
+
+    /** Configure MCP using a host-owned credential reference instead of an inline secret. */
+    fun configureMcp(
+        serverName: String,
+        url: String,
+        bearerToken: String? = null,
+        credentialRef: String? = null,
+    ): Boolean = nativeHandle != 0L && nativeConfigureMcp(
+        nativeHandle, serverName, url, bearerToken, credentialRef)
 
     /** Returns the remote MCP tool catalog as bounded JSON, or null when unavailable. */
     fun mcpTools(): String? = if (nativeHandle == 0L) null else nativeMcpTools(nativeHandle)

@@ -22,6 +22,11 @@ class AgentRuntimeService : Service() {
     private val binder = LocalBinder()
     private var runtime: AgentRuntime? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        AndroidCredentialStore.initialize(this)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val directory = intent?.getStringExtra(EXTRA_STORAGE_DIRECTORY)
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH)
@@ -59,7 +64,13 @@ class AgentRuntimeService : Service() {
         serverName: String,
         url: String,
         bearerToken: String? = null,
-    ): Boolean = runtime?.configureMcp(serverName, url, bearerToken) ?: false
+        credentialRef: String? = null,
+    ): Boolean = runtime?.configureMcp(serverName, url, bearerToken, credentialRef) ?: false
+
+    fun putCredential(reference: String, secret: String) =
+        AndroidCredentialStore.put(reference, secret)
+
+    fun removeCredential(reference: String) = AndroidCredentialStore.remove(reference)
 
     fun mcpTools(): String? = runtime?.mcpTools()
 
