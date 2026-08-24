@@ -27,12 +27,14 @@ local GGUF execution. The desktop server-context backend and its server/mtmd
 dependencies are intentionally not part of this Android target; adding them
 later must be an explicit host capability, not an Android-specific fallback.
 
-The Android agent integration is being built as a host around the common agent
-runtime. The planned first functional path is a Service-owned local runtime
-with SQLite state, structured events and cancellation; the Activity/UI remains
-a client of that Service. The JNI boundary should stay small and must not
-expose planner or tool implementation classes. GGUF models remain outside the
-APK in app-private storage after import through `ContentResolver`.
+The Android agent integration is a host around the common agent runtime. The
+first functional path is a Service-owned local runtime with SQLite state,
+structured events and cancellation; the Activity/UI is a client of that
+Service. `AgentClientSession` is the example application's runtime adapter: it
+binds the Service, configures an imported model, submits turns and polls
+event/result messages. The JNI boundary stays small and does not expose
+planner or tool implementation classes. GGUF models remain outside the APK in
+app-private storage after import through `ContentResolver`.
 
 Native worker threads should publish the existing agent events into a
 host-owned queue. Kotlin can poll or collect that queue without receiving
@@ -91,13 +93,15 @@ configured MCP endpoint is not the same as reachable or authorized. A packaged V
 Vulkan device; device enumeration and performance validation still belong to
 the Android host/device smoke tests.
 
-`com.arm.aichat.agent.AgentRuntimeService` is the optional Android lifecycle
+`com.arm.aichat.agent.AgentRuntimeService` is the Android lifecycle
 owner for that facade. It is non-exported, returns `START_NOT_STICKY`, and
 releases the native handle in `onDestroy`. An Activity or other UI component
 may bind to it as a client. The Service does not become a second planner or
 inference implementation; it owns process/lifecycle concerns and forwards
-submit, cancellation, capability, MCP transport, state, event polling and
-result polling to the native runtime. `close()` waits for an active native turn to finish; callers should
+model configuration, submit, cancellation, capability, MCP transport, state,
+event polling and result polling to the native runtime. Runtime replacement for
+a newly selected model is also Service-owned. `close()` waits for an active
+native turn to finish; callers should
 request cancellation first when leaving the Service.
 
 The JNI result is deliberately a small transport contract rather than a
