@@ -149,6 +149,37 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+#ifdef _WIN32
+    // The fake daemon may link against the agent DLLs in a shared Windows
+    // build. Stage those beside the copied executable as well; otherwise the
+    // child can exit before writing its JSONL ready message.
+    for (const auto & entry : std::filesystem::directory_iterator(
+                fake_daemon_source.parent_path(), ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file(ec) || ec ||
+                entry.path().extension() != ".dll") {
+            ec.clear();
+            continue;
+        }
+        std::filesystem::copy_file(
+            entry.path(),
+            temp_root / entry.path().filename(),
+            std::filesystem::copy_options::overwrite_existing,
+            ec);
+        if (ec) {
+            std::fprintf(stderr, "failed to stage fake daemon DLL %s: %s\n",
+                entry.path().string().c_str(), ec.message().c_str());
+            return 1;
+        }
+    }
+    if (ec) {
+        std::fprintf(stderr, "failed to enumerate fake daemon DLLs: %s\n", ec.message().c_str());
+        return 1;
+    }
+#endif
+
     {
         std::ofstream resource_stream(resource_path, std::ios::binary);
         resource_stream << "# CLI input\n";
