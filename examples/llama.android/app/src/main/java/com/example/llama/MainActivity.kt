@@ -3,6 +3,7 @@ package com.example.llama
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.app.AlertDialog
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
@@ -29,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var eventsRv: RecyclerView
     private lateinit var userInputEt: EditText
     private lateinit var userActionFab: FloatingActionButton
+    private lateinit var runtimeStatusTv: TextView
 
     private lateinit var agentSession: AgentClientSession
     private lateinit var modelManager: AndroidModelManager
@@ -63,6 +65,10 @@ class MainActivity : AppCompatActivity() {
         eventsRv.adapter = eventAdapter
         userInputEt = findViewById(R.id.user_input)
         userActionFab = findViewById(R.id.fab)
+        runtimeStatusTv = findViewById(R.id.runtime_status)
+        findViewById<android.widget.Button>(R.id.settings_button).setOnClickListener {
+            showRuntimeStatus()
+        }
         modelManager = AndroidModelManager(this)
         agentSession = AgentClientSession(this)
 
@@ -71,6 +77,7 @@ class MainActivity : AppCompatActivity() {
                 isModelReady = agentSession.configureModel(path)
                 if (isModelReady) updateModelReadyUi()
             }
+            refreshRuntimeStatus()
             agentSession.startPolling(lifecycleScope, ::handleAgentEvent, ::handleAgentResult)
         }
 
@@ -110,6 +117,7 @@ class MainActivity : AppCompatActivity() {
                         userInputEt.hint = "Agent service is not ready"
                         userActionFab.isEnabled = true
                     }
+                    refreshRuntimeStatus()
                 }
             } catch (error: Exception) {
                 Log.e(TAG, "Unable to prepare model", error)
@@ -171,7 +179,37 @@ class MainActivity : AppCompatActivity() {
         turnActive = false
         userInputEt.isEnabled = isModelReady
         userActionFab.isEnabled = true
+        refreshRuntimeStatus()
     }
+
+    private fun refreshRuntimeStatus() {
+        val state = agentSession.state()
+        runtimeStatusTv.text = if (state.isNullOrBlank()) {
+            "Agent runtime: unavailable"
+        } else {
+            "Agent runtime: ${if (isModelReady) "ready" else "idle"}"
+        }
+    }
+
+    private fun showRuntimeStatus() {
+        val state = agentSession.state().orEmpty()
+        val capabilities = agentSession.capabilities().orEmpty()
+        val content = buildString {
+            append("State\n")
+            append(prettyJson(state))
+            append("\n\nCapabilities\n")
+            append(prettyJson(capabilities))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Agent runtime")
+            .setMessage(content)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun prettyJson(value: String): String = runCatching {
+        org.json.JSONObject(value).toString(2)
+    }.getOrDefault(if (value.isBlank()) "unavailable" else value)
 
     private fun updateModelReadyUi() {
         userInputEt.hint = "Type and send a message!"

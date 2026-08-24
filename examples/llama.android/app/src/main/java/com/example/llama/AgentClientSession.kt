@@ -60,6 +60,10 @@ class AgentClientSession(context: Context) : Closeable {
 
     fun hasRuntime(): Boolean = service?.hasRuntime() == true
 
+    fun capabilities(): String? = service?.capabilities()
+
+    fun state(): String? = service?.state()
+
     fun submitTurn(
         prompt: String,
         mode: String = "agent",
