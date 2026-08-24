@@ -13,263 +13,175 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.arm.aichat.AiChat
-import com.arm.aichat.InferenceEngine
+import com.arm.aichat.agent.AndroidModelManager
 import com.arm.aichat.gguf.GgufMetadata
 import com.arm.aichat.gguf.GgufMetadataReader
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
+import org.json.JSONObject
 import java.util.UUID
 
+/** Minimal client for the Service-owned llama-agent runtime. */
 class MainActivity : AppCompatActivity() {
-
-    // Android views
     private lateinit var ggufTv: TextView
     private lateinit var messagesRv: RecyclerView
     private lateinit var userInputEt: EditText
     private lateinit var userActionFab: FloatingActionButton
 
-    // Arm AI Chat inference engine
-    private lateinit var engine: InferenceEngine
-    private var generationJob: Job? = null
-
-    // Conversation states
+    private lateinit var agentSession: AgentClientSession
+    private lateinit var modelManager: AndroidModelManager
     private var isModelReady = false
+    private var pendingModelPath: String? = null
+
     private val messages = mutableListOf<Message>()
-    private val lastAssistantMsg = StringBuilder()
     private val messageAdapter = MessageAdapter(messages)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
-        // View model boilerplate and state management is out of this basic sample's scope
-        onBackPressedDispatcher.addCallback { Log.w(TAG, "Ignore back press for simplicity") }
+        onBackPressedDispatcher.addCallback {
+            Log.w(TAG, "Back press does not stop the Service-owned runtime")
+        }
 
-        // Find views
         ggufTv = findViewById(R.id.gguf)
         messagesRv = findViewById(R.id.messages)
         messagesRv.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         messagesRv.adapter = messageAdapter
         userInputEt = findViewById(R.id.user_input)
         userActionFab = findViewById(R.id.fab)
+        modelManager = AndroidModelManager(this)
+        agentSession = AgentClientSession(this)
 
-        // Arm AI Chat initialization
-        lifecycleScope.launch(Dispatchers.Default) {
-            engine = AiChat.getInferenceEngine(applicationContext)
+        agentSession.bind {
+            pendingModelPath?.let { path ->
+                isModelReady = agentSession.configureModel(path)
+                if (isModelReady) updateModelReadyUi()
+            }
+            agentSession.startPolling(lifecycleScope, ::handleAgentEvent, ::handleAgentResult)
         }
 
-        // Upon CTA button tapped
         userActionFab.setOnClickListener {
-            if (isModelReady) {
-                // If model is ready, validate input and send to engine
-                handleUserInput()
-            } else {
-                // Otherwise, prompt user to select a GGUF metadata on the device
-                getContent.launch(arrayOf("*/*"))
-            }
+            if (isModelReady) handleUserInput() else getContent.launch(arrayOf("*/*"))
         }
     }
 
     private val getContent = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        Log.i(TAG, "Selected file uri:\n $uri")
-        uri?.let { handleSelectedModel(it) }
-    }
+    ) { uri -> uri?.let { handleSelectedModel(it) } }
 
-    /**
-     * Handles the file Uri from [getContent] result
-     */
     private fun handleSelectedModel(uri: Uri) {
-        // Update UI states
         userActionFab.isEnabled = false
         userInputEt.hint = "Parsing GGUF..."
-        ggufTv.text = "Parsing metadata from selected file \n$uri"
+        ggufTv.text = "Parsing metadata from selected file\n$uri"
 
         lifecycleScope.launch(Dispatchers.IO) {
-            // Parse GGUF metadata
-            Log.i(TAG, "Parsing GGUF metadata...")
-            contentResolver.openInputStream(uri)?.use {
-                GgufMetadataReader.create().readStructuredMetadata(it)
-            }?.let { metadata ->
-                // Update UI to show GGUF metadata to user
-                Log.i(TAG, "GGUF parsed: \n$metadata")
+            try {
+                val metadata = contentResolver.openInputStream(uri)?.use {
+                    GgufMetadataReader.create().readStructuredMetadata(it)
+                } ?: error("Unable to read selected model")
+
                 withContext(Dispatchers.Main) {
                     ggufTv.text = metadata.toString()
+                    userInputEt.hint = "Importing model..."
                 }
 
-                // Ensure the model file is available
                 val modelName = metadata.filename() + FILE_EXTENSION_GGUF
-                contentResolver.openInputStream(uri)?.use { input ->
-                    ensureModelFile(modelName, input)
-                }?.let { modelFile ->
-                    loadModel(modelName, modelFile)
+                val imported = modelManager.importGguf(uri, modelName)
+                pendingModelPath = imported.path
+                val configured = agentSession.configureModel(imported.path)
 
-                    withContext(Dispatchers.Main) {
-                        isModelReady = true
-                        userInputEt.hint = "Type and send a message!"
-                        userInputEt.isEnabled = true
-                        userActionFab.setImageResource(R.drawable.outline_send_24)
+                withContext(Dispatchers.Main) {
+                    isModelReady = configured
+                    if (configured) updateModelReadyUi() else {
+                        userInputEt.hint = "Agent service is not ready"
                         userActionFab.isEnabled = true
                     }
                 }
-            }
-        }
-    }
-
-    /**
-     * Prepare the model file within app's private storage
-     */
-    private suspend fun ensureModelFile(modelName: String, input: InputStream) =
-        withContext(Dispatchers.IO) {
-            File(ensureModelsDirectory(), modelName).also { file ->
-                // Copy the file into local storage if not yet done
-                if (!file.exists()) {
-                    Log.i(TAG, "Start copying file to $modelName")
-                    withContext(Dispatchers.Main) {
-                        userInputEt.hint = "Copying file..."
-                    }
-
-                    FileOutputStream(file).use { input.copyTo(it) }
-                    Log.i(TAG, "Finished copying file to $modelName")
-                } else {
-                    Log.i(TAG, "File already exists $modelName")
-                }
-            }
-        }
-
-    /**
-     * Load the model file from the app private storage
-     */
-    private suspend fun loadModel(modelName: String, modelFile: File) =
-        withContext(Dispatchers.IO) {
-            Log.i(TAG, "Loading model $modelName")
-            withContext(Dispatchers.Main) {
-                userInputEt.hint = "Loading model..."
-            }
-            engine.loadModel(modelFile.path)
-        }
-
-    /**
-     * Validate and send the user message into [InferenceEngine]
-     */
-    private fun handleUserInput() {
-        userInputEt.text.toString().also { userMsg ->
-            if (userMsg.isEmpty()) {
-                Toast.makeText(this, "Input message is empty!", Toast.LENGTH_SHORT).show()
-            } else {
-                userInputEt.text = null
-                userInputEt.isEnabled = false
-                userActionFab.isEnabled = false
-
-                // Update message states
-                messages.add(Message(UUID.randomUUID().toString(), userMsg, true))
-                lastAssistantMsg.clear()
-                messages.add(Message(UUID.randomUUID().toString(), lastAssistantMsg.toString(), false))
-
-                generationJob = lifecycleScope.launch(Dispatchers.Default) {
-                    engine.sendUserPrompt(userMsg)
-                        .onCompletion {
-                            withContext(Dispatchers.Main) {
-                                userInputEt.isEnabled = true
-                                userActionFab.isEnabled = true
-                            }
-                        }.collect { token ->
-                            withContext(Dispatchers.Main) {
-                                val messageCount = messages.size
-                                check(messageCount > 0 && !messages[messageCount - 1].isUser)
-
-                                messages.removeAt(messageCount - 1).copy(
-                                    content = lastAssistantMsg.append(token).toString()
-                                ).let { messages.add(it) }
-
-                                messageAdapter.notifyItemChanged(messages.size - 1)
-                            }
-                        }
-                }
-            }
-        }
-    }
-
-    /**
-     * Run a benchmark with the model file
-     */
-    @Deprecated("This benchmark doesn't accurately indicate GUI performance expected by app developers")
-    private suspend fun runBenchmark(modelName: String, modelFile: File) =
-        withContext(Dispatchers.Default) {
-            Log.i(TAG, "Starts benchmarking $modelName")
-            withContext(Dispatchers.Main) {
-                userInputEt.hint = "Running benchmark..."
-            }
-            engine.bench(
-                pp=BENCH_PROMPT_PROCESSING_TOKENS,
-                tg=BENCH_TOKEN_GENERATION_TOKENS,
-                pl=BENCH_SEQUENCE,
-                nr=BENCH_REPETITION
-            ).let { result ->
-                messages.add(Message(UUID.randomUUID().toString(), result, false))
+            } catch (error: Exception) {
+                Log.e(TAG, "Unable to prepare model", error)
                 withContext(Dispatchers.Main) {
-                    messageAdapter.notifyItemChanged(messages.size - 1)
+                    userInputEt.hint = "Select a GGUF model to retry"
+                    userActionFab.isEnabled = true
+                    Toast.makeText(this@MainActivity,
+                        error.message ?: "Unable to prepare model", Toast.LENGTH_LONG).show()
                 }
             }
         }
+    }
 
-    /**
-     * Create the `models` directory if not exist.
-     */
-    private fun ensureModelsDirectory() =
-        File(filesDir, DIRECTORY_MODELS).also {
-            if (it.exists() && !it.isDirectory) { it.delete() }
-            if (!it.exists()) { it.mkdir() }
+    private fun handleUserInput() {
+        val userMsg = userInputEt.text.toString().trim()
+        if (userMsg.isEmpty()) {
+            Toast.makeText(this, "Input message is empty!", Toast.LENGTH_SHORT).show()
+            return
         }
 
-    override fun onStop() {
-        generationJob?.cancel()
-        super.onStop()
+        userInputEt.text = null
+        userInputEt.isEnabled = false
+        userActionFab.isEnabled = false
+        messages.add(Message(UUID.randomUUID().toString(), userMsg, true))
+        messages.add(Message(UUID.randomUUID().toString(), "", false))
+        messageAdapter.notifyItemRangeInserted(messages.size - 2, 2)
+        messagesRv.scrollToPosition(messages.lastIndex)
+
+        if (!agentSession.submitTurn(userMsg)) {
+            messages.removeAt(messages.lastIndex)
+            messages.removeAt(messages.lastIndex)
+            messageAdapter.notifyDataSetChanged()
+            userInputEt.isEnabled = true
+            userActionFab.isEnabled = true
+            Toast.makeText(this, "Unable to start agent turn", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleAgentEvent(message: String) {
+        val event = runCatching { JSONObject(message).optJSONObject("event") }.getOrNull()
+        val detail = event?.optString("detail").orEmpty()
+        if (detail.isNotBlank()) Log.d(TAG, "Agent event: $detail")
+    }
+
+    private fun handleAgentResult(message: String) {
+        val result = runCatching { JSONObject(message) }.getOrNull() ?: return
+        val response = if (!result.optBoolean("ok", false)) {
+            result.optString("error").ifBlank { "Agent turn failed" }
+        } else result.optString("response")
+
+        if (messages.isNotEmpty() && !messages.last().isUser) {
+            messages[messages.lastIndex] = messages.last().copy(content = response)
+            messageAdapter.notifyItemChanged(messages.lastIndex)
+            messagesRv.scrollToPosition(messages.lastIndex)
+        }
+        userInputEt.isEnabled = isModelReady
+        userActionFab.isEnabled = true
+    }
+
+    private fun updateModelReadyUi() {
+        userInputEt.hint = "Type and send a message!"
+        userInputEt.isEnabled = true
+        userActionFab.setImageResource(R.drawable.outline_send_24)
+        userActionFab.isEnabled = true
     }
 
     override fun onDestroy() {
-        engine.destroy()
+        if (::agentSession.isInitialized) agentSession.close()
         super.onDestroy()
     }
 
     companion object {
         private val TAG = MainActivity::class.java.simpleName
-
-        private const val DIRECTORY_MODELS = "models"
         private const val FILE_EXTENSION_GGUF = ".gguf"
-
-        private const val BENCH_PROMPT_PROCESSING_TOKENS = 512
-        private const val BENCH_TOKEN_GENERATION_TOKENS = 128
-        private const val BENCH_SEQUENCE = 1
-        private const val BENCH_REPETITION = 3
     }
 }
 
 fun GgufMetadata.filename() = when {
-    basic.name != null -> {
-        basic.name?.let { name ->
-            basic.sizeLabel?.let { size ->
-                "$name-$size"
-            } ?: name
-        }
+    basic.name != null -> basic.name?.let { name ->
+        basic.sizeLabel?.let { size -> "$name-$size" } ?: name
     }
-    architecture?.architecture != null -> {
-        architecture?.architecture?.let { arch ->
-            basic.uuid?.let { uuid ->
-                "$arch-$uuid"
-            } ?: "$arch-${System.currentTimeMillis()}"
-        }
+    architecture?.architecture != null -> architecture?.architecture?.let { arch ->
+        basic.uuid?.let { uuid -> "$arch-$uuid" } ?: "$arch-${System.currentTimeMillis()}"
     }
-    else -> {
-        "model-${System.currentTimeMillis().toHexString()}"
-    }
+    else -> "model-${System.currentTimeMillis().toHexString()}"
 }
