@@ -196,9 +196,11 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect
           force-avd-creation: true
           disable-spellchecker: true
+          disable-animations: false
           working-directory: examples/llama.android
           script: |
-            set -euo pipefail
+            # android-emulator-runner executes this script through /bin/sh.
+            set -eu
             adb wait-for-device
             for attempt in $(seq 1 60); do
               boot_completed=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
