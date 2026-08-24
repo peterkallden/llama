@@ -33,6 +33,46 @@ wakes a waiting consumer and closes without accepting late events. Cancellation
 continues to use the existing shared runtime cancellation state; the Android
 host supplies the reason and the runtime propagates it to the active turn.
 
+## Shared turn wire contract
+
+The transport-neutral turn surface is defined in
+`common/agent/protocol/agent-jsonl.h` and implemented in
+`common/agent/protocol/agent-jsonl.cpp`. It is deliberately a wire contract,
+not a second runtime object model. It contains the common request, event and
+terminal-result shapes plus JSONL line parsing/writing helpers:
+
+```text
+common turn request
+    prompt, session/project/turn scope, mode, resources, timeouts
+
+runtime event
+    type, sequence, detail, populated semantic IDs and tool/resource fields
+
+turn result
+    request_id, ok/cancelled, response, plan_id, failure_class, event_count
+```
+
+The daemon's stdin/stdout and TCP adapters use the same request/event codecs;
+TCP adds only its socket-backed stream implementation. Android uses the same
+request, event and result envelopes across its JNI boundary, without starting
+a daemon subprocess. Stdio and TCP retain newline-delimited JSON framing,
+while JNI can pass one JSON object per call.
+
+Daemon administration commands and daemon-only response extensions remain in
+`tools/agent/daemon`. In particular, status, session/resource administration,
+authentication and richer continuation/summary payloads are not silently
+added to the portable turn contract. This keeps the common surface suitable
+for a Service, CLI or future host while allowing the daemon protocol to grow
+its management API independently.
+
+Example terminal result:
+
+```json
+{"message_type":"response","request_id":"3","ok":true,
+ "cancelled":false,"response":"done","plan_id":"plan-1",
+ "failure_class":"none","event_count":2}
+```
+
 ## Agent runtime modes
 
 The agent runtime deliberately has a smaller mode vocabulary than ordinary
