@@ -26,6 +26,7 @@ import java.util.UUID
 class MainActivity : AppCompatActivity() {
     private lateinit var ggufTv: TextView
     private lateinit var messagesRv: RecyclerView
+    private lateinit var eventsRv: RecyclerView
     private lateinit var userInputEt: EditText
     private lateinit var userActionFab: FloatingActionButton
 
@@ -36,7 +37,9 @@ class MainActivity : AppCompatActivity() {
     private var pendingModelPath: String? = null
 
     private val messages = mutableListOf<Message>()
+    private val events = mutableListOf<AgentEventRow>()
     private val messageAdapter = MessageAdapter(messages)
+    private val eventAdapter = AgentEventAdapter(events)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +58,9 @@ class MainActivity : AppCompatActivity() {
         messagesRv = findViewById(R.id.messages)
         messagesRv.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         messagesRv.adapter = messageAdapter
+        eventsRv = findViewById(R.id.events)
+        eventsRv.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
+        eventsRv.adapter = eventAdapter
         userInputEt = findViewById(R.id.user_input)
         userActionFab = findViewById(R.id.fab)
         modelManager = AndroidModelManager(this)
@@ -145,7 +151,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleAgentEvent(message: String) {
-        val detail = AgentClientMessages.eventDetail(message).orEmpty()
+        val event = AgentClientMessages.parseEvent(message) ?: return
+        events.add(AgentEventRow(UUID.randomUUID().toString(), event))
+        eventAdapter.notifyItemInserted(events.lastIndex)
+        eventsRv.scrollToPosition(events.lastIndex)
+        val detail = event.detail
         if (detail.isNotBlank()) Log.d(TAG, "Agent event: $detail")
     }
 

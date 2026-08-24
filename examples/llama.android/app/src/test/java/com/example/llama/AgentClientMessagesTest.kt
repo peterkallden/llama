@@ -36,4 +36,15 @@ class AgentClientMessagesTest {
         assertNull(AgentClientMessages.parseResult("{\"message_type\":\"event\"}"))
         assertNull(AgentClientMessages.eventDetail("not-json"))
     }
+
+    @Test
+    fun parsesCompactEventAndRetainsExpandedJson() {
+        val event = AgentClientMessages.parseEvent(
+            "{\"message_type\":\"event\",\"event\":{\"type\":\"tool.completed\",\"detail\":\"done\",\"step_id\":\"step-1\"}}"
+        )
+
+        assertEquals("tool.completed", event?.type)
+        assertEquals("done", event?.detail)
+        assertTrue(event?.json?.contains("step-1") == true)
+    }
 }
