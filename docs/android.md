@@ -59,6 +59,15 @@ now reuses the existing `mcp_agent_tool_provider` and exposes its resolved
 tools to planning/execution. The capability snapshot reports both endpoint
 configuration and HTTPS availability separately.
 
+Credential handling follows the same host-boundary rule. MCP configuration may
+keep an inline `bearer_token` for development and simple local setup, but
+production Android configuration should use a `credential_ref`. The native
+MCP client accepts an injected `common_agent_credential_provider`; Android can
+resolve that reference through a Keystore-backed implementation, while desktop
+hosts may use a keyring or another host-owned store. If both are configured,
+the provider-resolved credential takes precedence. Secrets are not part of
+model-facing tool contracts or runtime event output.
+
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common
 event queue, and exposes `create(storageDirectory, modelPath?)`,

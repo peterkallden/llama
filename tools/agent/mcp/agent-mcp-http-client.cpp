@@ -102,6 +102,14 @@ bool agent_mcp_http_client::send_request(
     if (!config.bearer_token.empty()) {
         headers.emplace("Authorization", "Bearer " + config.bearer_token);
     }
+    if (config.credential_provider && !config.credential_ref.empty()) {
+        std::string secret;
+        if (!config.credential_provider->resolve(config.credential_ref, secret, error)) {
+            if (error.empty()) error = "MCP credential provider could not resolve credential_ref";
+            return false;
+        }
+        headers["Authorization"] = "Bearer " + secret;
+    }
     if (!state->session_id.empty()) {
         headers.emplace("Mcp-Session-Id", state->session_id);
     }

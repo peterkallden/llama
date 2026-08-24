@@ -10,6 +10,7 @@
 #include "plan/plan-types.h"
 #include "runtime-resource.h"
 #include "../mcp/agent-mcp-http-transport.h"
+#include "common/agent/credentials/agent-credential-provider.h"
 
 #include <nlohmann/json.hpp>
 
@@ -302,6 +303,8 @@ struct agent_mcp_http_client_config {
     uint32_t shutdown_timeout_ms = 2000;
     size_t max_result_bytes = 1024 * 1024;
     std::shared_ptr<agent_mcp_http_transport> transport;
+    std::string credential_ref;
+    std::shared_ptr<common_agent_credential_provider> credential_provider;
 };
 
 class agent_mcp_http_client : public agent_mcp_tool_client {

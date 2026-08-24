@@ -19,6 +19,8 @@ struct agent_mcp_client_factory_request {
     uint32_t request_timeout_ms = 30000;
     uint32_t shutdown_timeout_ms = 2000;
     size_t max_result_bytes = 1024 * 1024;
+    std::string credential_ref;
+    std::shared_ptr<common_agent_credential_provider> credential_provider;
 };
 
 std::unique_ptr<agent_mcp_tool_client> make_agent_mcp_client(
