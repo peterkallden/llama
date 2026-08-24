@@ -1698,6 +1698,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-daemon-dispatcher-smoke
     llama-agent-daemon-protocol-smoke
     llama-agent-daemon-jsonl-protocol-smoke
+    llama-agent-jsonl-wire-contract-smoke
     llama-agent-daemon-event-stream-contract-smoke
     llama-agent-daemon-client-smoke
     llama-agent-daemon-wait-events-smoke
