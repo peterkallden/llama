@@ -11,7 +11,9 @@ import com.arm.aichat.AgentStorage
 import com.arm.aichat.agent.AndroidModelManager
 import com.arm.aichat.agent.AndroidResourceStore
 import android.net.Uri
+import android.content.ComponentName
 import java.io.File
+import com.arm.aichat.agent.AgentRuntimeService
 
 /**
  * Instrumented test, which will execute on an Android device.
@@ -54,5 +56,18 @@ class ExampleInstrumentedTest {
         assertEquals(4, imported.sizeBytes)
         assertTrue(imported.path.startsWith(context.filesDir.absolutePath))
         assertTrue(AndroidModelManager(context).installed().any { it.path == imported.path })
+    }
+
+    @Test
+    fun agentRuntimeServiceIsHostOwnedAndNotExported() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val component = ComponentName(context, AgentRuntimeService::class.java)
+        val info = context.packageManager.getServiceInfo(component, 0)
+
+        assertFalse(info.exported)
+        assertEquals(AgentRuntimeService.EXTRA_STORAGE_DIRECTORY,
+            "com.arm.aichat.agent.STORAGE_DIRECTORY")
+        assertEquals(AgentRuntimeService.EXTRA_MODEL_PATH,
+            "com.arm.aichat.agent.MODEL_PATH")
     }
 }

@@ -41,6 +41,30 @@ The transport-neutral turn surface is defined in
 not a second runtime object model. It contains the common request, event and
 terminal-result shapes plus JSONL line parsing/writing helpers:
 
+The ownership boundary is intentionally visible in the source tree:
+
+```text
+common/agent/protocol/
+    agent-jsonl.h/.cpp
+        portable turn request/event/result envelopes
+        JSON object validation and JSONL line framing
+
+tools/agent/daemon/
+    agent-daemon-jsonl-protocol.*
+        daemon request dispatch and daemon-specific response extensions
+    agent-daemon-tcp.* / agent-daemon-unix.*
+        socket/file-descriptor stream adapters
+
+examples/llama.android/lib/src/main/cpp/
+    agent_android_runtime.cpp
+        JNI facade; maps Android calls to the portable envelopes
+```
+
+The protocol package is part of the common agent core library. It must not
+depend on JNI, daemon state, socket APIs, a particular model, or a particular
+UI. Host adapters may add transport framing or administration fields, but
+they must not redefine the meaning of a turn, event or terminal result.
+
 ```text
 common turn request
     prompt, session/project/turn scope, mode, resources, timeouts

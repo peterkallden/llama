@@ -110,6 +110,14 @@ JSON. Events contain `type`, `detail` and only populated semantic identifiers.
 Completed results contain `request_id`, `ok`, `cancelled`, `response`,
 `plan_id`, `error`, `failure_class` and `event_count`.
 
+The Android-specific verification is split at the same boundary. The native
+`llama-agent-jsonl-wire-contract-smoke` checks the shared request/event/result
+serialization and round-trip framing. Android instrumentation tests check
+the Service manifest/lifecycle boundary and Android storage/resource imports;
+they do not reimplement or snapshot the C++ wire codec in Kotlin. Emulator
+tests that require a real model, CPU backend or Vulkan device remain optional
+device tests and are not substitutes for the portable contract tests.
+
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.
 2.	**Obtain a `InferenceEngine`** instance through the `AiChat` facade and load your selected model via its app-private file path.
