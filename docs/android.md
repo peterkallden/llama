@@ -51,7 +51,9 @@ reports `loading`, invokes the common runtime's turn-free model preparation
 seam, and reports `ready` only after the GGUF model and inference session have
 been initialized. The example UI shows a circular progress indicator while
 loading and keeps input disabled until that state is reached. Failed loading
-is represented as `failed` rather than as a misleading ready state.
+is represented as `failed` rather than as a misleading ready state. The same
+transition is also published through the common event queue as
+`model_loading`, `runtime_ready` or `runtime_failed`.
 
 `AndroidResourceStore` and `AndroidModelManager` reuse the existing path-based
 agent seams. They import a selected `content://` URI through Android's

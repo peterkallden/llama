@@ -286,8 +286,17 @@ Java_com_arm_aichat_agent_AgentRuntime_nativePrepareModel(JNIEnv *, jclass, jlon
     request.turn_id = "model-preparation";
     request.n_predict = 1;
     request.execution_control.cancellation = runtime->cancellation;
+    common_agent_event loading;
+    loading.type = common_agent_event_type::model_loading;
+    loading.detail = "loading configured GGUF model";
+    runtime->events.push(loading);
     std::string error;
-    return runtime->session_host->prepare_model(request, error) ? JNI_TRUE : JNI_FALSE;
+    const bool prepared = runtime->session_host->prepare_model(request, error);
+    common_agent_event result;
+    result.type = prepared ? common_agent_event_type::runtime_ready : common_agent_event_type::runtime_failed;
+    result.detail = prepared ? "model loaded and runtime ready" : error;
+    runtime->events.push(result);
+    return prepared ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

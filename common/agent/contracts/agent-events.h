@@ -5,6 +5,7 @@
 #include <string>
 
 enum class common_agent_event_type {
+    model_loading, runtime_ready, runtime_failed,
     memory_retrieved, memory_remembered, memory_rejected,
     memory_candidate_extracted, memory_candidate_not_stored,
     memory_capture_confirmation_required, memory_capture_confirmed,
@@ -26,6 +27,9 @@ enum class common_agent_event_type {
 
 inline const char * common_agent_event_type_name(common_agent_event_type type) {
     switch (type) {
+        case common_agent_event_type::model_loading: return "model_loading";
+        case common_agent_event_type::runtime_ready: return "runtime_ready";
+        case common_agent_event_type::runtime_failed: return "runtime_failed";
         case common_agent_event_type::memory_retrieved: return "memory_retrieved";
         case common_agent_event_type::memory_remembered: return "memory_remembered";
         case common_agent_event_type::memory_rejected: return "memory_rejected";
