@@ -63,6 +63,23 @@ class AgentRuntimeService : Service() {
 
     fun hasRuntime(): Boolean = runtime != null
 
+    /** Release model memory while retaining storage/session identity. */
+    fun pauseModel(): Boolean {
+        val current = runtime ?: return modelPath != null
+        current.cancel("model_paused")
+        current.close()
+        runtime = null
+        return true
+    }
+
+    /** Recreate the native runtime from the retained app-private configuration. */
+    fun resumeModel(): Boolean {
+        if (runtime != null) return true
+        val directory = storageDirectory ?: return false
+        runtime = AgentRuntime.create(directory, modelPath)
+        return runtime != null
+    }
+
     fun cancel(reason: String = "cancelled"): Boolean = runtime?.cancel(reason) ?: false
 
     fun resetCancellation(): Boolean = runtime?.resetCancellation() ?: false

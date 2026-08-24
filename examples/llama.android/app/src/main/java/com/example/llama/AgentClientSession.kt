@@ -54,6 +54,12 @@ class AgentClientSession(context: Context) : Closeable {
         return service?.configureModel(directory, modelPath) ?: false
     }
 
+    fun pauseModel(): Boolean = service?.pauseModel() ?: false
+
+    fun resumeModel(): Boolean = service?.resumeModel() ?: false
+
+    fun hasRuntime(): Boolean = service?.hasRuntime() == true
+
     fun submitTurn(
         prompt: String,
         mode: String = "agent",
