@@ -193,4 +193,21 @@ jobs:
           disable-spellchecker: true
           disable-animations: true
           working-directory: examples/llama.android
-          script: ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=4
+          script: |
+            set -euo pipefail
+            adb wait-for-device
+            for attempt in $(seq 1 60); do
+              boot_completed=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              package_service=$(adb shell cmd package list packages 2>/dev/null || true)
+              if [ "$boot_completed" = "1" ] && [ -n "$package_service" ]; then
+                break
+              fi
+              if [ "$attempt" = "60" ]; then
+                echo "Android package service did not become ready" >&2
+                adb shell getprop sys.boot_completed || true
+                adb shell service check package || true
+                exit 1
+              fi
+              sleep 2
+            done
+            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=4

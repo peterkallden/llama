@@ -2063,6 +2063,8 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-tool-chat-bridge
     test-tool-navigation
     test-agent-data-store-cozo
+    test-agent-runtime-contract
+    test-agent-event-queue
 )
 set(AGENT_TEST_PACK_AVAILABLE_TARGETS)
 foreach(TARGET ${AGENT_TEST_PACK_CTEST_TARGETS})
