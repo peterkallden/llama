@@ -35,7 +35,42 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
-add_library(${TARGET} agent-bootstrap.cpp agent-bootstrap.h agent-package-json.cpp agent-package-json.h agent-prepared-generation.cpp agent-prepared-generation.h credentials/agent-credential-provider.h learning/blueprint-selector.cpp learning/blueprint-selector.h tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h thinking/deliberation-policy.cpp thinking/deliberation-policy.h agent-runtime-context.h thinking/phases/agent-runtime-reflection-phase.cpp thinking/phases/agent-runtime-research-phase.cpp agent-runtime.cpp agent-runtime.h runtime-json-contracts.cpp runtime-json-contracts.h learning/memory-learning.cpp learning/memory-learning.h thinking/reflection-json.cpp thinking/reflection-json.h tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h tooling/adapters/families/memory-adapters.cpp tooling/adapters/families/memory-adapters.h tooling/adapters/families/data-adapters.cpp tooling/adapters/families/data-adapters.h tooling/adapters/families/document-adapters.cpp tooling/adapters/families/document-adapters.h tooling/adapters/families/repository-adapters.cpp tooling/adapters/families/repository-adapters.h tooling/adapters/families/diagnostics-adapters.cpp tooling/adapters/families/diagnostics-adapters.h tooling/adapters/families/resource-adapters.cpp tooling/adapters/families/resource-adapters.h tooling/adapters/support/adapter-support.h tooling/catalog/tool-catalog.cpp tooling/catalog/tool-catalog.h tooling/bridge/tool-chat-bridge.cpp tooling/bridge/tool-chat-bridge.h tooling/registry/tool-registry.cpp tooling/registry/tool-registry.h tooling/contracts/tool-result-contracts.cpp tooling/contracts/tool-result-contracts.h tooling/schema/tool-schema-compact.cpp tooling/schema/tool-schema-compact.h tooling/routing/tool-navigation.cpp tooling/routing/tool-navigation.h thinking/research/research-contract.h thinking/research/research-workspace.cpp thinking/research/research-workspace.h thinking/research/research-workspace-factory.cpp thinking/research/research-workspace-factory.h thinking/research/research-controller.cpp thinking/research/research-controller.h thinking/research/research-runner.cpp thinking/research/research-runner.h)
+add_library(${TARGET}
+    agent-bootstrap.cpp agent-bootstrap.h
+    agent-package-json.cpp agent-package-json.h
+    agent-prepared-generation.cpp agent-prepared-generation.h
+    credentials/agent-credential-provider.h
+    learning/blueprint-selector.cpp learning/blueprint-selector.h
+    protocol/agent-jsonl.cpp protocol/agent-jsonl.h
+    tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h
+    thinking/deliberation-policy.cpp thinking/deliberation-policy.h
+    agent-runtime-context.h
+    thinking/phases/agent-runtime-reflection-phase.cpp
+    thinking/phases/agent-runtime-research-phase.cpp
+    agent-runtime.cpp agent-runtime.h
+    runtime-json-contracts.cpp runtime-json-contracts.h
+    learning/memory-learning.cpp learning/memory-learning.h
+    thinking/reflection-json.cpp thinking/reflection-json.h
+    tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
+    tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
+    tooling/adapters/families/memory-adapters.cpp tooling/adapters/families/memory-adapters.h
+    tooling/adapters/families/data-adapters.cpp tooling/adapters/families/data-adapters.h
+    tooling/adapters/families/document-adapters.cpp tooling/adapters/families/document-adapters.h
+    tooling/adapters/families/repository-adapters.cpp tooling/adapters/families/repository-adapters.h
+    tooling/adapters/families/diagnostics-adapters.cpp tooling/adapters/families/diagnostics-adapters.h
+    tooling/adapters/families/resource-adapters.cpp tooling/adapters/families/resource-adapters.h
+    tooling/adapters/support/adapter-support.h
+    tooling/catalog/tool-catalog.cpp tooling/catalog/tool-catalog.h
+    tooling/bridge/tool-chat-bridge.cpp tooling/bridge/tool-chat-bridge.h
+    tooling/registry/tool-registry.cpp tooling/registry/tool-registry.h
+    tooling/contracts/tool-result-contracts.cpp tooling/contracts/tool-result-contracts.h
+    tooling/schema/tool-schema-compact.cpp tooling/schema/tool-schema-compact.h
+    tooling/routing/tool-navigation.cpp tooling/routing/tool-navigation.h
+    thinking/research/research-contract.h
+    thinking/research/research-workspace.cpp thinking/research/research-workspace.h
+    thinking/research/research-workspace-factory.cpp thinking/research/research-workspace-factory.h
+    thinking/research/research-controller.cpp thinking/research/research-controller.h
+    thinking/research/research-runner.cpp thinking/research/research-runner.h)
 
 # Tool registration, schema projection and native adapter execution form a
 # stable agent-only seam. Keep them out of the core runtime library so changes

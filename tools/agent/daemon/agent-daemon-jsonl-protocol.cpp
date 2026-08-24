@@ -1,5 +1,7 @@
 #include "agent-daemon-jsonl-protocol.h"
 
+#include "../../../common/agent/protocol/agent-jsonl.h"
+
 using json = nlohmann::ordered_json;
 
 namespace {
@@ -112,48 +114,14 @@ bool read_agent_daemon_jsonl_message(
         FILE * stream,
         json & out,
         std::string & error) {
-    out = json();
-    error.clear();
-
-    char buffer[4096];
-    while (std::fgets(buffer, sizeof(buffer), stream) != nullptr) {
-        std::string line(buffer);
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-
-        const auto parsed = json::parse(line, nullptr, false);
-        if (parsed.is_discarded() || !parsed.is_object()) {
-            error = "daemon emitted a non-JSON protocol line: " + line;
-            return false;
-        }
-
-        out = parsed;
-        return true;
-    }
-
-    error = "daemon closed before returning a protocol response";
-    return false;
+    return common_agent_jsonl_read_message(stream, out, error);
 }
 
 bool write_agent_daemon_jsonl_message(
         FILE * stream,
         const json & message,
         std::string & error) {
-    error.clear();
-    const std::string line = message.dump() + "\n";
-    if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
-        error = "failed to write daemon request";
-        return false;
-    }
-    if (std::fflush(stream) != 0) {
-        error = "failed to flush daemon request";
-        return false;
-    }
-    return true;
+    return common_agent_jsonl_write_message(stream, message, error);
 }
 
 nlohmann::ordered_json make_agent_daemon_jsonl_event_message(
@@ -197,43 +165,7 @@ nlohmann::ordered_json make_agent_daemon_jsonl_event_message(
 
 json make_agent_daemon_jsonl_turn_request(
         const agent_daemon_jsonl_turn_request & request) {
-    json turn_request = {
-        {"command", "run_turn"},
-        {"prompt", request.prompt},
-        {"session_id", request.session_id},
-        {"namespace_id", request.namespace_id},
-        {"project_id", request.project_id},
-        {"turn_id", request.turn_id},
-        {"memory_scope", request.memory_scope},
-        {"plan_scope", request.plan_scope},
-        {"n_predict", request.n_predict},
-        {"mode", request.mode},
-    };
-    if (!request.resource_refs.empty()) {
-        turn_request["resource_refs"] = request.resource_refs;
-    }
-    if (request.include_summary) {
-        turn_request["include_summary"] = true;
-    }
-    if (request.turn_timeout_ms.has_value()) {
-        turn_request["turn_timeout_ms"] = *request.turn_timeout_ms;
-    }
-    if (request.inference_step_timeout_ms.has_value()) {
-        turn_request["inference_step_timeout_ms"] = *request.inference_step_timeout_ms;
-    }
-    if (request.tool_timeout_ms.has_value()) {
-        turn_request["tool_timeout_ms"] = *request.tool_timeout_ms;
-    }
-    if (request.mcp_connect_timeout_ms.has_value()) {
-        turn_request["mcp_connect_timeout_ms"] = *request.mcp_connect_timeout_ms;
-    }
-    if (request.mcp_request_timeout_ms.has_value()) {
-        turn_request["mcp_request_timeout_ms"] = *request.mcp_request_timeout_ms;
-    }
-    if (request.mcp_shutdown_timeout_ms.has_value()) {
-        turn_request["mcp_shutdown_timeout_ms"] = *request.mcp_shutdown_timeout_ms;
-    }
-    return turn_request;
+    return common_agent_jsonl_make_turn_request(request);
 }
 
 json make_agent_daemon_jsonl_status_request(

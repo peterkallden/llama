@@ -684,6 +684,7 @@ target_include_directories(llama-agent-daemon-protocol
 )
 target_compile_features(llama-agent-daemon-protocol PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-daemon-protocol PUBLIC llama-common Threads::Threads)
+target_link_libraries(llama-agent-daemon-protocol PUBLIC llama-agent-core)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-daemon-protocol PROPERTIES
         POSITION_INDEPENDENT_CODE ON
@@ -1136,6 +1137,20 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_link_libraries(${TARGET} PRIVATE
     llama-agent-daemon-protocol
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-agent-jsonl-wire-contract-smoke)
+add_executable(${TARGET}
+    smoke/daemon/agent-jsonl-wire-contract-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-agent-core
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
@@ -1879,6 +1894,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-daemon-jsonl-protocol-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-jsonl-protocol-smoke>)
     set_property(TEST llama-agent-daemon-jsonl-protocol-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-jsonl-wire-contract-ctest
+        COMMAND $<TARGET_FILE:llama-agent-jsonl-wire-contract-smoke>)
+    set_property(TEST llama-agent-jsonl-wire-contract-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-daemon-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)

@@ -5,6 +5,7 @@
 #include "../../../common/agent/turn-summary.h"
 
 #include "agent-daemon-events.h"
+#include "../../../common/agent/protocol/agent-jsonl.h"
 
 #include <cstdio>
 #include <nlohmann/json.hpp>
@@ -13,25 +14,7 @@
 #include <string>
 #include <vector>
 
-struct agent_daemon_jsonl_turn_request {
-    std::string prompt;
-    std::string session_id;
-    std::string namespace_id;
-    std::string project_id;
-    std::string turn_id;
-    std::string memory_scope;
-    std::string plan_scope;
-    int n_predict = 0;
-    std::string mode = "chat";
-    std::vector<std::string> resource_refs;
-    bool include_summary = false;
-    std::optional<size_t> turn_timeout_ms;
-    std::optional<uint32_t> inference_step_timeout_ms;
-    std::optional<uint32_t> tool_timeout_ms;
-    std::optional<uint32_t> mcp_connect_timeout_ms;
-    std::optional<uint32_t> mcp_request_timeout_ms;
-    std::optional<uint32_t> mcp_shutdown_timeout_ms;
-};
+using agent_daemon_jsonl_turn_request = common_agent_jsonl_turn_request;
 
 struct agent_daemon_jsonl_status_request {};
 
@@ -102,18 +85,7 @@ struct agent_daemon_jsonl_ready_response {
     std::vector<std::string> capabilities;
 };
 
-struct agent_daemon_jsonl_event_entry {
-    std::string type;
-    std::string request_id;
-    std::string turn_id;
-    std::string namespace_id;
-    std::string project_id;
-    std::string session_id;
-    std::string operation_id;
-    std::string detail;
-    std::string event_type;
-    uint64_t sequence = 0;
-};
+using agent_daemon_jsonl_event_entry = common_agent_jsonl_event_entry;
 
 struct agent_daemon_jsonl_turn_response {
     bool ok = false;

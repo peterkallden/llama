@@ -101,10 +101,14 @@ result polling to the native runtime. `close()` waits for an active native turn 
 request cancellation first when leaving the Service.
 
 The JNI result is deliberately a small transport contract rather than a
-mirror of C++ classes. Events contain `type`, `detail` and only populated
-semantic identifiers. Completed results contain `request_id`, `ok`,
-`cancelled`, `response`, `plan_id`, `error`, `failure_class` and
-`event_count`.
+mirror of C++ classes. Its turn request, event envelope and terminal result
+reuse the transport-neutral JSONL wire contracts under
+`common/agent/protocol`; Android does not start the daemon or invent a second
+turn protocol. The Android service may carry one JSON message per JNI call,
+while daemon stdio/TCP adapters carry the same messages as newline-delimited
+JSON. Events contain `type`, `detail` and only populated semantic identifiers.
+Completed results contain `request_id`, `ok`, `cancelled`, `response`,
+`plan_id`, `error`, `failure_class` and `event_count`.
 
 A minimal Android app frontend is included to showcase the binding’s core functionalities:
 1.	**Parse GGUF metadata** via `GgufMetadataReader` from either a `ContentResolver` provided `Uri` from shared storage, or a local `File` from your app's private storage.

@@ -1888,6 +1888,16 @@ runtime host
 
 What exists today is a narrow foreground daemon, not a production service lifecycle. It speaks a minimal JSONL protocol over stdin/stdout and is intentionally narrow: one foreground process, keyed session routing for admin/test turns, a bounded configurable dispatcher worker pool (default one worker), explicit shutdown, and no detached lifetime management. The daemon suppresses routine info-level model logs in this admin/test path so stdout stays protocol-oriented, while stderr remains available for warnings and errors.
 
+The transport-neutral runtime wire contract now lives under
+`common/agent/protocol`. It owns the shared JSONL framing and the turn request,
+event and terminal-result shapes used by service clients. The daemon keeps its
+administrative commands (status, drain, shutdown, resource/session listings,
+TCP authentication and caller policy) in `tools/agent/daemon`; those are not
+part of the portable runtime contract. Stdio, TCP and future Android/JNI
+adapters must use the shared wire helpers for ordinary turns instead of
+creating a second JSON representation. This keeps transport and lifecycle
+different while keeping request, event, result and failure semantics aligned.
+
 The dispatcher/service layer is the intended transport-independent orchestration
 core. It owns command execution, session routing, cancellation, lifecycle state,
 readiness, host-owned stores and event production. JSONL, TCP and Unix sockets
