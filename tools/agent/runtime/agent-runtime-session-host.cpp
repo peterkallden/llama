@@ -393,6 +393,18 @@ bool common_agent_runtime_session_host::run_turn(
     return ok;
 }
 
+bool common_agent_runtime_session_host::prepare_model(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::string & error) {
+    if (request.session_id.empty() || request.namespace_id.empty()) {
+        error = "model preparation requires session and namespace identity";
+        return false;
+    }
+    bool reused = false;
+    if (!ensure_runtime(request, reused, error)) return false;
+    return runtime->prepare_model(error);
+}
+
 const common_agent_runtime_session * common_agent_runtime_session_host::session() const {
     return runtime ? &runtime->runtime_host().session() : nullptr;
 }

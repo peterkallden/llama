@@ -269,6 +269,27 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeResetCancellation(JNIEnv *, jclass,
     return JNI_TRUE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativePrepareModel(JNIEnv *, jclass, jlong handle) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    {
+        std::lock_guard<std::mutex> lock(handles_mutex);
+        runtime = find_handle(handle);
+    }
+    if (!runtime || !runtime->session_host || runtime->model_path.empty()) return JNI_FALSE;
+
+    common_agent_runtime_session_host_turn_request request;
+    request.mode = common_agent_runtime_host_mode::chat;
+    request.prompt = "model preparation";
+    request.session_id = "android";
+    request.namespace_id = "default";
+    request.turn_id = "model-preparation";
+    request.n_predict = 1;
+    request.execution_control.cancellation = runtime->cancellation;
+    std::string error;
+    return runtime->session_host->prepare_model(request, error) ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, jlong handle) {
     std::shared_ptr<android_agent_runtime_handle> runtime;

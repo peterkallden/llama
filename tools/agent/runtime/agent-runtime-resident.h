@@ -57,6 +57,9 @@ public:
     void set_execution_control(common_agent_runtime_execution_control execution_control);
     void set_policy_pack(std::optional<common_memory_policy_pack> policy_pack);
 
+    // Load the configured inference model without executing a user turn.
+    bool prepare_model(std::string & error);
+
     bool run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,

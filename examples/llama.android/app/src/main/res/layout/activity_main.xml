@@ -29,6 +29,13 @@
                 android:layout_weight="1"
                 android:text="Agent runtime: connecting..." />
 
+            <ProgressBar
+                android:id="@+id/model_progress"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:visibility="gone" />
+
             <Button
                 android:id="@+id/mcp_button"
                 android:layout_width="wrap_content"

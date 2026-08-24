@@ -23,6 +23,7 @@ class AgentRuntimeService : Service() {
     private var runtime: AgentRuntime? = null
     private var storageDirectory: String? = null
     private var modelPath: String? = null
+    @Volatile private var lifecycleState = "idle"
 
     override fun onCreate() {
         super.onCreate()
@@ -47,37 +48,62 @@ class AgentRuntimeService : Service() {
      * never creates a second native handle and never needs to know whether a
      * model change requires rebuilding the session host.
      */
+    @Synchronized
     fun configureModel(directory: String, selectedModelPath: String?): Boolean {
         if (directory.isBlank()) return false
         if (runtime != null && storageDirectory == directory && modelPath == selectedModelPath) {
             return true
         }
 
+        lifecycleState = "loading"
         runtime?.cancel("model_reconfigured")
         runtime?.close()
         runtime = AgentRuntime.create(directory, selectedModelPath)
         storageDirectory = directory
         modelPath = selectedModelPath
+        if (runtime == null) lifecycleState = "failed"
         return runtime != null
+    }
+
+    /** Configure and load the model; callers must invoke this off the UI thread. */
+    @Synchronized
+    fun configureAndPrepareModel(directory: String, selectedModelPath: String?): Boolean {
+        if (!configureModel(directory, selectedModelPath)) return false
+        val prepared = runtime?.prepareModel() == true
+        lifecycleState = if (prepared) "ready" else "failed"
+        return prepared
     }
 
     fun hasRuntime(): Boolean = runtime != null
 
     /** Release model memory while retaining storage/session identity. */
+    @Synchronized
     fun pauseModel(): Boolean {
         val current = runtime ?: return modelPath != null
         current.cancel("model_paused")
         current.close()
         runtime = null
+        lifecycleState = "paused"
         return true
     }
 
     /** Recreate the native runtime from the retained app-private configuration. */
+    @Synchronized
     fun resumeModel(): Boolean {
         if (runtime != null) return true
         val directory = storageDirectory ?: return false
+        lifecycleState = "loading"
         runtime = AgentRuntime.create(directory, modelPath)
+        if (runtime == null) lifecycleState = "failed"
         return runtime != null
+    }
+
+    @Synchronized
+    fun resumeAndPrepareModel(): Boolean {
+        if (!resumeModel()) return false
+        val prepared = runtime?.prepareModel() == true
+        lifecycleState = if (prepared) "ready" else "failed"
+        return prepared
     }
 
     fun cancel(reason: String = "cancelled"): Boolean = runtime?.cancel(reason) ?: false
@@ -100,6 +126,8 @@ class AgentRuntimeService : Service() {
     fun pollResult(): String? = runtime?.pollResult()
 
     fun state(): String? = runtime?.state()
+
+    fun lifecycleState(): String = lifecycleState
 
     fun capabilities(): String? = runtime?.capabilities()
 
@@ -125,6 +153,7 @@ class AgentRuntimeService : Service() {
         runtime = null
         storageDirectory = null
         modelPath = null
+        lifecycleState = "idle"
         super.onDestroy()
     }
 }

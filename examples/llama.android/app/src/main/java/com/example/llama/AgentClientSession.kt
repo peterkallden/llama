@@ -54,15 +54,24 @@ class AgentClientSession(context: Context) : Closeable {
         return service?.configureModel(directory, modelPath) ?: false
     }
 
+    fun configureAndPrepareModel(modelPath: String?): Boolean {
+        val directory = appContext.filesDir.resolve("agent").absolutePath
+        return service?.configureAndPrepareModel(directory, modelPath) ?: false
+    }
+
     fun pauseModel(): Boolean = service?.pauseModel() ?: false
 
     fun resumeModel(): Boolean = service?.resumeModel() ?: false
+
+    fun resumeAndPrepareModel(): Boolean = service?.resumeAndPrepareModel() ?: false
 
     fun hasRuntime(): Boolean = service?.hasRuntime() == true
 
     fun capabilities(): String? = service?.capabilities()
 
     fun state(): String? = service?.state()
+
+    fun lifecycleState(): String = service?.lifecycleState() ?: "disconnected"
 
     fun mcpTools(): String? = service?.mcpTools()
 

@@ -46,6 +46,13 @@ Native worker threads should publish the existing agent events into a
 host-owned queue. Kotlin can poll or collect that queue without receiving
 callbacks from threads whose lifetime is controlled by the native runtime.
 
+Model startup is asynchronous from the Activity's perspective. The Service
+reports `loading`, invokes the common runtime's turn-free model preparation
+seam, and reports `ready` only after the GGUF model and inference session have
+been initialized. The example UI shows a circular progress indicator while
+loading and keeps input disabled until that state is reached. Failed loading
+is represented as `failed` rather than as a misleading ready state.
+
 `AndroidResourceStore` and `AndroidModelManager` reuse the existing path-based
 agent seams. They import a selected `content://` URI through Android's
 `ContentResolver` into app-private storage, then pass the resulting path to the

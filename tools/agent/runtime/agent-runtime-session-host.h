@@ -133,6 +133,10 @@ public:
         common_agent_runtime_session_host_turn_result & result,
         std::string & error);
 
+    bool prepare_model(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::string & error);
+
     void reset();
 
     const common_agent_runtime_session * session() const;

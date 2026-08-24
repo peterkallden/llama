@@ -103,6 +103,23 @@ void common_agent_runtime_resident_runtime::set_policy_pack(
     base_turn_request.request.policy_pack = std::move(policy_pack);
 }
 
+bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
+    agent_inference_backend backend = agent_inference_backend::cli;
+    if (!parse_agent_inference_backend(
+            base_turn_request.policy.agent_inference_backend, backend)) {
+        error = "unsupported inference backend: " +
+            base_turn_request.policy.agent_inference_backend;
+        return false;
+    }
+    return initialize_agent_runtime_session(
+        base_turn_request.inference_options,
+        backend,
+        base_turn_request.memory_enabled,
+        base_turn_request.fallback_reason,
+        host.session(),
+        error);
+}
+
 bool common_agent_runtime_resident_runtime::run_chat_prompt(
         const std::string & prompt,
         const std::string & turn_id,

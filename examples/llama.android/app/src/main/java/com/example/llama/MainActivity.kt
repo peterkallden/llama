@@ -7,6 +7,7 @@ import android.app.AlertDialog
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
@@ -37,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var userInputEt: EditText
     private lateinit var userActionFab: FloatingActionButton
     private lateinit var runtimeStatusTv: TextView
+    private lateinit var modelProgress: ProgressBar
 
     private lateinit var agentSession: AgentClientSession
     private lateinit var modelManager: AndroidModelManager
@@ -74,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         userInputEt = findViewById(R.id.user_input)
         userActionFab = findViewById(R.id.fab)
         runtimeStatusTv = findViewById(R.id.runtime_status)
+        modelProgress = findViewById(R.id.model_progress)
         findViewById<Button>(R.id.settings_button).setOnClickListener {
             showRuntimeStatus()
         }
@@ -87,10 +90,7 @@ class MainActivity : AppCompatActivity() {
         restoreClientState(savedInstanceState)
 
         agentSession.bind {
-            pendingModelPath?.let { path ->
-                isModelReady = agentSession.configureModel(path)
-                if (isModelReady) updateModelReadyUi()
-            }
+            pendingModelPath?.let { path -> prepareModelAsync(path) }
             refreshRuntimeStatus()
             agentSession.startPolling(lifecycleScope, ::handleAgentEvent, ::handleAgentResult)
         }
@@ -175,15 +175,8 @@ class MainActivity : AppCompatActivity() {
                 val modelName = metadata.filename() + FILE_EXTENSION_GGUF
                 val imported = modelManager.importGguf(uri, modelName)
                 pendingModelPath = imported.path
-                val configured = agentSession.configureModel(imported.path)
-
                 withContext(Dispatchers.Main) {
-                    isModelReady = configured
-                    if (configured) updateModelReadyUi() else {
-                        userInputEt.hint = "Agent service is not ready"
-                        userActionFab.isEnabled = true
-                    }
-                    refreshRuntimeStatus()
+                    prepareModelAsync(imported.path)
                 }
             } catch (error: Exception) {
                 Log.e(TAG, "Unable to prepare model", error)
@@ -193,6 +186,34 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity,
                         error.message ?: "Unable to prepare model", Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    private fun prepareModelAsync(path: String, resume: Boolean = false) {
+        isModelReady = false
+        modelProgress.visibility = android.view.View.VISIBLE
+        runtimeStatusTv.text = "Agent runtime: loading model..."
+        userInputEt.isEnabled = false
+        userInputEt.hint = "Loading model..."
+        userActionFab.isEnabled = false
+        lifecycleScope.launch(Dispatchers.IO) {
+            val ready = if (resume) {
+                agentSession.resumeAndPrepareModel()
+            } else {
+                agentSession.configureAndPrepareModel(path)
+            }
+            withContext(Dispatchers.Main) {
+                isModelReady = ready
+                if (ready) {
+                    updateModelReadyUi()
+                } else {
+                    modelProgress.visibility = android.view.View.GONE
+                    runtimeStatusTv.text = "Agent runtime: failed"
+                    userInputEt.hint = "Unable to load model; select or retry"
+                    userActionFab.isEnabled = true
+                }
+                refreshRuntimeStatus()
             }
         }
     }
@@ -250,12 +271,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshRuntimeStatus() {
+        val lifecycle = agentSession.lifecycleState()
         val state = agentSession.state()
-        runtimeStatusTv.text = if (state.isNullOrBlank()) {
+        runtimeStatusTv.text = if (lifecycle == "disconnected" || state.isNullOrBlank()) {
             "Agent runtime: unavailable"
         } else {
-            "Agent runtime: ${if (isModelReady) "ready" else "idle"}"
+            "Agent runtime: $lifecycle"
         }
+        modelProgress.visibility = if (lifecycle == "loading")
+            android.view.View.VISIBLE else android.view.View.GONE
     }
 
     private fun showRuntimeStatus() {
@@ -404,6 +428,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateModelReadyUi() {
+        modelProgress.visibility = android.view.View.GONE
+        runtimeStatusTv.text = "Agent runtime: ready"
         userInputEt.hint = "Type and send a message!"
         userInputEt.isEnabled = true
         userActionFab.setImageResource(R.drawable.outline_send_24)
@@ -412,10 +438,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (::agentSession.isInitialized && pendingModelPath != null && !agentSession.hasRuntime()) {
-            isModelReady = agentSession.resumeModel()
-            if (isModelReady) updateModelReadyUi()
-            refreshRuntimeStatus()
+        if (::agentSession.isInitialized && agentSession.isConnected &&
+                pendingModelPath != null && !agentSession.hasRuntime()) {
+            prepareModelAsync(pendingModelPath!!, resume = true)
         }
     }
 
