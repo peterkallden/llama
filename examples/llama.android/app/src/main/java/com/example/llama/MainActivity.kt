@@ -20,7 +20,6 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.util.UUID
 
 /** Minimal client for the Service-owned llama-agent runtime. */
@@ -138,16 +137,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleAgentEvent(message: String) {
-        val event = runCatching { JSONObject(message).optJSONObject("event") }.getOrNull()
-        val detail = event?.optString("detail").orEmpty()
+        val detail = AgentClientMessages.eventDetail(message).orEmpty()
         if (detail.isNotBlank()) Log.d(TAG, "Agent event: $detail")
     }
 
     private fun handleAgentResult(message: String) {
-        val result = runCatching { JSONObject(message) }.getOrNull() ?: return
-        val response = if (!result.optBoolean("ok", false)) {
-            result.optString("error").ifBlank { "Agent turn failed" }
-        } else result.optString("response")
+        val result = AgentClientMessages.parseResult(message) ?: return
+        val response = if (result.ok) result.response else result.error
 
         if (messages.isNotEmpty() && !messages.last().isUser) {
             messages[messages.lastIndex] = messages.last().copy(content = response)
