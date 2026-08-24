@@ -24,6 +24,9 @@ class AndroidResourceStore(private val context: Context) {
             context.contentResolver.getType(uri), bytes)
     }
 
+    fun delete(resource: AndroidImportedResource): Boolean =
+        File(resource.path).takeIf { it.parentFile == File(context.filesDir, "agent/resources") }?.delete() == true
+
     private fun safeName(value: String): String = value
         .replace(Regex("[^A-Za-z0-9._-]"), "_")
         .ifBlank { "resource" }

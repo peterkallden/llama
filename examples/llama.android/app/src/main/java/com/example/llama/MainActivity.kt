@@ -29,7 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-/** Minimal client for the Service-owned llama-agent runtime. */
+/** Test/example client for the Service-owned llama-agent runtime. */
 class MainActivity : AppCompatActivity() {
     private lateinit var ggufTv: TextView
     private lateinit var messagesRv: RecyclerView
@@ -79,11 +79,12 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.mcp_button).setOnClickListener { showMcpTools() }
         findViewById<Button>(R.id.attachment_button).setOnClickListener {
-            getResources.launch(arrayOf("*/*"))
+            showAttachmentManager()
         }
         modelManager = AndroidModelManager(this)
         resourceStore = AndroidResourceStore(this)
         agentSession = AgentClientSession(this)
+        restoreClientState(savedInstanceState)
 
         agentSession.bind {
             pendingModelPath?.let { path ->
@@ -116,8 +117,7 @@ class MainActivity : AppCompatActivity() {
             }
             withContext(Dispatchers.Main) {
                 attachments.addAll(imported)
-                findViewById<Button>(R.id.attachment_button).text =
-                    "Attach (${attachments.size})"
+                updateAttachmentButton()
                 Toast.makeText(this@MainActivity,
                     "Attached ${imported.size} resource(s)", Toast.LENGTH_SHORT).show()
             }
@@ -127,6 +127,34 @@ class MainActivity : AppCompatActivity() {
     private fun displayName(uri: Uri): String =
         uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null }
             ?: "resource-${System.currentTimeMillis()}"
+
+    private fun updateAttachmentButton() {
+        findViewById<Button>(R.id.attachment_button).text =
+            if (attachments.isEmpty()) "Attach" else "Attach (${attachments.size})"
+    }
+
+    private fun showAttachmentManager() {
+        if (attachments.isEmpty()) {
+            getResources.launch(arrayOf("*/*"))
+            return
+        }
+        val selected = BooleanArray(attachments.size)
+        val names = attachments.map { it.path.substringAfterLast('/') }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Attachments")
+            .setMultiChoiceItems(names, selected) { _, index, checked -> selected[index] = checked }
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Add") { _, _ -> getResources.launch(arrayOf("*/*")) }
+            .setPositiveButton("Remove selected") { _, _ ->
+                val remaining = attachments.filterIndexed { index, _ -> !selected[index] }
+                attachments.filterIndexed { index, _ -> selected[index] }
+                    .forEach { resourceStore.delete(it) }
+                attachments.clear()
+                attachments.addAll(remaining)
+                updateAttachmentButton()
+            }
+            .show()
+    }
 
     private fun handleSelectedModel(uri: Uri) {
         userActionFab.isEnabled = false
@@ -244,6 +272,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Agent runtime")
             .setMessage(content)
+            .setNeutralButton("Configure MCP") { _, _ -> showMcpConfiguration() }
             .setPositiveButton("OK", null)
             .show()
     }
@@ -267,6 +296,45 @@ class MainActivity : AppCompatActivity() {
                 showMcpToolPicker(raw)
             }
         }
+    }
+
+    private fun showMcpConfiguration() {
+        val fields = listOf(
+            "Server name" to "android",
+            "HTTPS URL" to "",
+            "Bearer token (dev only)" to "",
+            "Credential reference" to "",
+        ).map { (hint, value) ->
+            EditText(this).apply {
+                this.hint = hint
+                setText(value)
+                if (hint.contains("token", ignoreCase = true)) {
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                }
+            }
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 8, 48, 0)
+            fields.forEach { addView(it) }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Configure MCP")
+            .setView(container)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val configured = agentSession.configureMcp(
+                    fields[0].text.toString().trim(), fields[1].text.toString().trim(),
+                    fields[2].text.toString().trim().ifBlank { null },
+                    fields[3].text.toString().trim().ifBlank { null },
+                )
+                Toast.makeText(this,
+                    if (configured) "MCP configured" else "Unable to configure MCP",
+                    Toast.LENGTH_SHORT).show()
+                refreshRuntimeStatus()
+            }
+            .show()
     }
 
     private fun showMcpToolPicker(raw: String) {
@@ -351,6 +419,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun restoreClientState(state: Bundle?) {
+        pendingModelPath = state?.getString(KEY_MODEL_PATH)
+        val paths = state?.getStringArrayList(KEY_ATTACHMENT_PATHS).orEmpty()
+        val uris = state?.getStringArrayList(KEY_ATTACHMENT_URIS).orEmpty()
+        paths.forEachIndexed { index, path ->
+            if (java.io.File(path).isFile) attachments.add(
+                AndroidImportedResource(uris.getOrNull(index).orEmpty(), path, null,
+                    java.io.File(path).length())
+            )
+        }
+        updateAttachmentButton()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_MODEL_PATH, pendingModelPath)
+        outState.putStringArrayList(KEY_ATTACHMENT_PATHS,
+            ArrayList(attachments.map { it.path }))
+        outState.putStringArrayList(KEY_ATTACHMENT_URIS,
+            ArrayList(attachments.map { it.uri }))
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onStop() {
         if (::agentSession.isInitialized && agentSession.hasRuntime()) {
             if (turnActive) {
@@ -376,6 +466,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private val TAG = MainActivity::class.java.simpleName
         private const val FILE_EXTENSION_GGUF = ".gguf"
+        private const val KEY_MODEL_PATH = "android_client_model_path"
+        private const val KEY_ATTACHMENT_PATHS = "android_client_attachment_paths"
+        private const val KEY_ATTACHMENT_URIS = "android_client_attachment_uris"
     }
 }
 

@@ -66,6 +66,13 @@ class AgentClientSession(context: Context) : Closeable {
 
     fun mcpTools(): String? = service?.mcpTools()
 
+    fun configureMcp(
+        serverName: String,
+        url: String,
+        bearerToken: String? = null,
+        credentialRef: String? = null,
+    ): Boolean = service?.configureMcp(serverName, url, bearerToken, credentialRef) ?: false
+
     fun mcpCall(toolName: String, argumentsJson: String): String? =
         service?.mcpCall(toolName, argumentsJson)
 

@@ -1,5 +1,11 @@
 
-# Android
+# Android example client
+
+The Android application under `examples/llama.android` is a development and
+integration example, not a production-ready mobile client. It exists to test
+the Android host boundary, SQLite-backed agent runtime, local model execution,
+MCP transport, structured events and resource imports. Its UI and lifecycle
+policies are intentionally small and may change as the host contracts mature.
 
 ## Build GUI binding using Android Studio
 
@@ -55,6 +61,11 @@ processing and tool input binding remain common code. The original Android
 `content://` URI is retained as import metadata, while native tools receive a
 stable app-private path that they can actually read.
 
+The **Attach** dialog lists imported files and supports selecting files with
+checkboxes for removal. Model selection, attachment paths and the selected
+session-side client state are restored across normal Activity recreation; the
+native Service remains the owner of the runtime state.
+
 The JNI facade also exposes the common MCP HTTP transport through
 `configureMcp`, `mcpTools` and `mcpCall`. This reuses `agent_mcp_http_client`
 and does not duplicate an MCP parser in Kotlin. Desktop uses the injected
@@ -78,6 +89,11 @@ resolve that reference through a Keystore-backed implementation, while desktop
 hosts may use a keyring or another host-owned store. If both are configured,
 the provider-resolved credential takes precedence. Secrets are not part of
 model-facing tool contracts or runtime event output.
+
+The example settings dialog can configure the MCP server name, HTTPS URL and
+either a development bearer token or a host-owned `credential_ref`. The bearer
+field is intentionally provided for local testing; production Android clients
+should resolve credentials through the platform provider instead.
 
 The library now includes a small `com.arm.aichat.agent.AgentRuntime` JNI
 lifecycle facade. It owns a native handle, cancellation state and the common

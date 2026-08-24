@@ -45,6 +45,8 @@ class ExampleInstrumentedTest {
         val imported = AndroidResourceStore(context).import(Uri.fromFile(source), "orders.csv")
         assertEquals("name,value\norders,1\n", File(imported.path).readText())
         assertTrue(imported.path.startsWith(context.filesDir.absolutePath))
+        assertTrue(AndroidResourceStore(context).delete(imported))
+        assertFalse(File(imported.path).exists())
     }
 
     @Test
