@@ -44,14 +44,16 @@ agent seams. They import a selected `content://` URI through Android's
 common runtime. GGUF files therefore remain outside the APK and Android-specific
 URI handling does not leak into resource, planning or tool code.
 
-The JNI facade also exposes the existing native HTTP MCP transport through
+The JNI facade also exposes the common MCP HTTP transport through
 `configureMcp`, `mcpTools` and `mcpCall`. This reuses `agent_mcp_http_client`
-and does not duplicate an MCP parser in Kotlin. The current Android build has
-OpenSSL disabled, so HTTPS is explicitly rejected by this target; use an HTTP
-endpoint for local development. A future Android TLS transport should be
-implemented behind the same MCP client seam, using Android's platform TLS
-stack, rather than copying MCP protocol parsing into Kotlin. These direct
-calls are a host transport seam, not a second planner or tool registry.
+and does not duplicate an MCP parser in Kotlin. Desktop uses the injected
+`cpp-httplib` adapter; Android uses a small `HttpsURLConnection` adapter for
+`https://` endpoints and therefore uses Android's normal certificate and
+hostname validation. HTTP remains available through the native adapter for
+local development. The Kotlin class only performs the platform request and
+returns bounded status/body/header data; MCP protocol parsing, tool discovery
+and tool calls remain in C++. These calls are a host transport seam, not a
+second planner or tool registry.
 When an endpoint is configured, the normal Android session `tooling_resolver`
 now reuses the existing `mcp_agent_tool_provider` and exposes its resolved
 tools to planning/execution. The capability snapshot reports both endpoint

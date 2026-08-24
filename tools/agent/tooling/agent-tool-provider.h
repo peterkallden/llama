@@ -9,6 +9,7 @@
 #include "chat.h"
 #include "plan/plan-types.h"
 #include "runtime-resource.h"
+#include "../mcp/agent-mcp-http-transport.h"
 
 #include <nlohmann/json.hpp>
 
@@ -300,6 +301,7 @@ struct agent_mcp_http_client_config {
     uint32_t request_timeout_ms = 30000;
     uint32_t shutdown_timeout_ms = 2000;
     size_t max_result_bytes = 1024 * 1024;
+    std::shared_ptr<agent_mcp_http_transport> transport;
 };
 
 class agent_mcp_http_client : public agent_mcp_tool_client {

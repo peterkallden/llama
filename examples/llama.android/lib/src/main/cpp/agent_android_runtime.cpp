@@ -15,6 +15,7 @@
 #include "tools/agent/runtime/agent-runtime-control.h"
 #include "tools/agent/runtime/agent-runtime-session-host.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
+#include "agent_android_mcp_transport.h"
 
 namespace {
 struct android_agent_runtime_handle {
@@ -31,6 +32,8 @@ struct android_agent_runtime_handle {
     std::unique_ptr<common_agent_runtime_session_host> session_host;
     bool storage_ready = false;
     std::shared_ptr<agent_mcp_http_client> mcp_client;
+    std::shared_ptr<agent_mcp_http_transport> android_https_transport;
+    bool android_https_supported = false;
     std::mutex mcp_mutex;
     std::mutex turn_mutex;
     std::thread turn_worker;
@@ -116,6 +119,22 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
     if (storage_directory.empty()) return 0;
     const std::string model_path = to_string(env, model);
     auto runtime = std::make_shared<android_agent_runtime_handle>(storage_directory, model_path);
+    JavaVM * java_vm = nullptr;
+    if (env->GetJavaVM(&java_vm) == JNI_OK) {
+        jclass transport_class = env->FindClass("com/arm/aichat/agent/AndroidMcpTransport");
+        if (transport_class) {
+            const jmethodID post_method = env->GetStaticMethodID(
+                transport_class, "post",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;III)Ljava/lang/String;");
+            if (post_method) {
+                runtime->android_https_transport = make_agent_mcp_android_https_transport(
+                    java_vm, transport_class, post_method);
+                runtime->android_https_supported = runtime->android_https_transport != nullptr;
+            }
+            env->DeleteLocalRef(transport_class);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
     std::string error;
     if (!runtime->memory_store.open(storage_directory + "/memory.sqlite", error) ||
             !runtime->plan_store.open(storage_directory + "/plan.sqlite", error)) {
@@ -269,7 +288,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, 
         ",\"vulkan_loader_available\":" + (vulkan_loader_available ? "true" : "false") +
         ",\"sqlite_storage\":" + (runtime->storage_ready ? "true" : "false") +
         ",\"mcp_remote_configured\":" + (mcp_configured ? "true" : "false") +
-        ",\"mcp_https_supported\":false" +
+        ",\"mcp_https_supported\":" + (runtime->android_https_supported ? "true" : "false") +
         ",\"inference_backend\":\"cli\"}";
     return env->NewStringUTF(json.c_str());
 }
@@ -290,12 +309,13 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeConfigureMcp(
             (endpoint.rfind("http://", 0) != 0 && endpoint.rfind("https://", 0) != 0)) {
         return JNI_FALSE;
     }
-    // The Android target deliberately builds cpp-httplib without OpenSSL.
-    // Do not advertise a transport that cannot enforce TLS.
-    if (endpoint.rfind("https://", 0) == 0) return JNI_FALSE;
+    const bool https = endpoint.rfind("https://", 0) == 0;
+    if (https && !runtime->android_https_transport) return JNI_FALSE;
+    agent_mcp_http_client_config config{
+        name, endpoint, token, {}, 5000, 30000, 2000, 256 * 1024};
+    if (https) config.transport = runtime->android_https_transport;
     std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
-    runtime->mcp_client = std::make_shared<agent_mcp_http_client>(agent_mcp_http_client_config{
-        name, endpoint, token, {}, 5000, 30000, 2000, 256 * 1024});
+    runtime->mcp_client = std::make_shared<agent_mcp_http_client>(std::move(config));
     return JNI_TRUE;
 }
 

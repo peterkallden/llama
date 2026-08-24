@@ -1,11 +1,10 @@
 #include "../tooling/agent-tool-provider.h"
 #include "agent-mcp-protocol.h"
 
-#include <cpp-httplib/httplib.h>
-
 #include <cstdlib>
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -13,58 +12,6 @@
 using json = nlohmann::ordered_json;
 
 namespace {
-
-struct parsed_url {
-    std::string scheme;
-    std::string host;
-    int port = 0;
-    std::string path = "/";
-};
-
-bool parse_url(const std::string & value, parsed_url & result, std::string & error) {
-    const size_t scheme_end = value.find("://");
-    if (scheme_end == std::string::npos) {
-        error = "MCP HTTP provider url must include a scheme";
-        return false;
-    }
-    result.scheme = value.substr(0, scheme_end);
-    const size_t authority_start = scheme_end + 3;
-    const size_t path_start = value.find('/', authority_start);
-    const std::string authority = value.substr(
-        authority_start,
-        path_start == std::string::npos ? std::string::npos : path_start - authority_start);
-    if (authority.empty()) {
-        error = "MCP HTTP provider url is missing a host";
-        return false;
-    }
-    const size_t port_start = authority.rfind(':');
-    if (port_start != std::string::npos && authority.find(']') == std::string::npos) {
-        result.host = authority.substr(0, port_start);
-        result.port = std::atoi(authority.substr(port_start + 1).c_str());
-    } else {
-        result.host = authority;
-        result.port = result.scheme == "https" ? 443 : 80;
-    }
-    if (result.host.empty() || result.port <= 0 || result.port > 65535) {
-        error = "MCP HTTP provider url has an invalid host or port";
-        return false;
-    }
-    result.path = path_start == std::string::npos ? "/" : value.substr(path_start);
-    return true;
-}
-
-template<typename Client>
-void configure_client(
-        Client & client,
-        uint32_t connect_timeout_ms,
-        uint32_t request_timeout_ms) {
-    client.set_connection_timeout(
-        connect_timeout_ms / 1000,
-        static_cast<time_t>((connect_timeout_ms % 1000) * 1000));
-    client.set_read_timeout(
-        request_timeout_ms / 1000,
-        static_cast<time_t>((request_timeout_ms % 1000) * 1000));
-}
 
 uint32_t bounded_timeout_ms(
         uint32_t configured_timeout_ms,
@@ -88,10 +35,15 @@ struct agent_mcp_http_client::impl {
     bool initialized = false;
     std::string session_id;
     std::string protocol_version = common_mcp_default_protocol_version();
+    std::shared_ptr<agent_mcp_http_transport> transport;
 };
 
 agent_mcp_http_client::agent_mcp_http_client(agent_mcp_http_client_config config)
-    : config(std::move(config)), state(std::make_unique<impl>()) {}
+    : config(std::move(config)), state(std::make_unique<impl>()) {
+    state->transport = this->config.transport
+        ? this->config.transport
+        : make_agent_mcp_httplib_transport();
+}
 
 agent_mcp_http_client::~agent_mcp_http_client() = default;
 
@@ -137,28 +89,13 @@ bool agent_mcp_http_client::send_request(
         std::string & error,
         std::optional<std::chrono::steady_clock::time_point> deadline) {
     std::lock_guard<std::mutex> lock(state->request_mutex);
-    parsed_url url;
-    if (!parse_url(config.url, url, error)) {
-        return false;
-    }
-    if (url.scheme == "https") {
-#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
-        error = "HTTPS MCP transport requires an OpenSSL-enabled cpp-httplib build";
-        return false;
-#endif
-    }
-    if (url.scheme != "http" && url.scheme != "https") {
-        error = "unsupported MCP HTTP provider scheme: " + url.scheme;
-        return false;
-    }
-
     const int request_id = state->next_request_id++;
     const bool is_notification = method.rfind("notifications/", 0) == 0;
     const json request = is_notification
         ? make_mcp_jsonrpc_notification(method, params)
         : make_mcp_jsonrpc_request(request_id, method, params);
     const std::string body = request.dump();
-    httplib::Headers headers = {
+    std::map<std::string, std::string> headers = {
         {"Accept", "application/json, text/event-stream"},
         {"MCP-Protocol-Version", state->protocol_version},
     };
@@ -169,40 +106,40 @@ bool agent_mcp_http_client::send_request(
         headers.emplace("Mcp-Session-Id", state->session_id);
     }
 
-    httplib::Result result;
-    const uint32_t connect_timeout_ms = bounded_timeout_ms(config.connect_timeout_ms, deadline);
-    const uint32_t request_timeout_ms = bounded_timeout_ms(config.request_timeout_ms, deadline);
-    if (url.scheme == "http") {
-        httplib::Client client(url.host, url.port);
-        configure_client(client, connect_timeout_ms, request_timeout_ms);
-        result = client.Post(url.path, headers, body, "application/json");
-    } else {
-#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-        httplib::SSLClient client(url.host, url.port);
-        configure_client(client, connect_timeout_ms, request_timeout_ms);
-        result = client.Post(url.path, headers, body, "application/json");
-#endif
-    }
-    if (!result) {
-        error = "MCP HTTP request failed: " + httplib::to_string(result.error());
+    agent_mcp_http_response result;
+    if (!state->transport->post({
+            config.url,
+            std::move(headers),
+            body,
+            bounded_timeout_ms(config.connect_timeout_ms, deadline),
+            bounded_timeout_ms(config.request_timeout_ms, deadline),
+            config.max_result_bytes,
+            deadline}, result, error)) {
         return false;
     }
-    if (result->status < 200 || result->status >= 300) {
-        error = "MCP HTTP server returned status " + std::to_string(result->status);
+    if (result.status < 200 || result.status >= 300) {
+        error = "MCP HTTP server returned status " + std::to_string(result.status);
         return false;
     }
-    if (result->body.size() > config.max_result_bytes) {
+    if (result.body.size() > config.max_result_bytes) {
         error = "MCP HTTP response exceeded max_result_bytes";
         return false;
     }
-    if (result->has_header("Mcp-Session-Id")) {
-        state->session_id = result->get_header_value("Mcp-Session-Id");
+    for (const auto & header : result.headers) {
+        std::string name = header.first;
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (name == "mcp-session-id") {
+            state->session_id = header.second;
+            break;
+        }
     }
     if (is_notification) {
         response = json::object();
         return true;
     }
-    response = json::parse(result->body, nullptr, false);
+    response = json::parse(result.body, nullptr, false);
     if (response.is_discarded() || !response.is_object()) {
         error = "MCP HTTP server returned invalid JSON-RPC payload";
         return false;

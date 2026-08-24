@@ -14,6 +14,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/host/agent-sandbox-assembly.cpp
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
+    ../../tools/agent/mcp/agent-mcp-http-transport.cpp
     ../../tools/agent/mcp/agent-mcp-client-factory.cpp
     ../../tools/agent/tooling/agent-selection-contracts.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
@@ -171,6 +172,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_DAEMON_SOURCES})
 
 set(AGENT_MCP_CLIENT_SOURCES
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
+    ../../tools/agent/mcp/agent-mcp-http-transport.cpp
     ../../tools/agent/mcp/agent-mcp-stdio-client.cpp
     ../../tools/agent/mcp/agent-mcp-client-factory.cpp
 )
