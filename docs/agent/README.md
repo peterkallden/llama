@@ -78,6 +78,19 @@ Cozo, daemon or external sandbox backends.
   They are not GitHub Release assets; open a successful workflow run and
   download its artifact. Development archive names have the form
   `llama-agent-dev-<timestamp>-run-<run-id>.tar.gz`.
+- [Android development artifacts](https://github.com/peterkallden/llama/actions/workflows/agent-ci-android.yml)
+  are published by the Android verification workflow for `feature/llama-agent`.
+  A successful run can provide:
+
+  ```text
+  llama-agent-dev-android          # Android development app artifact
+  llama-agent-dev-android-native   # arm64-v8a native CPU/Vulkan libraries and smoke binaries
+  ```
+
+  These are GitHub Actions artifacts for development and testing, not release
+  APK/AAB assets. The Android example currently targets arm64-v8a, builds CPU
+  with Android NEON and Vulkan support, and uses the SQLite storage profile;
+  there is no versioned Android release package in the release workflow yet.
 - [Release container images](https://github.com/users/peterkallden/packages?repo_name=peterkallden%2Fllama)
   are published to GitHub Container Registry. Pull a release image with:
 
