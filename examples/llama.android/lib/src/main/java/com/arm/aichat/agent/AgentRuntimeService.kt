@@ -21,6 +21,8 @@ class AgentRuntimeService : Service() {
 
     private val binder = LocalBinder()
     private var runtime: AgentRuntime? = null
+    private var storageDirectory: String? = null
+    private var modelPath: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -30,13 +32,35 @@ class AgentRuntimeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val directory = intent?.getStringExtra(EXTRA_STORAGE_DIRECTORY)
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH)
-        if (!directory.isNullOrBlank() && runtime == null) {
-            runtime = AgentRuntime.create(directory, modelPath)
+        if (!directory.isNullOrBlank()) {
+            configureModel(directory, modelPath)
         }
         return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
+
+    /**
+     * Configure the common runtime for the selected app-private model.
+     *
+     * The Service owns replacement of the native runtime. The Activity/UI
+     * never creates a second native handle and never needs to know whether a
+     * model change requires rebuilding the session host.
+     */
+    fun configureModel(directory: String, selectedModelPath: String?): Boolean {
+        if (directory.isBlank()) return false
+        if (runtime != null && storageDirectory == directory && modelPath == selectedModelPath) {
+            return true
+        }
+
+        runtime?.close()
+        runtime = AgentRuntime.create(directory, selectedModelPath)
+        storageDirectory = directory
+        modelPath = selectedModelPath
+        return runtime != null
+    }
+
+    fun hasRuntime(): Boolean = runtime != null
 
     fun cancel(reason: String = "cancelled"): Boolean = runtime?.cancel(reason) ?: false
 
@@ -80,6 +104,8 @@ class AgentRuntimeService : Service() {
     override fun onDestroy() {
         runtime?.close()
         runtime = null
+        storageDirectory = null
+        modelPath = null
         super.onDestroy()
     }
 }
