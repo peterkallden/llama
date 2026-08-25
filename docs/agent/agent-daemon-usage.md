@@ -747,17 +747,24 @@ The initial web surface is intentionally small:
 | `GET /api/v1/status` | Return the daemon status response |
 | `GET /api/v1/events` | Stream unchanged daemon JSONL event objects as SSE |
 
-The browser uses ordinary HTTP for commands and `EventSource` for events. SSE
-adds only `id`, `event` and `data` framing; the JSON object in `data` remains
-the common JSONL event payload. Event IDs mirror the daemon sequence for
-client-side correlation. Replay/resume from `Last-Event-ID` is deliberately
-left for a later protocol extension; the initial adapter does not pretend to
-provide replay when a client reconnects.
+The browser uses ordinary HTTP for commands and SSE for events. The example
+Vue client uses fetch-based SSE so it can send a bearer token in the
+`Authorization` header; a client using native `EventSource` must instead use
+same-origin cookie authentication or an authenticated proxy. SSE adds only
+`id`, `event` and `data` framing; the JSON object in `data` remains the common
+JSONL event payload. Event IDs mirror the daemon sequence for client-side
+correlation. Replay/resume from `Last-Event-ID` is deliberately left for a
+later protocol extension; the initial adapter does not pretend to provide
+replay when a client reconnects.
 
 The adapter owns HTTP routing, SSE connections, request framing, browser
-authentication and CORS. Static files and richer binary upload/download
-routes can be added around this seam later. It must not implement planning,
-tool selection, MCP semantics, resource policy or a second session manager.
+authentication and CORS. The example client and the optional Nginx config are
+documented in [`examples/llama-agent.web`](../../examples/llama-agent.web/README.md).
+Nginx should serve the built `dist/` directory and proxy `/api/` without
+buffering; it is also the natural place for TLS and deployment-specific edge
+authentication. Static files and richer binary upload/download routes can be
+added around this seam later. Neither layer may implement planning, tool
+selection, MCP semantics, resource policy or a second session manager.
 
 The focused beta smoke can be run with:
 
