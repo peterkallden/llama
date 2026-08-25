@@ -124,11 +124,14 @@ jobs:
             'bin\llama-agent.exe',
             'bin\llama-agent-daemon.exe',
             'bin\llama-agent-mcp-stdio-server.exe',
+            'bin\llama-agent-web.exe',
             'bin\llama-agent-core.dll',
             'bin\llama-agent-memory.dll',
             'bin\llama-agent-plan.dll',
             'bin\llama-agent-config-bootstrap.ps1',
-            'share\llama-agent\examples\agent-config.example.json'
+            'share\llama-agent\examples\agent-config.example.json',
+            'share\llama-agent\examples\llama-agent.web\README.md',
+            'share\llama-agent\examples\llama-agent.web\nginx\llama-agent-web.conf'
           )
           foreach ($path in $required) {
             if (-not (Test-Path (Join-Path 'package-root' $path))) {
