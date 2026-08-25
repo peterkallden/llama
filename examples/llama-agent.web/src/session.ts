@@ -96,20 +96,9 @@ async function submit(prompt: string) {
   try {
     const result = await api.value.submitTurn(turn) as TurnResult;
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
-    let finalResult = result;
-    const grammarFallback = result.ok === false &&
-      resourceRefs.value.length === 0 &&
-      /grammar|empty grammar stack|json schema/i.test(result.error || "");
-    if (grammarFallback) {
-      finalResult = await api.value.submitTurn({ ...turn, mode: "chat" }) as TurnResult;
-    }
-    if (assistant && typeof finalResult.response === "string") assistant.content = finalResult.response;
+    if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant) assistant.pending = false;
-    if (finalResult.ok === false) {
-      error.value = grammarFallback
-        ? `Agent grammar fallback failed: ${finalResult.error || "chat turn failed"}`
-        : (finalResult.error || "Turn failed");
-    }
+    if (result.ok === false) error.value = result.error || "Turn failed";
     busy.value = false;
     activeTurnId.value = "";
   } catch (cause) {

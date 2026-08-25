@@ -3,6 +3,61 @@
 This file records agent-specific bugs that affected runtime behavior and the
 commits that fixed them.
 
+## Structured agent grammar failure before tool-family selection
+
+- Status: Design identified; implementation pending
+- Affected area: daemon/web agent turns with small local models such as Qwen
+- Symptom: a simple prompt such as `hi there` enters agent mode, llama.cpp
+  reports `Unexpected empty grammar stack after accepting piece`, and the web
+  request can remain suspended until its turn timeout
+
+### Description
+
+The web client correctly submits an agent turn, but the current runtime can
+reach the full structured planner/tool grammar before it has established
+whether the request needs tools at all. Small models may fail that grammar on
+an ordinary conversational prompt. A retry implemented as a nested chat call
+inside the failed resident turn is not a safe general fix: the failed
+structured-generation attempt can still own session-lane or inference-capacity
+state, so the nested retry may reuse the same runtime state and wait forever.
+
+### Why this was a bug
+
+Tool selection and ordinary conversation were coupled too late. The host must
+decide whether a turn needs external tools before exposing the larger planner
+contract. The repository already contains the beginnings of this design in
+`common_tool_family_index`, `common_tool_family_selection`, and the
+`enable_tool_family_routing` configuration seam, but family selection is not
+yet wired as a complete pre-planner phase.
+
+### Chosen solution
+
+Use a bounded, host-owned family-selection phase before full planning:
+
+```text
+request
+  -> family selection
+       needs_tools=false -> ordinary chat
+       needs_tools=true  -> selected family contracts -> plan -> tools
+```
+
+The family view should contain only compact family descriptions. Individual
+tool contracts are exposed only after the model has selected the relevant
+families. A `needs_tools=false` result must never enter the structured tool
+planner. If family selection itself fails, ordinary chat is allowed only when
+the request has no attached resources and no plan/tool event has been created.
+Resource-bearing or already-planned turns fail closed and retain their agent
+semantics.
+
+Reflection, deliberation, and internal memory phases do not by themselves mean
+that an external tool is required. Explicit memory/resource/tool operations do
+count as host-owned work and must not be silently downgraded to chat.
+
+The eventual implementation must use distinct child request identities for
+internal phases and must reset or complete the failed phase through the normal
+session manager before another inference begins. The web client must not
+classify debugger/model error strings or implement its own semantic fallback.
+
 ## Research checkpoint missing turn identity for project-scoped plans
 
 - Status: Fixed and verified

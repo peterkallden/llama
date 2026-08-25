@@ -28,11 +28,12 @@ browser asks for microphone permission when recording starts. A prompt such as
 `Transcribe the attached recording` can be sent together with the audio
 resource; the web client does not perform speech recognition itself.
 
-The example submits turns in agent mode. If a small model rejects the initial
-agent grammar before any resource is attached, the client makes one bounded
-retry in ordinary chat mode. This keeps simple conversational prompts usable
-with models whose structured grammar support is incomplete; turns with
-attachments are never silently downgraded because they may require tools.
+The example submits turns in agent mode. Small models may reject the initial
+structured grammar before planning starts, especially for ordinary prompts
+that do not need tools. The planned host-side solution is to select tool
+families before exposing the full planner contract and route `needs_tools=false`
+to ordinary chat. The web client does not interpret model error strings or
+perform semantic fallback itself.
 
 Tools already emit `tool.artifact_created` events for generated resources. The
 example client renders a **Download** action for those events. The web adapter
