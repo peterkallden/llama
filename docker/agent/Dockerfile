@@ -46,7 +46,11 @@ RUN mkdir -p /opt/llama-agent \
     && rm /tmp/agent-package.tar.gz \
     && useradd --create-home --home-dir /home/llama-agent --shell /usr/sbin/nologin llama-agent \
     && mkdir -p /etc/llama-agent /models /var/lib/llama-agent/data /var/log/llama-agent \
-        /var/lib/llama-agent/nginx \
+        /var/lib/llama-agent/nginx/client_body \
+        /var/lib/llama-agent/nginx/proxy \
+        /var/lib/llama-agent/nginx/fastcgi \
+        /var/lib/llama-agent/nginx/uwsgi \
+        /var/lib/llama-agent/nginx/scgi \
     && chown -R llama-agent:llama-agent /etc/llama-agent /models /var/lib/llama-agent /var/log/llama-agent
 
 COPY agent-config.docker.example.json /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json
