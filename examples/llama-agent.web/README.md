@@ -28,6 +28,12 @@ browser asks for microphone permission when recording starts. A prompt such as
 `Transcribe the attached recording` can be sent together with the audio
 resource; the web client does not perform speech recognition itself.
 
+The example submits turns in agent mode. If a small model rejects the initial
+agent grammar before any resource is attached, the client makes one bounded
+retry in ordinary chat mode. This keeps simple conversational prompts usable
+with models whose structured grammar support is incomplete; turns with
+attachments are never silently downgraded because they may require tools.
+
 Tools already emit `tool.artifact_created` events for generated resources. The
 example client renders a **Download** action for those events. The web adapter
 reads the resource through the daemon's scoped resource API; it never serves
