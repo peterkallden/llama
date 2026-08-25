@@ -13,7 +13,6 @@ import com.arm.aichat.agent.AndroidResourceStore
 import android.net.Uri
 import android.content.ComponentName
 import java.io.File
-import android.net.Uri
 import com.arm.aichat.agent.AgentRuntimeService
 
 /**
