@@ -1674,6 +1674,17 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json
         ${PROJECT_SOURCE_DIR}/docs/examples/llama-agent-daemon.service
         DESTINATION share/llama-agent/examples)
+
+    # The Vue client is an example deployment companion for llama-agent-web.
+    # Keep its source, Nginx example and package metadata with the other
+    # installed examples, but do not ship generated frontend dependencies or
+    # build output in the Debian package.
+    install(DIRECTORY
+        ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/
+        DESTINATION share/llama-agent/examples/llama-agent.web
+        PATTERN node_modules EXCLUDE
+        PATTERN dist EXCLUDE
+        PATTERN .git EXCLUDE)
 endif()
 
 set(AGENT_MCP_SERVER_LIBRARY_TARGETS

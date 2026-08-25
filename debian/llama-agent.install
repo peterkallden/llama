@@ -1,5 +1,6 @@
 usr/bin/llama-agent usr/bin
 usr/bin/llama-agent-mcp-stdio-server usr/bin
+usr/bin/llama-agent-web usr/bin
 usr/bin/llama-agent-daemon usr/sbin
 usr/bin/llama-agent-config-bootstrap usr/sbin
 usr/lib/*.so* usr/lib

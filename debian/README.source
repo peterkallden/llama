@@ -36,7 +36,8 @@ PPA remain portable. A downstream maintainer building for a controlled host
 may set it to `on`.
 
 The resulting package installs the daemon and bootstrap helper under
-/usr/sbin, client binaries under /usr/bin, examples under
-/usr/share/doc/llama-agent/examples, and the systemd unit without enabling or
+/usr/sbin, client and web-adapter binaries under /usr/bin, examples under
+/usr/share/doc/llama-agent/examples (including the source and Nginx example
+for the Vue web client), and the systemd unit without enabling or
 starting it automatically. Generate /etc/llama-agent/config.json with
 llama-agent-config-bootstrap before enabling llama-agent.service.

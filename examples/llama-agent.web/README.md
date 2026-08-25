@@ -99,4 +99,6 @@ Nginx and the web adapter must not take over sessions, planning, tool
 selection, MCP, resource policy or capability decisions from the daemon.
 
 The client is intentionally an example and does not yet provide production
-features such as login, event replay, binary downloads or full routing.
+features such as login, event replay or full routing. Artifact downloads are
+supported through the authenticated daemon endpoint, but deployment-specific
+authorization and retention remain outside this example.
