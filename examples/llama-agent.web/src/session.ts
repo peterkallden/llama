@@ -17,7 +17,11 @@ const messages = ref<ChatMessage[]>([]);
 const attachments = ref<UploadedResource[]>([]);
 const resourceRefs = ref<string[]>([]);
 const activeTurnId = ref("");
+const recording = ref(false);
 const abortController = ref<AbortController | null>(null);
+let mediaRecorder: MediaRecorder | null = null;
+let mediaStream: MediaStream | null = null;
+let recordedChunks: Blob[] = [];
 const sessionStorageKey = "llama-agent-web.session-id";
 const sessionId = ref(sessionStorage.getItem(sessionStorageKey) || `web-${crypto.randomUUID()}`);
 sessionStorage.setItem(sessionStorageKey, sessionId.value);
@@ -122,6 +126,58 @@ async function upload(file: File) {
   catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
 }
 
+function recordingMimeType(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
+}
+
+async function startRecording() {
+  if (recording.value) return;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    error.value = "Audio recording is not supported by this browser.";
+    return;
+  }
+  try {
+    const mimeType = recordingMimeType();
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size) recordedChunks.push(event.data);
+    };
+    mediaRecorder.onstop = () => {
+      const type = mediaRecorder?.mimeType || mimeType || "audio/webm";
+      const extension = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : "webm";
+      const file = new File(recordedChunks, `recording-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.${extension}`, { type });
+      mediaStream?.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+      mediaRecorder = null;
+      recordedChunks = [];
+      if (file.size) void upload(file);
+    };
+    mediaRecorder.start();
+    recording.value = true;
+    error.value = "";
+  } catch (cause) {
+    mediaStream?.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+    mediaRecorder = null;
+    recording.value = false;
+    error.value = cause instanceof Error ? cause.message : "Microphone access was denied.";
+  }
+}
+
+function stopRecording() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+  recording.value = false;
+  mediaRecorder.stop();
+}
+
+function toggleRecording() {
+  if (recording.value) stopRecording();
+  else void startRecording();
+}
+
 function removeAttachment(index: number) {
   attachments.value.splice(index, 1);
   resourceRefs.value.splice(index, 1);
@@ -134,11 +190,12 @@ function newSession() {
   events.value = [];
   attachments.value = [];
   resourceRefs.value = [];
+  if (recording.value) stopRecording();
   activeTurnId.value = "";
   busy.value = false;
   error.value = "";
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, busy, error, attachments, activeTurnId, refreshStatus, connect, submit, cancel, upload, removeAttachment, newSession, eventType });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, newSession, eventType, toggleRecording });
 }

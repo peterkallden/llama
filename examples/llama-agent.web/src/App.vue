@@ -10,9 +10,9 @@ onMounted(() => { void session.connect(); void session.refreshStatus().catch(() 
 
 function send() {
   const value = prompt.value.trim();
-  if (!value || session.busy) return;
+  if ((!value && !session.attachments.length) || session.busy) return;
   prompt.value = "";
-  void session.submit(value);
+  void session.submit(value || "Please process the attached audio.");
 }
 
 function attachFiles(event: Event) {
@@ -53,7 +53,7 @@ function eventText(event: Record<string, unknown>) {
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><label class="file-button">Attach files<input type="file" multiple @change="attachFiles" /></label><button class="primary-button" :disabled="session.busy || !prompt.trim()">Send</button></div>
+            <div class="composer-actions"><div class="input-actions"><label class="file-button">Attach files<input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording">{{ session.recording ? "Stop recording" : "Record audio" }}</button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span></div><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)">Send</button></div>
           </form>
           <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><label v-for="(file, index) in session.attachments" :key="file.name" class="attachment"><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label></div>
         </section>

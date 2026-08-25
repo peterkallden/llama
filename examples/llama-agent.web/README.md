@@ -20,7 +20,12 @@ instead of `EventSource`, so a bearer token can be sent in the
 Text attachments use the existing `text` field. Binary attachments use the
 existing byte-oriented resource-store path and are sent as bounded
 `bytes_base64` JSONL payloads. The daemon applies the same 1 MiB resource
-limit to both forms.
+limit to both forms. The **Record audio** button uses the browser
+`MediaRecorder` API, uploads the resulting WebM/Ogg/M4A recording through the
+same binary path, and adds it to the next turn as a `resource_ref`. The
+browser asks for microphone permission when recording starts. A prompt such as
+`Transcribe the attached recording` can be sent together with the audio
+resource; the web client does not perform speech recognition itself.
 
 ## Build and local development
 
