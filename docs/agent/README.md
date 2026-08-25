@@ -166,6 +166,8 @@ remote MCP providers, status/readiness, and Docker usage.
   image fallback. See [Agent multimodal runtime](agent-multimodal.md).
 - **Daemon and protocols** — foreground JSONL administration, TCP and Unix
   transports, inbound MCP, readiness/status reporting, and systemd examples.
+  The optional `llama-agent-web` binary is only an HTTP/SSE protocol adapter
+  over the daemon's JSONL/TCP boundary; it does not add a second agent host.
 - **Sandbox workspaces** — capability-checked Docker/Podman, Kubernetes and
   optional LXC execution with deterministic local/sandbox fallback and
   artifact handling. See [Agent Sandbox Workspaces](agent-sandbox-workspaces.md).

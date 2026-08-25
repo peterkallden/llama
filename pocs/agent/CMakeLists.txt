@@ -1155,6 +1155,17 @@ target_link_libraries(${TARGET} PRIVATE
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-web-sse-contract-smoke)
+add_executable(${TARGET}
+    smoke/daemon/agent-web-sse-contract-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-protocol)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-daemon-event-stream-contract-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-daemon-event-stream-contract-smoke.cpp
@@ -1614,8 +1625,20 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-web)
+add_executable(${TARGET}
+    ../../tools/agent/web/agent-web-main.cpp
+    ../../tools/agent/web/agent-web-server.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-protocol cpp-httplib Threads::Threads)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
-    install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon RUNTIME)
+    install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-web RUNTIME)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
@@ -1671,6 +1694,7 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-cli
     llama-agent-mcp-stdio-server
     llama-agent-daemon
+    llama-agent-web
 )
 
 set(AGENT_TEST_BUILD_TARGETS
@@ -1699,6 +1723,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-daemon-protocol-smoke
     llama-agent-daemon-jsonl-protocol-smoke
     llama-agent-jsonl-wire-contract-smoke
+    llama-agent-web-sse-contract-smoke
     llama-agent-daemon-event-stream-contract-smoke
     llama-agent-daemon-client-smoke
     llama-agent-daemon-wait-events-smoke
@@ -1899,6 +1924,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-jsonl-wire-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-jsonl-wire-contract-smoke>)
     set_property(TEST llama-agent-jsonl-wire-contract-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-web-sse-contract-ctest
+        COMMAND $<TARGET_FILE:llama-agent-web-sse-contract-smoke>)
+    set_property(TEST llama-agent-web-sse-contract-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-daemon-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-client-smoke>)

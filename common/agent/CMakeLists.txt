@@ -1,5 +1,16 @@
 set(TARGET llama-agent-core)
 
+# Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
+# mobile clients can share the wire contract without linking agent semantics.
+add_library(llama-agent-protocol STATIC
+    protocol/agent-jsonl.cpp protocol/agent-jsonl.h
+    protocol/agent-sse.cpp protocol/agent-sse.h
+)
+target_include_directories(llama-agent-protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-protocol PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-protocol PUBLIC llama-common)
+set_target_properties(llama-agent-protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 if (LLAMA_AGENT_SANDBOX)
     add_library(llama-agent-sandbox
         sandbox/sandbox-docker-runtime.cpp
@@ -41,7 +52,6 @@ add_library(${TARGET}
     agent-prepared-generation.cpp agent-prepared-generation.h
     credentials/agent-credential-provider.h
     learning/blueprint-selector.cpp learning/blueprint-selector.h
-    protocol/agent-jsonl.cpp protocol/agent-jsonl.h
     tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h
     thinking/deliberation-policy.cpp thinking/deliberation-policy.h
     agent-runtime-context.h
@@ -123,7 +133,14 @@ endif()
 add_library(llama-agent-poc ALIAS ${TARGET})
 target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
-target_link_libraries(${TARGET} PUBLIC llama-agent-dataset-contracts llama-agent-plan llama-agent-memory llama-agent-tooling)
+target_link_libraries(${TARGET}
+    PUBLIC
+        llama-agent-dataset-contracts
+        llama-agent-plan
+        llama-agent-memory
+        llama-agent-tooling
+        llama-agent-protocol
+)
 target_link_libraries(${TARGET} PRIVATE cpp-httplib)
 if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)

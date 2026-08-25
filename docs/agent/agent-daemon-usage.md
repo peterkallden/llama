@@ -705,6 +705,60 @@ restart. Authentication and policy remain connection-scoped.
 Unix sockets are POSIX-only in this slice. Windows continues to use stdio or
 TCP; named pipes can be added later using the same JSONL stream boundary.
 
+## Minimal web adapter: HTTP commands and SSE events
+
+`llama-agent-web` is a protocol adapter for a running JSONL/TCP daemon. It is
+not another agent host: sessions, turns, planning, tools, MCP, resources,
+policy and capabilities remain owned by `llama-agent-daemon`.
+
+The adapter translates only the transport boundary:
+
+```text
+HTTP request                  JSONL request
+HTTP response / SSE event  <- JSONL response / event
+```
+
+Start the daemon with a private TCP endpoint first, then start the web adapter:
+
+```bash
+./build-agent/bin/llama-agent-daemon \
+  --config docs/examples/agent-host-config-jsonl-tcp.json
+
+./build-agent/bin/llama-agent-web \
+  --daemon-address 127.0.0.1 \
+  --daemon-port 8091 \
+  --listen 127.0.0.1 \
+  --port 8090 \
+  --web-bearer-token replace-with-a-web-secret \
+  --daemon-authorization "Bearer replace-with-a-daemon-secret"
+```
+
+The daemon authorization value must match the TCP caller policy. Keep both
+listeners on loopback or behind a TLS/authentication proxy; the adapter does
+not provide TLS.
+
+The initial web surface is intentionally small:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/v1/turns` | Forward a JSON turn request |
+| `POST /api/v1/turns/{id}/cancel` | Forward `cancel_turn` |
+| `POST /api/v1/resources` | Forward `put_resource` |
+| `GET /api/v1/status` | Return the daemon status response |
+| `GET /api/v1/events` | Stream unchanged daemon JSONL event objects as SSE |
+
+The browser uses ordinary HTTP for commands and `EventSource` for events. SSE
+adds only `id`, `event` and `data` framing; the JSON object in `data` remains
+the common JSONL event payload. Event IDs mirror the daemon sequence for
+client-side correlation. Replay/resume from `Last-Event-ID` is deliberately
+left for a later protocol extension; the initial adapter does not pretend to
+provide replay when a client reconnects.
+
+The adapter owns HTTP routing, SSE connections, request framing, browser
+authentication and CORS. Static files and richer binary upload/download
+routes can be added around this seam later. It must not implement planning,
+tool selection, MCP semantics, resource policy or a second session manager.
+
 The focused beta smoke can be run with:
 
 ```powershell
