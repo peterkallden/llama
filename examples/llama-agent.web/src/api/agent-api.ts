@@ -65,6 +65,15 @@ export class AgentApi {
     return this.request("/resources", { method: "POST", body: JSON.stringify(resource) });
   }
 
+  async downloadResource(uri: string, context: Record<string, string> = {}): Promise<Blob> {
+    const query = new URLSearchParams({ uri, ...context });
+    const response = await fetch(`${this.baseUrl}/resources/download?${query}`, {
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new Error(`Artifact download failed: ${response.status}`);
+    return response.blob();
+  }
+
   async connectEvents(sink: EventSink, signal: AbortSignal): Promise<void> {
     const response = await fetch(`${this.baseUrl}/events`, {
       headers: { ...this.headers(), Accept: "text/event-stream" },

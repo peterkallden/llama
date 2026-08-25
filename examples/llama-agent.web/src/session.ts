@@ -39,6 +39,14 @@ function eventType(event: AgentEvent): string {
   return String(event.event_type || event.type || "event");
 }
 
+function eventResourceUri(event: AgentEvent): string {
+  return typeof event.resource_uri === "string" && event.resource_uri
+    ? event.resource_uri
+    : eventType(event) === "tool.artifact_created" && typeof event.detail === "string"
+      ? event.detail
+      : "";
+}
+
 function observe(event: AgentEvent) {
   events.value.unshift(event);
   const kind = eventType(event);
@@ -183,6 +191,30 @@ function removeAttachment(index: number) {
   resourceRefs.value.splice(index, 1);
 }
 
+async function downloadArtifact(event: AgentEvent) {
+  const uri = eventResourceUri(event);
+  if (!uri) {
+    error.value = "The artifact event did not contain a resource URI.";
+    return;
+  }
+  try {
+    const blob = await api.value.downloadResource(uri, {
+      namespace_id: String(event.namespace_id ?? ""),
+      project_id: String(event.project_id ?? ""),
+      session_id: String(event.session_id ?? sessionId.value),
+      turn_id: String(event.turn_id ?? ""),
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = uri.split("/").at(-1) || "artifact";
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 function newSession() {
   sessionId.value = `web-${crypto.randomUUID()}`;
   sessionStorage.setItem(sessionStorageKey, sessionId.value);
@@ -197,5 +229,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

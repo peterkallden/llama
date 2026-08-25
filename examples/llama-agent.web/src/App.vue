@@ -30,6 +30,10 @@ function toggle(index: number) {
 function eventText(event: Record<string, unknown>) {
   return String(event.detail ?? event.error ?? event.tool_name ?? "");
 }
+
+function isArtifactEvent(event: Record<string, unknown>) {
+  return session.eventType(event) === "tool.artifact_created" && Boolean(event.detail || event.resource_uri);
+}
 </script>
 
 <template>
@@ -63,7 +67,7 @@ function eventText(event: Record<string, unknown>) {
           <div v-if="!session.events.length" class="empty">Runtime events will appear here while the daemon is working.</div>
           <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
             <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
-            <div class="event-main"><div><strong>{{ session.eventType(event) }}</strong><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span></div><p>{{ eventText(event) }}</p></div>
+            <div class="event-main"><div><strong>{{ session.eventType(event) }}</strong><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div><p>{{ eventText(event) }}</p></div>
             <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
           </div>
         </section>

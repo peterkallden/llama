@@ -744,6 +744,7 @@ The initial web surface is intentionally small:
 | `POST /api/v1/turns` | Forward a JSON turn request |
 | `POST /api/v1/turns/{id}/cancel` | Forward `cancel_turn` |
 | `POST /api/v1/resources` | Forward `put_resource` for text or bounded `bytes_base64` payloads |
+| `GET /api/v1/resources/download?uri=...` | Read an authenticated bounded resource download through the daemon |
 | `GET /api/v1/status` | Return the daemon status response |
 | `GET /api/v1/events` | Stream unchanged daemon JSONL event objects as SSE |
 
@@ -761,6 +762,13 @@ Resource uploads preserve the existing daemon contract. Text files use the
 `text` field; binary files use `bytes_base64` and are decoded into the
 byte-oriented resource store before the turn receives the resulting opaque
 resource URI. Both forms are bounded by the daemon's 1 MiB resource limit.
+
+Tool-generated resources are announced as `tool.artifact_created` events. The
+web client may turn the resource URI from that event into a download action,
+but the web adapter must read the bytes through the daemon's scoped
+`read_resource` command. It must not expose the resource-store filesystem or
+construct direct filesystem URLs. Download responses are independently
+bounded by the web adapter configuration.
 
 The adapter owns HTTP routing, SSE connections, request framing, browser
 authentication and CORS. The example client and the optional Nginx config are

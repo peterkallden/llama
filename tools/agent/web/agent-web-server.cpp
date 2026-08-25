@@ -229,6 +229,25 @@ void set_json_error(httplib::Response & response, int status, const std::string 
     response.set_content(json{{"error", error}}.dump(), "application/json");
 }
 
+std::string safe_download_filename(const json & resource, const std::string & uri) {
+    auto name = resource.value("name", std::string());
+    if (name.empty()) {
+        const auto slash = uri.find_last_of('/');
+        name = slash == std::string::npos ? "artifact" : uri.substr(slash + 1);
+    }
+    for (char & character : name) {
+        if (character == '\r' || character == '\n' || character == '"' || character == '/' || character == '\\') character = '_';
+    }
+    return name.empty() ? "artifact" : name;
+}
+
+std::string request_param_or(
+        const httplib::Request & request,
+        const char * name,
+        const char * fallback) {
+    return request.has_param(name) ? request.get_param_value(name) : fallback;
+}
+
 } // namespace
 
 bool run_agent_web_server(
@@ -321,6 +340,37 @@ bool run_agent_web_server(
             return;
         }
         response.set_content(result.dump(), "application/json");
+    });
+
+    server.Get("/api/v1/resources/download", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
+        if (!authorize(request, response)) return;
+        if (!request.has_param("uri")) {
+            set_json_error(response, 400, "resource download requires uri");
+            return;
+        }
+        const auto uri = request.get_param_value("uri");
+        const json command = {
+            {"command", "read_resource"},
+            {"uri", uri},
+            {"namespace_id", request_param_or(request, "namespace_id", "default-namespace")},
+            {"session_id", request_param_or(request, "session_id", "default-session")},
+            {"project_id", request_param_or(request, "project_id", "")},
+            {"turn_id", request_param_or(request, "turn_id", "")},
+            {"max_bytes", options.max_download_bytes},
+        };
+        json result;
+        std::string command_error;
+        if (!send_daemon_command(options, command, result, command_error)) {
+            set_json_error(response, 502, command_error);
+            return;
+        }
+        if (!result.value("ok", false) || !result.contains("resource") || !result.contains("content")) {
+            set_json_error(response, 404, result.value("error", "resource could not be downloaded"));
+            return;
+        }
+        const auto & resource = result["resource"];
+        response.set_header("Content-Disposition", "attachment; filename=\"" + safe_download_filename(resource, uri) + "\"");
+        response.set_content(result["content"].get<std::string>(), resource.value("mime_type", "application/octet-stream"));
     });
 
     server.Get("/api/v1/status", [&options, authorize](const httplib::Request & request, httplib::Response & response) {

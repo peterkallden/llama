@@ -14,6 +14,7 @@ struct agent_web_server_options {
     // Allows the JSON/base64 framing overhead while the daemon still applies
     // its authoritative 1 MiB decoded resource limit.
     size_t max_body_bytes = 2 * 1024 * 1024;
+    size_t max_download_bytes = 64 * 1024 * 1024;
 };
 
 bool run_agent_web_server(

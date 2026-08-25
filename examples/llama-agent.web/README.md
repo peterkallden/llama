@@ -9,6 +9,7 @@ The client uses:
 - `POST /api/v1/turns` for questions;
 - `POST /api/v1/turns/{id}/cancel` for cancellation;
 - `POST /api/v1/resources` for text and binary attachments;
+- `GET /api/v1/resources/download?uri=...` for authenticated artifact downloads;
 - `GET /api/v1/status` for status;
 - `GET /api/v1/events` for JSONL events over SSE.
 
@@ -26,6 +27,12 @@ same binary path, and adds it to the next turn as a `resource_ref`. The
 browser asks for microphone permission when recording starts. A prompt such as
 `Transcribe the attached recording` can be sent together with the audio
 resource; the web client does not perform speech recognition itself.
+
+Tools already emit `tool.artifact_created` events for generated resources. The
+example client renders a **Download** action for those events. The web adapter
+reads the resource through the daemon's scoped resource API; it never serves
+the resource-store filesystem directly. Download responses are bounded by the
+adapter's `max_download_bytes` limit.
 
 ## Build and local development
 
