@@ -2,6 +2,7 @@
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "../cli/agent-cli-selection.h"
+#include "base64.hpp"
 
 #include <limits>
 #include <algorithm>
@@ -187,6 +188,19 @@ bool parse_agent_daemon_command_name(
         payload.request.description = parsed.value("description", "");
         payload.request.mime_type = parsed.value("mime_type", "text/plain");
         payload.request.text = parsed.value("text", "");
+        if (parsed.contains("bytes_base64")) {
+            if (!parsed["bytes_base64"].is_string()) {
+                error = "put_resource bytes_base64 must be a string";
+                return false;
+            }
+            try {
+                payload.request.bytes = base64::decode(parsed["bytes_base64"].get<std::string>());
+                payload.request.bytes_are_authoritative = true;
+            } catch (const std::exception & exception) {
+                error = std::string("put_resource bytes_base64 is invalid: ") + exception.what();
+                return false;
+            }
+        }
         payload.request.namespace_id = parsed.value("namespace_id", "default-namespace");
         payload.request.session_id = parsed.value("session_id", "default-session");
         payload.request.project_id = parsed.value("project_id", "");
@@ -206,7 +220,7 @@ bool parse_agent_daemon_command_name(
             error = "put_resource requires name";
             return false;
         }
-        if (payload.request.text.find('\0') != std::string::npos) {
+        if (!payload.request.bytes_are_authoritative && payload.request.text.find('\0') != std::string::npos) {
             error = "put_resource text must not contain NUL bytes";
             return false;
         }

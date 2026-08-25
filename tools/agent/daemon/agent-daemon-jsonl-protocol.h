@@ -57,6 +57,10 @@ struct agent_daemon_jsonl_put_resource_request {
     std::string session_id;
     std::string project_id;
     std::string turn_id;
+    // Optional byte-oriented upload. The wire representation is base64;
+    // the daemon decodes it before handing the payload to the resource store.
+    std::string bytes;
+    bool bytes_are_authoritative = false;
 };
 
 struct agent_daemon_jsonl_drain_request {};

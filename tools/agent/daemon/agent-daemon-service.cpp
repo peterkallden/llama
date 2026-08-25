@@ -1075,8 +1075,11 @@ bool common_agent_daemon_service::execute_outcome(
                     "resource_create_failed",
                     common_agent_daemon_event_type::resource_create_failed);
             }
-            if (command.resource_put->request.text.size() > 1024 * 1024) {
-                error = "put_resource text exceeds the 1 MiB limit";
+            const size_t payload_size = command.resource_put->request.bytes_are_authoritative
+                ? command.resource_put->request.bytes.size()
+                : command.resource_put->request.text.size();
+            if (payload_size > 1024 * 1024) {
+                error = "put_resource payload exceeds the 1 MiB limit";
                 return fail_lifecycle_result(
                     command,
                     outcome,
@@ -1089,10 +1092,10 @@ bool common_agent_daemon_service::execute_outcome(
             auto put_request = command.resource_put->request;
             put_request.source_provider = "jsonl-admin";
             put_request.source_tool = "put_resource";
-            if (!runtime.resource_store->put_text(
-                        put_request,
-                        outcome.resource_result.resource,
-                        error)) {
+            const bool stored = put_request.bytes_are_authoritative
+                ? runtime.resource_store->put_bytes(put_request, outcome.resource_result.resource, error)
+                : runtime.resource_store->put_text(put_request, outcome.resource_result.resource, error);
+            if (!stored) {
                 outcome.ok = false;
                 outcome.event = "resource_create_failed";
                 outcome.error = error;

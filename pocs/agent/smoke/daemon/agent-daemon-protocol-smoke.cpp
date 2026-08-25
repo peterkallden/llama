@@ -77,6 +77,27 @@ int main() {
         return 1;
     }
 
+    common_agent_daemon_command binary_resource_command;
+    if (!parse_agent_daemon_command(
+            json{
+                {"request_id", "resource-put-binary-1"},
+                {"command", "put_resource"},
+                {"name", "image.bin"},
+                {"mime_type", "application/octet-stream"},
+                {"bytes_base64", "AAEC"},
+                {"scope", "session"},
+            },
+            options,
+            common_agent_runtime_host_mode::chat,
+            binary_resource_command,
+            error) ||
+            !binary_resource_command.resource_put.has_value() ||
+            !binary_resource_command.resource_put->request.bytes_are_authoritative ||
+            binary_resource_command.resource_put->request.bytes != std::string("\x00\x01\x02", 3)) {
+        std::fprintf(stderr, "failed to parse binary put_resource command: %s\n", error.c_str());
+        return 1;
+    }
+
     common_agent_daemon_command list_sessions_command;
     if (!parse_agent_daemon_command(
             json{{"request_id", "sessions-1"}, {"command", "list_sessions"}},

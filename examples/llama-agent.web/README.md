@@ -6,16 +6,21 @@ resources, policy and capabilities.
 
 The client uses:
 
-- `POST /api/v1/turns` för frågor;
-- `POST /api/v1/turns/{id}/cancel` för avbrytning;
-- `POST /api/v1/resources` för textbilagor;
-- `GET /api/v1/status` för status;
-- `GET /api/v1/events` för JSONL-event som SSE.
+- `POST /api/v1/turns` for questions;
+- `POST /api/v1/turns/{id}/cancel` for cancellation;
+- `POST /api/v1/resources` for text and binary attachments;
+- `GET /api/v1/status` for status;
+- `GET /api/v1/events` for JSONL events over SSE.
 
 The JSON payload is the same as the daemon's JSONL event payload. Only the
 transport framing changes from JSONL to SSE. SSE is connected with `fetch`
 instead of `EventSource`, so a bearer token can be sent in the
 `Authorization` header.
+
+Text attachments use the existing `text` field. Binary attachments use the
+existing byte-oriented resource-store path and are sent as bounded
+`bytes_base64` JSONL payloads. The daemon applies the same 1 MiB resource
+limit to both forms.
 
 ## Build and local development
 
@@ -82,4 +87,4 @@ Nginx and the web adapter must not take over sessions, planning, tool
 selection, MCP, resource policy or capability decisions from the daemon.
 
 The client is intentionally an example and does not yet provide production
-features such as login, event replay, binary uploads/downloads or full routing.
+features such as login, event replay, binary downloads or full routing.

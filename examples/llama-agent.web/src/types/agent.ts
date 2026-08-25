@@ -22,6 +22,14 @@ export type DaemonStatus = {
   [key: string]: unknown;
 };
 
+export type ChatMessage = {
+  id: string;
+  turnId: string;
+  role: "user" | "assistant";
+  content: string;
+  pending?: boolean;
+};
+
 export type TurnRequest = {
   prompt: string;
   session_id: string;
@@ -37,12 +45,22 @@ export type TurnRequest = {
 export type UploadedResource = {
   name: string;
   mime_type: string;
-  text: string;
+  text?: string;
+  bytes_base64?: string;
   scope: "session";
   description?: string;
   session_id?: string;
   namespace_id?: string;
   project_id?: string;
+  uri?: string;
+};
+
+export type TurnResult = {
+  ok?: boolean;
+  response?: string;
+  error?: string;
+  turn_id?: string;
+  [key: string]: unknown;
 };
 
 export type PutResourceResult = {

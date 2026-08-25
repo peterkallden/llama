@@ -743,7 +743,7 @@ The initial web surface is intentionally small:
 | --- | --- |
 | `POST /api/v1/turns` | Forward a JSON turn request |
 | `POST /api/v1/turns/{id}/cancel` | Forward `cancel_turn` |
-| `POST /api/v1/resources` | Forward `put_resource` |
+| `POST /api/v1/resources` | Forward `put_resource` for text or bounded `bytes_base64` payloads |
 | `GET /api/v1/status` | Return the daemon status response |
 | `GET /api/v1/events` | Stream unchanged daemon JSONL event objects as SSE |
 
@@ -756,6 +756,11 @@ JSONL event payload. Event IDs mirror the daemon sequence for client-side
 correlation. Replay/resume from `Last-Event-ID` is deliberately left for a
 later protocol extension; the initial adapter does not pretend to provide
 replay when a client reconnects.
+
+Resource uploads preserve the existing daemon contract. Text files use the
+`text` field; binary files use `bytes_base64` and are decoded into the
+byte-oriented resource store before the turn receives the resulting opaque
+resource URI. Both forms are bounded by the daemon's 1 MiB resource limit.
 
 The adapter owns HTTP routing, SSE connections, request framing, browser
 authentication and CORS. The example client and the optional Nginx config are

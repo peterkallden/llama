@@ -1,6 +1,7 @@
 #include "agent-daemon-jsonl-protocol.h"
 
 #include "../../../common/agent/protocol/agent-jsonl.h"
+#include "base64.hpp"
 
 using json = nlohmann::ordered_json;
 
@@ -245,7 +246,7 @@ json make_agent_daemon_jsonl_read_resource_request(
 
 json make_agent_daemon_jsonl_put_resource_request(
         const agent_daemon_jsonl_put_resource_request & request) {
-    return {
+    json message = {
         {"command", "put_resource"},
         {"name", request.name},
         {"description", request.description},
@@ -257,6 +258,11 @@ json make_agent_daemon_jsonl_put_resource_request(
         {"project_id", request.project_id},
         {"turn_id", request.turn_id},
     };
+    if (!request.bytes.empty() || request.bytes_are_authoritative) {
+        message["bytes_base64"] = base64::encode(request.bytes);
+        message["text"] = "";
+    }
+    return message;
 }
 
 json make_agent_daemon_jsonl_drain_request(

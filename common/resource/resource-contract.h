@@ -212,6 +212,7 @@ struct agent_resource_put_request {
     // to use `text`; byte-oriented callers use `bytes`, including embedded NULs.
     // Kept at the end so existing aggregate initializers remain valid.
     std::string bytes;
+    bool bytes_are_authoritative = false;
 };
 
 struct agent_resource_descriptor : common_runtime_resource_ref {
