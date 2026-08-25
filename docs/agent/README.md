@@ -168,6 +168,11 @@ remote MCP providers, status/readiness, and Docker usage.
   transports, inbound MCP, readiness/status reporting, and systemd examples.
   The optional `llama-agent-web` binary is only an HTTP/SSE protocol adapter
   over the daemon's JSONL/TCP boundary; it does not add a second agent host.
+  The matching Vue 3/TypeScript example client is in
+  [`examples/llama-agent.web`](../../examples/llama-agent.web/README.md).
+  It owns presentation and browser transport only; daemon semantics remain
+  authoritative. It uses HTTP for commands/uploads and fetch-based SSE for
+  runtime events, which also permits bearer authentication in browsers.
 - **Sandbox workspaces** — capability-checked Docker/Podman, Kubernetes and
   optional LXC execution with deterministic local/sandbox fallback and
   artifact handling. See [Agent Sandbox Workspaces](agent-sandbox-workspaces.md).
