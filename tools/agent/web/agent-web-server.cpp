@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,16 @@ static void close_agent_web_socket(agent_web_socket_t socket) { close(socket); }
 using json = nlohmann::ordered_json;
 
 namespace {
+
+std::string web_request_id(const json & command) {
+    const auto request_id = command.value("request_id", std::string());
+    if (!request_id.empty()) return request_id;
+    const auto turn_id = command.value("turn_id", std::string());
+    if (!turn_id.empty()) return turn_id;
+
+    static std::atomic<uint64_t> next_id{1};
+    return "web-turn-" + std::to_string(next_id.fetch_add(1));
+}
 
 class daemon_connection {
 public:
@@ -301,6 +312,7 @@ bool run_agent_web_server(
             return;
         }
         command["command"] = "run_turn";
+        command["request_id"] = web_request_id(command);
         json result;
         std::string command_error;
         if (!send_daemon_command(options, command, result, command_error)) {
