@@ -31,7 +31,12 @@ bool common_agent_prepare_chat_generation(
     prepared.parse_tool_calls = !request.tools.empty();
 
     if (request.json_schema.empty()) {
-        prepared.grammar = common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar };
+        // An empty tool view is ordinary chat, not an empty tool-call
+        // grammar. Some small models (notably Qwen 1.5B) treat an enabled
+        // grammar with no productions as a fatal empty grammar stack.
+        if (!request.tools.empty()) {
+            prepared.grammar = common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar };
+        }
         prepared.generation_prompt = generated_chat_params.generation_prompt;
         return true;
     }

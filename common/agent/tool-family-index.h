@@ -37,3 +37,10 @@ bool common_parse_tool_family_selection(
     const std::string & json_text,
     common_tool_family_selection & selection,
     std::string & error);
+
+// Small-model preflight contract. This deliberately avoids JSON grammar.
+bool common_parse_tool_family_selection_text(
+    const std::string & text,
+    const std::vector<common_tool_family_index> & families,
+    common_tool_family_selection & selection,
+    std::string & error);

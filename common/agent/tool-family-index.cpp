@@ -3,8 +3,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 
 using json = nlohmann::ordered_json;
@@ -124,6 +126,53 @@ bool common_parse_tool_family_selection(
             return false;
         }
         selection.family_ids.push_back(item.get<std::string>());
+    }
+    error.clear();
+    return true;
+}
+
+bool common_parse_tool_family_selection_text(
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error) {
+    selection = {};
+    std::string line = text.substr(0, text.find('\n'));
+    while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+    size_t first = 0;
+    while (first < line.size() && std::isspace(static_cast<unsigned char>(line[first]))) ++first;
+    line.erase(0, first);
+    std::string upper = line;
+    for (char & ch : upper) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    if (upper.rfind("NO_TOOLS", 0) == 0 || upper.rfind("NO TOOLS", 0) == 0) {
+        selection.needs_tools = false;
+        return true;
+    }
+    if (upper.rfind("TOOLS:", 0) != 0) {
+        error = "tool family selection must start with NO_TOOLS or TOOLS:";
+        return false;
+    }
+    std::set<std::string> available;
+    for (const auto & family : families) available.insert(family.id);
+    std::string ids = line.substr(6);
+    for (char & ch : ids) if (ch == ',' || ch == ';') ch = ' ';
+    std::istringstream stream(ids);
+    std::string id;
+    selection.needs_tools = true;
+    while (stream >> id) {
+        if (!available.count(id)) {
+            error = "tool family selection returned unknown family: " + id;
+            return false;
+        }
+        if (std::find(selection.family_ids.begin(), selection.family_ids.end(), id) != selection.family_ids.end()) {
+            error = "tool family selection contains duplicate family: " + id;
+            return false;
+        }
+        selection.family_ids.push_back(id);
+    }
+    if (selection.family_ids.empty()) {
+        error = "tool family selection must include at least one family after TOOLS:";
+        return false;
     }
     error.clear();
     return true;

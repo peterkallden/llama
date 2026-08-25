@@ -1,5 +1,7 @@
 #include "agent-runtime-execution.h"
 #include "agent/context-compaction.h"
+#include "agent/tool-family-index.h"
+#include "../runtime/agent-runtime-chat-driver.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -10,6 +12,86 @@
 #include <ctime>
 
 namespace {
+
+bool select_model_tool_families(
+        common_agent_runtime_driver_execution & execution,
+        const common_agent_request & request,
+        std::string & error) {
+    execution.model_tools.clear();
+    const auto & generation_config = execution.runtime_config.generation_config;
+    execution.family_chat_routed = false;
+    execution.family_chat_result = {};
+    if (!generation_config.enable_tool_family_routing ||
+            execution.tooling.tools.empty() ||
+            !execution.current_plan_id.empty() ||
+            !execution.input_resources.empty()) {
+        return true;
+    }
+
+    const auto families = common_generate_tool_family_index(execution.tooling.tools);
+    const std::string family_view = common_render_tool_family_index(families, 2048);
+    common_chat_msg system{
+        "system",
+        "Decide whether the user request needs external tools. Reply with exactly one line: "
+        "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
+        "are needed. Do not explain, use JSON, or invent family ids. Available families:\n" + family_view,
+    };
+    common_chat_msg user{"user", request.prompt};
+    common_agent_generation_options options;
+    // This is a one-line classifier, not a planning turn. A small hard cap
+    // prevents a weak model from spending the whole turn elaborating before
+    // the host can route it.
+    options.n_predict = 16;
+    options.n_threads = generation_config.n_threads;
+    options.generation_trace = generation_config.generation_trace;
+    const auto generation = execution.inference.generate_result(
+        common_agent_make_generation_request(
+            common_agent_generation_purpose::tool_family_selection,
+            request.turn_id + ":tool-family-selection",
+            common_agent_scope_from_request(request),
+            {system, user},
+            options,
+            {}));
+    if (!common_agent_generation_succeeded(generation)) {
+        error = "tool family selection failed: " + generation.error_message;
+        if (generation.error_message.empty()) error += " model did not return a completed selection";
+        return false;
+    }
+
+    common_tool_family_selection selection;
+    if (!common_parse_tool_family_selection_text(generation.content, families, selection, error)) {
+        error = "tool family selection failed: " + error;
+        return false;
+    }
+    if (!selection.needs_tools) {
+        if (!selection.family_ids.empty()) {
+            error = "tool family selection must not select families when needs_tools is false";
+            return false;
+        }
+        common_agent_runtime_tooling chat_tooling = execution.tooling;
+        chat_tooling.tools.clear();
+        common_agent_generation_options chat_options;
+        chat_options.n_predict = generation_config.n_predict;
+        chat_options.n_threads = generation_config.n_threads;
+        chat_options.generation_trace = generation_config.generation_trace;
+        common_agent_chat_runtime_execution chat_execution{
+            execution.inference,
+            request,
+            chat_options,
+            {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
+            chat_tooling,
+        };
+        execution.family_chat_routed = true;
+        return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
+    }
+    execution.model_tools = common_filter_tools_by_families(
+        execution.tooling.tools, selection.family_ids);
+    if (execution.model_tools.empty()) {
+        error = "tool family selection did not resolve any registered tools";
+        return false;
+    }
+    return true;
+}
 
 bool prepare_resource_chunk_observations(
         common_agent_runtime_driver_execution & execution,
@@ -391,6 +473,9 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memory_scope,
         inputs.memory_enabled,
         inputs.tooling,
+        {},
+        {},
+        false,
         inputs.input_resources,
         std::nullopt,
         inputs.research_should_stop,
@@ -513,17 +598,29 @@ bool run_agent_runtime_driver(
         error = result.error.empty() ? "agent runtime execution stopped" : result.error;
         return false;
     };
+    const common_agent_request initial_request = make_agent_runtime_driver_request(execution);
+    if (!select_model_tool_families(execution, initial_request, error)) {
+        return false;
+    }
+    if (execution.family_chat_routed) {
+        result = std::move(execution.family_chat_result);
+        error.clear();
+        return true;
+    }
     while (true) {
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
+        const auto & model_tools = execution.model_tools.empty()
+            ? execution.tooling.tools
+            : execution.model_tools;
+        const common_agent_request request = make_agent_runtime_driver_request(execution);
         auto assembly = make_agent_runtime_assembly(
             execution.memory_store,
             execution.plan_store,
             execution.inference,
             execution.runtime_config,
-            execution.tooling.tools,
+            model_tools,
             execution.tooling.tool_view);
 
-        const common_agent_request request = make_agent_runtime_driver_request(execution);
         const auto slice = assembly.runtime->run(request);
         if (!slice.error.empty()) {
             if (execution.policy.agent_trace) {

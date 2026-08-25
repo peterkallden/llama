@@ -5,7 +5,7 @@ commits that fixed them.
 
 ## Structured agent grammar failure before tool-family selection
 
-- Status: Design identified; implementation pending
+- Status: Fixed locally; contract tests and Qwen web smoke verified
 - Affected area: daemon/web agent turns with small local models such as Qwen
 - Symptom: a simple prompt such as `hi there` enters agent mode, llama.cpp
   reports `Unexpected empty grammar stack after accepting piece`, and the web
@@ -13,22 +13,23 @@ commits that fixed them.
 
 ### Description
 
-The web client correctly submits an agent turn, but the current runtime can
-reach the full structured planner/tool grammar before it has established
-whether the request needs tools at all. Small models may fail that grammar on
-an ordinary conversational prompt. A retry implemented as a nested chat call
-inside the failed resident turn is not a safe general fix: the failed
-structured-generation attempt can still own session-lane or inference-capacity
-state, so the nested retry may reuse the same runtime state and wait forever.
+The web client correctly submits an agent turn, but the runtime previously
+reached the full structured planner/tool grammar before it had established
+whether the request needed tools at all. Small models could fail that grammar
+on an ordinary conversational prompt. A retry implemented as a nested chat
+call inside the failed resident turn was not a safe general fix: the failed
+structured-generation attempt could still own session-lane or
+inference-capacity state, so the nested retry could reuse the same runtime
+state and wait forever.
 
 ### Why this was a bug
 
 Tool selection and ordinary conversation were coupled too late. The host must
 decide whether a turn needs external tools before exposing the larger planner
-contract. The repository already contains the beginnings of this design in
-`common_tool_family_index`, `common_tool_family_selection`, and the
-`enable_tool_family_routing` configuration seam, but family selection is not
-yet wired as a complete pre-planner phase.
+contract. The daemon and CLI now both connect `agent_plan=auto` to
+`enable_tool_family_routing`, so the family selection phase is actually run
+before the full planner. This daemon wiring is important because the CLI and
+daemon have separate configuration adapters.
 
 ### Chosen solution
 
@@ -53,10 +54,31 @@ Reflection, deliberation, and internal memory phases do not by themselves mean
 that an external tool is required. Explicit memory/resource/tool operations do
 count as host-owned work and must not be silently downgraded to chat.
 
-The eventual implementation must use distinct child request identities for
-internal phases and must reset or complete the failed phase through the normal
-session manager before another inference begins. The web client must not
-classify debugger/model error strings or implement its own semantic fallback.
+The implementation uses a bounded plain-text family contract rather than a
+JSON tool-call grammar for this first small-model decision:
+
+```text
+NO_TOOLS
+```
+
+or:
+
+```text
+TOOLS: dataset, data
+```
+
+`NO_TOOLS` routes to ordinary chat with no tool grammar at all. A selected
+family is filtered against the host-owned tool view before full planning. The
+empty-tool preparation path also deliberately leaves the grammar empty; an
+empty tool view is ordinary chat, not an empty structured tool-call grammar.
+The web client must not classify debugger/model error strings or implement its
+own semantic fallback.
+
+The implementation is covered by `test-tool-family-index`,
+`test-agent-prepared-generation`, the runtime/inference contract tests, and a
+Qwen-backed web smoke with resident tracing. The trace confirms the intended
+sequence: `tool_family_selection` -> `conversation` for `hi there`, with no
+planner grammar and no timeout.
 
 ## Research checkpoint missing turn identity for project-scoped plans
 

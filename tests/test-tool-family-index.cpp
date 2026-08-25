@@ -45,10 +45,20 @@ int main() {
         selection,
         error));
     assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(common_parse_tool_family_selection(
+        R"({"needs_tools":false,"families":[],"reason":"ordinary conversation"})",
+        selection,
+        error));
+    assert(!selection.needs_tools && selection.family_ids.empty());
     assert(!common_parse_tool_family_selection(
         R"({"needs_tools":true,"families":["data","data"]})",
         selection,
         error));
+    assert(common_parse_tool_family_selection_text("NO_TOOLS\n", families, selection, error));
+    assert(!selection.needs_tools && selection.family_ids.empty());
+    assert(common_parse_tool_family_selection_text("TOOLS: dataset, data", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(!common_parse_tool_family_selection_text("TOOLS: unknown", families, selection, error));
 
     const auto workflows = common_generate_tool_workflow_index();
     const auto workflow_view = common_render_tool_workflow_index(workflows, {"dataset", "data", "statistics"});

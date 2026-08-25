@@ -793,13 +793,36 @@ tool families:
 - statistics: Describe datasets and compute summaries
 ```
 
-The same seam can later support a two-stage tool-intent flow: first expose only
-the family names and descriptions, then render exact tool names and compact
-contracts for selected families. A
-selected family is always intersected with the active host tool view; routing
-cannot grant access to a tool that the profile did not expose. The family
-projection lives in `common/agent/tool-family-index.*` and is tested by
-`test-tool-family-index`.
+When `agent_plan=auto` is enabled, this is an active two-stage tool-intent
+flow, not only a future extension. The host first exposes only the family
+names and descriptions, then renders exact tool names and compact contracts
+for selected families. The first decision uses a bounded plain-text contract:
+
+```text
+NO_TOOLS
+```
+
+or:
+
+```text
+TOOLS: dataset, data
+```
+
+This deliberately avoids asking a small model to satisfy the full JSON tool
+grammar before the host knows whether tools are needed. `NO_TOOLS` routes the
+turn directly to ordinary conversation with an empty tool list. A `TOOLS:`
+selection is validated against the generated family index and intersected
+with the active host tool view before full planning. Routing cannot grant
+access to a tool that the profile did not expose. The daemon and CLI both map
+`agent_plan=auto` to the runtime family-routing flag; this keeps their
+separate host configuration paths semantically aligned.
+
+An empty tool view is therefore ordinary chat, not an empty structured
+tool-call grammar. Resource-bearing or already-planned turns bypass this
+preflight and retain the normal fail-closed agent semantics. The family
+projection and text parser live in `common/agent/tool-family-index.*` and are
+tested by `test-tool-family-index`; the no-tools generation rule is covered by
+`test-agent-prepared-generation`.
 
 Workflow selection is a separate bounded model round after family routing. The
 model first returns workflow IDs such as `dataset.discover` or `dataset.join`.

@@ -357,6 +357,7 @@ endif()
 if (LLAMA_AGENT_RUNTIME)
     foreach(TEST_SOURCE
         test-agent-contract.cpp
+        test-agent-prepared-generation.cpp
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
@@ -385,6 +386,12 @@ if (LLAMA_AGENT_RUNTIME)
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
         if (TEST_NAME STREQUAL "test-agent-continuation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-prepared-generation")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp)
         endif()
         if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)

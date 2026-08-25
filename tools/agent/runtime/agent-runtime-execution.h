@@ -88,6 +88,11 @@ struct common_agent_runtime_driver_execution {
     common_memory_scope memory_scope = common_memory_scope::session;
     bool memory_enabled = false;
     const common_agent_runtime_tooling & tooling;
+    // Model-facing tools after host-owned family selection. The resolved
+    // tool_view remains authoritative for execution and policy enforcement.
+    std::vector<common_chat_tool> model_tools;
+    common_agent_result family_chat_result;
+    bool family_chat_routed = false;
     std::vector<common_agent_input_resource> input_resources;
     std::optional<common_agent_working_state> compact_working_state;
     std::function<bool()> research_should_stop;

@@ -1,6 +1,6 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
-#include "tools/agent/runtime/agent-server-generation.h"
+#include "agent-server-generation.h"
 #include "chat.h"
 
 #include <cassert>
@@ -88,6 +88,17 @@ void test_prepare_json_schema_generation() {
     assert(!prepared.parse_tool_calls);
 }
 
+void test_prepare_plain_chat_has_no_tool_grammar() {
+    auto templates = make_templates();
+    const auto request = make_base_request();
+
+    common_agent_prepared_generation prepared;
+    assert(common_agent_prepare_chat_generation(templates.get(), request, prepared));
+    assert(prepared.grammar.empty());
+    assert(!prepared.parse_tool_calls);
+    assert(!prepared.stream);
+}
+
 void test_server_task_params_from_prepared_generation() {
     auto request = make_base_request();
     common_params params_base;
@@ -141,6 +152,7 @@ void test_server_task_params_from_prepared_generation() {
 int main() {
     test_prepare_tool_generation();
     test_prepare_json_schema_generation();
+    test_prepare_plain_chat_has_no_tool_grammar();
     test_server_task_params_from_prepared_generation();
     return 0;
 }
