@@ -51,7 +51,16 @@ class MainActivity : AppCompatActivity() {
     private val messages = mutableListOf<Message>()
     private val events = mutableListOf<AgentEventRow>()
     private val messageAdapter = MessageAdapter(messages)
-    private val eventAdapter = AgentEventAdapter(events)
+    private val eventAdapter = AgentEventAdapter(events, ::downloadArtifact)
+    private var pendingArtifact: AgentClientEvent? = null
+
+    private val createArtifactDocument = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { destination ->
+        val artifact = pendingArtifact
+        pendingArtifact = null
+        if (destination != null && artifact != null) exportArtifact(artifact, destination)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -253,6 +262,33 @@ class MainActivity : AppCompatActivity() {
         eventsRv.scrollToPosition(events.lastIndex)
         val detail = event.detail
         if (detail.isNotBlank()) Log.d(TAG, "Agent event: $detail")
+    }
+
+    private fun downloadArtifact(event: AgentClientEvent) {
+        if (event.resourceUri.isBlank()) return
+        pendingArtifact = event
+        createArtifactDocument.launch(suggestedArtifactName(event.resourceUri))
+    }
+
+    private fun suggestedArtifactName(resourceUri: String): String =
+        Uri.parse(resourceUri).lastPathSegment?.substringAfterLast('/')
+            ?.ifBlank { null } ?: "agent-artifact-${System.currentTimeMillis()}"
+
+    private fun exportArtifact(event: AgentClientEvent, destination: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                resourceStore.copyTo(event.resourceUri, destination)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Artifact saved", Toast.LENGTH_SHORT).show()
+                }
+            } catch (error: Exception) {
+                Log.e(TAG, "Unable to export artifact", error)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity,
+                        error.message ?: "Unable to save artifact", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun handleAgentResult(message: String) {

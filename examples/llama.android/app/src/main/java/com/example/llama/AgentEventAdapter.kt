@@ -15,6 +15,7 @@ data class AgentEventRow(
 
 class AgentEventAdapter(
     private val events: MutableList<AgentEventRow>,
+    private val onDownload: (AgentClientEvent) -> Unit,
 ) : RecyclerView.Adapter<AgentEventAdapter.EventViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): EventViewHolder =
         EventViewHolder(LayoutInflater.from(parent.context)
@@ -26,6 +27,10 @@ class AgentEventAdapter(
         holder.detail.text = row.event.detail
         holder.json.text = row.event.json
         holder.json.visibility = if (row.expanded) View.VISIBLE else View.GONE
+        val downloadable = row.event.resourceUri.isNotBlank() && row.event.type in setOf(
+            "resource_created", "resource_processing_completed", "tool.artifact_created")
+        holder.download.visibility = if (downloadable) View.VISIBLE else View.GONE
+        holder.download.setOnClickListener { onDownload(row.event) }
         holder.toggle.text = if (row.expanded) "−" else "+"
         holder.toggle.setOnClickListener {
             row.expanded = !row.expanded
@@ -40,5 +45,6 @@ class AgentEventAdapter(
         val type: TextView = view.findViewById(R.id.event_type)
         val detail: TextView = view.findViewById(R.id.event_detail)
         val json: TextView = view.findViewById(R.id.event_json)
+        val download: Button = view.findViewById(R.id.event_download)
     }
 }

@@ -40,11 +40,12 @@ class AgentClientMessagesTest {
     @Test
     fun parsesCompactEventAndRetainsExpandedJson() {
         val event = AgentClientMessages.parseEvent(
-            "{\"message_type\":\"event\",\"event\":{\"type\":\"tool.completed\",\"detail\":\"done\",\"step_id\":\"step-1\"}}"
+            "{\"message_type\":\"event\",\"event\":{\"type\":\"tool.completed\",\"detail\":\"done\",\"resource_uri\":\"file:///tmp/report.pdf\",\"step_id\":\"step-1\"}}"
         )
 
         assertEquals("tool.completed", event?.type)
         assertEquals("done", event?.detail)
+        assertEquals("file:///tmp/report.pdf", event?.resourceUri)
         assertTrue(event?.json?.contains("step-1") == true)
     }
 }

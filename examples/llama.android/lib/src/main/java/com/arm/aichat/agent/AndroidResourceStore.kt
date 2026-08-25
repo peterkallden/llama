@@ -3,6 +3,7 @@ package com.arm.aichat.agent
 import android.content.Context
 import android.net.Uri
 import java.io.File
+import java.io.FileInputStream
 
 data class AndroidImportedResource(
     val uri: String,
@@ -26,6 +27,27 @@ class AndroidResourceStore(private val context: Context) {
 
     fun delete(resource: AndroidImportedResource): Boolean =
         File(resource.path).takeIf { it.parentFile == File(context.filesDir, "agent/resources") }?.delete() == true
+
+    /** Copies a local/content resource to a user-selected Android document. */
+    fun copyTo(resourceUri: String, destination: Uri): Long {
+        val input = openInput(resourceUri)
+            ?: error("Unable to open local artifact resource: $resourceUri")
+        return input.use { source ->
+            context.contentResolver.openOutputStream(destination)?.use { output ->
+                source.copyTo(output)
+            } ?: error("Unable to open destination document: $destination")
+            context.contentResolver.openAssetFileDescriptor(destination, "r")?.use { it.length }
+                .takeIf { it != null && it >= 0 } ?: 0L
+        }
+    }
+
+    private fun openInput(resourceUri: String) = when (val uri = Uri.parse(resourceUri)) {
+        else -> when (uri.scheme) {
+            "content", "file" -> context.contentResolver.openInputStream(uri)
+            null -> FileInputStream(File(resourceUri))
+            else -> error("Unsupported artifact URI scheme: ${uri.scheme}")
+        }
+    }
 
     private fun safeName(value: String): String = value
         .replace(Regex("[^A-Za-z0-9._-]"), "_")

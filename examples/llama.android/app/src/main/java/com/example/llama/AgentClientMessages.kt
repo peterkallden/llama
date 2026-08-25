@@ -12,6 +12,7 @@ data class AgentClientResult(
 data class AgentClientEvent(
     val type: String,
     val detail: String,
+    val resourceUri: String,
     val json: String,
 )
 
@@ -41,6 +42,7 @@ object AgentClientMessages {
         AgentClientEvent(
             type = event.stringValue("type").ifBlank { event.stringValue("event_type") },
             detail = event.stringValue("detail"),
+            resourceUri = event.stringValue("resource_uri"),
             json = event.toString(),
         )
     }.getOrNull()
