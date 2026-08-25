@@ -202,6 +202,7 @@ container replacement:
 | `/etc/llama-agent` | Generated daemon configuration | Persistent named volume or bind mount |
 | `/var/lib/llama-agent/data` | Memory, plan, structured data and resource stores | Persistent named volume or bind mount |
 | `/var/log/llama-agent` | Daemon diagnostics | Persistent named volume or bind mount |
+| `/opt/llama-agent-web` | Built Vue example client served by Nginx | Image content; override only for development |
 
 The image includes
 `agent-config.docker.example.json`, which points to these paths. It expects
@@ -220,12 +221,36 @@ docker volume create llama-agent-logs
 
 docker run --rm \
   --name llama-agent-dev \
+  --publish 8080:8080 \
   --mount source=llama-agent-models,target=/models,readonly \
   --mount source=llama-agent-config,target=/etc/llama-agent \
   --mount source=llama-agent-data,target=/var/lib/llama-agent/data \
   --mount source=llama-agent-logs,target=/var/log/llama-agent \
   ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
 ```
+
+The container defaults to `LLAMA_AGENT_MODE=all`: it starts the daemon, the
+JSONL/TCP web adapter and Nginx serving the Vue example client. Open
+`http://localhost:8080`. The daemon TCP listener remains internal on port
+`8091`; only the Nginx web port needs to be published for the example client.
+Use `LLAMA_AGENT_MODE=daemon` for a daemon-only container.
+
+Set `LLAMA_AGENT_WEB_TLS=true` to make Nginx serve HTTPS on port `8443` and
+redirect HTTP from `8080`. If
+`/etc/llama-agent/tls/server.crt` and `server.key` are absent, the entrypoint
+generates and persists a development self-signed certificate. Mount a
+certificate and key at those paths for deployment use:
+
+```bash
+docker run --rm --name llama-agent-dev \
+  -e LLAMA_AGENT_WEB_TLS=true \
+  -p 8443:8443 \
+  -v llama-agent-tls:/etc/llama-agent/tls \
+  ghcr.io/peterkallden/llama/llama-agent-dev:cpu-amd64-latest
+```
+
+TLS termination remains an Nginx/container concern; the daemon and web
+adapter continue to use their internal loopback JSONL/TCP boundary.
 
 The model volume must contain the files named by the configuration. For a
 host bind mount, ensure that the container user can read `/models` and write

@@ -79,6 +79,9 @@ jobs:
           cp docker/agent/Dockerfile docker-context/Dockerfile
           cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
           cp docker/agent/capability-smoke.sh docker-context/capability-smoke.sh
+          mkdir -p docker-context/nginx
+          cp docker/agent/nginx/llama-agent-web.http.conf docker-context/nginx/llama-agent-web.http.conf
+          cp docker/agent/nginx/llama-agent-web.https.conf.template docker-context/nginx/llama-agent-web.https.conf.template
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
           package_id="$(basename "$archive" .tar.gz)"
@@ -191,6 +194,9 @@ jobs:
           cp docker/agent/Dockerfile docker-context/Dockerfile
           cp docker/agent/entrypoint.sh docker-context/entrypoint.sh
           cp docker/agent/capability-smoke.sh docker-context/capability-smoke.sh
+          mkdir -p docker-context/nginx
+          cp docker/agent/nginx/llama-agent-web.http.conf docker-context/nginx/llama-agent-web.http.conf
+          cp docker/agent/nginx/llama-agent-web.https.conf.template docker-context/nginx/llama-agent-web.https.conf.template
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
           archive_id="$(basename "$archive" .tar.gz)"

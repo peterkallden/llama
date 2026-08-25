@@ -4,7 +4,7 @@ set -euo pipefail
 # This is an image contract check, not a release-version check.  Keep it
 # executable during the image build so a missing external tool fails early.
 for command_name in \
-    git cmake ninja gcc g++ clang clangd gdb pandoc python3 tesseract mutool gs; do
+    git cmake ninja gcc g++ clang clangd gdb pandoc python3 tesseract mutool gs nginx openssl; do
     command -v "$command_name" >/dev/null
 done
 
@@ -21,6 +21,9 @@ python3 --version
 tesseract --version | head -n 1
 mutool -v 2>&1 | head -n 1
 gs --version | head -n 1
+nginx -v 2>&1
+openssl version
+test -s /opt/llama-agent-web/dist/index.html
 
 # Exercise the two small local development paths that do not need project
 # sources or a model: compile a C++ translation unit and convert Markdown.

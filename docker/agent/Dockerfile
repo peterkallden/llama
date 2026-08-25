@@ -1,4 +1,16 @@
 ARG BASE_IMAGE=ubuntu:24.04
+
+FROM node:22-bookworm AS web-build
+
+ARG PACKAGE_ARCHIVE=agent-package.tar.gz
+COPY ${PACKAGE_ARCHIVE} /tmp/agent-package.tar.gz
+
+RUN mkdir -p /opt/llama-agent \
+    && tar -xzf /tmp/agent-package.tar.gz -C /opt/llama-agent \
+    && cd /opt/llama-agent/share/llama-agent/examples/llama-agent.web \
+    && npm ci --ignore-scripts \
+    && npm run build
+
 FROM ${BASE_IMAGE}
 
 ARG PACKAGE_ARCHIVE=agent-package.tar.gz
@@ -13,6 +25,9 @@ RUN apt-get update \
         libgomp1 \
         libssl3 \
         libvulkan1 \
+        nginx \
+        openssl \
+        gettext-base \
         zlib1g \
     && if [ "$INSTALL_DEV_TOOLS" = "true" ]; then \
         apt-get install --no-install-recommends --yes \
@@ -22,12 +37,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ${PACKAGE_ARCHIVE} /tmp/agent-package.tar.gz
+COPY --from=web-build /opt/llama-agent/share/llama-agent/examples/llama-agent.web/dist /opt/llama-agent-web/dist
+COPY nginx/llama-agent-web.http.conf /opt/llama-agent/nginx/llama-agent-web.http.conf
+COPY nginx/llama-agent-web.https.conf.template /opt/llama-agent/nginx/llama-agent-web.https.conf.template
 
 RUN mkdir -p /opt/llama-agent \
     && tar -xzf /tmp/agent-package.tar.gz -C /opt/llama-agent \
     && rm /tmp/agent-package.tar.gz \
     && useradd --create-home --home-dir /home/llama-agent --shell /usr/sbin/nologin llama-agent \
     && mkdir -p /etc/llama-agent /models /var/lib/llama-agent/data /var/log/llama-agent \
+        /var/lib/llama-agent/nginx \
     && chown -R llama-agent:llama-agent /etc/llama-agent /models /var/lib/llama-agent /var/log/llama-agent
 
 COPY agent-config.docker.example.json /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json
@@ -35,6 +54,7 @@ COPY entrypoint.sh /usr/local/bin/llama-agent-entrypoint
 COPY capability-smoke.sh /usr/local/bin/llama-agent-capability-smoke
 
 RUN chmod 0755 /usr/local/bin/llama-agent-entrypoint /usr/local/bin/llama-agent-capability-smoke \
+    && chown -R llama-agent:llama-agent /opt/llama-agent-web /opt/llama-agent/nginx \
     && if [ "$INSTALL_DEV_TOOLS" = "true" ]; then \
         /usr/local/bin/llama-agent-capability-smoke; \
     fi
@@ -52,3 +72,5 @@ WORKDIR /var/lib/llama-agent
 
 ENTRYPOINT ["/usr/local/bin/llama-agent-entrypoint"]
 CMD ["llama-agent-daemon"]
+
+EXPOSE 8080 8443

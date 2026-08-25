@@ -6,6 +6,22 @@ mkdir -p "$(dirname "$log_file")"
 
 config_file="${LLAMA_AGENT_CONFIG_FILE:-/etc/llama-agent/config.json}"
 bootstrap="${LLAMA_AGENT_CONFIG_BOOTSTRAP:-/opt/llama-agent/bin/llama-agent-config-bootstrap}"
+mode="${LLAMA_AGENT_MODE:-all}"
+daemon_port="${LLAMA_AGENT_DAEMON_PORT:-8091}"
+web_adapter_port="${LLAMA_AGENT_WEB_ADAPTER_PORT:-8090}"
+
+case "$mode" in
+    daemon|all) ;;
+    *)
+        echo "LLAMA_AGENT_MODE must be daemon or all" >&2
+        exit 2
+        ;;
+esac
+
+bootstrap_transport=stdio
+if [[ "$mode" == all ]]; then
+    bootstrap_transport=jsonl-tcp
+fi
 
 if [[ ! -s "$config_file" ]]; then
     mkdir -p "$(dirname "$config_file")"
@@ -24,6 +40,9 @@ if [[ ! -s "$config_file" ]]; then
         --default-mode "${LLAMA_AGENT_DEFAULT_MODE:-agent}" \
         --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-auto}" \
         --sandbox "${LLAMA_AGENT_SANDBOX:-none}" \
+        --transport "$bootstrap_transport" \
+        --listen 127.0.0.1 \
+        --port "$daemon_port" \
         --pdf-page-image-execution "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTION:-local_preferred}" \
         --pdf-page-image-backend "${LLAMA_AGENT_PDF_PAGE_IMAGE_BACKEND:-local}" \
         --pdf-page-image-executable "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTABLE:-mutool}" \
@@ -32,23 +51,85 @@ if [[ ! -s "$config_file" ]]; then
         --ocr-tesseract-executable "${LLAMA_AGENT_OCR_TESSERACT_EXECUTABLE:-tesseract}" \
         --pandoc-execution "${LLAMA_AGENT_PANDOC_EXECUTION:-local_preferred}" \
         --pandoc-backend "${LLAMA_AGENT_PANDOC_BACKEND:-local}" \
-        --pandoc-executable "${LLAMA_AGENT_PANDOC_EXECUTABLE:-pandoc}" \
-        --transport stdio
+        --pandoc-executable "${LLAMA_AGENT_PANDOC_EXECUTABLE:-pandoc}"
 fi
 
-if [[ "${1:-}" == "llama-agent-daemon" ]]; then
-    has_config=false
-    for argument in "$@"; do
-        if [[ "$argument" == "--config" || "$argument" == --config=* ]]; then
-            has_config=true
-            break
+if [[ "$mode" == daemon ]]; then
+    if [[ "${1:-}" == "llama-agent-daemon" ]]; then
+        has_config=false
+        for argument in "$@"; do
+            if [[ "$argument" == "--config" || "$argument" == --config=* ]]; then
+                has_config=true
+                break
+            fi
+        done
+        if [[ "$has_config" == false ]]; then
+            set -- "$@" --config "$config_file"
         fi
-    done
-    if [[ "$has_config" == false ]]; then
-        set -- "$@" --config "$config_file"
     fi
+    exec "$@" 2> >(tee -a "$log_file" >&2)
 fi
 
-# Keep stderr visible to the container runtime and persist the same diagnostics
-# in the mounted log volume. JSONL protocol output remains on stdout.
-exec "$@" 2> >(tee -a "$log_file" >&2)
+if [[ "${1:-}" != "llama-agent-daemon" ]]; then
+    exec "$@"
+fi
+
+if [[ "${LLAMA_AGENT_WEB_TLS:-false}" == true ]]; then
+    tls_cert="${LLAMA_AGENT_TLS_CERT:-/etc/llama-agent/tls/server.crt}"
+    tls_key="${LLAMA_AGENT_TLS_KEY:-/etc/llama-agent/tls/server.key}"
+    if [[ -s "$tls_cert" && -s "$tls_key" ]]; then
+        :
+    elif [[ ! -e "$tls_cert" && ! -e "$tls_key" ]]; then
+        mkdir -p "$(dirname "$tls_cert")"
+        openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+            -keyout "$tls_key" \
+            -out "$tls_cert" \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+            >/dev/null 2>&1
+        echo "Generated self-signed TLS certificate: $tls_cert" >&2
+        openssl x509 -in "$tls_cert" -noout -fingerprint -sha256 >&2
+    else
+        echo "TLS requires both LLAMA_AGENT_TLS_CERT and LLAMA_AGENT_TLS_KEY" >&2
+        exit 2
+    fi
+
+    export LLAMA_AGENT_TLS_CERT="$tls_cert"
+    export LLAMA_AGENT_TLS_KEY="$tls_key"
+    envsubst '${LLAMA_AGENT_TLS_CERT} ${LLAMA_AGENT_TLS_KEY}' \
+        < /opt/llama-agent/nginx/llama-agent-web.https.conf.template \
+        > /etc/llama-agent/nginx.conf
+else
+    cp /opt/llama-agent/nginx/llama-agent-web.http.conf /etc/llama-agent/nginx.conf
+fi
+
+nginx -t -c /etc/llama-agent/nginx.conf
+
+daemon_args=("$@" --config "$config_file" --tcp-listen 127.0.0.1 --tcp-port "$daemon_port")
+web_args=(
+    /opt/llama-agent/bin/llama-agent-web
+    --daemon-address 127.0.0.1
+    --daemon-port "$daemon_port"
+    --listen 127.0.0.1
+    --port "$web_adapter_port"
+)
+if [[ -n "${LLAMA_AGENT_WEB_BEARER_TOKEN:-}" ]]; then
+    web_args+=(--web-bearer-token "$LLAMA_AGENT_WEB_BEARER_TOKEN")
+fi
+
+"${daemon_args[@]}" 2> >(tee -a "$log_file" >&2) &
+daemon_pid=$!
+"${web_args[@]}" 2> >(tee -a /var/log/llama-agent/web.log >&2) &
+web_pid=$!
+nginx -c /etc/llama-agent/nginx.conf -g 'daemon off;' \
+    2> >(tee -a /var/log/llama-agent/nginx.log >&2) &
+nginx_pid=$!
+
+cleanup() {
+    kill "$nginx_pid" "$web_pid" "$daemon_pid" 2>/dev/null || true
+    wait "$nginx_pid" "$web_pid" "$daemon_pid" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+wait -n "$nginx_pid" "$web_pid" "$daemon_pid"
+exit $?
