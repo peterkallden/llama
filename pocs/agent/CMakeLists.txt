@@ -750,6 +750,9 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-mcp-client-library
         llama-agent-runtime-engine
         llama-agent-runtime-host
+        llama-agent-runtime-adapters
+        llama-agent-runtime-selection
+        llama-agent-runtime-packages
         llama-agent-runtime-support
         llama-agent-resource
         llama-agent-data

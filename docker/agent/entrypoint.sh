@@ -25,33 +25,38 @@ fi
 
 if [[ ! -s "$config_file" ]]; then
     mkdir -p "$(dirname "$config_file")"
-    "$bootstrap" \
-        --output "$config_file" \
-        --model "${LLAMA_AGENT_MODEL_PATH:-/models/model.gguf}" \
-        --embedding-model "${LLAMA_AGENT_EMBEDDING_MODEL_PATH:-/models/embedding.gguf}" \
-        --cozo-root "${LLAMA_AGENT_COZO_ROOT:-/var/lib/llama-agent/data}" \
-        --repository-root "${LLAMA_AGENT_REPOSITORY_ROOT:-/var/lib/llama-agent/workspace}" \
-        --tool-profile "${LLAMA_AGENT_TOOL_PROFILE:-all-configured}" \
-        --threads "${LLAMA_AGENT_THREADS:-4}" \
-        --gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-0}" \
-        --worker-count "${LLAMA_AGENT_WORKER_COUNT:-2}" \
-        --queue-capacity "${LLAMA_AGENT_QUEUE_CAPACITY:-8}" \
-        --inference-max-active "${LLAMA_AGENT_INFERENCE_MAX_ACTIVE:-1}" \
-        --default-mode "${LLAMA_AGENT_DEFAULT_MODE:-agent}" \
-        --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-auto}" \
-        --sandbox "${LLAMA_AGENT_SANDBOX:-none}" \
-        --transport "$bootstrap_transport" \
-        --listen 127.0.0.1 \
-        --port "$daemon_port" \
-        --pdf-page-image-execution "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTION:-local_preferred}" \
-        --pdf-page-image-backend "${LLAMA_AGENT_PDF_PAGE_IMAGE_BACKEND:-local}" \
-        --pdf-page-image-executable "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTABLE:-mutool}" \
-        --ocr-tesseract-execution "${LLAMA_AGENT_OCR_TESSERACT_EXECUTION:-local_preferred}" \
-        --ocr-tesseract-backend "${LLAMA_AGENT_OCR_TESSERACT_BACKEND:-local}" \
-        --ocr-tesseract-executable "${LLAMA_AGENT_OCR_TESSERACT_EXECUTABLE:-tesseract}" \
-        --pandoc-execution "${LLAMA_AGENT_PANDOC_EXECUTION:-local_preferred}" \
-        --pandoc-backend "${LLAMA_AGENT_PANDOC_BACKEND:-local}" \
+    bootstrap_args=(
+        --output "$config_file"
+        --model "${LLAMA_AGENT_MODEL_PATH:-/models/model.gguf}"
+        --embedding-model "${LLAMA_AGENT_EMBEDDING_MODEL_PATH:-/models/embedding.gguf}"
+        --cozo-root "${LLAMA_AGENT_COZO_ROOT:-/var/lib/llama-agent/data}"
+        --repository-root "${LLAMA_AGENT_REPOSITORY_ROOT:-/var/lib/llama-agent/workspace}"
+        --tool-profile "${LLAMA_AGENT_TOOL_PROFILE:-all-configured}"
+        --threads "${LLAMA_AGENT_THREADS:-4}"
+        --gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-0}"
+        --worker-count "${LLAMA_AGENT_WORKER_COUNT:-2}"
+        --queue-capacity "${LLAMA_AGENT_QUEUE_CAPACITY:-8}"
+        --inference-max-active "${LLAMA_AGENT_INFERENCE_MAX_ACTIVE:-1}"
+        --default-mode "${LLAMA_AGENT_DEFAULT_MODE:-agent}"
+        --thinking-mode "${LLAMA_AGENT_THINKING_MODE:-auto}"
+        --sandbox "${LLAMA_AGENT_SANDBOX:-none}"
+        --transport "$bootstrap_transport"
+        --listen 127.0.0.1
+        --port "$daemon_port"
+        --pdf-page-image-execution "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTION:-local_preferred}"
+        --pdf-page-image-backend "${LLAMA_AGENT_PDF_PAGE_IMAGE_BACKEND:-local}"
+        --pdf-page-image-executable "${LLAMA_AGENT_PDF_PAGE_IMAGE_EXECUTABLE:-mutool}"
+        --ocr-tesseract-execution "${LLAMA_AGENT_OCR_TESSERACT_EXECUTION:-local_preferred}"
+        --ocr-tesseract-backend "${LLAMA_AGENT_OCR_TESSERACT_BACKEND:-local}"
+        --ocr-tesseract-executable "${LLAMA_AGENT_OCR_TESSERACT_EXECUTABLE:-tesseract}"
+        --pandoc-execution "${LLAMA_AGENT_PANDOC_EXECUTION:-local_preferred}"
+        --pandoc-backend "${LLAMA_AGENT_PANDOC_BACKEND:-local}"
         --pandoc-executable "${LLAMA_AGENT_PANDOC_EXECUTABLE:-pandoc}"
+    )
+    [[ -n "${LLAMA_AGENT_TCP_AUTH_MODE:-}" ]] && bootstrap_args+=(--auth-mode "$LLAMA_AGENT_TCP_AUTH_MODE")
+    [[ -n "${LLAMA_AGENT_TCP_TOKEN_ENV:-}" ]] && bootstrap_args+=(--token-env "$LLAMA_AGENT_TCP_TOKEN_ENV")
+    [[ -n "${LLAMA_AGENT_TCP_TOKEN_PROFILE:-}" ]] && bootstrap_args+=(--token-profile "$LLAMA_AGENT_TCP_TOKEN_PROFILE")
+    "$bootstrap" "${bootstrap_args[@]}"
 fi
 
 if [[ "$mode" == daemon ]]; then
@@ -115,6 +120,9 @@ web_args=(
 )
 if [[ -n "${LLAMA_AGENT_WEB_BEARER_TOKEN:-}" ]]; then
     web_args+=(--web-bearer-token "$LLAMA_AGENT_WEB_BEARER_TOKEN")
+fi
+if [[ -n "${LLAMA_AGENT_DAEMON_AUTHORIZATION:-}" ]]; then
+    web_args+=(--daemon-authorization "$LLAMA_AGENT_DAEMON_AUTHORIZATION")
 fi
 
 "${daemon_args[@]}" 2> >(tee -a "$log_file" >&2) &
