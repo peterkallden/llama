@@ -1,10 +1,10 @@
 # llama-agent web example
 
-Det här är en liten Vue 3/TypeScript-testklient för `llama-agent-web`. Den är
-inte en andra agenthost: daemonen äger sessioner, turns, planering, tools, MCP,
-resources, policy och capabilities.
+This is a small Vue 3/TypeScript test client for `llama-agent-web`. It is not a
+second agent host: the daemon owns sessions, turns, planning, tools, MCP,
+resources, policy and capabilities.
 
-Klienten använder:
+The client uses:
 
 - `POST /api/v1/turns` för frågor;
 - `POST /api/v1/turns/{id}/cancel` för avbrytning;
@@ -12,14 +12,15 @@ Klienten använder:
 - `GET /api/v1/status` för status;
 - `GET /api/v1/events` för JSONL-event som SSE.
 
-JSON-payloaden är densamma som daemonens JSONL-event. Endast transportens
-framing ändras från JSONL till SSE. SSE ansluts med `fetch` i stället för
-`EventSource`, så en bearer-token kan skickas i `Authorization`-headern.
+The JSON payload is the same as the daemon's JSONL event payload. Only the
+transport framing changes from JSONL to SSE. SSE is connected with `fetch`
+instead of `EventSource`, so a bearer token can be sent in the
+`Authorization` header.
 
-## Bygg och lokal utveckling
+## Build and local development
 
-Bygg web-adaptern och klienten separat. C++-adaptern kopplar webben till
-daemonens JSONL/TCP-port; Vue-klienten är statiska filer.
+Build the web adapter and client separately. The C++ adapter connects the web
+client to the daemon's JSONL/TCP port; the Vue client is a set of static files.
 
 ```bash
 cmake --build build-agent --target llama-agent-web -j4
@@ -29,24 +30,24 @@ npm test
 npm run build
 ```
 
-Det sista kommandot skapar `dist/`.
+The last command creates `dist/`.
 
-Starta daemonen och `llama-agent-web` enligt
-[`agent-daemon-usage.md`](../../docs/agent/agent-daemon-usage.md). Installera
-sedan frontend-beroenden och kör:
+Start the daemon and `llama-agent-web` as described in
+[`agent-daemon-usage.md`](../../docs/agent/agent-daemon-usage.md). Then install
+the frontend dependencies and run:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite proxar `/api` till `http://127.0.0.1:8090`. För annan adress används
-`VITE_AGENT_WEB_BASE_URL`.
+Vite proxies `/api` to `http://127.0.0.1:8090`. Set
+`VITE_AGENT_WEB_BASE_URL` to use another base URL.
 
-## Enkel Nginx-uppsättning
+## Minimal Nginx setup
 
-För en lokal eller intern Linux-installation kan Nginx servera `dist/` och
-proxy:a `/api/` till `llama-agent-web`:
+For a local or internal Linux installation, Nginx can serve `dist/` and proxy
+`/api/` to `llama-agent-web`:
 
 ```bash
 sudo apt install nginx
@@ -59,26 +60,26 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Exemplet lyssnar på `http://127.0.0.1:8080`, serverar klienten från
-`/opt/llama-agent-web/dist` och vidarebefordrar `/api/` till
-`llama-agent-web` på `127.0.0.1:8090`. Kör daemonens TCP-port och web-adaptern
-på loopback enligt daemon-dokumentationen. För nätverksåtkomst ska Nginx få
-TLS och autentisering framför sig; den medföljande konfigurationen är inte en
-produktionssäkerhetsprofil.
+The example listens on `http://127.0.0.1:8080`, serves the client from
+`/opt/llama-agent-web/dist` and forwards `/api/` to `llama-agent-web` at
+`127.0.0.1:8090`. Run the daemon's TCP port and the web adapter on loopback as
+described in the daemon documentation. For network access, put TLS and
+deployment-specific authentication in front of Nginx; the supplied
+configuration is not a production security profile.
 
-Konfigurationen stänger av proxy-buffering och använder lång timeout för
-SSE. Den vidarebefordrar browserns `Authorization`-header till web-adaptern.
-Klienten använder fetch-baserad SSE i stället för inbyggd `EventSource`, vilket
-gör bearer-token möjlig även i samma-origin- och reverse-proxy-installationer.
+The configuration disables proxy buffering and uses a long timeout for SSE. It
+forwards the browser's `Authorization` header to the web adapter. The client
+uses fetch-based SSE instead of the built-in `EventSource`, which allows bearer
+authentication in same-origin and reverse-proxy deployments.
 
-Det här är tre separata processroller:
+These are three separate process roles:
 
 ```text
 llama-agent-daemon  --TCP-->  llama-agent-web  --HTTP/SSE-->  Nginx/browser
 ```
 
-Nginx och web-adaptern får inte ta över sessioner, planering, toolval, MCP,
-resource-policy eller capability-beslut från daemonen.
+Nginx and the web adapter must not take over sessions, planning, tool
+selection, MCP, resource policy or capability decisions from the daemon.
 
-Klienten är avsiktligt ett exempel och saknar ännu produktionsegenskaper som
-login, event-replay, binära uploads/downloads och fullständig routing.
+The client is intentionally an example and does not yet provide production
+features such as login, event replay, binary uploads/downloads or full routing.
