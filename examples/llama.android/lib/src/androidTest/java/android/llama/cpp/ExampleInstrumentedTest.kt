@@ -13,6 +13,7 @@ import com.arm.aichat.agent.AndroidResourceStore
 import android.net.Uri
 import android.content.ComponentName
 import java.io.File
+import android.net.Uri
 import com.arm.aichat.agent.AgentRuntimeService
 
 /**
@@ -58,6 +59,25 @@ class ExampleInstrumentedTest {
         assertEquals(4, imported.sizeBytes)
         assertTrue(imported.path.startsWith(context.filesDir.absolutePath))
         assertTrue(AndroidModelManager(context).installed().any { it.path == imported.path })
+    }
+
+    @Test
+    fun artifactExportCopiesBytesToUserSelectedDocument() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "artifact-smoke.bin")
+        val destination = File(context.cacheDir, "artifact-exported.bin")
+        val payload = byteArrayOf(0, 1, 2, 3, 127, -1)
+        source.writeBytes(payload)
+        destination.delete()
+
+        val copied = AndroidResourceStore(context).copyTo(
+            source.absolutePath,
+            Uri.fromFile(destination))
+
+        assertEquals(payload.size.toLong(), copied)
+        assertArrayEquals(payload, destination.readBytes())
+        assertTrue(source.delete())
+        assertTrue(destination.delete())
     }
 
     @Test

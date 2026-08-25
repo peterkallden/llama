@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 data class AndroidImportedResource(
     val uri: String,
@@ -33,11 +34,10 @@ class AndroidResourceStore(private val context: Context) {
         val input = openInput(resourceUri)
             ?: error("Unable to open local artifact resource: $resourceUri")
         return input.use { source ->
-            context.contentResolver.openOutputStream(destination)?.use { output ->
+            openOutput(destination)?.use { output ->
                 source.copyTo(output)
             } ?: error("Unable to open destination document: $destination")
-            context.contentResolver.openAssetFileDescriptor(destination, "r")?.use { it.length }
-                .takeIf { it != null && it >= 0 } ?: 0L
+            destinationLength(destination)
         }
     }
 
@@ -47,6 +47,17 @@ class AndroidResourceStore(private val context: Context) {
             null -> FileInputStream(File(resourceUri))
             else -> error("Unsupported artifact URI scheme: ${uri.scheme}")
         }
+    }
+
+    private fun openOutput(destination: Uri) = when (destination.scheme) {
+        "file" -> FileOutputStream(File(destination.path ?: error("Destination has no path")))
+        else -> context.contentResolver.openOutputStream(destination)
+    }
+
+    private fun destinationLength(destination: Uri): Long = when (destination.scheme) {
+        "file" -> File(destination.path ?: return 0L).length()
+        else -> context.contentResolver.openAssetFileDescriptor(destination, "r")?.use { it.length }
+            .takeIf { it != null && it >= 0 } ?: 0L
     }
 
     private fun safeName(value: String): String = value
