@@ -193,7 +193,9 @@ jobs:
           cores: 2
           ram-size: 2048M
           heap-size: 512M
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu off
+          # Keep the emulator headless, but provide a Vulkan-capable software
+          # renderer so native Vulkan loading is exercised in CI.
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
           force-avd-creation: true
           disable-spellchecker: true
           disable-animations: false
@@ -201,5 +203,11 @@ jobs:
           script: |
             adb wait-for-device
             test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
+            echo "Emulator ABI:"
+            adb shell getprop ro.product.cpu.abilist
+            echo "Emulator storage:"
+            adb shell df -h /data /data/local/tmp
+            adb shell pm uninstall com.arm.aichat.test || true
+            adb shell pm uninstall com.example.llama.aichat || true
             adb shell cmd package list packages >/dev/null
             ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
