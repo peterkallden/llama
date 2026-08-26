@@ -1,6 +1,7 @@
 #include "agent-daemon-tcp.h"
 
 #include "agent-daemon-dispatcher.h"
+#include "agent-daemon-scope.h"
 
 #include <algorithm>
 #include <atomic>
@@ -144,9 +145,8 @@ bool bind_tcp_policy(
         return true;
     }
 
-    if (request.contains("namespace_id")) request["namespace_id"] = policy.namespace_id;
-    if (request.contains("project_id")) request["project_id"] = policy.project_id;
     const auto command = request.value("command", std::string());
+    common_agent_daemon_bind_caller_scope(request, policy);
     if ((command == "shutdown" || command == "drain" || command == "reload_config") &&
             !policy.allow_admin) {
         error = "TCP caller policy does not allow daemon administration";
@@ -157,18 +157,6 @@ bool bind_tcp_policy(
     }
     if (command == "run_turn") {
         request["_caller_allow_policy_gated_writes"] = policy.allow_writes;
-    }
-    if (command == "run_turn") {
-        request["namespace_id"] = policy.namespace_id;
-        request["project_id"] = policy.project_id;
-        if (request.value("session_id", std::string()).empty()) {
-            request["session_id"] = policy.caller_id + "-session";
-        }
-    }
-    if (command == "execute_tool") {
-        request["namespace_id"] = policy.namespace_id;
-        request["project_id"] = policy.project_id;
-        if (!policy.tool_profile.empty()) request["tool_profile"] = policy.tool_profile;
     }
     return true;
 }

@@ -788,6 +788,12 @@ Resource uploads preserve the existing daemon contract. Text files use the
 byte-oriented resource store before the turn receives the resulting opaque
 resource URI. Both forms are bounded by the daemon's 1 MiB resource limit.
 
+For authenticated TCP and Unix clients, resource upload, read and list
+requests are always bound to the namespace/project in the authenticated token
+policy. Omitting those fields is supported; sending different values does not
+change the authority. This keeps an uploaded URI readable by the subsequent
+turn, whose scope is bound by the same policy.
+
 For agent planning, uploaded URIs are rendered to the model as `r1`, `r2`, ...;
 other visible scoped resources are rendered as `s1`, `s2`, .... These are
 model-facing handles, not values to send back over the wire. A single current

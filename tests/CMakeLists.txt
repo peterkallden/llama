@@ -380,11 +380,15 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
         test-agent-bootstrap.cpp
+        test-agent-daemon-scope.cpp
     )
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
         if (TEST_NAME STREQUAL "test-agent-continuation")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-daemon-scope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         if (TEST_NAME STREQUAL "test-agent-prepared-generation")

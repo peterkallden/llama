@@ -831,16 +831,21 @@ TOOLS: dataset, data
 
 This deliberately avoids asking a small model to satisfy the full JSON tool
 grammar before the host knows whether tools are needed. `NO_TOOLS` routes the
-turn directly to ordinary conversation with an empty tool list. A `TOOLS:`
-selection is validated against the generated family index and intersected
-with the active host tool view before full planning. Routing cannot grant
-access to a tool that the profile did not expose. The daemon and CLI both map
+turn directly to ordinary conversation with an empty tool list. This remains
+valid when attachments are present if the turn is unrelated to them;
+attachments make resource and dataset families available, but do not make
+tool use mandatory. When the request concerns an attachment, the selector is
+instructed to choose the corresponding family. A `TOOLS:` selection is
+validated against the generated family index and intersected with the active
+host tool view before full planning. Routing cannot grant access to a tool
+that the profile did not expose. The daemon and CLI both map
 `agent_plan=auto` to the runtime family-routing flag; this keeps their
 separate host configuration paths semantically aligned.
 
 An empty tool view is therefore ordinary chat, not an empty structured
-tool-call grammar. Resource-bearing or already-planned turns bypass this
-preflight and retain the normal fail-closed agent semantics. The family
+tool-call grammar. Resource metadata is prepared before this preflight, so a
+web attachment submitted as only an opaque URI is rehydrated with its
+host-owned name, media type and bounded metadata. The family
 projection and text parser live in `common/agent/tool-family-index.*` and are
 tested by `test-tool-family-index`; the no-tools generation rule is covered by
 `test-agent-prepared-generation`.

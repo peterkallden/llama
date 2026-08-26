@@ -134,6 +134,23 @@ default budget” and resolves to 16 rounds. This avoids a misleading situation
 where required tool selection is enabled but the execution budget is
 accidentally zero; explicit positive limits remain authoritative.
 
+## Resource upload scope drift at the daemon boundary
+
+- Status: Fixed locally; daemon scope regression test added
+- Affected area: authenticated TCP and Unix resource upload/read/list commands
+- Symptom: an upload could succeed, but the following turn could not read the
+  returned URI when the client omitted namespace/project fields.
+
+The JSONL parser supplies protocol defaults for omitted scope fields. A turn is
+then rebound to the authenticated token policy, so the resource and turn could
+end up in different authorities. The daemon now binds `put_resource`,
+`read_resource`, and `list_resources` to the authenticated namespace/project,
+regardless of whether the client omitted them or supplied conflicting values.
+`run_turn` and `execute_tool` use the same shared binding helper. This is an
+authorization consistency fix, not a permission expansion: the token policy
+still determines the effective scope. `test-agent-daemon-scope` covers omitted
+fields, conflicting fields, and the implicit caller session.
+
 ## Research checkpoint missing turn identity for project-scoped plans
 
 - Status: Fixed and verified

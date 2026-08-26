@@ -1,6 +1,7 @@
 #include "agent-daemon-unix.h"
 
 #include "agent-daemon-dispatcher.h"
+#include "agent-daemon-scope.h"
 
 #include <atomic>
 #include <cerrno>
@@ -104,14 +105,10 @@ bool prepare_unix_request(
         error = "Unix socket caller policy does not allow daemon administration";
         return false;
     }
-    if (request.contains("namespace_id")) request["namespace_id"] = policy.namespace_id;
-    if (request.contains("project_id")) request["project_id"] = policy.project_id;
+    common_agent_daemon_bind_caller_scope(request, policy);
     if (command == "run_turn") {
-        request["namespace_id"] = policy.namespace_id;
-        request["project_id"] = policy.project_id;
         request["_caller_allow_policy_gated_writes"] = policy.allow_writes;
         if (!policy.allowed_tools.empty()) request["_caller_allowed_tools"] = policy.allowed_tools;
-        if (request.value("session_id", std::string()).empty()) request["session_id"] = policy.caller_id + "-session";
     }
     return true;
 }

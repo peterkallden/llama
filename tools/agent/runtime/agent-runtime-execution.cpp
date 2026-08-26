@@ -44,7 +44,10 @@ bool select_model_tool_families(
         "system",
         "Decide whether the user request needs external tools. Reply with exactly one line: "
         "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
-        "are needed. Do not explain, use JSON, or invent family ids. Available families:\n" + family_view,
+        "are needed. Current-turn attachments are optional inputs: choose the resource or "
+        "dataset family when the request concerns an attached file, but keep NO_TOOLS for "
+        "unrelated conversation. Do not explain, use JSON, or invent family ids. Available "
+        "families:\n" + family_view,
     };
     common_chat_msg user{"user", request.prompt + common_agent_render_input_resource_context(
         request.input_resources, 2048, request.available_resources)};
@@ -74,11 +77,11 @@ bool select_model_tool_families(
         error = "tool family selection failed: " + error;
         return false;
     }
+    if (!selection.needs_tools && !selection.family_ids.empty()) {
+        error = "tool family selection must not select families when needs_tools is false";
+        return false;
+    }
     if (!selection.needs_tools) {
-        if (!selection.family_ids.empty()) {
-            error = "tool family selection must not select families when needs_tools is false";
-            return false;
-        }
         common_agent_runtime_tooling chat_tooling = execution.tooling;
         chat_tooling.tools.clear();
         common_agent_generation_options chat_options;
@@ -148,11 +151,21 @@ bool prepare_available_resources(common_agent_runtime_driver_execution & executi
     execution.available_resources.clear();
     for (const auto & descriptor : listed) {
         if (descriptor.uri.empty()) continue;
-        const bool current = std::any_of(
-            execution.input_resources.begin(), execution.input_resources.end(),
-            [&](const common_agent_input_resource & input) {
-                return input.resource.uri == descriptor.uri;
-            });
+        bool current = false;
+        for (auto & input : execution.input_resources) {
+            if (input.resource.uri != descriptor.uri) continue;
+            // Web clients normally submit only the opaque URI. Rehydrate the
+            // host-owned descriptor before family selection so the model can
+            // see the attachment name, MIME type and bounded metadata while
+            // retaining the caller-owned role/required flags.
+            const auto role = input.role;
+            const bool required = input.required;
+            input.resource = descriptor;
+            input.role = role;
+            input.required = required;
+            current = true;
+            break;
+        }
         if (!current) execution.available_resources.push_back({descriptor, "scoped_reference", false});
     }
     return true;
