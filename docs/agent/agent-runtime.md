@@ -247,6 +247,27 @@ materialized. The model-facing resource catalog advertises possible bounded
 inspection seams by MIME type; the host still validates the final reference,
 scope and representation.
 
+### Resource handles and attachment defaults
+
+The wire request carries opaque host-owned resource URIs in `input_resources`.
+The model-facing prompt uses compact handles: `r1`, `r2`, ... refer to
+current-turn attachments, while `s1`, `s2`, ... refer to host-listed resources
+from session or project scope. These handles are prompt-only; adapters receive
+canonical URIs after runtime binding and must not interpret handles or access
+the resource store directly.
+
+For exactly one current attachment, dataset inspection uses that attachment as
+the host-owned default when the model omits the source or emits a
+non-canonical alias. Explicit `dataset://...` references remain authoritative.
+With multiple attachments, the model must select one explicitly. `dataset.list`
+is therefore a discovery operation for registered or prior scoped datasets,
+not a mandatory step for every upload.
+
+This is narrow argument normalization, not a second orchestration path. It
+does not bypass scope checks, turn arbitrary strings into filesystem paths, or
+materialize unsupported formats. CSV materialization continues through the
+existing host-owned `dataset_from_resource` callback.
+
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,
 source/evidence creation, provenance, answer verification and cancellation
 without network access. The common runtime emits structured research events

@@ -788,6 +788,13 @@ Resource uploads preserve the existing daemon contract. Text files use the
 byte-oriented resource store before the turn receives the resulting opaque
 resource URI. Both forms are bounded by the daemon's 1 MiB resource limit.
 
+For agent planning, uploaded URIs are rendered to the model as `r1`, `r2`, ...;
+other visible scoped resources are rendered as `s1`, `s2`, .... These are
+model-facing handles, not values to send back over the wire. A single current
+attachment is the default dataset-inspection source unless the model selects
+an explicit canonical dataset reference; multiple attachments require an
+explicit choice. See [Agent Runtime](agent-runtime.md#resource-handles-and-attachment-defaults).
+
 Tool-generated resources are announced as `tool.artifact_created` events. The
 web client may turn the resource URI from that event into a download action,
 but the web adapter must read the bytes through the daemon's scoped
