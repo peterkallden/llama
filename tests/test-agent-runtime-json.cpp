@@ -74,6 +74,35 @@ int main() {
     TEST_ASSERT(normalized.value("uri", "") == "agent-resource://turn/t/second");
     TEST_ASSERT(!normalized.contains("id"));
 
+    common_agent_request csv_request = request;
+    csv_request.input_resources.resize(1);
+    csv_request.input_resources.front().resource.name = "data.csv";
+    csv_request.input_resources.front().resource.mime_type = "text/csv";
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.sample",
+        nlohmann::ordered_json::object({{"rows", 20}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+    TEST_ASSERT(normalized.value("rows", 0) == 20);
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        request,
+        "dataset.sample",
+        nlohmann::ordered_json::object(),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(!changed);
+    TEST_ASSERT(!normalized.contains("resource"));
+
     const auto rendered_resources = common_agent_render_input_resource_context(request.input_resources);
     TEST_ASSERT(rendered_resources.find("id=r1") != std::string::npos);
     TEST_ASSERT(rendered_resources.find("id=r2") != std::string::npos);

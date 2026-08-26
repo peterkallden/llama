@@ -1121,6 +1121,105 @@ static void test_chat_runtime_driver_smoke() {
     assert(inference.seen[1].messages[2].tool_name == "memory_search");
 }
 
+static void test_tool_family_singleton_fast_path() {
+    fake_agent_inference inference;
+    const std::vector<common_chat_tool> tools = {
+        {"time_now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false,"properties":{"timezone":{"type":"string","enum":["UTC"]}}})"},
+    };
+    inference.queued = {
+        // Family routing is intentionally a separate, bounded preflight.
+        make_success("TOOLS: time"),
+        make_success(
+            R"(<tool_calls>[{"name":"time_now","arguments":{}}]</tool_calls>)",
+            5,
+            common_agent_generation_stop_reason::none,
+            make_tool_call_chat_params(tools)),
+        make_success("The current UTC time is 12:34:56."),
+    };
+
+    common_memory_in_memory_store memories;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memories.open("", error));
+    assert(plans.open("", error));
+
+    args options = make_test_args();
+    options.prompt = "What time is it?";
+    options.agent_plan = "off";
+    options.agent_blueprint = "off";
+    options.memory_learn = "off";
+    options.max_tool_rounds = 1;
+
+    common_agent_scope scope;
+    scope.namespace_id = "tenant-a";
+    scope.session_id = "session-42";
+    scope.turn_id = "turn-time";
+    scope.memory_scope = common_memory_scope::session;
+    scope.plan_scope = common_plan_scope::turn;
+
+    size_t dispatch_count = 0;
+    test_agent_tool_view tool_view;
+    tool_view.tools = tools;
+    tool_view.handler = [&dispatch_count](const agent_tool_call & call, std::string & error) {
+        ++dispatch_count;
+        assert(call.name == "time_now");
+        error.clear();
+        agent_tool_result result;
+        result.ok = true;
+        result.tool_call_id = call.id;
+        result.tool_name = call.name;
+        result.content_json = R"({"timezone":"UTC","time":"12:34:56"})";
+        return result;
+    };
+
+    auto tooling = make_runtime_tooling(tools, &tool_view, false);
+    auto runtime_config = make_agent_runtime_config(options);
+    runtime_config.generation_config.enable_tool_family_routing = true;
+    const std::vector<common_blueprint_candidate> blueprints;
+    const std::vector<common_memory_hit> hits;
+    std::string current_plan_id;
+    common_agent_runtime_driver_execution execution{
+        memories,
+        plans,
+        inference,
+        make_agent_runtime_policy(options),
+        runtime_config,
+        make_test_agent_orchestration_config(options),
+        current_plan_id,
+        scope,
+        blueprints,
+        std::nullopt,
+        hits,
+        common_memory_scope::session,
+        true,
+        tooling,
+    };
+
+    common_agent_result result;
+    assert(run_agent_runtime_driver(execution, result, error));
+    assert(error.empty());
+    assert(result.error.empty());
+    assert(result.response == "The current UTC time is 12:34:56.");
+    assert(dispatch_count == 1);
+    assert(execution.family_chat_routed);
+    assert(execution.require_tool_execution);
+
+    // The singleton fast path must retain the ordinary chat/tool lifecycle:
+    // preflight, required tool call, then a follow-up grounded in the result.
+    // It must not silently fall back to a planner or an answer-only response.
+    assert(inference.seen.size() == 3);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::tool_family_selection);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::conversation);
+    assert(inference.seen[1].tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED);
+    assert(inference.seen[1].tools.size() == 1);
+    assert(inference.seen[1].tools[0].name == "time_now");
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::tool_followup);
+    assert(inference.seen[2].tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE);
+    assert(inference.seen[2].messages.size() == 3);
+    assert(inference.seen[2].messages[2].role == "tool");
+    assert(inference.seen[2].messages[2].tool_name == "time_now");
+}
+
 static void test_chat_runtime_rejects_truncated_output() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2012,6 +2111,7 @@ static bool run_named_test(const std::string & name) {
         test_runtime_execution_builder();
     } else if (name == "chat-runtime-driver-smoke") {
         test_chat_runtime_driver_smoke();
+        test_tool_family_singleton_fast_path();
         test_chat_runtime_rejects_truncated_output();
         test_chat_runtime_continues_text_at_message_boundary();
         test_truncated_tool_call_is_not_dispatched();

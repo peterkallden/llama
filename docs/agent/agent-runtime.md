@@ -824,6 +824,56 @@ projection and text parser live in `common/agent/tool-family-index.*` and are
 tested by `test-tool-family-index`; the no-tools generation rule is covered by
 `test-agent-prepared-generation`.
 
+### Singleton-tool fast path
+
+Family routing has a deliberately narrow fast path for the common case where
+the selected family resolves to exactly one tool and that tool has no required
+arguments. `time_now` is the current example. The host does not create a
+deliberate plan merely to carry an argument-free singleton through one tool
+call. Instead, it sends the selected tool to the ordinary chat/tool driver:
+
+```text
+tool-family preflight
+  -> select one authorized singleton tool
+  -> ordinary conversation with tool_choice=REQUIRED
+  -> host dispatches the tool call
+  -> tool result is appended to the conversation
+  -> tool_followup produces the grounded answer
+```
+
+This is an orchestration optimization, not a second execution model. The
+request remains marked with the existing `require_tool_execution` contract,
+so an assistant message without a tool call is rejected. The normal resolved
+`agent_tool_view` still validates and executes the call, and the ordinary chat
+driver still owns tool-round limits, cancellation/deadline checks, result
+normalization and the follow-up generation. The fast path therefore avoids a
+planner round, but it does not avoid the runtime's tool lifecycle.
+
+The fast path must not:
+
+* grant a tool or widen the host-resolved profile, capability set, namespace,
+  workspace or policy;
+* dispatch through a private handler instead of the resolved `agent_tool_view`;
+* accept an answer-only model response after a family was selected;
+* bypass tool validation, argument normalization, risk/policy checks,
+  cancellation, deadlines, tool-round limits or bounded result handling;
+* synthesize a plan, scheduler lane, hidden retry, memory observation or
+  completion evidence of its own;
+* be used for multiple selected tools, required semantic arguments, dataflow,
+  resource-bearing turns or turns that already have an active plan. Those
+  cases retain normal planning or the existing resource/chunk path.
+
+The fast path is also not a daemon `execute_tool` command. It is an internal
+tool dispatch belonging to the active `run_turn`. Consequently, the daemon's
+current `metrics.tools_completed` counter, which counts successful dispatcher
+`execute_tool` commands, is not a reliable per-turn count of tools dispatched
+inside a run. If that metric is extended later, the increment belongs at the
+shared tool-dispatch seam and must cover both the normal planner path and this
+fast path; a fast-path-specific counter would recreate the split lifecycle
+that this optimization is meant to avoid. The model-free
+`llama-agent-inference-ctest` regression covers the required sequence and
+asserts that the selected singleton is actually dispatched before follow-up.
+
 Workflow selection is a separate bounded model round after family routing. The
 model first returns workflow IDs such as `dataset.discover` or `dataset.join`.
 Only then does the host render the exact tool contracts belonging to the
@@ -983,6 +1033,23 @@ already supplied the required dataset names.
 The importer can materialize all bounded worksheets, or one exact worksheet
 selected by the host with `sheet_name` or `sheet_index`; selection is not a
 model-selected parser operation. A missing requested worksheet fails closed.
+
+### Current-turn resource selection
+
+User attachments and previously stored session resources are separate
+selection concerns. The host renders current-turn attachments with bounded
+handles such as r1 and r2. If exactly one current-turn resource is present,
+resource inspection tools may safely default to that resource when the user
+does not name a file. This is a host-owned default, not a model-invented
+dataset alias and not an implicit search through every session resource.
+
+When multiple current-turn resources are present, the model must select one
+explicitly with its rN handle, or the caller should ask the user to clarify.
+Earlier session resources remain available through the scoped resource-list
+and selection path; they are not silently mixed into the single-attachment
+default. Dataset inspection tools normalize the single-resource case to their
+resource argument before execution, while dataset bindings continue to refer
+to materialized dataset outputs from earlier plan steps.
 
 The model-free `llama-agent-data-manipulation-ctest` exercises the existing
 Cozo data-store path with two imported-style worksheet datasets. It verifies

@@ -3,6 +3,7 @@
 #include "agent/contracts/agent-request.h"
 #include "agent/contracts/agent-result.h"
 #include "agent/agent-inference.h"
+#include "agent-runtime-control.h"
 #include "../runtime/agent-runtime-tooling.h"
 
 #include <string>
@@ -19,6 +20,7 @@ struct common_agent_chat_runtime_execution {
     common_agent_generation_options generation_options;
     common_agent_chat_runtime_policy policy;
     const common_agent_runtime_tooling & tooling;
+    common_agent_runtime_execution_control execution_control;
 };
 
 bool run_agent_chat_runtime(

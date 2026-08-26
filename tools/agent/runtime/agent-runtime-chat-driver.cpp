@@ -158,6 +158,23 @@ void record_truncated_chat_generation(
     });
 }
 
+bool stop_chat_runtime_if_requested(
+        common_agent_chat_runtime_execution & execution,
+        common_agent_result & result,
+        std::string & error) {
+    if (!execution.execution_control.should_stop()) {
+        return false;
+    }
+    result.response_generation_status = common_agent_generation_status::cancelled;
+    result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
+    error = execution.execution_control.stop_reason();
+    if (error.empty()) {
+        error = "chat runtime execution stopped";
+    }
+    result.error = error;
+    return true;
+}
+
 bool reject_truncated_chat_generation(
         common_agent_result & result,
         const common_agent_generation_result & generation_result,
@@ -178,6 +195,9 @@ bool run_agent_chat_runtime(
         common_agent_result & result,
         std::string & error) {
     result = {};
+    if (stop_chat_runtime_if_requested(execution, result, error)) {
+        return false;
+    }
     std::vector<common_chat_msg> messages = execution.request.messages;
     auto available_tools = execution.tooling.tools;
     const auto initial_tool_choice = available_tools.empty()
@@ -197,6 +217,9 @@ bool run_agent_chat_runtime(
     result.response_decoded_tokens = generation_result.decoded_tokens;
     result.response_generation_status = generation_result.status;
     result.response_stop_reason = generation_result.stop_reason;
+    if (stop_chat_runtime_if_requested(execution, result, error)) {
+        return false;
+    }
     std::string response_prefix;
     size_t continuation_count = 0;
     while (generation_result.stop_reason == common_agent_generation_stop_reason::limit) {
@@ -249,12 +272,19 @@ bool run_agent_chat_runtime(
 
     size_t tool_rounds = 0;
     while (!assistant_message.tool_calls.empty()) {
+        if (stop_chat_runtime_if_requested(execution, result, error)) {
+            return false;
+        }
         if (tool_rounds >= execution.policy.max_tool_rounds) {
             error = "tool call round limit reached";
             result.limit_reached = true;
             return false;
         }
         if (!append_dispatched_tool_messages(execution, assistant_message, messages, error)) {
+            return false;
+        }
+
+        if (stop_chat_runtime_if_requested(execution, result, error)) {
             return false;
         }
 

@@ -202,6 +202,18 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
                 changed = true;
             }
         }
+        // A single current-turn attachment is an unambiguous safe source for
+        // dataset inspection. Keep the source as a resource reference rather
+        // than making the model invent a dataset-list alias. With multiple
+        // attachments the model must select one explicitly using resource:rN.
+        if (!normalized_arguments.contains("dataset") &&
+                !normalized_arguments.contains("resource") &&
+                !normalized_arguments.contains("path") &&
+                request.input_resources.size() == 1 &&
+                !request.input_resources.front().resource.uri.empty()) {
+            normalized_arguments["resource"] = request.input_resources.front().resource.uri;
+            changed = true;
+        }
     } else if (tool_name == "repository.list" || tool_name == "workspace.list") {
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("depth")) { normalized_arguments["depth"] = 1; changed = true; }

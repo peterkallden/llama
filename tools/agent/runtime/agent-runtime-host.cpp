@@ -198,6 +198,7 @@ bool run_agent_runtime_host(
                 {execution.turn_request.policy.max_tool_rounds,
                     execution.turn_request.runtime_config.max_continuations},
                 execution.tooling,
+                execution.turn_request.execution_control,
             };
             return run_agent_chat_runtime(chat_execution, result, error);
         }

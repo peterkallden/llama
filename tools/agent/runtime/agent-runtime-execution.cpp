@@ -90,6 +90,7 @@ bool select_model_tool_families(
             chat_options,
             {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
             chat_tooling,
+            execution.execution_control,
         };
         execution.family_chat_routed = true;
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
@@ -126,6 +127,7 @@ bool select_model_tool_families(
             chat_options,
             {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
             chat_tooling,
+            execution.execution_control,
         };
         execution.family_chat_routed = true;
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
@@ -645,8 +647,14 @@ bool run_agent_runtime_driver(
         return false;
     };
     const common_agent_request initial_request = make_agent_runtime_driver_request(execution);
+    if (execution.execution_control.should_stop()) {
+        return stop_for_execution_control();
+    }
     if (!select_model_tool_families(execution, initial_request, error)) {
         return false;
+    }
+    if (execution.execution_control.should_stop()) {
+        return stop_for_execution_control();
     }
     if (execution.family_chat_routed) {
         result = std::move(execution.family_chat_result);
