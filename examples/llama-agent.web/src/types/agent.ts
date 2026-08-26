@@ -21,8 +21,14 @@ export type DaemonStatus = {
   active_turn_id?: string;
   readiness?: {
     tools?: DaemonToolStatus[];
+    providers?: DaemonProviderStatus[];
+    warnings?: string[];
+    tool_profile?: string;
+    stores?: Record<string, string>;
     [key: string]: unknown;
   };
+  metrics?: Record<string, number>;
+  session_keys?: unknown[];
   [key: string]: unknown;
 };
 
@@ -31,6 +37,12 @@ export type DaemonToolStatus = {
   description?: string;
   source?: string;
   state?: "active" | "degraded" | "disabled" | string;
+};
+
+export type DaemonProviderStatus = {
+  id?: string;
+  name?: string;
+  status?: string;
 };
 
 export type ChatMessage = {
