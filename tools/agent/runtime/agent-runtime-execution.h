@@ -66,6 +66,9 @@ struct common_agent_runtime_driver_inputs {
     const std::string & fallback_reason;
     const common_agent_runtime_tooling & tooling;
     std::vector<common_agent_input_resource> input_resources;
+    // Bounded host-side resource.list result. Current-turn attachments remain
+    // in input_resources and are always rendered as rN handles.
+    std::vector<common_agent_input_resource> available_resources;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
     std::optional<common_memory_candidate> explicit_memory_candidate;

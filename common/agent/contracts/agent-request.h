@@ -52,6 +52,9 @@ struct common_agent_request {
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;
+    // Host-owned candidates discovered from the scoped resource store. These
+    // are available for selection but are not current-turn inputs.
+    std::vector<common_agent_input_resource> available_resources;
     std::optional<common_agent_working_state> working_state;
     std::optional<common_agent_objective> objective;
     std::optional<common_memory_policy_pack> policy_pack;

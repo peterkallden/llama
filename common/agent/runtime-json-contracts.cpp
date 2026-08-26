@@ -46,16 +46,30 @@ bool resolve_model_resource_handle(
         return false;
     }
     const auto handle = arguments.at(supplied_key).get<std::string>();
-    if (handle.size() < 2 || handle[0] != 'r') {
-        error = "resource handle must use the current-turn form r1, r2, ...";
+    if (handle.size() < 2 || (handle[0] != 'r' && handle[0] != 's')) {
+        error = "resource handle must use r1, r2, ... for current attachments or s1, s2, ... for scoped candidates";
         return false;
     }
     size_t index = 0;
     try { index = std::stoul(handle.substr(1)); }
     catch (...) { error = "resource handle is invalid"; return false; }
-    if (index == 0 || index > request.input_resources.size() ||
-            request.input_resources[index - 1].resource.uri.empty()) {
-        error = "resource handle is not available in the current turn";
+    const auto & candidates = handle[0] == 'r'
+        ? request.input_resources
+        : request.available_resources;
+    if (index == 0 || index > candidates.size() ||
+            candidates[index - 1].resource.uri.empty()) {
+        error = "unknown resource '" + handle + "'. Choose one of:";
+        for (size_t candidate = 0; candidate < request.input_resources.size(); ++candidate) {
+            error += " r" + std::to_string(candidate + 1);
+            if (!request.input_resources[candidate].resource.name.empty())
+                error += " (" + request.input_resources[candidate].resource.name + ")";
+        }
+        for (size_t candidate = 0; candidate < request.available_resources.size(); ++candidate) {
+            error += " s" + std::to_string(candidate + 1);
+            if (!request.available_resources[candidate].resource.name.empty())
+                error += " (" + request.available_resources[candidate].resource.name + ")";
+        }
+        if (request.input_resources.empty() && request.available_resources.empty()) error += " none";
         return false;
     }
     normalized_arguments.erase("id");
@@ -191,9 +205,22 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
         if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "dataset.inspect" || tool_name == "dataset.schema" || tool_name == "dataset.sample") {
+        // Compatibility repair for the old compact-schema example. The
+        // placeholder is invalid, but a single current attachment is an
+        // unambiguous safe default.
+        if (normalized_arguments.contains("dataset") &&
+                normalized_arguments["dataset"].is_string() &&
+                normalized_arguments["dataset"].get<std::string>() == "$datasets.datasets[]" &&
+                request.input_resources.size() == 1 &&
+                !request.input_resources.front().resource.uri.empty()) {
+            normalized_arguments.erase("dataset");
+            normalized_arguments["resource"] = request.input_resources.front().resource.uri;
+            changed = true;
+        }
         const bool resource_handle = arguments.contains("id") ||
             (arguments.contains("resource") && arguments["resource"].is_string() &&
-                arguments["resource"].get<std::string>().rfind("r", 0) == 0);
+                (arguments["resource"].get<std::string>().rfind("r", 0) == 0 ||
+                 arguments["resource"].get<std::string>().rfind("s", 0) == 0));
         if (resource_handle) {
             if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
             if (normalized_arguments.contains("uri")) {

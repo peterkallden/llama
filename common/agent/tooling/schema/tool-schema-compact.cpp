@@ -227,7 +227,7 @@ std::string common_render_compact_tool_description(
     } else if (name == "dataset.select") {
         rendered += "\nexample: args:{name:orders} -> dataset:$orders.dataset";
     } else if (name == "dataset.list") {
-        rendered += "\nexample: args:{} -> datasets:$datasets.datasets[]";
+        rendered += "\nexample: steps:[dataset.list as=candidates; dataset.select(name=$candidates.names[0]) as=dataset] -> dataset:$dataset.dataset";
     } else if (name == "statistics.describe") {
         rendered += "\nexample: args:{dataset:$joined.dataset; columns:[amount]}";
     }

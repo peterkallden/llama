@@ -91,6 +91,33 @@ int main() {
     TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
     TEST_ASSERT(normalized.value("rows", 0) == 20);
 
+    csv_request.available_resources.push_back({
+        common_runtime_resource_ref{"agent-resource://session/old.csv", "old.csv", "", "text/csv", 0},
+        "scoped_reference",
+        false});
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.inspect",
+        nlohmann::ordered_json::object({{"resource", "s1"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://session/old.csv");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.inspect",
+        nlohmann::ordered_json::object({{"dataset", "$datasets.datasets[]"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
@@ -118,7 +145,7 @@ int main() {
         normalized,
         changed,
         error));
-    TEST_ASSERT(error.find("not available") != std::string::npos);
+    TEST_ASSERT(error.find("Choose one of") != std::string::npos);
 
     normalized = nlohmann::ordered_json();
     changed = false;

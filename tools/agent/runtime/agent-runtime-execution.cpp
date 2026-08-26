@@ -1,5 +1,6 @@
 #include "agent-runtime-execution.h"
 #include "agent/context-compaction.h"
+#include "agent/input-resources.h"
 #include "agent/tool-family-index.h"
 #include "../runtime/agent-runtime-chat-driver.h"
 
@@ -33,8 +34,7 @@ bool select_model_tool_families(
     execution.require_tool_execution = false;
     if (!generation_config.enable_tool_family_routing ||
             execution.tooling.tools.empty() ||
-            !execution.current_plan_id.empty() ||
-            !execution.input_resources.empty()) {
+            !execution.current_plan_id.empty()) {
         return true;
     }
 
@@ -46,7 +46,8 @@ bool select_model_tool_families(
         "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
         "are needed. Do not explain, use JSON, or invent family ids. Available families:\n" + family_view,
     };
-    common_chat_msg user{"user", request.prompt};
+    common_chat_msg user{"user", request.prompt + common_agent_render_input_resource_context(
+        request.input_resources, 2048, request.available_resources)};
     common_agent_generation_options options;
     // This is a one-line classifier, not a planning turn. A small hard cap
     // prevents a weak model from spending the whole turn elaborating before
@@ -131,6 +132,28 @@ bool select_model_tool_families(
         };
         execution.family_chat_routed = true;
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
+    }
+    return true;
+}
+
+bool prepare_available_resources(common_agent_runtime_driver_execution & execution) {
+    if (execution.tooling.resource_runtime.store == nullptr) return true;
+    std::vector<agent_resource_descriptor> listed;
+    std::string list_error;
+    const auto authority = make_agent_resource_read_authority(
+        execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    // Listing is advisory context. A store/list failure must not make an
+    // otherwise valid turn fail; normal binding still enforces read authority.
+    if (!execution.tooling.resource_runtime.store->list(authority, listed, list_error)) return true;
+    execution.available_resources.clear();
+    for (const auto & descriptor : listed) {
+        if (descriptor.uri.empty()) continue;
+        const bool current = std::any_of(
+            execution.input_resources.begin(), execution.input_resources.end(),
+            [&](const common_agent_input_resource & input) {
+                return input.resource.uri == descriptor.uri;
+            });
+        if (!current) execution.available_resources.push_back({descriptor, "scoped_reference", false});
     }
     return true;
 }
@@ -546,6 +569,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.plan_scope = execution.scope.plan_scope;
     request.prompt = execution.orchestration_config.prompt;
     request.input_resources = execution.input_resources;
+    request.available_resources = execution.available_resources;
     request.working_state = execution.compact_working_state;
     if (!execution.current_plan_id.empty()) {
         request.plan_id = execution.current_plan_id;
@@ -646,6 +670,7 @@ bool run_agent_runtime_driver(
         error = result.error.empty() ? "agent runtime execution stopped" : result.error;
         return false;
     };
+    prepare_available_resources(execution);
     const common_agent_request initial_request = make_agent_runtime_driver_request(execution);
     if (execution.execution_control.should_stop()) {
         return stop_for_execution_control();

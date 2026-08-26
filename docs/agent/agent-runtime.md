@@ -1043,6 +1043,20 @@ resource inspection tools may safely default to that resource when the user
 does not name a file. This is a host-owned default, not a model-invented
 dataset alias and not an implicit search through every session resource.
 
+Before family selection, the host performs an advisory `resource.list` phase
+against the authorized resource store. It merges bounded metadata for prior
+session/project resources into the planning context as s1, s2, and so on;
+current-turn attachments remain r1, r2 and take precedence for the implicit
+single-file default. The phase lists metadata only and never materializes file
+contents or creates a dataset.
+
+If a model reference is unknown, the host returns a bounded `Choose one of`
+candidate list. The model may then select an rN or sN handle. Selection only
+identifies the source: `dataset.inspect`, `dataset.schema` or `dataset.sample`
+may subsequently materialize the selected resource into a dataset. The
+resource-list phase must not become a model-generated tool step or a retry
+loop.
+
 When multiple current-turn resources are present, the model must select one
 explicitly with its rN handle, or the caller should ask the user to clarify.
 Earlier session resources remain available through the scoped resource-list
