@@ -65,8 +65,16 @@ npm install
 npm run dev
 ```
 
-Vite proxies `/api` to `http://127.0.0.1:8090`. Set
-`VITE_AGENT_WEB_BASE_URL` to use another base URL.
+Vite proxies `/api` to `http://127.0.0.1:8090` for a native web adapter. To
+develop the UI while the daemon and web adapter run in the local test
+container on port 8080, use:
+
+```bash
+VITE_AGENT_DEV_PROXY=http://127.0.0.1:8080 npm run dev -- --host 127.0.0.1
+```
+
+The browser then uses `http://127.0.0.1:5173`; Vite serves the Vue source with
+hot reload and proxies authenticated `/api` requests to the adapter.
 
 ## Minimal Nginx setup
 
