@@ -111,6 +111,30 @@ int main() {
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         csv_request,
         "dataset.inspect",
+        nlohmann::ordered_json::object({{"dataset", "s1"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://session/old.csv");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.inspect",
+        nlohmann::ordered_json::object({{"dataset", "TAB6623_sv_sample.csv"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://turn/t/document.json");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.inspect",
         nlohmann::ordered_json::object({{"dataset", "$datasets.datasets[]"}}),
         normalized,
         changed,

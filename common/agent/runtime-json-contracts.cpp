@@ -46,7 +46,10 @@ bool resolve_model_resource_handle(
         return false;
     }
     const auto handle = arguments.at(supplied_key).get<std::string>();
-    if (handle.size() < 2 || (handle[0] != 'r' && handle[0] != 's')) {
+    if (handle.size() < 2 || (handle[0] != 'r' && handle[0] != 's') ||
+            !std::all_of(handle.begin() + 1, handle.end(), [](const char character) {
+                return std::isdigit(static_cast<unsigned char>(character));
+            })) {
         error = "resource handle must use r1, r2, ... for current attachments or s1, s2, ... for scoped candidates";
         return false;
     }
@@ -75,7 +78,7 @@ bool resolve_model_resource_handle(
     normalized_arguments.erase("id");
     normalized_arguments.erase("resource");
     normalized_arguments.erase("resource_id");
-    normalized_arguments["uri"] = request.input_resources[index - 1].resource.uri;
+    normalized_arguments["uri"] = candidates[index - 1].resource.uri;
     return true;
 }
 
@@ -216,6 +219,45 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
             normalized_arguments.erase("dataset");
             normalized_arguments["resource"] = request.input_resources.front().resource.uri;
             changed = true;
+        }
+        // The model-facing contract calls the attachment a resource, but a
+        // small model can copy the dataset_ref type annotation and emit
+        // dataset:"r1" instead. Treat the handle as a resource selection;
+        // otherwise the literal r1 reaches the dataset registry and becomes
+        // the misleading "dataset reference unavailable" failure seen by
+        // the web client.
+        if (normalized_arguments.contains("dataset") &&
+                normalized_arguments["dataset"].is_string()) {
+            const auto dataset_value = normalized_arguments["dataset"].get<std::string>();
+            if (dataset_value.size() >= 2 &&
+                    (dataset_value.front() == 'r' || dataset_value.front() == 's') &&
+                    std::all_of(dataset_value.begin() + 1, dataset_value.end(), [](const char character) {
+                        return std::isdigit(static_cast<unsigned char>(character));
+                    })) {
+                json resource_arguments = json::object({{"resource", dataset_value}});
+                json resolved_resource = resource_arguments;
+                if (!resolve_model_resource_handle(request, resource_arguments, resolved_resource, error)) {
+                    return false;
+                }
+                normalized_arguments.erase("dataset");
+                normalized_arguments["resource"] = resolved_resource["uri"];
+                changed = true;
+            }
+        }
+        // If there is one caller-owned attachment, a non-canonical dataset
+        // value is an ambiguous model alias rather than a trustworthy
+        // registry reference. Apply the same single-attachment default as an
+        // omitted argument, while preserving explicit dataset:// references.
+        if (normalized_arguments.contains("dataset") &&
+                normalized_arguments["dataset"].is_string() &&
+                request.input_resources.size() == 1 &&
+                !request.input_resources.front().resource.uri.empty()) {
+            const auto dataset_value = normalized_arguments["dataset"].get<std::string>();
+            if (dataset_value.rfind("dataset://", 0) != 0) {
+                normalized_arguments.erase("dataset");
+                normalized_arguments["resource"] = request.input_resources.front().resource.uri;
+                changed = true;
+            }
         }
         const bool resource_handle = arguments.contains("id") ||
             (arguments.contains("resource") && arguments["resource"].is_string() &&

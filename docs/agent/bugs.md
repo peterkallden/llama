@@ -80,6 +80,24 @@ Qwen-backed web smoke with resident tracing. The trace confirms the intended
 sequence: `tool_family_selection` -> `conversation` for `hi there`, with no
 planner grammar and no timeout.
 
+## Dataset attachment binding after compact planning
+
+- Status: Fixed locally; runtime JSON regression coverage passes
+- Affected area: dataset inspection of small-model turns with attached or
+  previously scoped resources
+- Symptom: a CSV upload succeeded, but a subsequent `dataset.inspect` could
+  report that the dataset reference was unavailable.
+
+The model-facing resource catalog uses compact handles: `rN` means a
+current-turn attachment and `sN` means a host-listed scoped resource. The
+normalizer previously selected the right `sN` candidate but accidentally
+copied the URI from the `rN` list. It also handled `resource:"r1"` for dataset
+tools but not the equivalent `dataset:"r1"` that a small model can emit when
+it follows the `dataset_ref` schema annotation. Both forms now resolve to the
+host-owned resource URI before the dataset adapter runs. With exactly one
+current attachment, a non-canonical model alias is treated as the implicit
+attachment default; explicit `dataset://...` references remain unchanged.
+
 ## Family selection allowed an ungrounded answer fallback
 
 - Status: Fixed locally; deterministic contract tests and a Qwen web smoke are
