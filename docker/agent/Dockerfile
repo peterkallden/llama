@@ -58,6 +58,7 @@ COPY entrypoint.sh /usr/local/bin/llama-agent-entrypoint
 COPY capability-smoke.sh /usr/local/bin/llama-agent-capability-smoke
 
 RUN chmod 0755 /usr/local/bin/llama-agent-entrypoint /usr/local/bin/llama-agent-capability-smoke \
+    && chmod 0755 /opt/llama-agent /opt/llama-agent/nginx \
     && chown -R llama-agent:llama-agent /opt/llama-agent-web /opt/llama-agent/nginx \
     && if [ "$INSTALL_DEV_TOOLS" = "true" ]; then \
         /usr/local/bin/llama-agent-capability-smoke; \
