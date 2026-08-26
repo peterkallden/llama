@@ -2110,6 +2110,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-bootstrap
     test-cli-scope
     test-agent-prepared-generation
+    test-agent-daemon-scope
     test-memory-learning
     test-agent-runtime-json
     test-reflection-json

@@ -479,9 +479,9 @@ static void test_runtime_generation_metadata() {
     assert(reflection.generation);
     assert(reflection.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
     assert(inference.seen[4].messages.size() == 2);
-    assert(inference.seen[4].messages[0].content.find("Dataset repair contract is always available") != std::string::npos);
-    assert(inference.seen[4].messages[0].content.find("dataset.select(name:string)") != std::string::npos);
-    assert(inference.seen[4].messages[0].content.find("$alias.datasets[index]") != std::string::npos);
+    assert(inference.seen[4].messages[0].content.find("For dataset repair, use dataset.list/select") != std::string::npos);
+    assert(inference.seen[4].messages[1].content.find("<reflection_plan>") != std::string::npos);
+    assert(inference.seen[4].messages[1].content.find("[Draft]") != std::string::npos);
 
     auto extractor = make_llama_cli_memory_candidate_extractor(inference, make_agent_generation_config(options));
     common_agent_result agent_result;
