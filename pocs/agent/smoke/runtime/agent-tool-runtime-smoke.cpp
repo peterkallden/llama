@@ -55,8 +55,8 @@ public:
         tool_step.intended_contribution = tool_step.objective;
         tool_step.status = common_plan_step_status::active;
         tool_step.mode = common_plan_step_mode::tool;
-        tool_step.selected_tool = "web_search";
-        tool_step.tool_call = common_plan_tool_call{"web_search", R"({"query":"resident runtime resource evidence","limit":5})"};
+        tool_step.selected_tool = "web.search";
+        tool_step.tool_call = common_plan_tool_call{"web.search", R"({"query":"resident runtime resource evidence","limit":5})"};
 
         common_plan_step final_step;
         final_step.id = "step-final";
@@ -83,7 +83,7 @@ public:
             const std::vector<std::string> &,
             std::string & error) override {
         for (const auto & observation : plan.observations) {
-            if (observation.source == "web_search" &&
+            if (observation.source == "web.search" &&
                     !observation.resource_refs.empty() &&
                     observation.resource_refs[0].metadata.content_summary.find("Stubbed") != std::string::npos) {
                 error.clear();
@@ -181,8 +181,8 @@ public:
         step.objective = "Fetch the already selected memory.";
         step.intended_contribution = step.objective;
         step.mode = common_plan_step_mode::tool;
-        step.selected_tool = "memory_get";
-        step.tool_call = common_plan_tool_call{"memory_get", "{}"};
+        step.selected_tool = "memory.get";
+        step.tool_call = common_plan_tool_call{"memory.get", "{}"};
 
         common_plan_operation op;
         op.kind = common_plan_operation_kind::add_step;
@@ -314,7 +314,7 @@ int main() {
                 request.text = R"({"results":[{"title":"stub runtime result","url":"https://example.com/runtime"}],"provider":"stub"})";
                 request.scope = common_runtime_resource_scope::turn;
                 request.source_provider = "native";
-                request.source_tool = "web_search";
+                request.source_tool = "web.search";
                 request.metadata = {
                     "Preserve the full search payload for later runtime evidence.",
                     "Stubbed runtime search result payload.",
@@ -350,7 +350,7 @@ int main() {
     tool_context.profile_id = "research";
     tool_context.max_calls = 2;
     tool_context.allow_network = true;
-    tool_context.async_exposed_tool_names = {"web_search"};
+    tool_context.async_exposed_tool_names = {"web.search"};
     tool_context.scope.namespace_id = "runtime-smoke";
     tool_context.scope.session_id = "runtime-smoke-session";
     tool_context.scope.turn_id = "runtime-smoke-turn";
@@ -364,7 +364,7 @@ int main() {
     std::unique_ptr<common_agent_tool_runtime> tool_runtime =
         make_provider_agent_tool_runtime(*tool_view);
     common_agent_tool_call async_call;
-    async_call.name = "web_search";
+    async_call.name = "web.search";
     async_call.arguments_json = R"({"query":"runtime async smoke"})";
     if (!tool_runtime->supports_async(async_call)) {
         std::fprintf(stderr, "provider runtime adapter did not expose configured async tool\n");
@@ -442,7 +442,7 @@ int main() {
             saw_plan_created_event = true;
         }
         if (event.type == common_agent_event_type::observation_recorded &&
-                event.tool_name == "web_search" &&
+                event.tool_name == "web.search" &&
                 !event.observation_id.empty()) {
             saw_observation_event = true;
         }
@@ -451,7 +451,7 @@ int main() {
             saw_resource_created_event = true;
         }
         if (event.type == common_agent_event_type::resource_attached &&
-                event.tool_name == "web_search" &&
+                event.tool_name == "web.search" &&
                 event.resource_uri.rfind("agent-resource://", 0) == 0) {
             saw_resource_attached_event = true;
         }
@@ -464,7 +464,7 @@ int main() {
         }
         if (entry.stage == common_runtime_trace_stage::tool &&
                 entry.kind == common_runtime_trace_kind::succeeded &&
-                entry.tool_name == "web_search") {
+                entry.tool_name == "web.search") {
             saw_tool_success = true;
         }
         if (entry.stage == common_runtime_trace_stage::response &&
@@ -478,7 +478,7 @@ int main() {
         return 1;
     }
     for (const auto & observation : stored_plan->observations) {
-        if (observation.source == "web_search" && !observation.resource_refs.empty()) {
+        if (observation.source == "web.search" && !observation.resource_refs.empty()) {
             saw_observation_resource = true;
             break;
         }
@@ -525,7 +525,7 @@ int main() {
     const auto reflection_result = reflection_runtime.run(reflection_request);
     if (reflection_result.error.empty() ||
             reflection_result.error.find("not allowed") == std::string::npos) {
-        std::fprintf(stderr, "reflection runtime did not fail closed for the disallowed memory_get repair: %s\n", reflection_result.error.c_str());
+        std::fprintf(stderr, "reflection runtime did not fail closed for the disallowed memory.get repair: %s\n", reflection_result.error.c_str());
         return 1;
     }
     bool saw_policy_failure = false;
@@ -533,10 +533,10 @@ int main() {
         saw_policy_failure = saw_policy_failure ||
             (trace.stage == common_runtime_trace_stage::reflection &&
              trace.kind == common_runtime_trace_kind::failed &&
-             trace.detail.find("memory_get") != std::string::npos);
+             trace.detail.find("memory.get") != std::string::npos);
     }
     if (!saw_policy_failure) {
-        std::fprintf(stderr, "reflection runtime did not emit a failed reflection trace for memory_get\n");
+        std::fprintf(stderr, "reflection runtime did not emit a failed reflection trace for memory.get\n");
         return 1;
     }
 

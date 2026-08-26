@@ -495,7 +495,7 @@ int main(int argc, char ** argv) {
                     {"namespace", "namespace-a"},
                     {"project", "project-a"},
                     {"tool_profile", "minimal"},
-                    {"allowed_tools", json::array({"calculator"})},
+                    {"allowed_tools", json::array({"math.calculate"})},
                     {"allow_writes", false},
                 },
                 json{
@@ -540,7 +540,7 @@ int main(int argc, char ** argv) {
                 {"allowed_algorithms", json::array({"RS256"})},
                 {"required_scopes", json::array({"agent:mcp"})},
                 {"tool_profile", "minimal"},
-                {"allowed_tools", json::array({"calculator"})},
+                {"allowed_tools", json::array({"math.calculate"})},
                 {"allow_writes", false},
             }},
         }}}},
@@ -565,7 +565,7 @@ int main(int argc, char ** argv) {
         "https://issuer.example.test/.well-known/jwks.json",
         {"RS256"},
         {"agent:mcp"},
-        {"jwt-caller", "https://agent.example.test/mcp", "local", "project-a", "minimal", {"calculator"}, false},
+        {"jwt-caller", "https://agent.example.test/mcp", "local", "project-a", "minimal", {"math.calculate"}, false},
     });
     agent_mcp_caller_policy unused_policy;
     if (jwt_authenticator.authenticate({"Bearer malformed-token"}, unused_policy, error) ||
@@ -611,7 +611,7 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon tooling resolve did not return a tool view\n");
         return 1;
     }
-    if (!has_tool(tooling.tools, "calculator") ||
+    if (!has_tool(tooling.tools, "math.calculate") ||
             !has_tool(tooling.tools, "github_search_issues") ||
             !has_tool(tooling.tools, "github_alt_search_issues")) {
         std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
@@ -621,9 +621,9 @@ int main(int argc, char ** argv) {
     daemon_options custom_options = options;
     custom_options.tool_profile = "custom-research";
     custom_options.tool_capabilities = {
-        {"custom.utility", {"calculator"}},
-        {"custom.network-read", {"web_search"}},
-        {"custom.proposals", {"memory_remember"}},
+        {"custom.utility", {"math.calculate"}},
+        {"custom.network-read", {"web.search"}},
+        {"custom.proposals", {"memory.remember"}},
     };
     common_tool_profile custom_profile;
     custom_profile.id = "custom-research";
@@ -656,9 +656,9 @@ int main(int argc, char ** argv) {
             custom_tooling,
             error) ||
             !custom_tooling.tool_view ||
-            !has_tool(custom_tooling.tools, "calculator") ||
-            !has_tool(custom_tooling.tools, "web_search") ||
-            has_tool(custom_tooling.tools, "memory_remember")) {
+            !has_tool(custom_tooling.tools, "math.calculate") ||
+            !has_tool(custom_tooling.tools, "web.search") ||
+            has_tool(custom_tooling.tools, "memory.remember")) {
         std::fprintf(stderr, "custom profile policy was not applied through daemon tooling\n");
         return 1;
     }
@@ -671,7 +671,7 @@ int main(int argc, char ** argv) {
     restricted_request.project_id = "project-a";
     restricted_request.turn_id = "turn-policy";
     restricted_request.allow_policy_gated_writes = false;
-    restricted_request.allowed_exposed_tool_names = {"calculator"};
+    restricted_request.allowed_exposed_tool_names = {"math.calculate"};
     common_agent_runtime_tooling restricted_tooling;
     if (!resolve_agent_daemon_tooling(
             options,
@@ -683,7 +683,7 @@ int main(int argc, char ** argv) {
             restricted_tooling,
             error) ||
             restricted_tooling.tool_view == nullptr ||
-            !restricted_tooling.tool_view->exposes_tool("calculator") ||
+            !restricted_tooling.tool_view->exposes_tool("math.calculate") ||
             restricted_tooling.tool_view->exposes_tool("github_search_issues") ||
             restricted_tooling.tool_view->exposes_tool("github_create_issue")) {
         std::fprintf(stderr, "restricted daemon tool policy projection failed: %s\n", error.c_str());
@@ -694,7 +694,7 @@ int main(int argc, char ** argv) {
 
     auto calculator_result = tooling.tool_view->call({
         "call-1",
-        "calculator",
+        "math.calculate",
         R"({"expression":"6 * 7"})",
     }, error);
     if (!calculator_result.ok || calculator_result.content_json.find("42") == std::string::npos) {

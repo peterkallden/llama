@@ -55,7 +55,7 @@ bool select_model_tool_families(
     // This is a one-line classifier, not a planning turn. A small hard cap
     // prevents a weak model from spending the whole turn elaborating before
     // the host can route it.
-    options.n_predict = 16;
+    options.n_predict = 64;
     options.n_threads = generation_config.n_threads;
     options.generation_trace = generation_config.generation_trace;
     const auto generation = execution.inference.generate_result(
@@ -74,8 +74,25 @@ bool select_model_tool_families(
 
     common_tool_family_selection selection;
     if (!common_parse_tool_family_selection_text(generation.content, families, selection, error)) {
-        error = "tool family selection failed: " + error;
-        return false;
+        // A weak model can emit the required TOOLS: prefix and then stop
+        // before naming a family. With exactly one current-turn resource,
+        // the host can safely default to the already policy-filtered
+        // resource family. This keeps the family gate intact and does not
+        // guess when there are multiple resources or no resource family.
+        const bool empty_tools_selection =
+            error == "tool family selection must include at least one family after TOOLS:";
+        const bool has_resource_family = std::any_of(
+            families.begin(), families.end(), [](const common_tool_family_index & family) {
+                return family.id == "resource";
+            });
+        if (empty_tools_selection && request.input_resources.size() == 1 && has_resource_family) {
+            selection.needs_tools = true;
+            selection.family_ids = {"resource"};
+            error.clear();
+        } else {
+            error = "tool family selection failed: " + error;
+            return false;
+        }
     }
     if (!selection.needs_tools && !selection.family_ids.empty()) {
         error = "tool family selection must not select families when needs_tools is false";

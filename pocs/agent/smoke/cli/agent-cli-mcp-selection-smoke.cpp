@@ -50,9 +50,9 @@ int main(int argc, char ** argv) {
     common_tool_profile profile;
     profile.id = options.tool_profile;
     profile.members = {
-        {"calculator", 1, true, "{}"},
-        {"time_now", 1, true, "{}"},
-        {"resource_read", 1, true, "{}"},
+        {"math.calculate", 1, true, "{}"},
+        {"time.now", 1, true, "{}"},
+        {"resource.read", 1, true, "{}"},
     };
     profile.allow_network = true;
     profile.allow_policy_gated_writes = false;
@@ -100,11 +100,11 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "CLI MCP selection did not expose github_search_issues\n");
         return 1;
     }
-    if (!has_tool(selection.tooling.tools, "calculator")) {
+    if (!has_tool(selection.tooling.tools, "math.calculate")) {
         std::fprintf(stderr, "CLI MCP selection did not expose native calculator from the minimal tool profile\n");
         return 1;
     }
-    if (!has_tool(selection.tooling.tools, "resource_read")) {
+    if (!has_tool(selection.tooling.tools, "resource.read")) {
         std::fprintf(stderr, "CLI MCP selection did not expose resource_read\n");
         return 1;
     }
@@ -115,7 +115,7 @@ int main(int argc, char ** argv) {
 
     const auto native_result = selection.tool_view->call({
         "call-native",
-        "calculator",
+        "math.calculate",
         R"({"expression":"2 + 3"})",
     }, error);
     if (!native_result.ok || native_result.content_json.find("5") == std::string::npos) {
@@ -139,7 +139,7 @@ int main(int argc, char ** argv) {
     }
     const auto pdf_read_result = selection.tool_view->call({
         "call-resource-read-pdf",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":1024})",
     }, error);
     if (!pdf_read_result.ok ||
@@ -164,7 +164,7 @@ int main(int argc, char ** argv) {
     common_tool_profile sandbox_profile;
     sandbox_profile.id = unavailable_options.tool_profile;
     sandbox_profile.members = {
-        {"calculator", 1, true, "{}"},
+        {"math.calculate", 1, true, "{}"},
         {"development.build", 1, true, "{}"},
         {"development.test", 1, true, "{}"},
     };
@@ -181,7 +181,7 @@ int main(int argc, char ** argv) {
             unavailable_selection,
             error) ||
             !unavailable_selection.tool_view ||
-            !has_tool(unavailable_selection.tooling.tools, "calculator") ||
+            !has_tool(unavailable_selection.tooling.tools, "math.calculate") ||
             has_tool(unavailable_selection.tooling.tools, "development.build") ||
             has_tool(unavailable_selection.tooling.tools, "development.test")) {
         std::fprintf(stderr, "CLI selection did not disable sandbox tools without a backend\n");

@@ -100,14 +100,14 @@ int main() {
         std::fprintf(stderr, "minimal provider resolve failed: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(minimal_view->chat_tools(), "calculator")) {
+    if (!has_tool(minimal_view->chat_tools(), "math.calculate")) {
         std::fprintf(stderr, "calculator was not exposed through minimal tool view\n");
         return 1;
     }
 
     const auto first_result = minimal_view->call({
         "call-1",
-        "calculator",
+        "math.calculate",
         R"({"expression":"17 * 23"})",
     }, error);
     if (!first_result.ok) {
@@ -121,7 +121,7 @@ int main() {
 
     const auto second_result = minimal_view->call({
         "call-2",
-        "calculator",
+        "math.calculate",
         R"({"expression":"1 + 1"})",
     }, error);
     if (second_result.ok ||
@@ -141,7 +141,7 @@ int main() {
     }
     const auto cancelled_result = cancelled_view->call({
         "call-cancelled",
-        "calculator",
+        "math.calculate",
         R"({"expression":"2 + 2"})",
     }, error);
     if (cancelled_result.ok ||
@@ -183,7 +183,7 @@ int main() {
                 request.text = R"({"results":[{"title":"stub issue","url":"https://example.com/stub"}],"provider":"stub"})";
                 request.scope = common_runtime_resource_scope::turn;
                 request.source_provider = "native";
-                request.source_tool = "web_search";
+                request.source_tool = "web.search";
                 request.metadata = {
                     "Preserve the full bounded web search candidate set outside the inline model context.",
                     "Stubbed search candidates for resident inference.",
@@ -220,7 +220,7 @@ int main() {
                 request.text = R"({"url":"https://example.com/stub","final_url":"https://example.com/stub","status":200,"content_type":"text/html","title":"Stub Fetch Title","text":"Stub fetch body text that is intentionally long enough to live in the stored resource payload rather than only inline.","truncated":false})";
                 request.scope = common_runtime_resource_scope::turn;
                 request.source_provider = "native";
-                request.source_tool = "web_fetch";
+                request.source_tool = "web.fetch";
                 request.metadata = {
                     "Preserve the full bounded web fetch result outside the inline model context.",
                     "Fetched bounded page text for \"Stub Fetch Title\".",
@@ -257,7 +257,7 @@ int main() {
     research_context.profile_id = "research";
     research_context.allow_network = true;
     research_context.max_calls = 16;
-    research_context.async_exposed_tool_names = {"web_fetch"};
+    research_context.async_exposed_tool_names = {"web.fetch"};
     research_context.scope.namespace_id = "provider-smoke";
     research_context.scope.session_id = "session-1";
     research_context.scope.project_id = "project-1";
@@ -268,11 +268,11 @@ int main() {
         std::fprintf(stderr, "research provider resolve failed: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(research_view->chat_tools(), "web_search")) {
+    if (!has_tool(research_view->chat_tools(), "web.search")) {
         std::fprintf(stderr, "web_search was not exposed in the research tool view\n");
         return 1;
     }
-    if (research_view->supports_async_call("web_search")) {
+    if (research_view->supports_async_call("web.search")) {
         std::fprintf(stderr, "web_search should not have been marked async in this smoke\n");
         return 1;
     }
@@ -310,14 +310,14 @@ int main() {
         for (const auto & candidate : candidates) std::fprintf(stderr, "  candidate=%s\n", candidate.c_str());
         return 1;
     }
-    if (!research_view->supports_async_call("web_fetch")) {
+    if (!research_view->supports_async_call("web.fetch")) {
         std::fprintf(stderr, "web_fetch should have been marked async in this smoke\n");
         return 1;
     }
 
     const auto search_result = research_view->call({
         "call-2b",
-        "web_search",
+        "web.search",
         R"({"query":"resident inference architecture in llama.cpp","limit":5})",
     }, error);
     if (!search_result.ok) {
@@ -340,7 +340,7 @@ int main() {
     agent_tool_pending_call pending_fetch;
     if (!research_view->begin_call_async({
             "call-2d",
-            "web_fetch",
+            "web.fetch",
             R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
         }, pending_fetch, error)) {
         std::fprintf(stderr, "web_fetch async start failed: %s\n", error.c_str());
@@ -373,7 +373,7 @@ int main() {
     agent_tool_pending_call cancelled_fetch;
     if (!research_view->begin_call_async({
             "call-2f",
-            "web_fetch",
+            "web.fetch",
             R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
         }, cancelled_fetch, error)) {
         std::fprintf(stderr, "web_fetch cancellation async start failed: %s\n", error.c_str());
@@ -406,7 +406,7 @@ int main() {
 
     const auto sync_fetch_result = research_view->call({
         "call-2d",
-        "web_fetch",
+        "web.fetch",
         R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
     }, error);
     if (!sync_fetch_result.ok) {
@@ -429,7 +429,7 @@ int main() {
 
     const auto resource_read_result = research_view->call({
         "call-2c",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","representation":"text","max_bytes":4096})",
     }, error);
     if (!resource_read_result.ok ||
@@ -441,7 +441,7 @@ int main() {
 
     const auto default_resource_read_result = research_view->call({
         "call-2d-default-text",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","max_bytes":4096})",
     }, error);
     if (!default_resource_read_result.ok ||
@@ -452,7 +452,7 @@ int main() {
 
     const auto unavailable_representation_result = research_view->call({
         "call-2c-image",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"(","representation":"image"})",
     }, error);
     if (unavailable_representation_result.ok ||
@@ -463,7 +463,7 @@ int main() {
 
     const auto fetch_resource_read_result = research_view->call({
         "call-2e",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + fetch_result.resource_refs[0].uri + R"(","max_bytes":4096})",
     }, error);
     if (!fetch_resource_read_result.ok || fetch_resource_read_result.content_json.find("Stub fetch body text") == std::string::npos) {
@@ -473,7 +473,7 @@ int main() {
 
     const auto resource_inspect_result = research_view->call({
         "call-2f",
-        "resource_inspect",
+        "resource.inspect",
         std::string(R"({"uri":")") + search_result.resource_refs[0].uri + R"("})",
     }, error);
     if (!resource_inspect_result.ok ||
@@ -503,7 +503,7 @@ int main() {
 
     const auto processed_pdf_read = research_view->call({
         "call-2g-pdf-text",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":4096})",
     }, error);
     if (!processed_pdf_read.ok ||
@@ -520,7 +520,7 @@ int main() {
 
     const auto cached_pdf_read = research_view->call({
         "call-2g-pdf-text-cache",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + pdf_descriptor.uri + R"(","representation":"text","max_bytes":4096})",
     }, error);
     if (!cached_pdf_read.ok || cached_pdf_read.content_json != processed_pdf_read.content_json) {
@@ -550,7 +550,7 @@ int main() {
 
     const auto binary_inspect_result = research_view->call({
         "call-2g",
-        "resource_inspect",
+        "resource.inspect",
         std::string(R"({"uri":")") + binary_descriptor.uri + R"("})",
     }, error);
     if (!binary_inspect_result.ok ||
@@ -561,7 +561,7 @@ int main() {
 
     const auto binary_read_result = research_view->call({
         "call-2h",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + binary_descriptor.uri + R"(","representation":"text"})",
     }, error);
     if (binary_read_result.ok ||
@@ -572,7 +572,7 @@ int main() {
 
     const auto binary_bytes_result = research_view->call({
         "call-2i",
-        "resource_read",
+        "resource.read",
         std::string(R"({"uri":")") + binary_descriptor.uri + R"(","representation":"bytes","max_bytes":32})",
     }, error);
     if (!binary_bytes_result.ok ||
@@ -611,14 +611,14 @@ int main() {
         std::fprintf(stderr, "memory provider resolve failed: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(memory_view->chat_tools(), "memory_remember")) {
+    if (!has_tool(memory_view->chat_tools(), "memory.remember")) {
         std::fprintf(stderr, "memory_remember was not exposed through memory tool view\n");
         return 1;
     }
 
     const auto memory_result = memory_view->call({
         "call-3",
-        "memory_remember",
+        "memory.remember",
         R"({"kind":"decision","content":"Use the existing memory store for symbolic project decisions before introducing a separate overlay system."})",
     }, error);
     if (!memory_result.ok || memory_result.content_json.find("\"decision\":\"accept\"") == std::string::npos) {
@@ -632,7 +632,7 @@ int main() {
 
     std::printf("provider_tools=%zu\n", minimal_view->chat_tools().size());
     std::printf("calculator_result=%s\n", first_result.content_json.c_str());
-    std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web_search") ? "yes" : "no");
+    std::printf("network_tool_exposed=%s\n", has_tool(research_view->chat_tools(), "web.search") ? "yes" : "no");
     std::printf("web_fetch_async=%s\n", fetch_ready ? "yes" : "no");
     std::printf("web_search_resource_uri=%s\n", search_result.resource_refs.empty() ? "" : search_result.resource_refs[0].uri.c_str());
     std::printf("web_fetch_resource_uri=%s\n", fetch_result.resource_refs.empty() ? "" : fetch_result.resource_refs[0].uri.c_str());

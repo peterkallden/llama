@@ -89,8 +89,8 @@ int main(int argc, char ** argv) {
     common_tool_profile profile;
     profile.id = options.tool_profile;
     profile.members = {
-        {"calculator", 1, true, "{}"},
-        {"time_now", 1, true, "{}"},
+        {"math.calculate", 1, true, "{}"},
+        {"time.now", 1, true, "{}"},
     };
     profile.allow_network = true;
     profile.allow_policy_gated_writes = false;
@@ -124,7 +124,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    if (!has_tool(selection.tooling.tools, "calculator") ||
+    if (!has_tool(selection.tooling.tools, "math.calculate") ||
             !has_tool(selection.tooling.tools, "github_search_issues")) {
         std::fprintf(stderr, "CLI MCP run smoke did not expose the expected composite tool set\n");
         return 1;
