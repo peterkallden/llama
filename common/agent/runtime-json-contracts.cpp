@@ -28,6 +28,91 @@ bool infer_memory_search_query(const std::string & prompt, std::string & query) 
     return query.size() <= 1024;
 }
 
+struct model_resource_candidate {
+    std::string handle;
+    const common_agent_input_resource * resource = nullptr;
+};
+
+std::vector<model_resource_candidate> model_resource_candidates(
+        const common_agent_request & request,
+        const std::string & name = {}) {
+    std::vector<model_resource_candidate> candidates;
+    const auto add = [&](const std::vector<common_agent_input_resource> & resources,
+                         const char prefix) {
+        for (size_t index = 0; index < resources.size(); ++index) {
+            const auto & resource = resources[index];
+            if (resource.resource.uri.empty() ||
+                    (!name.empty() && resource.resource.name != name)) {
+                continue;
+            }
+            candidates.push_back({std::string(1, prefix) + std::to_string(index + 1), &resource});
+        }
+    };
+    add(request.input_resources, 'r');
+    add(request.available_resources, 's');
+    return candidates;
+}
+
+std::string render_resource_candidates(
+        const std::vector<model_resource_candidate> & candidates) {
+    std::string rendered;
+    for (const auto & candidate : candidates) {
+        rendered += " " + candidate.handle;
+        if (!candidate.resource->resource.name.empty()) {
+            rendered += " (" + candidate.resource->resource.name + ")";
+        }
+    }
+    return rendered;
+}
+
+bool is_model_resource_handle(const std::string & value) {
+    return value.size() >= 2 && (value.front() == 'r' || value.front() == 's') &&
+        std::all_of(value.begin() + 1, value.end(), [](const char character) {
+            return std::isdigit(static_cast<unsigned char>(character));
+        });
+}
+
+bool resolve_model_resource_value(
+        const common_agent_request & request,
+        const std::string & value,
+        std::string & uri,
+        std::string & error) {
+    if (is_model_resource_handle(value)) {
+        const auto candidates = model_resource_candidates(request);
+        const auto candidate = std::find_if(
+            candidates.begin(), candidates.end(),
+            [&](const model_resource_candidate & item) { return item.handle == value; });
+        if (candidate == candidates.end()) {
+            error = "unknown resource '" + value + "'. Choose one of:" +
+                render_resource_candidates(candidates);
+            if (candidates.empty()) error += " none";
+            return false;
+        }
+        uri = candidate->resource->resource.uri;
+        return true;
+    }
+    // Canonical resource and dataset URIs must remain untouched. Only a
+    // human-facing name is eligible for exact lookup in host-listed resources.
+    if (value.find("://") != std::string::npos) {
+        uri = value;
+        return true;
+    }
+    const auto candidates = model_resource_candidates(request, value);
+    if (candidates.size() == 1) {
+        uri = candidates.front().resource->resource.uri;
+        return true;
+    }
+    if (candidates.size() > 1) {
+        error = "ambiguous resource '" + value + "'. Choose one of:" +
+            render_resource_candidates(candidates);
+        return false;
+    }
+    error = "unknown resource '" + value + "'. Choose one of:" +
+        render_resource_candidates(model_resource_candidates(request));
+    if (model_resource_candidates(request).empty()) error += " none";
+    return false;
+}
+
 bool resolve_model_resource_handle(
         const common_agent_request & request,
         const json & arguments,
@@ -46,39 +131,12 @@ bool resolve_model_resource_handle(
         return false;
     }
     const auto handle = arguments.at(supplied_key).get<std::string>();
-    if (handle.size() < 2 || (handle[0] != 'r' && handle[0] != 's') ||
-            !std::all_of(handle.begin() + 1, handle.end(), [](const char character) {
-                return std::isdigit(static_cast<unsigned char>(character));
-            })) {
-        error = "resource handle must use r1, r2, ... for current attachments or s1, s2, ... for scoped candidates";
-        return false;
-    }
-    size_t index = 0;
-    try { index = std::stoul(handle.substr(1)); }
-    catch (...) { error = "resource handle is invalid"; return false; }
-    const auto & candidates = handle[0] == 'r'
-        ? request.input_resources
-        : request.available_resources;
-    if (index == 0 || index > candidates.size() ||
-            candidates[index - 1].resource.uri.empty()) {
-        error = "unknown resource '" + handle + "'. Choose one of:";
-        for (size_t candidate = 0; candidate < request.input_resources.size(); ++candidate) {
-            error += " r" + std::to_string(candidate + 1);
-            if (!request.input_resources[candidate].resource.name.empty())
-                error += " (" + request.input_resources[candidate].resource.name + ")";
-        }
-        for (size_t candidate = 0; candidate < request.available_resources.size(); ++candidate) {
-            error += " s" + std::to_string(candidate + 1);
-            if (!request.available_resources[candidate].resource.name.empty())
-                error += " (" + request.available_resources[candidate].resource.name + ")";
-        }
-        if (request.input_resources.empty() && request.available_resources.empty()) error += " none";
-        return false;
-    }
+    std::string uri;
+    if (!resolve_model_resource_value(request, handle, uri, error)) return false;
     normalized_arguments.erase("id");
     normalized_arguments.erase("resource");
     normalized_arguments.erase("resource_id");
-    normalized_arguments["uri"] = candidates[index - 1].resource.uri;
+    normalized_arguments["uri"] = uri;
     return true;
 }
 
@@ -202,10 +260,22 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!normalized_arguments.contains("end_line")) { normalized_arguments["end_line"] = 200; changed = true; }
     } else if (tool_name == "resource_read") {
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+        if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
+                normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {
+            std::string uri;
+            if (!resolve_model_resource_value(request, normalized_arguments["uri"].get<std::string>(), uri, error)) return false;
+            normalized_arguments["uri"] = uri;
+        }
         if (!normalized_arguments.contains("max_bytes")) { normalized_arguments["max_bytes"] = 8192; changed = true; }
         if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "resource_inspect") {
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+        if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
+                normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {
+            std::string uri;
+            if (!resolve_model_resource_value(request, normalized_arguments["uri"].get<std::string>(), uri, error)) return false;
+            normalized_arguments["uri"] = uri;
+        }
         if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "dataset.inspect" || tool_name == "dataset.schema" || tool_name == "dataset.sample") {
         // Compatibility repair for the old compact-schema example. The
@@ -242,6 +312,27 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
                 normalized_arguments.erase("dataset");
                 normalized_arguments["resource"] = resolved_resource["uri"];
                 changed = true;
+            }
+        }
+        // A filename is a convenience lookup key, not a dataset identity.
+        // Resolve it against both current attachments and host-listed scoped
+        // resources when exactly one resource has that name. Ambiguity is a
+        // repairable host error; an unmatched value remains available for a
+        // registered dataset lookup below.
+        if (normalized_arguments.contains("dataset") &&
+                normalized_arguments["dataset"].is_string()) {
+            const auto dataset_value = normalized_arguments["dataset"].get<std::string>();
+            if (!is_model_resource_handle(dataset_value) && dataset_value.find("://") == std::string::npos) {
+                std::string uri;
+                std::string resource_error;
+                if (resolve_model_resource_value(request, dataset_value, uri, resource_error)) {
+                    normalized_arguments.erase("dataset");
+                    normalized_arguments["resource"] = uri;
+                    changed = true;
+                } else if (resource_error.rfind("ambiguous resource ", 0) == 0) {
+                    error = std::move(resource_error);
+                    return false;
+                }
             }
         }
         // If there is one caller-owned attachment, a non-canonical dataset
@@ -308,6 +399,16 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
             if (normalized_arguments.contains("uri")) {
                 normalized_arguments["resource"] = normalized_arguments["uri"];
                 normalized_arguments.erase("uri");
+                changed = true;
+            }
+        }
+        if (normalized_arguments.contains("resource") &&
+                normalized_arguments["resource"].is_string()) {
+            const auto supplied_resource = normalized_arguments["resource"].get<std::string>();
+            if (!is_model_resource_handle(supplied_resource) && supplied_resource.find("://") == std::string::npos) {
+                std::string uri;
+                if (!resolve_model_resource_value(request, supplied_resource, uri, error)) return false;
+                normalized_arguments["resource"] = uri;
                 changed = true;
             }
         }

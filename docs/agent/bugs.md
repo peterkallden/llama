@@ -98,6 +98,13 @@ host-owned resource URI before the dataset adapter runs. With exactly one
 current attachment, a non-canonical model alias is treated as the implicit
 attachment default; explicit `dataset://...` references remain unchanged.
 
+The resolver now also performs exact host-owned name lookup across both lists.
+A unique filename such as `sales.csv` can therefore resolve to the matching
+attachment or prior scoped resource before dataset/document materialization.
+Multiple matches fail with a bounded `Choose one of` diagnostic; an unknown
+resource-only name fails with the candidate list rather than being interpreted
+as a filesystem path.
+
 ## Family selection allowed an ungrounded answer fallback
 
 - Status: Fixed locally; deterministic contract tests and a Qwen web smoke are

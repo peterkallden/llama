@@ -259,13 +259,21 @@ the resource store directly.
 For exactly one current attachment, dataset inspection uses that attachment as
 the host-owned default when the model omits the source or emits a
 non-canonical alias. Explicit `dataset://...` references remain authoritative.
-With multiple attachments, the model must select one explicitly. `dataset.list`
-is therefore a discovery operation for registered or prior scoped datasets,
-not a mandatory step for every upload.
+The same exact-name resolver also searches host-listed `sN` resources. Thus a
+unique `sales.csv` can resolve to either a current attachment or a prior
+scoped resource and then enter the resource-to-dataset materialization path.
+If a name matches more than one resource, the host returns a bounded `Choose
+one of` diagnostic with the available `rN`/`sN` handles. With multiple
+attachments, the model must otherwise select one explicitly. `dataset.list` is
+therefore a discovery operation for registered or prior scoped datasets, not a
+mandatory step for every upload.
 
 This is narrow argument normalization, not a second orchestration path. It
 does not bypass scope checks, turn arbitrary strings into filesystem paths, or
-materialize unsupported formats. CSV materialization continues through the
+materialize unsupported formats. Name matching is exact and host-owned; an
+unmatched dataset name remains eligible for registered-dataset lookup, while a
+resource-only lookup fails with candidates rather than becoming a filesystem
+path. CSV materialization continues through the
 existing host-owned `dataset_from_resource` callback.
 
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,

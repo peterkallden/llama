@@ -123,6 +123,61 @@ int main() {
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         csv_request,
         "dataset.inspect",
+        nlohmann::ordered_json::object({{"dataset", "old.csv"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("resource", "") == "agent-resource://session/old.csv");
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "resource_read",
+        nlohmann::ordered_json::object({{"uri", "old.csv"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(changed);
+    TEST_ASSERT(normalized.value("uri", "") == "agent-resource://session/old.csv");
+
+    common_agent_request ambiguous_resources = csv_request;
+    ambiguous_resources.available_resources.push_back({
+        common_runtime_resource_ref{"agent-resource://project/old.csv", "old.csv", "", "text/csv", 0},
+        "scoped_reference",
+        false});
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
+        ambiguous_resources,
+        "dataset.inspect",
+        nlohmann::ordered_json::object({{"dataset", "old.csv"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(error.find("ambiguous resource 'old.csv'") != std::string::npos);
+    TEST_ASSERT(error.find("s1") != std::string::npos);
+    TEST_ASSERT(error.find("s2") != std::string::npos);
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "resource_inspect",
+        nlohmann::ordered_json::object({{"uri", "missing.csv"}}),
+        normalized,
+        changed,
+        error));
+    TEST_ASSERT(error.find("unknown resource 'missing.csv'") != std::string::npos);
+    TEST_ASSERT(error.find("r1") != std::string::npos);
+    TEST_ASSERT(error.find("s1") != std::string::npos);
+
+    normalized = nlohmann::ordered_json();
+    changed = false;
+    TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
+        csv_request,
+        "dataset.inspect",
         nlohmann::ordered_json::object({{"dataset", "TAB6623_sv_sample.csv"}}),
         normalized,
         changed,
