@@ -3,6 +3,9 @@ export type AgentEvent = {
   event_type?: string;
   message_type?: string;
   sequence?: number;
+  timestamp?: string | number;
+  created_at?: string | number;
+  client_received_at?: number;
   request_id?: string;
   turn_id?: string;
   session_id?: string;

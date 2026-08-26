@@ -53,7 +53,9 @@ function eventResourceUri(event: AgentEvent): string {
 }
 
 function observe(event: AgentEvent) {
-  events.value.unshift(event);
+  // Daemon events do not consistently carry a presentation timestamp. Keep
+  // the server payload intact while recording when the browser received it.
+  events.value.unshift({ ...event, client_received_at: Date.now() });
   const kind = eventType(event);
   const turnId = String(event.turn_id ?? activeTurnId.value);
   const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");

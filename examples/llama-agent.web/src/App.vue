@@ -83,6 +83,16 @@ function eventText(event: Record<string, unknown>) {
   return String(event.detail ?? event.error ?? event.tool_name ?? "");
 }
 
+function eventTime(event: Record<string, unknown>) {
+  const value = event.timestamp ?? event.created_at ?? event.client_received_at;
+  if (typeof value === "number") return new Date(value < 10_000_000_000 ? value * 1000 : value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (typeof value === "string" && value) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  return "—:—:—";
+}
+
 function isArtifactEvent(event: Record<string, unknown>) {
   return session.eventType(event) === "tool.artifact_created" && Boolean(event.detail || event.resource_uri);
 }
@@ -117,10 +127,12 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <section class="card">
           <div class="card-title"><h2>Events</h2><span class="muted">{{ session.events.length }}</span></div>
           <div v-if="!session.events.length" class="empty">Runtime events will appear here while the daemon is working.</div>
+          <div class="events-viewport">
           <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
             <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
-            <div class="event-main"><div><strong>{{ session.eventType(event) }}</strong><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div><p>{{ eventText(event) }}</p></div>
+            <div class="event-main"><div><time class="event-time">{{ eventTime(event) }}</time><strong>{{ session.eventType(event) }}:</strong><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div><p>{{ eventText(event) }}</p></div>
             <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
+          </div>
           </div>
         </section>
       </div>
