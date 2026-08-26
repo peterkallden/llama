@@ -199,6 +199,13 @@ bool run_agent_chat_runtime(
         return false;
     }
     std::vector<common_chat_msg> messages = execution.request.messages;
+    // Driver callers may provide a standalone prompt without constructing a
+    // chat history (notably the tool-family singleton fast path). Preserve
+    // that user turn in the ordinary chat/tool lifecycle so the model sees
+    // the request and the follow-up retains a complete conversation.
+    if (messages.empty() && !execution.request.prompt.empty()) {
+        messages.push_back({"user", execution.request.prompt});
+    }
     auto available_tools = execution.tooling.tools;
     const auto initial_tool_choice = available_tools.empty()
         ? COMMON_CHAT_TOOL_CHOICE_NONE
