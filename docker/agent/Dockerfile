@@ -16,8 +16,11 @@ FROM ${BASE_IMAGE}
 ARG PACKAGE_ARCHIVE=agent-package.tar.gz
 ARG BACKEND=cpu
 ARG INSTALL_DEV_TOOLS=false
+ARG CONFIG_FILE=agent-config.docker.example.json
+ARG IMAGE_CHANNEL=release
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LLAMA_AGENT_IMAGE_CHANNEL=${IMAGE_CHANNEL}
 
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes \
@@ -53,7 +56,7 @@ RUN mkdir -p /opt/llama-agent \
         /var/lib/llama-agent/nginx/scgi \
     && chown -R llama-agent:llama-agent /etc/llama-agent /models /var/lib/llama-agent /var/log/llama-agent
 
-COPY agent-config.docker.example.json /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json
+COPY ${CONFIG_FILE} /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json
 COPY entrypoint.sh /usr/local/bin/llama-agent-entrypoint
 COPY capability-smoke.sh /usr/local/bin/llama-agent-capability-smoke
 
@@ -78,4 +81,4 @@ WORKDIR /var/lib/llama-agent
 ENTRYPOINT ["/usr/local/bin/llama-agent-entrypoint"]
 CMD ["llama-agent-daemon"]
 
-EXPOSE 8080 8443
+EXPOSE 8080 8081 8443

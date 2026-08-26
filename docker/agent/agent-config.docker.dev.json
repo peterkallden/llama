@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "/models/model.gguf",
+    "embedding_model": "/models/embedding.gguf"
+  },
+  "runtime": {
+    "context_size": 0,
+    "n_predict": 128,
+    "n_threads": 4,
+    "n_gpu_layers": 0,
+    "default_mode": "agent",
+    "thinking_mode": "auto",
+    "max_reflection_rounds": 2,
+    "max_plan_revisions": 3,
+    "max_research_iterations": 4,
+    "memory_learn": "post-turn",
+    "agent_plan": "auto",
+    "agent_trace": true
+  },
+  "stores": {
+    "memory": { "backend": "cozo", "path": "/var/lib/llama-agent/data/memory.cozo" },
+    "plan": { "backend": "cozo", "path": "/var/lib/llama-agent/data/plan.cozo" },
+    "data": { "backend": "cozo", "path": "/var/lib/llama-agent/data/structured.cozo" }
+  },
+  "resources": {
+    "blob_backend": "fs",
+    "blob_root": "/var/lib/llama-agent/data/resources",
+    "metadata_backend": "cozo",
+    "metadata_db": "/var/lib/llama-agent/data/resources.cozo"
+  },
+  "tools": {
+    "profile": "all-configured",
+    "repository_root": "/var/lib/llama-agent/workspace",
+    "providers": []
+  },
+  "mcp": {
+    "inbound": {
+      "enabled": true,
+      "listen": "0.0.0.0",
+      "port": 8081,
+      "path": "/mcp",
+      "agent_tools": true,
+      "max_delegation_depth": 1,
+      "tokens": [
+        {
+          "id": "docker-dev",
+          "token_env": "LLAMA_AGENT_MCP_TOKEN",
+          "audience": "llama-agent",
+          "namespace": "local",
+          "project": "default",
+          "tool_profile": "all-configured",
+          "allow_writes": false
+        }
+      ]
+    }
+  },
+  "sandbox": {
+    "backend": "none",
+    "workspace": {
+      "root": "/var/lib/llama-agent/workspaces",
+      "artifact_root": "/var/lib/llama-agent/artifacts",
+      "operation_mode": "ephemeral",
+      "project_mode": "persistent"
+    }
+  },
+  "diagnostics": {
+    "semantic_backend": "auto",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "auto"
+  },
+  "limits": {
+    "queue_capacity": 8,
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "turn_timeout_ms": 120000,
+    "inference_step_timeout_ms": 0,
+    "tool_timeout_ms": 1000,
+    "mcp_connect_timeout_ms": 5000,
+    "mcp_request_timeout_ms": 30000,
+    "mcp_shutdown_timeout_ms": 2000,
+    "max_tool_rounds": 0
+  }
+}

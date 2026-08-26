@@ -9,6 +9,24 @@ bootstrap="${LLAMA_AGENT_CONFIG_BOOTSTRAP:-/opt/llama-agent/bin/llama-agent-conf
 mode="${LLAMA_AGENT_MODE:-all}"
 daemon_port="${LLAMA_AGENT_DAEMON_PORT:-8091}"
 web_adapter_port="${LLAMA_AGENT_WEB_ADAPTER_PORT:-8090}"
+mcp_token_file="${LLAMA_AGENT_MCP_TOKEN_FILE:-/etc/llama-agent/mcp-dev-token}"
+
+# The development image has an inbound MCP config. Keep its token convenient
+# for local testing, but never create or print one for release images.
+if [[ "${LLAMA_AGENT_IMAGE_CHANNEL:-release}" == "dev" && -z "${LLAMA_AGENT_MCP_TOKEN:-}" ]]; then
+    if [[ -s "$mcp_token_file" ]]; then
+        LLAMA_AGENT_MCP_TOKEN="$(head -n 1 "$mcp_token_file")"
+        export LLAMA_AGENT_MCP_TOKEN
+        echo "Using development MCP bearer token from $mcp_token_file" >&2
+    else
+        LLAMA_AGENT_MCP_TOKEN="${LLAMA_AGENT_DEV_TOKEN:-dev-token}"
+        printf '%s\n' "$LLAMA_AGENT_MCP_TOKEN" > "$mcp_token_file"
+        chmod 0600 "$mcp_token_file"
+        export LLAMA_AGENT_MCP_TOKEN
+        echo "Generated development MCP bearer token: $LLAMA_AGENT_MCP_TOKEN" >&2
+        echo "Persisted development MCP bearer token in $mcp_token_file" >&2
+    fi
+fi
 
 case "$mode" in
     daemon|all) ;;
@@ -21,6 +39,13 @@ esac
 bootstrap_transport=stdio
 if [[ "$mode" == all ]]; then
     bootstrap_transport=jsonl-tcp
+fi
+
+if [[ ! -s "$config_file" && "${LLAMA_AGENT_IMAGE_CHANNEL:-release}" == "dev" && \
+      -s /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json ]]; then
+    mkdir -p "$(dirname "$config_file")"
+    cp /opt/llama-agent/share/llama-agent/examples/agent-config.docker.example.json "$config_file"
+    echo "Installed development Docker configuration at $config_file" >&2
 fi
 
 if [[ ! -s "$config_file" ]]; then

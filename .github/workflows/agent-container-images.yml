@@ -84,6 +84,8 @@ jobs:
           cp docker/agent/nginx/llama-agent-web.https.conf.template docker-context/nginx/llama-agent-web.https.conf.template
           cp docker/agent/agent-config.docker.example.json \
             docker-context/agent-config.docker.example.json
+          cp docker/agent/agent-config.docker.dev.json \
+            docker-context/agent-config.docker.dev.json
           package_id="$(basename "$archive" .tar.gz)"
           safe_package_tag="${package_id#llama-agent-dev-}"
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
@@ -123,6 +125,8 @@ jobs:
             BACKEND=cpu
             BASE_IMAGE=ubuntu:24.04
             INSTALL_DEV_TOOLS=true
+            CONFIG_FILE=agent-config.docker.dev.json
+            IMAGE_CHANNEL=dev
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.tags }}

@@ -204,8 +204,11 @@ container replacement:
 | `/var/log/llama-agent` | Daemon diagnostics | Persistent named volume or bind mount |
 | `/opt/llama-agent-web` | Built Vue example client served by Nginx | Image content; override only for development |
 
-The image includes
-`agent-config.docker.example.json`, which points to these paths. It expects
+The release image includes
+`agent-config.docker.example.json`, which points to these paths. The dev image
+uses a separate development configuration with inbound MCP enabled, the
+`all-configured` tool profile, agent tools enabled, and
+`memory_learn: post-turn`. It expects
 `/models/model.gguf` and `/models/embedding.gguf`; omit or edit the embedding
 model entry when a separate embedding model is not used. The entrypoint keeps
 diagnostics visible through the container runtime and also appends them to
@@ -221,7 +224,8 @@ docker volume create llama-agent-logs
 
 docker run --rm \
   --name llama-agent-dev \
-  --publish 8080:8080 \
+  --publish 127.0.0.1:8080:8080 \
+  --publish 127.0.0.1:8081:8081 \
   --mount source=llama-agent-models,target=/models,readonly \
   --mount source=llama-agent-config,target=/etc/llama-agent \
   --mount source=llama-agent-data,target=/var/lib/llama-agent/data \
@@ -231,9 +235,21 @@ docker run --rm \
 
 The container defaults to `LLAMA_AGENT_MODE=all`: it starts the daemon, the
 JSONL/TCP web adapter and Nginx serving the Vue example client. Open
-`http://localhost:8080`. The daemon TCP listener remains internal on port
-`8091`; only the Nginx web port needs to be published for the example client.
+`http://localhost:8080`. The dev image also serves inbound MCP at
+`http://localhost:8081/mcp`; clients must send the development bearer token.
+The default Docker publish bindings above are loopback-only. To deliberately
+make the service reachable from other hosts, change the host-side bind to
+`0.0.0.0` and put it behind the network and authentication controls appropriate
+for that environment. The daemon TCP listener remains internal on port `8091`.
 Use `LLAMA_AGENT_MODE=daemon` for a daemon-only container.
+
+For the dev image, the token is `dev-token` by default and is persisted at
+`/etc/llama-agent/mcp-dev-token`; the entrypoint prints it once at startup so
+local MCP clients can be configured quickly. Set `LLAMA_AGENT_DEV_TOKEN` or
+`LLAMA_AGENT_MCP_TOKEN` to use another token. Keep the `/etc/llama-agent`
+volume when you want the generated token and configuration to survive a
+container replacement. The release image does not enable inbound MCP or
+generate a token automatically.
 
 Set `LLAMA_AGENT_WEB_TLS=true` to make Nginx serve HTTPS on port `8443` and
 redirect HTTP from `8080`. If
