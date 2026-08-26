@@ -15,14 +15,14 @@ int main() {
     std::vector<common_chat_tool> tools;
     assert(common_tool_profile_to_chat_tools(catalog, "minimal", registry, tools, error));
     assert(tools.size() == 2);
-    assert(tools[0].name == "calculator");
+    assert(tools[0].name == "math.calculate");
     assert(tools[0].description.find("args: expression:string") != std::string::npos);
     assert(tools[0].description.find("returns:") != std::string::npos);
     assert(tools[0].parameters.find("expression") != std::string::npos);
 
     common_chat_msg assistant;
     assistant.role = "assistant";
-    assistant.tool_calls.push_back({"calculator", R"({"expression":"7 * 6"})", ""});
+    assistant.tool_calls.push_back({"math.calculate", R"({"expression":"7 * 6"})", ""});
     common_tool_chat_dispatch_result dispatched;
     assert(common_tool_dispatch_chat_calls(assistant, registry, 1, dispatched, error));
     assert(assistant.tool_calls[0].id == "native-tool-1");
@@ -31,7 +31,7 @@ int main() {
     assert(dispatched.tool_messages[0].tool_call_id == "native-tool-1");
     assert(dispatched.tool_messages[0].content.find("42") != std::string::npos);
 
-    assistant.tool_calls.push_back({"time_now", "{}", "second"});
+    assistant.tool_calls.push_back({"time.now", "{}", "second"});
     assert(!common_tool_dispatch_chat_calls(assistant, registry, 1, dispatched, error));
     assert(error == "tool call batch exceeds configured limit");
 
@@ -43,7 +43,7 @@ int main() {
     assert(common_register_native_tool_adapters(memory_catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
     assert(common_tool_profile_to_chat_tools(memory_catalog, "memory", proposal_registry, tools, error));
     bool has_remember = false;
-    for (const auto & tool : tools) has_remember = has_remember || tool.name == "memory_remember";
+    for (const auto & tool : tools) has_remember = has_remember || tool.name == "memory.remember";
     assert(has_remember);
     return 0;
 }

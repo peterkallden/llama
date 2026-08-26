@@ -175,7 +175,7 @@ int main() {
     assert(build->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
     assert(test->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
 
-    const auto * resource_read = catalog.find_definition("resource_read");
+    const auto * resource_read = catalog.find_definition("resource.read");
     assert(resource_read);
     const auto resource_schema = nlohmann::json::parse(resource_read->input_schema_json);
     const auto resource_model_schema = nlohmann::json::parse(resource_read->model_input_schema_json);
@@ -195,7 +195,7 @@ int main() {
         resource_read->result_schema_json,
         compact_error);
     assert(compact_error.empty());
-    assert(compact_read.find("resource_read") != std::string::npos);
+    assert(compact_read.find("resource.read") != std::string::npos);
     assert(compact_read.find("args: id:string") != std::string::npos);
     assert(compact_read.find("representation?:text|bytes") != std::string::npos);
     assert(compact_read.find("max_bytes?:integer[1..32768]") != std::string::npos);

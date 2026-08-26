@@ -381,12 +381,17 @@ public:
             generate_plan,
             [&](const auto & candidate) {
                 parse_error.clear();
+                // Keep each regeneration attempt isolated.  A rejected
+                // candidate must not partially replace the proposal that will
+                // be returned or become input state for the next attempt.
+                common_plan_state candidate_plan = proposal.plan;
+                std::vector<common_plan_operation> candidate_operations;
                 parsed = common_plan_parse_proposal_json(
-                    candidate.content, proposal.plan, proposal.operations, parse_error, 6);
+                    candidate.content, candidate_plan, candidate_operations, parse_error, 6);
                 if (parsed && request.require_tool_execution) {
                     const bool has_allowed_tool_step = std::any_of(
-                        proposal.operations.begin(),
-                        proposal.operations.end(),
+                        candidate_operations.begin(),
+                        candidate_operations.end(),
                         [this](const common_plan_operation & operation) {
                             return operation.step && operation.step->tool_call &&
                                 std::find(
@@ -398,6 +403,10 @@ public:
                         parsed = false;
                         parse_error = "required tool execution plan must contain at least one registered tool step";
                     }
+                }
+                if (parsed) {
+                    proposal.plan = std::move(candidate_plan);
+                    proposal.operations = std::move(candidate_operations);
                 }
                 return parsed;
             });
