@@ -113,7 +113,7 @@ int main() {
     bindings.plan_id = &active_plan_id;
     common_tool_adapter_result adapters;
     assert(common_register_native_tool_adapters(catalog, "memory-read", bindings, registry, adapters, error));
-    assert(adapters.registered.size() == 5);
+    assert(adapters.registered.size() == 7);
     auto result = registry.execute({"calculator", R"({"expression":"(18 + 2) * 3"})"});
     assert(result.ok);
     auto output = result.output;
@@ -124,6 +124,10 @@ int main() {
     assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
     result = registry.execute({"memory_get", R"({"memory_id":"memory-1"})"});
     assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"memory_inspect", "{}"});
+    assert(result.ok && result.output.find("\"count\":1") != std::string::npos && result.output.find("fact") != std::string::npos);
+    result = registry.execute({"memory_conflict_check", R"({"content":"The plan store uses optimistic version checks."})"});
+    assert(result.ok && result.output.find("\"conflict\":true") != std::string::npos && result.output.find("memory-1") != std::string::npos);
     result = registry.execute({"memory_get", R"("memory-1")"});
     assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
     result = registry.execute({"plan_get", "{}"});

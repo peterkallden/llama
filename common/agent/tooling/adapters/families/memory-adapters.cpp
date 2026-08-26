@@ -76,6 +76,8 @@ bool common_try_register_memory_tool_adapter(
     installed = false;
     const bool is_memory_tool = definition.executor_id == "builtin.memory_search" ||
             definition.executor_id == "builtin.memory_get" ||
+            definition.executor_id == "builtin.memory_inspect" ||
+            definition.executor_id == "builtin.memory_conflict_check" ||
             definition.executor_id == "builtin.memory_remember";
     if (!is_memory_tool) return false;
 
@@ -112,6 +114,47 @@ bool common_try_register_memory_tool_adapter(
                 return not_found_failure("tool.memory_get.unavailable", "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
             }
             return common_tool_execution_result::success(common_tool_memory_get_result_to_json(*memory).dump());
+        }, error);
+    } else if (definition.executor_id == "builtin.memory_inspect" && bindings.memory_store) {
+        installed = register_definition(definition, registry, [bindings](const std::string & input) {
+            json arguments;
+            std::string err;
+            if (!parse_object(input, arguments, err)) {
+                return validation_failure("tool.memory_inspect.invalid_arguments", std::move(err));
+            }
+            const auto records = bindings.memory_store->list(bindings.memory_query, err);
+            if (!err.empty()) return execution_failure("tool.memory_inspect.load_failed", std::move(err), "Memory inspection failed.");
+            json by_kind = json::object();
+            for (const auto & record : records) {
+                const auto kind = common_memory_kind_name(record.kind);
+                by_kind[kind] = by_kind.value(kind, 0) + 1;
+            }
+            return common_tool_execution_result::success(json({
+                {"count", records.size()}, {"by_kind", std::move(by_kind)},
+            }).dump());
+        }, error);
+    } else if (definition.executor_id == "builtin.memory_conflict_check" && bindings.memory_store) {
+        installed = register_definition(definition, registry, [bindings](const std::string & input) {
+            json arguments;
+            std::string err;
+            if (!parse_object(input, arguments, err) || !arguments.contains("content") || !arguments["content"].is_string() || arguments["content"].get<std::string>().empty()) {
+                return validation_failure("tool.memory_conflict_check.invalid_content", "memory_conflict_check requires content");
+            }
+            common_memory_query query = bindings.memory_query;
+            query.text = arguments["content"].get<std::string>();
+            query.limit = 3;
+            query.minimum_score = 0.5f;
+            common_memory_retrieval retrieval(*bindings.memory_store);
+            const auto hits = retrieval.retrieve(query, err);
+            if (!err.empty()) return execution_failure("tool.memory_conflict_check.search_failed", std::move(err), "Memory conflict check failed.");
+            json matches = json::array();
+            for (const auto & hit : hits) matches.push_back({
+                {"id", hit.memory.id}, {"kind", common_memory_kind_name(hit.memory.kind)},
+                {"content", hit.memory.content}, {"score", hit.final_score},
+            });
+            return common_tool_execution_result::success(json({
+                {"conflict", !matches.empty()}, {"matches", std::move(matches)},
+            }).dump());
         }, error);
     } else if (definition.executor_id == "builtin.memory_remember" && bindings.memory_store) {
         installed = register_definition(definition, registry, [bindings](const std::string & input) {

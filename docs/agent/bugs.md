@@ -232,3 +232,29 @@ entering the lower-level load path. Invalid paths therefore produce a bounded
 
 The fix is intentionally contained in the agent resident host; it does not
 change the shared `tools/server/server-context.cpp` implementation.
+## MCP catalog advertised unexecutable memory tools
+
+- Status: Fixed locally; adapter and MCP regression coverage added
+- Affected area: inbound MCP `tools/list` and memory inspection
+- Symptom: `memory_inspect` and `memory_conflict_check` appeared in the MCP
+  catalog but were rejected by caller policy because no native adapter had
+  registered them. `memory_search` could also exceed the one-second generic
+  tool timeout while initializing the local embedding path.
+
+The memory adapter now registers both read-only tools and preserves their
+runtime scope. `memory_search` has a bounded 30-second tool budget, while the
+MCP request remains governed by the host's MCP timeout. A catalogued tool must
+have an executable adapter before it is treated as available; the adapter
+regression test covers inspection and conflict lookup.
+
+## Native launcher repository-root binding
+
+- Status: Fixed locally in the development launcher
+- Affected area: native MCP and web smoke tests for repository tools
+- Symptom: repository tools returned `not a git repository` even though the
+  launcher was started from the project checkout.
+
+The launcher previously mapped `tools.repository_root` to an empty temporary
+workspace. It now defaults that binding to the checkout and passes it as an
+explicit daemon override, while `LLAMA_AGENT_REPOSITORY_ROOT` remains
+available for a deliberately different fixture.
