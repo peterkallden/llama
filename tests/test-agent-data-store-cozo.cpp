@@ -64,6 +64,14 @@ int main() {
     customers_descriptor.columns = {{"customer_id", common_agent_dataset_column_type::integer, false},
         {"name", common_agent_dataset_column_type::string, true}};
     TEST_ASSERT(store.put_dataset_descriptor(customers_descriptor, error));
+    common_agent_dataset_descriptor duplicate_customers = customers_descriptor;
+    duplicate_customers.ref.uri = "customers-duplicate";
+    TEST_ASSERT(store.put_dataset_descriptor(duplicate_customers, error));
+    common_agent_dataset_descriptor ambiguous;
+    TEST_ASSERT(!store.find_dataset_by_name("customers", ambiguous, error));
+    TEST_ASSERT(error.find("dataset name is ambiguous") != std::string::npos &&
+        error.find("customers-duplicate") != std::string::npos &&
+        error.find("customers") != std::string::npos);
 
     std::string output;
     TEST_ASSERT(store.execute("data.query", R"({"dataset":"orders","order_by":[{"field":"value","direction":"desc"}],"max_scan_rows":2,"max_result_rows":1})", output, error));

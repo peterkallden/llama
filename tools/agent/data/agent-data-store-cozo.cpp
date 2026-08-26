@@ -21,6 +21,14 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+std::string normalized_dataset_name(const std::string & value) {
+    std::string result;
+    for (const unsigned char ch : value) {
+        if (!std::isspace(ch)) result += static_cast<char>(std::tolower(ch));
+    }
+    return result;
+}
+
 common_agent_dataset_column_type infer_dataset_column_type(const json & value) {
     if (value.is_null()) return common_agent_dataset_column_type::null_;
     if (value.is_boolean()) return common_agent_dataset_column_type::boolean;
@@ -340,7 +348,15 @@ bool common_agent_cozo_data_store::find_dataset_by_name(
         std::string candidate_name;
         for (const char ch : candidate.ref.name) if (!std::isspace(static_cast<unsigned char>(ch))) candidate_name += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         if (candidate_name != wanted) continue;
-        if (match != nullptr) { error = "dataset name is ambiguous"; return false; }
+        if (match != nullptr) {
+            error = "dataset name is ambiguous; choose one of: " + match->ref.name + " (" + match->ref.uri + ")";
+            for (const auto & option : descriptors) {
+                if (normalized_dataset_name(option.ref.name) == wanted && option.ref.uri != match->ref.uri) {
+                    error += ", " + option.ref.name + " (" + option.ref.uri + ")";
+                }
+            }
+            return false;
+        }
         match = &candidate;
     }
     if (match == nullptr) { error = "dataset name was not found"; return false; }
