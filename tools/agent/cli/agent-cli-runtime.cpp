@@ -52,6 +52,36 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     return names.empty() ? "none" : names;
 }
 
+std::string render_planner_binding_repair_context(
+        const common_agent_request & request,
+        const std::string & parse_error) {
+    if (parse_error.rfind("plan.binding.", 0) != 0) return {};
+
+    std::string repair = " The previous plan failed host binding validation with '" + parse_error + "'. "
+        "Repair the complete plan now. A resource handle is not a dataset binding: do not use "
+        "expressions such as $datasets.datasets[] for an attached file. ";
+    if (request.input_resources.empty()) {
+        return repair +
+            "There are no current attached resources to choose from. Do not invent a resource "
+            "URI or dataset alias. Use the registered-dataset flow only if the user asked for "
+            "a registered dataset; otherwise ask the user to attach a file or use the separate "
+            "scoped resource-list flow before choosing a prior resource.";
+    }
+    if (request.input_resources.size() == 1) {
+        return repair +
+            "The current attachment choices are: r1. Use resource:'r1' directly with "
+            "dataset.inspect, dataset.schema or dataset.sample.";
+    }
+    repair += "Choose exactly one current attachment using an explicit resource handle: ";
+    for (size_t index = 0; index < request.input_resources.size(); ++index) {
+        if (index != 0) repair += ", ";
+        repair += "r" + std::to_string(index + 1);
+        const auto & name = request.input_resources[index].resource.name;
+        if (!name.empty()) repair += " (" + common_agent_escape_input_resource_text(name) + ")";
+    }
+    return repair + ". Use that handle as resource:'rN'; do not invent dataset aliases.";
+}
+
 std::string build_memory_prompt_context(
         const std::vector<common_memory_hit> & hits,
         const common_memory_context_config & memory_config = {},
@@ -257,6 +287,8 @@ public:
                 common_memory_overlay_stage::planning,
                 make_memory_context_config(generation_config.context_budgets),
                 make_overlay_config(generation_config.context_budgets));
+        std::string parse_error;
+        bool parsed = false;
         auto generate_plan = [&](bool regeneration) {
             common_chat_msg attempt = user;
             if (regeneration) {
@@ -269,6 +301,7 @@ public:
                         " At least one step must be mode:'tool' and use an exact registered tool name. "
                         "A reasoning-only or answer-only plan is invalid for this request.";
                 }
+                attempt.content += render_planner_binding_repair_context(request, parse_error);
             }
             return inference.generate_result(make_agent_cli_generation_request(
                 request,
@@ -277,8 +310,6 @@ public:
                 make_agent_cli_generation_options(generation_config, std::max(generation_config.n_predict, 512)),
                 common_plan_model_facing_json_schema(allowed_tools)));
         };
-        std::string parse_error;
-        bool parsed = false;
         auto generation_result = common_agent_bounded_structured_regeneration(
             generate_plan,
             [&](const auto & candidate) {

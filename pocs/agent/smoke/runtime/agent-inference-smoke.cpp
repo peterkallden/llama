@@ -545,6 +545,41 @@ static void test_planner_regenerates_truncated_json() {
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
 }
 
+static void test_planner_repairs_invalid_resource_binding() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Inspect file","steps":[{"tool":"dataset.sample","mode":"tool","args":{"resource":"$datasets.datasets[]"}}]})"),
+        make_success(R"({"goal":"Inspect file","steps":[{"tool":"dataset.sample","mode":"tool","args":{"resource":"r1","rows":20}}]})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Tell me what the attached CSV contains";
+    request.require_tool_execution = true;
+    common_agent_input_resource resource;
+    resource.resource.name = "data.csv";
+    resource.resource.mime_type = "text/csv";
+    resource.resource.uri = "agent-resource://resource/data.csv";
+    request.input_resources.push_back(std::move(resource));
+    const std::vector<common_chat_tool> tools = {
+        {"dataset.sample", "Sample rows from an attached dataset.",
+            R"({"type":"object","additionalProperties":false,"properties":{"resource":{"type":"string"},"rows":{"type":"integer"}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 1);
+    assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
+    assert(proposal.operations[0].step->tool_call->arguments["resource"] == "r1");
+    assert(inference.seen.size() == 2);
+    const auto & repair_prompt = inference.seen[1].messages[1].content;
+    assert(repair_prompt.find("plan.binding.") != std::string::npos);
+    assert(repair_prompt.find("current attachment choices are: r1") != std::string::npos);
+    assert(repair_prompt.find("resource:'r1'") != std::string::npos);
+}
+
 static void test_reflection_regenerates_invalid_json() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2093,6 +2128,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_generation_metadata();
     } else if (name == "planner-regeneration") {
         test_planner_regenerates_truncated_json();
+    } else if (name == "planner-resource-binding-repair") {
+        test_planner_repairs_invalid_resource_binding();
     } else if (name == "reflection-regeneration") {
         test_reflection_regenerates_invalid_json();
     } else if (name == "memory-regeneration") {
@@ -2162,6 +2199,7 @@ int main(int argc, char ** argv) {
         "runtime-assembly",
         "runtime-metadata",
         "planner-regeneration",
+        "planner-resource-binding-repair",
         "reflection-regeneration",
         "memory-regeneration",
         "selection-metadata",

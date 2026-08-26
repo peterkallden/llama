@@ -1181,6 +1181,23 @@ answer-only fallback, because that would make an ungrounded answer look like a
 successful tool-backed turn. Callers that allow ordinary conversational
 fallback may retain the old bounded answer step.
 
+If the rejected plan contains a `plan.binding.*` error, the planner gets one
+bounded regeneration with a host-generated repair hint. For current-turn
+attachments the hint lists only the available handles (`r1`, `r2`, and so on)
+and their names. The model must select one of those handles explicitly, for
+example `resource: "r1"`; it must not invent `$datasets` aliases or turn the
+attachment list into a dataset registry. With exactly one attachment the host
+may still apply the deterministic default for dataset inspection tools. With
+multiple attachments the host does not guess. If there are no current
+attachments, the repair hint directs the model to the registered-dataset
+flow (`dataset.list` followed by `dataset.select`) when the user asked for a
+registered dataset; otherwise the host must first run a separate scoped
+resource-list flow, or ask the user for an attachment. The existing
+daemon/admin `resources/list` operation is not silently exposed as a planner
+tool by this repair. This repair is local to the failed planner attempt; it
+does not rerun the entire orchestration plan and it does not fabricate missing
+resources.
+
 Tool-call repair is a common runtime path shared by `reflective`, `deliberate`
 and `research`; it is not a mode-specific tool provider. After a schema or
 availability failure, the host records a bounded repair context for the next
