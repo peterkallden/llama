@@ -93,6 +93,10 @@ function eventTime(event: Record<string, unknown>) {
   return "—:—:—";
 }
 
+function isAgentError(message: { role: string; content: string }) {
+  return message.role === "assistant" && message.content.trim().toLowerCase().startsWith("agent runtime failed:");
+}
+
 function isArtifactEvent(event: Record<string, unknown>) {
   return session.eventType(event) === "tool.artifact_created" && Boolean(event.detail || event.resource_uri);
 }
@@ -115,11 +119,11 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <section class="card chat">
           <div class="card-title"><h2>Chat</h2><button v-if="session.busy" class="cancel-button" @click="session.cancel">Cancel</button></div>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
-          <div v-for="message in session.messages" :key="message.id" class="message" :class="message.role"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "working…" : "") }}</div></div>
+          <div v-for="message in session.messages" :key="message.id" class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><div class="input-actions"><label class="file-button">Attach files<input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording">{{ session.recording ? "Stop recording" : "Record audio" }}</button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span></div><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)">Send</button></div>
+            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8.5 12.5 6.2-6.2a3.5 3.5 0 0 1 5 5l-7.8 7.8a5 5 0 0 1-7.1-7.1l7.4-7.4a2.5 2.5 0 0 1 3.5 3.5l-7.1 7.1a1.5 1.5 0 1 1-2.1-2.1l6.1-6.1" /></svg><span>Attach files</span><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg><span>{{ session.recording ? "Stop recording" : "Record audio" }}</span></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>Send</span></button></div></div>
           </form>
           <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><label v-for="(file, index) in session.attachments" :key="file.name" class="attachment"><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label></div>
         </section>
