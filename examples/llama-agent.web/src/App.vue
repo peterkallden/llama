@@ -83,6 +83,14 @@ function eventText(event: Record<string, unknown>) {
   return String(event.detail ?? event.error ?? event.tool_name ?? "");
 }
 
+function eventCategory(event: Record<string, unknown>) {
+  return String(event.event_category ?? "").trim();
+}
+
+function eventTypeLabel(event: Record<string, unknown>) {
+  return String(event.event_type ?? event.type ?? "event").trim();
+}
+
 function eventTime(event: Record<string, unknown>) {
   const value = event.timestamp ?? event.created_at ?? event.client_received_at;
   if (typeof value === "number") return new Date(value < 10_000_000_000 ? value * 1000 : value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -134,7 +142,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
           <div class="events-viewport">
           <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
             <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
-            <div class="event-main"><div><time class="event-time">{{ eventTime(event) }}</time><strong>{{ session.eventType(event) }}:</strong><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div><p>{{ eventText(event) }}</p></div>
+            <div class="event-main"><div class="event-line"><time class="event-time">{{ eventTime(event) }}</time><strong class="event-kind"><span v-if="eventCategory(event)">{{ eventCategory(event) }}: </span>{{ eventTypeLabel(event) }}:</strong><span class="event-detail">{{ eventText(event) }}</span><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div></div>
             <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
           </div>
           </div>
