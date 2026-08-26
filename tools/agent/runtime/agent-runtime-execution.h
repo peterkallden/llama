@@ -113,6 +113,9 @@ struct common_agent_runtime_driver_execution {
     size_t active_resource_chunk_plan = static_cast<size_t>(-1);
     size_t active_resource_chunk_input = static_cast<size_t>(-1);
     size_t active_resource_chunk_index = 0;
+    // A successful family preflight makes ordinary answer-only fallback
+    // invalid until at least one selected tool has completed.
+    bool require_tool_execution = false;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

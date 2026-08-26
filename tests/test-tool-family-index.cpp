@@ -10,11 +10,12 @@ int main() {
         {"dataset.list", "list", "{}", "{}"},
         {"diagnostics.native_crash", "native crash", "{}", "{}"},
         {"web_search", "search", "{}", "{}"},
+        {"time_now", "time", "{}", "{}"},
         {"calculator", "calculate", "{}", "{}"},
     };
 
     const auto families = common_generate_tool_family_index(tools);
-    assert(families.size() == 5);
+    assert(families.size() == 6);
     const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == id) return &family;
         return nullptr;
@@ -26,6 +27,7 @@ int main() {
     assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);
     assert(rendered.find("diagnostics: Analyze compiler and test failures, native crashes and debugger dumps") != std::string::npos);
     assert(rendered.find("web: Search and retrieve information from the web") != std::string::npos);
+    assert(rendered.find("time: Return the current time") != std::string::npos);
     assert(rendered.find("calculator: Operations provided by the calculator tool family") != std::string::npos);
     assert(rendered.find("aggregate") == std::string::npos);
     assert(rendered.find("dataset.list") == std::string::npos);

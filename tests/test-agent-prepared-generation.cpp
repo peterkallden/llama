@@ -95,6 +95,8 @@ void test_prepare_plain_chat_has_no_tool_grammar() {
     common_agent_prepared_generation prepared;
     assert(common_agent_prepare_chat_generation(templates.get(), request, prepared));
     assert(prepared.grammar.empty());
+    assert(!prepared.grammar_lazy);
+    assert(prepared.grammar_triggers.empty());
     assert(!prepared.parse_tool_calls);
     assert(!prepared.stream);
 }

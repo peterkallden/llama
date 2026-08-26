@@ -36,6 +36,14 @@ bool common_agent_prepare_chat_generation(
         // grammar with no productions as a fatal empty grammar stack.
         if (!request.tools.empty()) {
             prepared.grammar = common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar };
+        } else {
+            // Some chat templates expose lazy tool-grammar metadata even when
+            // the current request has no tools. Do not carry that metadata
+            // into ordinary conversation or final synthesis: there is no
+            // grammar to activate and small models can otherwise create an
+            // empty grammar stack when the lazy trigger fires.
+            prepared.grammar_lazy = false;
+            prepared.grammar_triggers.clear();
         }
         prepared.generation_prompt = generated_chat_params.generation_prompt;
         return true;

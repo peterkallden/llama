@@ -6,12 +6,21 @@
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cstdio>
 #include <sstream>
 #include <ctime>
 
 namespace {
+
+bool tool_has_no_required_arguments(const common_chat_tool & tool) {
+    const auto schema = nlohmann::ordered_json::parse(tool.parameters, nullptr, false);
+    if (schema.is_discarded() || !schema.is_object()) return false;
+    if (!schema.contains("required")) return true;
+    return schema["required"].is_array() && schema["required"].empty();
+}
 
 bool select_model_tool_families(
         common_agent_runtime_driver_execution & execution,
@@ -21,6 +30,7 @@ bool select_model_tool_families(
     const auto & generation_config = execution.runtime_config.generation_config;
     execution.family_chat_routed = false;
     execution.family_chat_result = {};
+    execution.require_tool_execution = false;
     if (!generation_config.enable_tool_family_routing ||
             execution.tooling.tools.empty() ||
             !execution.current_plan_id.empty() ||
@@ -89,6 +99,36 @@ bool select_model_tool_families(
     if (execution.model_tools.empty()) {
         error = "tool family selection did not resolve any registered tools";
         return false;
+    }
+    // The preflight is a host-owned intent decision. Once it says that a
+    // family is needed, a planner-generated answer without a completed tool
+    // would be an ungrounded fallback (for example, a placeholder answer to
+    // a time query). Reuse the runtime's existing fail-closed contract.
+    execution.require_tool_execution = true;
+
+    // A selected singleton tool with no mandatory arguments does not need a
+    // model-authored plan. Reuse the normal chat/tool driver, but keep the
+    // request marked as tool-required so it cannot silently answer without
+    // dispatching the selected tool.
+    if (execution.model_tools.size() == 1 &&
+            tool_has_no_required_arguments(execution.model_tools.front())) {
+        common_agent_runtime_tooling chat_tooling = execution.tooling;
+        chat_tooling.tools = execution.model_tools;
+        common_agent_request chat_request = request;
+        chat_request.require_tool_execution = true;
+        common_agent_generation_options chat_options;
+        chat_options.n_predict = generation_config.n_predict;
+        chat_options.n_threads = generation_config.n_threads;
+        chat_options.generation_trace = generation_config.generation_trace;
+        common_agent_chat_runtime_execution chat_execution{
+            execution.inference,
+            std::move(chat_request),
+            chat_options,
+            {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
+            chat_tooling,
+        };
+        execution.family_chat_routed = true;
+        return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
     }
     return true;
 }
@@ -440,7 +480,12 @@ common_agent_runtime_policy make_agent_runtime_policy(common_agent_runtime_polic
     policy.enable_reflection = true;
     policy.max_iterations = 2;
     policy.max_reflection_rounds = 1;
-    policy.max_tool_rounds = options.max_tool_rounds;
+    // Zero in host/bootstrap configuration means "use the safe default", not
+    // "disable every tool round". A caller that wants a smaller budget can
+    // still provide an explicit positive value.
+    policy.max_tool_rounds = options.max_tool_rounds > 0
+        ? options.max_tool_rounds
+        : 16;
     common_tool_profile_snapshot profile_snapshot;
     std::string profile_error;
     if (resolve_common_tool_profile_snapshot(
@@ -508,6 +553,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.max_iterations = execution.policy.max_iterations;
     request.max_reflection_rounds = execution.policy.max_reflection_rounds;
     request.max_tool_batches = execution.tooling.profile_tools_active ? execution.policy.max_tool_rounds : 0;
+    request.require_tool_execution = execution.require_tool_execution;
     request.allow_policy_gated_tool_proposals = execution.policy.allow_policy_gated_tool_proposals;
     request.deliberation_policy = execution.policy.deliberation_policy;
     request.research_should_stop = execution.research_should_stop;

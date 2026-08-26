@@ -80,6 +80,42 @@ Qwen-backed web smoke with resident tracing. The trace confirms the intended
 sequence: `tool_family_selection` -> `conversation` for `hi there`, with no
 planner grammar and no timeout.
 
+## Family selection allowed an ungrounded answer fallback
+
+- Status: Fixed locally; deterministic contract tests and a Qwen web smoke are
+  required for verification
+- Affected area: daemon/web agent turns using `agent_plan=auto`
+- Symptom: a request such as `what time is it?` selected the `time` family, but
+  the planner could still produce a reasoning/answer step without completing
+  `time_now`. The turn then returned a placeholder-like answer instead of the
+  UTC value from the tool.
+
+### Cause and fix
+
+Family selection is a host-owned decision that says external evidence is
+needed. It must therefore not only narrow the model-facing tool view; it must
+also set the existing `require_tool_execution` request contract. The normal
+runtime guard then rejects answer-only fallback until a mandatory tool step has
+completed. This keeps the behavior aligned with ordinary CLI requests that
+already use the same contract, without adding a second family-specific
+execution path.
+
+The `time` family is described semantically as `Return the current time`. The
+family view remains compact and does not expose `time_now` until the model has
+selected the family; the later planner view contains the exact tool name and
+contract.
+
+Singleton tools with no required arguments now use the existing chat/tool
+driver directly after family selection. This is a fast path, not a second
+execution model: multi-tool and dataflow requests still use the normal plan
+compiler/runtime. The selected request remains marked as requiring tool
+execution, so the fast path also fails closed if the model emits no tool call.
+
+The host/bootstrap value `limits.max_tool_rounds: 0` is treated as “use the
+default budget” and resolves to 16 rounds. This avoids a misleading situation
+where required tool selection is enabled but the execution budget is
+accidentally zero; explicit positive limits remain authoritative.
+
 ## Research checkpoint missing turn identity for project-scoped plans
 
 - Status: Fixed and verified

@@ -180,7 +180,11 @@ bool run_agent_chat_runtime(
     result = {};
     std::vector<common_chat_msg> messages = execution.request.messages;
     auto available_tools = execution.tooling.tools;
-    const auto initial_tool_choice = available_tools.empty() ? COMMON_CHAT_TOOL_CHOICE_NONE : COMMON_CHAT_TOOL_CHOICE_AUTO;
+    const auto initial_tool_choice = available_tools.empty()
+        ? COMMON_CHAT_TOOL_CHOICE_NONE
+        : (execution.request.require_tool_execution
+            ? COMMON_CHAT_TOOL_CHOICE_REQUIRED
+            : COMMON_CHAT_TOOL_CHOICE_AUTO);
     auto generation_result = execution.inference.generate_result(make_generation_request(
         execution.request,
         common_agent_generation_purpose::conversation,
@@ -235,6 +239,11 @@ bool run_agent_chat_runtime(
 
     common_chat_msg assistant_message;
     if (!parse_assistant_message(generation_result, !execution.tooling.tools.empty(), assistant_message, error)) {
+        return false;
+    }
+
+    if (assistant_message.tool_calls.empty() && execution.request.require_tool_execution) {
+        error = "required tool execution did not produce a tool call";
         return false;
     }
 

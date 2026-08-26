@@ -116,7 +116,12 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     policy.enable_reflection = true;
     policy.max_iterations = 2;
     policy.max_reflection_rounds = 1;
-    policy.max_tool_rounds = options.max_tool_rounds;
+    // A zero value in host/bootstrap configuration means "use the safe
+    // default". Keep daemon turns consistent with the CLI/runtime policy;
+    // callers can still select a smaller positive budget explicitly.
+    policy.max_tool_rounds = options.max_tool_rounds > 0
+        ? options.max_tool_rounds
+        : 16;
     common_tool_profile_snapshot profile_snapshot;
     std::string profile_error;
     if (resolve_common_tool_profile_snapshot(

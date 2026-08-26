@@ -35,6 +35,7 @@ std::string family_description_for_id(const std::string & id) {
         {"repository", "Search and inspect repository-backed content"},
         {"resource",   "Resolve and inspect external resources"},
         {"statistics", "Describe datasets and compute summaries"},
+        {"time",       "Return the current time"},
         {"web",        "Search and retrieve information from the web"},
     };
     const auto it = descriptions.find(id);

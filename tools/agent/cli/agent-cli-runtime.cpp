@@ -238,6 +238,13 @@ public:
             "Steps chain after the previous step by default. Omit a dataflow input when exactly one compatible preceding output can be inferred; use as:'name' and an explicit $name.field or $previous.field reference only when selecting or disambiguating a source. A bare name such as \"table\" is a literal, not an alias. The host canonicalizes references to the strict $from_step/$json_pointer binding. Do not invent placeholder values such as resolved table or previous_result. Resource handles (r1) and dataset results (d1) are different types. "
             "A tool step has mode tool. A reasoning step has mode reasoning. The runtime adds the final answer step automatically, so do not emit one unless you need a custom final dependency shape. "
             "The runtime supplies IDs, titles, objectives, empty evidence lists, operation metadata, and safe defaults. Keep values under twelve words.";
+        if (request.require_tool_execution) {
+            system.content +=
+                " At least one selected step MUST be a mode:'tool' step using one of the registered tools, "
+                "and that tool must be executed before any answer is synthesized. Do not return a "
+                "reasoning-only or answer-only plan. For a current-time request, use tool:'time_now' "
+                "with args:{}; never answer the time question from memory or with a placeholder.";
+        }
         common_chat_msg user;
         user.role = "user";
         user.content = "[User request]\n" + request.prompt +
@@ -256,6 +263,11 @@ public:
                     "\n[Regeneration]\nThe previous response was incomplete or structurally invalid. "
                     "Regenerate the complete JSON object from the beginning. Do not continue partial JSON, "
                     "add commentary, or emit tool calls outside the requested plan object.";
+                if (request.require_tool_execution) {
+                    attempt.content +=
+                        " At least one step must be mode:'tool' and use an exact registered tool name. "
+                        "A reasoning-only or answer-only plan is invalid for this request.";
+                }
             }
             return inference.generate_result(make_agent_cli_generation_request(
                 request,
@@ -269,9 +281,25 @@ public:
         auto generation_result = common_agent_bounded_structured_regeneration(
             generate_plan,
             [&](const auto & candidate) {
-            parse_error.clear();
+                parse_error.clear();
                 parsed = common_plan_parse_proposal_json(
                     candidate.content, proposal.plan, proposal.operations, parse_error, 6);
+                if (parsed && request.require_tool_execution) {
+                    const bool has_allowed_tool_step = std::any_of(
+                        proposal.operations.begin(),
+                        proposal.operations.end(),
+                        [this](const common_plan_operation & operation) {
+                            return operation.step && operation.step->tool_call &&
+                                std::find(
+                                    allowed_tools.begin(),
+                                    allowed_tools.end(),
+                                    operation.step->tool_call->name) != allowed_tools.end();
+                        });
+                    if (!has_allowed_tool_step) {
+                        parsed = false;
+                        parse_error = "required tool execution plan must contain at least one registered tool step";
+                    }
+                }
                 return parsed;
             });
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
