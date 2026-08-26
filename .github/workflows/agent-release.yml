@@ -262,6 +262,9 @@ jobs:
             > "$package_dir/AGENT-RELEASE-MANIFEST.txt"
 
           archive="llama-agent-${artifact_version}-${BACKEND}-linux-x64.tar.gz"
+          # Keep archive permissions portable across Docker, Podman and native
+          # installs; runner-local private directory modes must not be shipped.
+          chmod -R u+rwX,go+rX "$package_dir"
           tar -czf "$archive" -C "$package_dir" .
           sha256sum "$archive" > "${archive}.sha256"
 

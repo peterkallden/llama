@@ -193,6 +193,9 @@ jobs:
             "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > package-source/AGENT-PACKAGE-MANIFEST.txt
 
+          # Archives are consumed by containers and other users. Do not carry
+          # runner-local private directory modes into those runtimes.
+          chmod -R u+rwX,go+rX package-source
           tar -czf "$archive" -C package-source .
           sha256sum "$archive" > "${archive}.sha256"
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
