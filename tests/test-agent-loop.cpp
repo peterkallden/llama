@@ -199,6 +199,14 @@ public:
     }
 };
 
+class context_overflow_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
+        error = "model reflection generation failed (status=errored, stop=error): request (3174 tokens) exceeds the available context size (3072 tokens)";
+        return {};
+    }
+};
+
 class hint_reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
@@ -344,6 +352,19 @@ int main() {
     assert(reasoning_plan && reasoning_plan->observations.size() == 1);
     assert(reasoning_plan->observations.front().summary.find("\"format\":\"unstructured\"") != std::string::npos);
 
+    common_plan_in_memory_store reflection_overflow_store;
+    assert(reflection_overflow_store.open("", error));
+    context_overflow_reflector overflow_reflector;
+    common_agent_runtime reflection_overflow_runtime(
+        reflection_overflow_store, reasoning_p, reasoning_e, overflow_reflector);
+    const auto reflection_overflow_result = reflection_overflow_runtime.run(reasoning_request);
+    assert(reflection_overflow_result.error.empty());
+    assert(reflection_overflow_result.response == "draft");
+    assert(std::any_of(reflection_overflow_result.trace.begin(), reflection_overflow_result.trace.end(),
+        [](const auto & trace) {
+            return trace.detail.find("reflection skipped because its context exceeded the model budget") != std::string::npos;
+        }));
+
     common_plan_in_memory_store hint_store;
     assert(hint_store.open("", error));
     hint_reflector hint_r;
@@ -403,6 +424,15 @@ int main() {
     assert(failed_plan && failed_plan->observations.size() == 1);
     assert(failed_plan->observations.front().summary.find("tool.lookup.not_found") != std::string::npos);
     assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
+
+    common_plan_in_memory_store reflection_failure_store;
+    assert(reflection_failure_store.open("", error));
+    context_overflow_reflector reflection_failure_reflector;
+    common_agent_runtime reflection_failure_runtime(
+        reflection_failure_store, failing_p, e, reflection_failure_reflector, &failing_tool_runtime);
+    const auto reflection_failure_run = reflection_failure_runtime.run(failure_request);
+    assert(reflection_failure_run.response.empty());
+    assert(reflection_failure_run.error.find("context budget exceeded") != std::string::npos);
 
     common_plan_in_memory_store invalid_args_store;
     assert(invalid_args_store.open("", error));

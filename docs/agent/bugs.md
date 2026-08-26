@@ -141,6 +141,22 @@ default budget” and resolves to 16 rounds. This avoids a misleading situation
 where required tool selection is enabled but the execution budget is
 accidentally zero; explicit positive limits remain authoritative.
 
+## Reflection request exceeded the model context
+
+- Status: Fixed locally; compact reflection projection and fallback regression
+  coverage added
+- Affected area: small-model reflection after planning and tool execution
+- Symptom: Qwen reported `request (3174 tokens) exceeds the available context
+  size (3072 tokens)` and the turn failed during reflection generation.
+
+Reflection now receives only compact plan state, relevant tool contracts,
+bounded observations, resource handles, the request and the draft. It omits the
+full tool catalog and memory/history projection. If the reduced request still
+does not fit, a draft is accepted only when every required tool step is
+resolved; otherwise the draft is discarded and the required work remains
+blocked. This preserves the fail-closed tool guarantee while allowing a valid
+answer to survive an optional quality-pass failure.
+
 ## Resource upload scope drift at the daemon boundary
 
 - Status: Fixed locally; daemon scope regression test added

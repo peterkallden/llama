@@ -19,6 +19,11 @@
 
 using json = nlohmann::ordered_json;
 
+static bool common_agent_reflection_context_overflow(const std::string & error) {
+    return error.find("exceeds the available context size") != std::string::npos ||
+        error.find("context size") != std::string::npos;
+}
+
 static bool request_has_active_resource_chunk(const common_agent_request & request) {
     return std::any_of(request.input_resources.begin(), request.input_resources.end(),
         [](const common_agent_input_resource & input) {
@@ -891,6 +896,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return false;
     };
 
+    const auto has_unresolved_required_tool_step = [&]() -> bool {
+        for (const auto & step : plan.steps) {
+            if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool || step.optional) continue;
+            if (step.status != common_plan_step_status::completed &&
+                    step.status != common_plan_step_status::skipped) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     const auto complete_active_synthesis_step = [&]() -> bool {
         if (!plan.active_step_id) return true;
         common_plan_step * active = nullptr;
@@ -1436,8 +1452,35 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         common_reflection_result reflection;
         if (!evaluate_common_agent_reflection_phase(
                 turn, plan, draft, executed_step_ids, reflection)) {
+            if (common_agent_reflection_context_overflow(error) &&
+                    !has_unresolved_required_tool_step()) {
+                if (!complete_active_synthesis_step()) {
+                    result.error = error;
+                    return result;
+                }
+                result.response = draft;
+                error.clear();
+                result.error.clear();
+                append_trace(result, common_runtime_trace_stage::reflection,
+                    common_runtime_trace_kind::failed,
+                    "reflection skipped because its context exceeded the model budget",
+                    plan.id);
+                append_trace(result, common_runtime_trace_stage::response,
+                    common_runtime_trace_kind::completed,
+                    "response accepted without reflection after context-budget guard",
+                    plan.id);
+                break;
+            }
             result.response = draft;
-            result.error = "reflection failed safely: " + error;
+            if (common_agent_reflection_context_overflow(error)) {
+                // Do not leak an unverified draft when a mandatory tool step
+                // is still unresolved. The caller gets the bounded reason
+                // and can retry with a larger context or repair the step.
+                result.response.clear();
+                result.error = "reflection skipped safely: model context budget exceeded while required tool work remains unresolved";
+            } else {
+                result.error = "reflection failed safely: " + error;
+            }
             break;
         }
         const bool tool_execution_closed = common_plan_tool_execution_closed(plan);

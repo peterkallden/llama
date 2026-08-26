@@ -1860,6 +1860,20 @@ The final synthesis and reflection paths use this observation budget
 separately from `plan_chars`. This prevents a long plan or raw result from
 clipping the facts needed to produce and verify the final answer.
 
+Reflection uses a narrower projection than final synthesis. It receives the
+goal, active/failed and dependency-relevant step state, bounded verified
+observations, the relevant tool contracts, the user request, resource handles
+and the draft. It does not receive the full tool catalog, full memory overlay,
+or the complete raw plan history. This keeps repair decisions useful for small
+models without changing the authoritative host plan or evidence store.
+
+If a reflection request still exceeds the model context, the runtime handles
+that as a bounded quality-pass failure. A draft may be accepted without
+reflection only when no required tool step remains unresolved. If required
+tool work is pending or failed, the draft is discarded and the turn remains
+blocked with an explicit context-budget error; reflection overflow must never
+turn an unverified draft into a final answer.
+
 The ordinary model-facing runtime plan follows the same separation. It carries
 plan identity, goal, constraints, assumptions and step status, but does not
 repeat raw observation summaries when the bounded
