@@ -81,6 +81,7 @@ async function connect() {
     await api.value.connectEvents(observe, controller.signal, () => {
       connected.value = true;
       connectionState.value = "connected";
+      void refreshStatus().catch(() => undefined);
     });
   } catch (cause) {
     if (!controller.signal.aborted) {

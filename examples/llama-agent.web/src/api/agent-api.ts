@@ -94,7 +94,15 @@ export class AgentApi {
         for (const block of parsed.blocks) {
           const message = parseSseBlock(block);
           if (!message?.data) continue;
-          try { sink(JSON.parse(message.data) as AgentEvent); } catch { /* ignore malformed event */ }
+          try {
+            const payload = JSON.parse(message.data) as AgentEvent & { event?: AgentEvent };
+            // The daemon SSE envelope carries the presentation event in its
+            // nested `event` value. Pass that value to the UI so category,
+            // type and detail are rendered from the event itself rather than
+            // falling back to the envelope's generic message type.
+            const event = payload.event && typeof payload.event === "object" ? payload.event : payload;
+            sink(event);
+          } catch { /* ignore malformed event */ }
         }
       }
     } finally { reader.releaseLock(); }
