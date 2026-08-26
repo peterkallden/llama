@@ -412,6 +412,21 @@ public:
             });
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (parsed) {
+            if (request.require_tool_execution) {
+                // Final synthesis is host-owned for tool-required plans. The
+                // JSON parser may add its generic native final operation for
+                // standalone callers, but it must not become a second
+                // model-selected operation in this planner path.
+                proposal.operations.erase(
+                    std::remove_if(
+                        proposal.operations.begin(),
+                        proposal.operations.end(),
+                        [](const common_plan_operation & operation) {
+                            return operation.step &&
+                                common_plan_step_effective_mode(*operation.step) == common_plan_step_mode::final_response;
+                        }),
+                    proposal.operations.end());
+            }
             for (auto & operation : proposal.operations) {
                 if (operation.step && operation.step->tool_call && std::find(allowed_tools.begin(), allowed_tools.end(), operation.step->tool_call->name) == allowed_tools.end()) {
                     operation.step->tool_call.reset();
