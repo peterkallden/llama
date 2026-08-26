@@ -11,6 +11,8 @@ const capabilities = computed(() => Array.isArray(status.value.capabilities)
   ? status.value.capabilities.map(String)
   : []);
 const connected = ref(false);
+const connectionState = ref<"connecting" | "connected" | "disconnected" | "error" | "auth-error">("disconnected");
+const connectionError = ref("");
 const busy = ref(false);
 const error = ref("");
 const messages = ref<ChatMessage[]>([]);
@@ -68,14 +70,24 @@ async function connect() {
   const controller = new AbortController();
   abortController.value = controller;
   connected.value = false;
+  connectionState.value = "connecting";
+  connectionError.value = "";
   try {
-    connected.value = true;
-    await api.value.connectEvents(observe, controller.signal);
+    await api.value.connectEvents(observe, controller.signal, () => {
+      connected.value = true;
+      connectionState.value = "connected";
+    });
   } catch (cause) {
-    if (!controller.signal.aborted) error.value = cause instanceof Error ? cause.message : String(cause);
+    if (!controller.signal.aborted) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      connected.value = false;
+      connectionError.value = message;
+      connectionState.value = /401|403|unauthor/i.test(message) ? "auth-error" : "error";
+    }
   } finally {
     connected.value = false;
-    if (!controller.signal.aborted) {
+    if (!controller.signal.aborted && connectionState.value !== "auth-error") {
+      connectionState.value = "disconnected";
       await new Promise((resolve) => window.setTimeout(resolve, 1500));
       if (!controller.signal.aborted) void connect();
     }
@@ -229,5 +241,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

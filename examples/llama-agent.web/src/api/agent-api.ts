@@ -74,12 +74,13 @@ export class AgentApi {
     return response.blob();
   }
 
-  async connectEvents(sink: EventSink, signal: AbortSignal): Promise<void> {
+  async connectEvents(sink: EventSink, signal: AbortSignal, onConnected?: () => void): Promise<void> {
     const response = await fetch(`${this.baseUrl}/events`, {
       headers: { ...this.headers(), Accept: "text/event-stream" },
       signal,
     });
     if (!response.ok || !response.body) throw new Error(`SSE connection failed: ${response.status}`);
+    onConnected?.();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
