@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "./session";
 import type { DaemonProviderStatus } from "./types/agent";
 
@@ -10,6 +10,7 @@ const toolsExpanded = ref(false);
 const expandedTools = ref<Set<string>>(new Set());
 const sessionsExpanded = ref(false);
 const webClientExpanded = ref(true);
+const eventsViewport = ref<HTMLElement | null>(null);
 
 const connectionLabel = {
   connecting: "connecting",
@@ -23,6 +24,12 @@ onMounted(() => { void session.connect(); void session.refreshStatus().catch(() 
 
 watch(() => session.connectionState, (state) => {
   if (state !== "connected") webClientExpanded.value = true;
+});
+
+watch(() => session.events.length, () => {
+  void nextTick(() => {
+    if (eventsViewport.value) eventsViewport.value.scrollTop = 0;
+  });
 });
 
 function send() {
@@ -131,7 +138,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><span>Attach files</span><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg><span>{{ session.recording ? "Stop recording" : "Record audio" }}</span></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>Send</span></button></div></div>
+            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /><path class="plane-plus" d="M18 18v4M16 20h4" /></svg><span>Send</span></button></div></div>
           </form>
           <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><label v-for="(file, index) in session.attachments" :key="file.name" class="attachment"><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label></div>
         </section>
@@ -139,7 +146,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <section class="card">
           <div class="card-title"><h2>Events</h2><span class="muted">{{ session.events.length }}</span></div>
           <div v-if="!session.events.length" class="empty">Runtime events will appear here while the daemon is working.</div>
-          <div class="events-viewport">
+          <div ref="eventsViewport" class="events-viewport">
           <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
             <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
             <div class="event-main"><div class="event-line"><time class="event-time">{{ eventTime(event) }}</time><strong class="event-kind"><span v-if="eventCategory(event)">{{ eventCategory(event) }}: </span>{{ eventTypeLabel(event) }}:</strong><span class="event-detail">{{ eventText(event) }}</span><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div></div>
