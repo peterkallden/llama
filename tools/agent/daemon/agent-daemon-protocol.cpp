@@ -472,6 +472,16 @@ void append_agent_daemon_status_snapshot(
         {"tool_profile", status.readiness.tool_profile},
         {"warnings", status.readiness.warnings},
     };
+    json tools = json::array();
+    for (const auto & tool : status.readiness.tools) {
+        tools.push_back({
+            {"name", tool.name},
+            {"description", tool.description},
+            {"source", tool.source},
+            {"state", tool.state},
+        });
+    }
+    response["readiness"]["tools"] = std::move(tools);
     json providers = json::array();
     for (const auto & provider : status.readiness.providers) {
         json item = {

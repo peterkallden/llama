@@ -322,6 +322,27 @@ common_agent_daemon_readiness make_daemon_readiness(
                 provider.warning = "provider probe has not run";
                 readiness.providers.push_back(std::move(provider));
             }
+            common_tool_profile_snapshot profile_snapshot;
+            std::string profile_error;
+            if (resolve_common_tool_profile_snapshot(
+                    options->tool_profile,
+                    options->tool_capabilities,
+                    options->tool_profiles,
+                    profile_snapshot,
+                    profile_error)) {
+                for (const auto & definition : profile_snapshot.tools) {
+                    if (!definition.enabled) continue;
+                    readiness.tools.push_back({definition.name, definition.description, "profile", "active"});
+                }
+            }
+        }
+    }
+
+    std::set<std::string> known_tool_names;
+    for (const auto & tool : readiness.tools) known_tool_names.insert(tool.name);
+    for (const auto & tool : runtime.provider_probe_tooling.tools) {
+        if (known_tool_names.insert(tool.name).second) {
+            readiness.tools.push_back({tool.name, tool.description, "mcp", "active"});
         }
     }
 

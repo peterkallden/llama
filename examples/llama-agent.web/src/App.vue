@@ -5,6 +5,8 @@ import { useAgentSession } from "./session";
 const session = useAgentSession();
 const prompt = ref("");
 const expanded = ref<Set<number>>(new Set());
+const toolsExpanded = ref(false);
+const expandedTools = ref<Set<string>>(new Set());
 
 const connectionLabel = {
   connecting: "connecting",
@@ -33,6 +35,12 @@ function toggle(index: number) {
   const next = new Set(expanded.value);
   next.has(index) ? next.delete(index) : next.add(index);
   expanded.value = next;
+}
+
+function toggleTool(name: string) {
+  const next = new Set(expandedTools.value);
+  next.has(name) ? next.delete(name) : next.add(name);
+  expandedTools.value = next;
 }
 
 function eventText(event: Record<string, unknown>) {
@@ -83,6 +91,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
 
       <aside class="side">
         <section class="card"><div class="card-title"><h2>Status and capabilities</h2><button class="quiet" @click="session.refreshStatus">refresh</button></div><dl><template v-for="(value, key) in session.status" :key="String(key)"><dt>{{ key }}</dt><dd>{{ typeof value === 'object' ? JSON.stringify(value) : value }}</dd></template></dl><div v-if="session.capabilities.length" class="capabilities"><strong>Capabilities</strong><span v-for="capability in session.capabilities" :key="capability" class="tag">{{ capability }}</span></div></section>
+        <section class="card tool-panel"><button class="tool-panel-toggle" @click="toolsExpanded = !toolsExpanded"><span><strong>MCP tools</strong><small>{{ session.tools.length }} active</small></span><span class="collapse-icon">{{ toolsExpanded ? "−" : "+" }}</span></button><p class="muted">Host-approved tools exposed to the agent.</p><div v-if="toolsExpanded" class="tool-list"><div v-if="!session.tools.length" class="empty">No tool snapshot is available.</div><div v-for="tool in session.tools" :key="tool.name" class="tool-entry"><button class="tool-name" @click="toggleTool(tool.name)"><span class="tool-dot" :class="`tool-dot-${tool.state || 'active'}`" /><span>{{ tool.name }}</span><span class="tool-chevron">{{ expandedTools.has(tool.name) ? "−" : "+" }}</span></button><div v-if="expandedTools.has(tool.name)" class="tool-details"><p>{{ tool.description || "No description provided." }}</p><span v-if="tool.source" class="tool-source">source: {{ tool.source }}</span></div></div></div></section>
         <section class="card"><div class="card-title"><h2>Web client</h2></div><p class="muted">HTTP commands go to the daemon. SSE is used only for the server event stream.</p><label class="field token-field" :class="{ 'token-missing': !session.token.trim(), 'token-unconnected': session.token.trim() && !session.connected }">Bearer token<input v-model="session.token" type="password" autocomplete="off" placeholder="enter token" :aria-invalid="!session.token.trim() || undefined" /><small v-if="!session.token.trim()">No token entered. An authenticated daemon may reject requests.</small><small v-else-if="session.connectionState === 'auth-error'">The token was rejected. Check it and reconnect.</small><small v-else-if="!session.connected">Token entered, but the event connection is not established yet. Try reconnect.</small><small v-else>Token accepted and event connection is active.</small></label><p v-if="session.connectionError" class="connection-error">{{ session.connectionError }}</p></section>
       </aside>
     </section>

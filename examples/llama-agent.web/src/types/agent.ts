@@ -19,7 +19,18 @@ export type DaemonStatus = {
   status?: string;
   state?: string;
   active_turn_id?: string;
+  readiness?: {
+    tools?: DaemonToolStatus[];
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
+};
+
+export type DaemonToolStatus = {
+  name: string;
+  description?: string;
+  source?: string;
+  state?: "active" | "degraded" | "disabled" | string;
 };
 
 export type ChatMessage = {

@@ -158,6 +158,13 @@ struct common_agent_daemon_active_turn_status {
     std::string pending_operation_detail;
 };
 
+struct common_agent_daemon_tool_status {
+    std::string name;
+    std::string description;
+    std::string source;
+    std::string state = "active";
+};
+
 struct common_agent_daemon_readiness {
     // Lifecycle state and operational readiness are intentionally separate.
     // `health` describes whether the daemon can serve work now.
@@ -169,6 +176,7 @@ struct common_agent_daemon_readiness {
     std::string resource_store = "unavailable";
     std::string tool_profile;
     std::vector<common_agent_daemon_provider_readiness> providers;
+    std::vector<common_agent_daemon_tool_status> tools;
     std::vector<std::string> warnings;
 };
 

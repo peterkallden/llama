@@ -645,6 +645,9 @@ void configure_agent_daemon_provider_probe(
                 probe_data_store);
             if (provider_ready) {
                 status.status = "ready";
+                for (auto & tool : provider_tooling.tools) {
+                    retained_tooling.tools.push_back(std::move(tool));
+                }
                 for (auto & resource : provider_tooling.owned_resources) {
                     retained_tooling.owned_resources.push_back(std::move(resource));
                 }

@@ -1,6 +1,6 @@
 import { computed, reactive, ref } from "vue";
 import { AgentApi } from "./api/agent-api";
-import type { AgentEvent, ChatMessage, DaemonStatus, PutResourceResult, TurnRequest, TurnResult, UploadedResource } from "./types/agent";
+import type { AgentEvent, ChatMessage, DaemonStatus, DaemonToolStatus, PutResourceResult, TurnRequest, TurnResult, UploadedResource } from "./types/agent";
 
 const apiBase = import.meta.env.VITE_AGENT_WEB_BASE_URL || "/api/v1";
 const token = ref("");
@@ -9,6 +9,9 @@ const events = ref<AgentEvent[]>([]);
 const status = ref<DaemonStatus>({ state: "unknown" });
 const capabilities = computed(() => Array.isArray(status.value.capabilities)
   ? status.value.capabilities.map(String)
+  : []);
+const tools = computed<DaemonToolStatus[]>(() => Array.isArray(status.value.readiness?.tools)
+  ? status.value.readiness.tools.filter((tool): tool is DaemonToolStatus => Boolean(tool && typeof tool.name === "string"))
   : []);
 const connected = ref(false);
 const connectionState = ref<"connecting" | "connected" | "disconnected" | "error" | "auth-error">("disconnected");
@@ -241,5 +244,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }
