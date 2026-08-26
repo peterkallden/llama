@@ -572,7 +572,8 @@ static void test_planner_repairs_invalid_resource_binding() {
     assert(error.empty());
     assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
-    assert(proposal.operations[0].step->tool_call->arguments["resource"] == "r1");
+    const auto arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
+    assert(arguments["resource"] == "r1");
     assert(inference.seen.size() == 2);
     const auto & repair_prompt = inference.seen[1].messages[1].content;
     assert(repair_prompt.find("plan.binding.") != std::string::npos);
