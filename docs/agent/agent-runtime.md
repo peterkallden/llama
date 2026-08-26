@@ -808,8 +808,9 @@ plan steps.
 
 The host can generate a compact family index from the already resolved
 model-facing tool view. The generator groups dotted namespaces such as
-`data.join` and `dataset.select`; older underscore names such as `web_search`
-use the prefix before the underscore. This is a projection, not a permission
+`data.join`, `dataset.select`, `memory.search` and `web.search`. The canonical
+utility names are `math.calculate` and `time.now`; resource access uses
+`resource.inspect` and `resource.read`. This is a projection, not a permission
 mechanism: profile and policy filtering must happen before the family index is
 created.
 
@@ -820,6 +821,7 @@ tool families:
 - data: Query and transform datasets
 - dataset: Choose and inspect datasets for analysis
 - statistics: Describe datasets and compute summaries
+- memory: Search and manage scoped runtime memory
 ```
 
 When `agent_plan=auto` is enabled, this is an active two-stage tool-intent
@@ -862,7 +864,7 @@ tested by `test-tool-family-index`; the no-tools generation rule is covered by
 
 Family routing has a deliberately narrow fast path for the common case where
 the selected family resolves to exactly one tool and that tool has no required
-arguments. `time_now` is the current example. The host does not create a
+arguments. `time.now` is the current example. The host does not create a
 deliberate plan merely to carry an argument-free singleton through one tool
 call. Instead, it sends the selected tool to the ordinary chat/tool driver:
 
@@ -1428,9 +1430,17 @@ plan step
 
 The family is derived from the canonical tool name before the first dot. For
 example, `statistics.describe` and `statistics.value_counts` belong to the
-`statistics` family, while an undotted tool such as `calculator` belongs to the
-bounded `utility` family. The current resource tools are intentionally still
-in the `utility` family until their names are migrated to a namespaced form.
+`statistics` family, while `math.calculate` belongs to `math`. Memory is a
+cross-cutting family: it remains available alongside dataset, data, document
+and statistics families whenever the active profile permits it. Selecting a
+data family does not remove memory; selecting memory remains an explicit
+model-intent decision and does not force memory tools into unrelated turns.
+
+The runtime accepts former underscore spellings such as `calculator`,
+`time_now`, `memory_search`, `resource_read` and `web_search` as execution
+aliases for older clients and saved plans. New model-facing catalogues and MCP
+listings use dotted canonical names. Aliases are not additional advertised
+capabilities and do not bypass profile or policy checks.
 
 The navigation context is turn/operation-local and carries operation, plan and
 step identities, current family and tool, an optional asynchronous operation
@@ -1482,8 +1492,8 @@ family:
 | `workspace.patch` |
 
 Repository and workspace tools use only their namespaced model-facing names.
-The former underscore names are no longer accepted by the catalog, profiles,
-planning or research paths.
+The former underscore names are retained only as compatibility aliases; new
+catalogue, profile, planning and research paths should use the dotted names.
 
 Structured data tools use the host-owned `common_agent_data_store` interface. The
 tool layer submits semantic JSON operations and does not select CozoDB, DuckDB or

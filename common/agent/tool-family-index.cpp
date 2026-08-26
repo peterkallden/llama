@@ -14,6 +14,7 @@ using json = nlohmann::ordered_json;
 namespace {
 
 std::string family_id_for_tool(const std::string & name) {
+    if (name == "calculator") return "math";
     const auto dot = name.find('.');
     if (dot != std::string::npos && dot > 0) return name.substr(0, dot);
 
@@ -33,10 +34,12 @@ std::string family_description_for_id(const std::string & id) {
         {"document",   "Extract structured content from documents"},
         {"mcp",        "Discover and invoke MCP resources and tools"},
         {"repository", "Search and inspect repository-backed content"},
-        {"resource",   "Resolve and inspect external resources"},
+        {"math",       "Perform bounded arithmetic calculations"},
+        {"memory",     "Search and manage scoped runtime memory"},
+        {"resource",   "Inspect and read host-owned resources"},
         {"statistics", "Describe datasets and compute summaries"},
-        {"time",       "Return the current time"},
-        {"web",        "Search and retrieve information from the web"},
+        {"time",       "Read current time and date information"},
+        {"web",        "Search and retrieve information from the public web"},
     };
     const auto it = descriptions.find(id);
     return it != descriptions.end()

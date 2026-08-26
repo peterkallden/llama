@@ -240,25 +240,25 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         }
     };
 
-    if (tool_name == "calculator" && !normalized_arguments.contains("expression")) {
+    if ((tool_name == "math.calculate" || tool_name == "calculator") && !normalized_arguments.contains("expression")) {
         std::string expression;
         if (infer_calculator_expression(request.prompt, expression)) {
             normalized_arguments["expression"] = std::move(expression);
             changed = true;
         }
-    } else if (tool_name == "memory_search") {
+    } else if (tool_name == "memory.search" || tool_name == "memory_search") {
         set_prompt_query(1024);
     } else if (tool_name == "repository.search" || tool_name == "workspace.search") {
         set_prompt_query(256);
         if (!normalized_arguments.contains("path")) { normalized_arguments["path"] = ""; changed = true; }
         if (!normalized_arguments.contains("max_results")) { normalized_arguments["max_results"] = 16; changed = true; }
-    } else if (tool_name == "web_search") {
+    } else if (tool_name == "web.search" || tool_name == "web_search") {
         set_prompt_query(256);
         if (!normalized_arguments.contains("limit")) { normalized_arguments["limit"] = 5; changed = true; }
     } else if (tool_name == "repository.read" || tool_name == "workspace.read") {
         if (!normalized_arguments.contains("start_line")) { normalized_arguments["start_line"] = 1; changed = true; }
         if (!normalized_arguments.contains("end_line")) { normalized_arguments["end_line"] = 200; changed = true; }
-    } else if (tool_name == "resource_read") {
+    } else if (tool_name == "resource.read" || tool_name == "resource_read") {
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
         if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
                 normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {
@@ -268,7 +268,7 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         }
         if (!normalized_arguments.contains("max_bytes")) { normalized_arguments["max_bytes"] = 8192; changed = true; }
         if (normalized_arguments.contains("uri")) changed = true;
-    } else if (tool_name == "resource_inspect") {
+    } else if (tool_name == "resource.inspect" || tool_name == "resource_inspect") {
         if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
         if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
                 normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {

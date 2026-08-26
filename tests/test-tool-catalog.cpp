@@ -61,9 +61,10 @@ int main() {
     assert(web_search->executor_id == "builtin.web_search");
     assert(web_fetch->executor_id == "builtin.web_fetch");
 
-    const auto * calculator = catalog.find_definition("calculator");
+    const auto * calculator = catalog.find_definition("math.calculate");
+    const auto * calculator_legacy = catalog.find_definition("calculator");
     const auto * data_query = catalog.find_definition("data.query");
-    assert(calculator && data_query);
+    assert(calculator && calculator_legacy && calculator_legacy->name == "math.calculate" && data_query);
     const auto calculator_model = nlohmann::json::parse(calculator->model_input_schema_json);
     const auto data_query_model = nlohmann::json::parse(data_query->model_input_schema_json);
     assert(calculator_model["properties"].contains("expression"));

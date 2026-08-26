@@ -34,5 +34,6 @@ public:
     bool is_read_only(const std::string & name) const;
     bool is_policy_gated(const std::string & name) const;
 private:
+    const common_registered_tool * find_tool(const std::string & name) const;
     std::unordered_map<std::string, common_registered_tool> tools;
 };

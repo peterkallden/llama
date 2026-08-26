@@ -323,12 +323,12 @@ static bool normalize_agent_tool_call(
 }
 
 static bool is_research_acquisition_tool(const std::string & tool_name) {
-    return tool_name == "resource_read" ||
+    return tool_name == "resource.read" || tool_name == "resource_read" ||
         tool_name == "repository.search" ||
-        tool_name == "web_search" ||
-        tool_name == "web_fetch" ||
-        tool_name == "memory_get" ||
-        tool_name == "memory_search";
+        tool_name == "web.search" || tool_name == "web_search" ||
+        tool_name == "web.fetch" || tool_name == "web_fetch" ||
+        tool_name == "memory.get" || tool_name == "memory_get" ||
+        tool_name == "memory.search" || tool_name == "memory_search";
 }
 
 static bool merge_reflection_tool_repair_arguments(
@@ -558,13 +558,13 @@ static bool is_incomplete_tool_call(
     }
 
     if (validation_error == "required contract field is missing" && arguments.empty()) {
-        if (tool_name == "memory_get") {
+        if (tool_name == "memory.get" || tool_name == "memory_get") {
             validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
         }
         return true;
     }
 
-    if (tool_name == "memory_get" && !arguments.contains("id")) {
+    if ((tool_name == "memory.get" || tool_name == "memory_get") && !arguments.contains("id")) {
         validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
         return true;
     }

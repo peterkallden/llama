@@ -36,19 +36,19 @@ bool build_call(
         call.arguments_json = json{{"query", instruction}, {"max_results", 8}}.dump();
         return true;
     }
-    if (tool_name == "web_search") {
+    if (tool_name == "web.search" || tool_name == "web_search") {
         call.arguments_json = json{{"query", instruction}, {"limit", 5}}.dump();
         return true;
     }
-    if (tool_name == "resource_read") {
+    if (tool_name == "resource.read" || tool_name == "resource_read") {
         call.arguments_json = json{{"uri", instruction}, {"max_bytes", 16384}}.dump();
         return true;
     }
-    if (tool_name == "memory_get") {
+    if (tool_name == "memory.get" || tool_name == "memory_get") {
         call.arguments_json = json{{"id", instruction}}.dump();
         return true;
     }
-    if (tool_name == "web_fetch") {
+    if (tool_name == "web.fetch" || tool_name == "web_fetch") {
         call.arguments_json = json{{"url", instruction}, {"max_bytes", 32768}, {"extract", "text"}}.dump();
         return true;
     }
@@ -133,7 +133,7 @@ bool common_agent_research_runtime_adapter::execute(
 
         const std::string existing_source_id = existing_source_id_for_resource(
             workspace, result.resource_refs, action.instruction);
-        const std::string memory_source_id = tool_name == "memory_get"
+        const std::string memory_source_id = (tool_name == "memory.get" || tool_name == "memory_get")
             ? existing_source_id_for_memory(workspace, action.instruction)
             : std::string();
         const std::string source_id = !memory_source_id.empty()
@@ -187,7 +187,7 @@ bool common_agent_research_runtime_adapter::execute(
         source.title = tool_name;
         source.origin = tool_name;
         source.authority = "host-tool-runtime";
-        source.kind = tool_name == "web_search" || tool_name == "web_fetch"
+        source.kind = (tool_name == "web.search" || tool_name == "web_search" || tool_name == "web.fetch" || tool_name == "web_fetch")
             ? common_agent_research_source_kind::web_page
             : (!result.resource_refs.empty() &&
                 result.resource_refs.front().uri.rfind("artifact://", 0) == 0
