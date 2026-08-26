@@ -259,7 +259,7 @@ int main() {
     for (const auto & definition : analysis) {
         analysis_has_dataset_schema = analysis_has_dataset_schema || definition.name == "dataset.schema";
         analysis_has_document_tables = analysis_has_document_tables || definition.name == "document.tables";
-        analysis_has_web_fetch = analysis_has_web_fetch || definition.name == "web_fetch";
+        analysis_has_web_fetch = analysis_has_web_fetch || definition.name == "web.fetch";
         assert(!definition.requires_confirmation);
         assert(definition.name != "memory_remember");
         assert(definition.name != "development.build");
