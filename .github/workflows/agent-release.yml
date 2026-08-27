@@ -34,7 +34,8 @@ jobs:
   build-release:
     name: Build ${{ matrix.backend }} release package
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # CUDA agent builds can exceed one hour on GitHub-hosted runners.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
