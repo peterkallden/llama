@@ -78,6 +78,18 @@ int main() {
     assert(catalog.relations[0].item_operation_id == "getSale");
     assert(catalog.relations[0].item_parameter == "id");
 
+    agent_openapi_result_projection projection;
+    assert(classify_agent_openapi_result_json(
+        R"([{"id":"s1","region":"north"},{"id":"s2","region":"south"}])",
+        agent_openapi_result_projection_limits{}, projection, error));
+    assert(projection.kind == agent_openapi_result_projection_kind::dataset);
+    assert(projection.row_count == 2);
+    assert(projection.columns.size() == 2);
+    assert(classify_agent_openapi_result_json(
+        R"([{"id":"s1","details":{"amount":10}}])",
+        agent_openapi_result_projection_limits{}, projection, error));
+    assert(projection.kind == agent_openapi_result_projection_kind::json_resource);
+
     std::cout << "agent-openapi-catalog-smoke: ok\n";
     return 0;
 }

@@ -154,6 +154,66 @@ std::string collection_path_for(const std::string & path, std::string & item_par
 
 }
 
+bool classify_agent_openapi_result_json(
+        const std::string & structured_content_json,
+        const agent_openapi_result_projection_limits & limits,
+        agent_openapi_result_projection & projection,
+        std::string & error) {
+    projection = {};
+    if (structured_content_json.size() > limits.max_bytes) {
+        projection.reason = "structured API result exceeds the materialization byte limit";
+        error.clear();
+        return true;
+    }
+    const auto value = nlohmann::json::parse(structured_content_json, nullptr, false);
+    if (value.is_discarded()) {
+        error = "OpenAPI structured result is not valid JSON";
+        return false;
+    }
+    if (!value.is_array() || value.empty() || value.size() > limits.max_rows) {
+        projection.reason = value.is_array() && value.size() > limits.max_rows
+            ? "collection exceeds the materialization row limit"
+            : "result is not a non-empty bounded JSON collection";
+        error.clear();
+        return true;
+    }
+    std::set<std::string> columns;
+    size_t cells = 0;
+    for (const auto & row : value) {
+        if (!row.is_object()) {
+            projection.reason = "collection contains a non-object item";
+            error.clear();
+            return true;
+        }
+        cells += row.size();
+        if (cells > limits.max_cells) {
+            projection.reason = "collection exceeds the materialization cell limit";
+            error.clear();
+            return true;
+        }
+        for (const auto & item : row.items()) {
+            if (!(item.value().is_null() || item.value().is_boolean() ||
+                    item.value().is_number() || item.value().is_string())) {
+                projection.reason = "collection contains nested or heterogeneous values";
+                error.clear();
+                return true;
+            }
+            columns.insert(item.key());
+        }
+        if (columns.size() > limits.max_columns) {
+            projection.reason = "collection exceeds the materialization column limit";
+            error.clear();
+            return true;
+        }
+    }
+    projection.kind = agent_openapi_result_projection_kind::dataset;
+    projection.row_count = value.size();
+    projection.columns.assign(columns.begin(), columns.end());
+    projection.reason = "bounded shallow JSON collection is dataset-compatible";
+    error.clear();
+    return true;
+}
+
 std::string agent_openapi_access_name(agent_openapi_access access) {
     switch (access) {
         case agent_openapi_access::read: return "read";
