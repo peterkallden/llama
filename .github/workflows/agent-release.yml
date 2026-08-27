@@ -95,8 +95,10 @@ jobs:
           cuda_stub="$(find /usr/local/cuda* -type f -path '*/stubs/libcuda.so' -print -quit)"
           test -n "$cuda_stub"
           cuda_stub_dir="$(dirname "$cuda_stub")"
-          ln -sf libcuda.so "$cuda_stub_dir/libcuda.so.1"
-          echo "CUDA_STUB_DIR=$cuda_stub_dir" >> "$GITHUB_ENV"
+          cuda_runtime_dir="$RUNNER_TEMP/cuda-runtime-stubs"
+          mkdir -p "$cuda_runtime_dir"
+          ln -sf "$cuda_stub" "$cuda_runtime_dir/libcuda.so.1"
+          echo "CUDA_STUB_DIR=$cuda_runtime_dir" >> "$GITHUB_ENV"
           export PATH="/usr/local/cuda/bin:$PATH"
           nvcc --version
 
