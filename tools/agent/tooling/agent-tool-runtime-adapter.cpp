@@ -77,6 +77,10 @@ public:
         return tool_view.describe_tool_dataflow(tool_name, contract, error);
     }
 
+    bool validate_plan(const common_plan_state & plan, std::string & error) const override {
+        return tool_view.validate_plan(plan, error);
+    }
+
     bool is_available(const std::string & tool_name) const override {
         return tool_view.exposes_tool(tool_name);
     }

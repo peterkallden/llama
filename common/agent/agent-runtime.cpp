@@ -789,6 +789,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
         }
     }
+    if (tools && !tools->validate_plan(plan, error)) {
+        result.error = "tool workflow validation failed: " + error;
+        return result;
+    }
     turn.plan_store = &store;
     turn.outer_plan = &plan;
     if (request.deliberation_policy.mode == common_agent_thinking_mode::research) {

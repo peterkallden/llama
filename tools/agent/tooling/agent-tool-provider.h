@@ -95,6 +95,7 @@ public:
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
     virtual bool describe_tool_dataflow(
         const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
+    virtual bool validate_plan(const common_plan_state &, std::string &) const { return true; }
     virtual common_agent_tool_repair_context make_repair_context(
         const std::string &, const std::string &, const std::string &) const;
     virtual bool exposes_tool(const std::string & name) const = 0;
@@ -207,10 +208,12 @@ public:
 
 class mcp_agent_tool_provider : public agent_tool_provider {
 public:
+    using plan_validator = std::function<bool(const common_plan_state &, std::string &)>;
     mcp_agent_tool_provider(
-        std::string provider_id,
-        agent_mcp_tool_client & client,
-        std::string exposed_name_prefix = {});
+            std::string provider_id,
+            agent_mcp_tool_client & client,
+            std::string exposed_name_prefix = {},
+            plan_validator validator = {});
 
     std::unique_ptr<agent_tool_view> resolve_tools(
         const agent_tool_context & context,
@@ -220,6 +223,7 @@ private:
     std::string provider_id;
     agent_mcp_tool_client & client;
     std::string exposed_name_prefix;
+    plan_validator validator;
 };
 
 class composite_agent_tool_provider : public agent_tool_provider {

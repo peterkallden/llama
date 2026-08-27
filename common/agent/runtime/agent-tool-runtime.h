@@ -7,6 +7,7 @@
 #include <vector>
 
 struct common_plan_tool_dataflow_contract;
+struct common_plan_state;
 
 // Host-side tool execution contract. Planning and reflection contracts live
 // in their own headers so tool consumers do not inherit the full runtime.
@@ -30,6 +31,7 @@ public:
     virtual bool is_policy_gated(const std::string & tool_name) const = 0;
     virtual bool describe_tool_dataflow(
             const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
+    virtual bool validate_plan(const common_plan_state &, std::string &) const { return true; }
     virtual bool is_available(const std::string &) const { return true; }
     virtual bool resolve_tool_name(
             const std::string &, std::string &, std::vector<std::string> &) const { return false; }

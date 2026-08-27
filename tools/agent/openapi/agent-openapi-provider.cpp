@@ -1,6 +1,7 @@
 #include "agent-openapi-provider.h"
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 class agent_openapi_tool_provider::client : public agent_mcp_tool_client {
 public:
@@ -71,7 +72,36 @@ agent_openapi_tool_provider::agent_openapi_tool_provider(
     , executor(std::move(executor))
     , client_impl(std::make_unique<client>(this->catalog, this->executor))
     , delegate(std::make_unique<mcp_agent_tool_provider>(
-        this->catalog.provider_id, *client_impl, this->catalog.prefix)) {}
+        this->catalog.provider_id,
+        *client_impl,
+        this->catalog.prefix,
+        [this](const common_plan_state & plan, std::string & error) {
+            for (const auto & relation : this->catalog.relations) {
+                const std::string item_name = this->catalog.prefix + "." + relation.item_operation_id;
+                const std::string collection_name = this->catalog.prefix + "." + relation.collection_operation_id;
+                for (size_t index = 0; index < plan.steps.size(); ++index) {
+                    const auto & step = plan.steps[index];
+                    if (!step.tool_call || step.tool_call->name != item_name ||
+                            step.tool_call->arguments_json.find("\"$") == std::string::npos) continue;
+                    bool producer_before_item = false;
+                    for (size_t previous = 0; previous < index; ++previous) {
+                        if (plan.steps[previous].tool_call &&
+                                plan.steps[previous].tool_call->name == collection_name) {
+                            producer_before_item = true;
+                            break;
+                        }
+                    }
+                    if (!producer_before_item) {
+                        error = "workflow.required_producer_missing: " + item_name +
+                            " requires " + collection_name + " before dynamic " +
+                            relation.item_parameter + " binding";
+                        return false;
+                    }
+                }
+            }
+            error.clear();
+            return true;
+        })) {}
 
 agent_openapi_tool_provider::~agent_openapi_tool_provider() = default;
 

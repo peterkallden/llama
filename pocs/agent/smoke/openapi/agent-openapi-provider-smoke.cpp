@@ -30,6 +30,17 @@ int main() {
     assert(view->chat_tools().size() == 2);
     assert(view->chat_tools()[0].name == "sales.listSales");
     assert(view->chat_tools()[0].description.find("workflow: sales.listSales -> choose/bind id -> sales.getSale") != std::string::npos);
+    common_plan_state invalid_plan;
+    invalid_plan.steps.push_back({});
+    invalid_plan.steps[0].tool_call = common_plan_tool_call{
+        "sales.getSale", R"({"id":"$previous.id"})"};
+    assert(!view->validate_plan(invalid_plan, error));
+    common_plan_state valid_plan;
+    common_plan_step collection_step;
+    collection_step.tool_call = common_plan_tool_call{"sales.listSales", R"({})"};
+    valid_plan.steps.push_back(collection_step);
+    valid_plan.steps.push_back(invalid_plan.steps[0]);
+    assert(view->validate_plan(valid_plan, error));
     assert(view->is_read_only("sales.listSales"));
     assert(!view->is_policy_gated("sales.listSales"));
     agent_tool_call call{"call-1", "sales.listSales", R"({"limit":10})"};

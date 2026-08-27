@@ -562,14 +562,20 @@ public:
             agent_tool_context context,
             agent_mcp_tool_client & client,
             std::vector<common_chat_tool> chat_tools,
-            std::map<std::string, mcp_agent_tool_definition> definitions)
+            std::map<std::string, mcp_agent_tool_definition> definitions,
+            mcp_agent_tool_provider::plan_validator validator)
         : context(std::move(context))
         , client(client)
         , chat_tool_list(std::move(chat_tools))
-        , definitions(std::move(definitions)) {}
+        , definitions(std::move(definitions))
+        , validator(std::move(validator)) {}
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    bool validate_plan(const common_plan_state & plan, std::string & error) const override {
+        return !validator || validator(plan, error);
     }
 
     bool exposes_tool(const std::string & name) const override {
@@ -849,6 +855,7 @@ private:
     agent_mcp_tool_client & client;
     std::vector<common_chat_tool> chat_tool_list;
     std::map<std::string, mcp_agent_tool_definition> definitions;
+    mcp_agent_tool_provider::plan_validator validator;
     size_t call_count = 0;
     mutable std::mutex state_mutex;
     mutable std::mutex async_mutex;
@@ -877,6 +884,14 @@ public:
             std::string & error) const override {
         const auto * view = find_owner(name);
         return view != nullptr && view->describe_tool_dataflow(name, contract, error);
+    }
+
+    bool validate_plan(const common_plan_state & plan, std::string & error) const override {
+        for (const auto & view : views) {
+            if (!view->validate_plan(plan, error)) return false;
+        }
+        error.clear();
+        return true;
     }
 
     common_agent_tool_repair_context make_repair_context(
@@ -1092,10 +1107,12 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
 mcp_agent_tool_provider::mcp_agent_tool_provider(
         std::string provider_id,
         agent_mcp_tool_client & client,
-        std::string exposed_name_prefix)
+        std::string exposed_name_prefix,
+        plan_validator validator)
     : provider_id(std::move(provider_id))
     , client(client)
-    , exposed_name_prefix(std::move(exposed_name_prefix)) {}
+    , exposed_name_prefix(std::move(exposed_name_prefix))
+    , validator(std::move(validator)) {}
 
 std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         const agent_tool_context & context,
@@ -1141,7 +1158,8 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         context,
         client,
         std::move(chat_tools),
-        std::move(resolved_definitions));
+        std::move(resolved_definitions),
+        validator);
 }
 
 void composite_agent_tool_provider::add_provider(agent_tool_provider & provider) {
