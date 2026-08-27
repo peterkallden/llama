@@ -13,6 +13,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-event-collector.cpp
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/openapi/agent-openapi-catalog.cpp
+    ../../tools/agent/openapi/agent-openapi-provider.cpp
     ../../tools/agent/host/agent-sandbox-assembly.cpp
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
     ../../tools/agent/mcp/agent-mcp-http-transport.cpp
@@ -790,6 +791,17 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-agent-openapi-provider-smoke)
+add_executable(${TARGET}
+    smoke/openapi/agent-openapi-provider-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
@@ -1712,6 +1724,7 @@ set(AGENT_MCP_SERVER_LIBRARY_TARGETS
     llama-agent-mcp-stdio-server
     llama-agent-daemon-mcp-config-smoke
     llama-agent-openapi-catalog-smoke
+    llama-agent-openapi-provider-smoke
     llama-agent-daemon
 )
 foreach(TARGET ${AGENT_MCP_SERVER_LIBRARY_TARGETS})
@@ -1968,6 +1981,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-openapi-catalog-ctest
         COMMAND $<TARGET_FILE:llama-agent-openapi-catalog-smoke>)
     set_property(TEST llama-agent-openapi-catalog-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-openapi-provider-ctest
+        COMMAND $<TARGET_FILE:llama-agent-openapi-provider-smoke>)
+    set_property(TEST llama-agent-openapi-provider-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-config-discovery-ctest
         COMMAND $<TARGET_FILE:llama-agent-config-discovery-smoke>)

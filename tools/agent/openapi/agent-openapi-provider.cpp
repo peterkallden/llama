@@ -1,0 +1,68 @@
+#include "agent-openapi-provider.h"
+
+#include <algorithm>
+
+class agent_openapi_tool_provider::client : public agent_mcp_tool_client {
+public:
+    client(const agent_openapi_catalog & catalog, agent_openapi_executor executor)
+        : catalog(catalog), executor(std::move(executor)) {}
+
+    bool list_tools(const agent_tool_context &, std::vector<mcp_agent_tool_definition> & tools,
+                    std::string &) override {
+        tools.clear();
+        for (const auto & operation : catalog.operations) {
+            mcp_agent_tool_definition definition;
+            definition.provider_id = catalog.provider_id;
+            definition.name = operation.operation_id;
+            definition.description = operation.description.empty() ? operation.summary : operation.description;
+            definition.input_schema_json = operation.input_schema_json;
+            definition.read_only = operation.read_only;
+            definition.requires_confirmation = operation.requires_confirmation;
+            definition.uses_network = true;
+            tools.push_back(std::move(definition));
+        }
+        return true;
+    }
+
+    bool call_tool(const agent_tool_context & context, const mcp_agent_tool_definition & tool,
+                   const std::string & arguments_json, mcp_agent_tool_call_result & result,
+                   std::string & error) override {
+        const auto it = std::find_if(catalog.operations.begin(), catalog.operations.end(),
+            [&](const agent_openapi_operation & operation) { return operation.operation_id == tool.name; });
+        if (it == catalog.operations.end()) {
+            error = "OpenAPI operation is not in the filtered catalog";
+            return false;
+        }
+        agent_openapi_execution_result execution;
+        if (!executor || !executor(context, *it, arguments_json, execution, error)) return false;
+        result.ok = execution.ok;
+        result.structured_content_json = execution.structured_content_json;
+        result.text_content = execution.text_content;
+        result.resource_refs = execution.resource_refs;
+        result.failure_code = execution.failure_code;
+        result.failure_class = execution.failure_class;
+        result.retryable = execution.retryable;
+        result.safe_summary = execution.safe_summary;
+        result.raw_diagnostic = execution.raw_diagnostic;
+        return true;
+    }
+
+private:
+    const agent_openapi_catalog & catalog;
+    agent_openapi_executor executor;
+};
+
+agent_openapi_tool_provider::agent_openapi_tool_provider(
+        agent_openapi_catalog catalog, agent_openapi_executor executor)
+    : catalog(std::move(catalog))
+    , executor(std::move(executor))
+    , client_impl(std::make_unique<client>(this->catalog, this->executor))
+    , delegate(std::make_unique<mcp_agent_tool_provider>(
+        this->catalog.provider_id, *client_impl, this->catalog.prefix)) {}
+
+agent_openapi_tool_provider::~agent_openapi_tool_provider() = default;
+
+std::unique_ptr<agent_tool_view> agent_openapi_tool_provider::resolve_tools(
+        const agent_tool_context & context, std::string & error) {
+    return delegate->resolve_tools(context, error);
+}
