@@ -532,10 +532,8 @@ jobs:
           git clone --depth 1 --branch "v$env:COZO_VERSION" `
             https://github.com/cozodb/cozo.git $cozoRoot
           $cozoArchive = Join-Path $cozoRoot "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip"
-          gh release download "v$env:COZO_VERSION" `
-            --repo cozodb/cozo `
-            --pattern "libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip" `
-            --dir $cozoRoot
+          $cozoUrl = "https://github.com/cozodb/cozo/releases/download/v$env:COZO_VERSION/libcozo_c-$env:COZO_VERSION-x86_64-pc-windows-msvc.lib.zip"
+          curl.exe --fail --location --retry 3 --output $cozoArchive $cozoUrl
           if (-not (Test-Path $cozoArchive)) {
             throw "Cozo library archive was not downloaded: $cozoArchive"
           }
