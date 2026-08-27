@@ -234,6 +234,7 @@ bool read_openapi_provider(
     read_optional(value, "exposure", provider.exposure);
     read_optional(value, "auth_type", provider.auth_type);
     read_optional(value, "token_env", provider.token_env);
+    read_optional(value, "allow_private_network", provider.allow_private_network);
     read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
     read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
     read_optional(value, "max_result_bytes", provider.max_result_bytes);
@@ -856,6 +857,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"type", provider.auth_type},
                 {"token_env", provider.token_env},
             }},
+            {"allow_private_network", provider.allow_private_network},
             {"limits", {
                 {"connect_timeout_ms", provider.connect_timeout_ms},
                 {"request_timeout_ms", provider.request_timeout_ms},

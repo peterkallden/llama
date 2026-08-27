@@ -32,6 +32,7 @@ struct agent_host_openapi_provider_config {
 
     std::string auth_type = "none";
     std::string token_env;
+    bool allow_private_network = false;
     uint32_t connect_timeout_ms = 5000;
     uint32_t request_timeout_ms = 30000;
     size_t max_result_bytes = 1024 * 1024;

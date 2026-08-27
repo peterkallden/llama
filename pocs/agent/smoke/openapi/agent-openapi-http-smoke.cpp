@@ -22,6 +22,7 @@ int main() {
     config.connect_timeout_ms = 1000;
     config.request_timeout_ms = 2000;
     config.max_result_bytes = 1024;
+    config.allow_private_network = true;
     agent_openapi_catalog catalog;
     catalog.provider_id = config.id;
     catalog.prefix = "sales";
@@ -38,6 +39,19 @@ int main() {
     const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42"})"}, error);
     assert(result.ok);
     assert(result.content_json.find("\"total\":7") != std::string::npos);
+
+    config.allow_private_network = false;
+    agent_openapi_tool_provider private_denied_provider(
+        agent_openapi_catalog{
+            "sales-api", config.base_url, "sales", {
+                {"getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
+                    {"id"}, {"limit"}, agent_openapi_access::read, true, false}}},
+        make_agent_openapi_http_executor(config));
+    auto private_denied_view = private_denied_provider.resolve_tools(context, error);
+    assert(private_denied_view != nullptr);
+    const auto private_denied = private_denied_view->call(
+        {"http-private", "sales.getSale", R"({"id":"42"})"}, error);
+    assert(!private_denied.ok);
 
     context.allow_network = false;
     agent_openapi_tool_provider denied_provider(std::move(agent_openapi_catalog{

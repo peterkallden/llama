@@ -3,6 +3,10 @@
 #include <cpp-httplib/httplib.h>
 
 #include <cstdlib>
+#include <cstring>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <sstream>
 
 namespace {
@@ -15,6 +19,7 @@ bool parse_url(const std::string & input, url_parts & url, std::string & error) 
     const auto authority_start = scheme_end + 3;
     const auto path_start = input.find('/', authority_start);
     const auto authority = input.substr(authority_start, path_start == std::string::npos ? std::string::npos : path_start - authority_start);
+    if (authority.find('@') != std::string::npos) { error = "OpenAPI base_url must not contain userinfo"; return false; }
     const auto port_start = authority.rfind(':');
     if (port_start != std::string::npos) {
         url.host = authority.substr(0, port_start);
@@ -29,6 +34,34 @@ bool parse_url(const std::string & input, url_parts & url, std::string & error) 
         return false;
     }
     return true;
+}
+
+bool private_address(const sockaddr * address) {
+    if (address->sa_family == AF_INET) {
+        const auto value = ntohl(reinterpret_cast<const sockaddr_in *>(address)->sin_addr.s_addr);
+        return (value >> 24) == 10 || (value >> 20) == 0xAC1 || (value >> 16) == 0xC0A8 ||
+            (value >> 24) == 127 || (value >> 28) == 0xE || (value >> 24) == 0;
+    }
+    if (address->sa_family == AF_INET6) {
+        const auto * bytes = reinterpret_cast<const unsigned char *>(
+            &reinterpret_cast<const sockaddr_in6 *>(address)->sin6_addr);
+        return bytes[0] == 0 || bytes[0] == 0xFF || bytes[0] == 0xFC || bytes[0] == 0xFD ||
+            (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80) ||
+            (bytes[15] == 1 && std::all_of(bytes, bytes + 15, [](unsigned char byte) { return byte == 0; }));
+    }
+    return true;
+}
+
+bool host_is_private(const std::string & host) {
+    addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC;
+    addrinfo * results = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &results) != 0) return true;
+    bool result = false;
+    for (auto * item = results; item != nullptr; item = item->ai_next) {
+        if (private_address(item->ai_addr)) { result = true; break; }
+    }
+    freeaddrinfo(results);
+    return result;
 }
 
 template<typename Client>
@@ -52,6 +85,10 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         if (!context.allow_network) { error = "OpenAPI tool requires network capability"; return false; }
         url_parts url;
         if (!parse_url(config.base_url, url, error)) return false;
+        if (!config.allow_private_network && host_is_private(url.host)) {
+            error = "OpenAPI request targets a private or local network address";
+            return false;
+        }
         const auto arguments = nlohmann::json::parse(arguments_json, nullptr, false);
         if (!arguments.is_object()) { error = "OpenAPI tool arguments must be a JSON object"; return false; }
         std::string path = operation.path;
