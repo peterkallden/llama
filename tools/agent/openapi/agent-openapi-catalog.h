@@ -25,6 +25,7 @@ struct agent_openapi_operation {
     agent_openapi_access access = agent_openapi_access::write;
     bool read_only = false;
     bool requires_confirmation = false;
+    std::string result_schema_json = R"({"type":"object"})";
 };
 
 struct agent_openapi_relation {

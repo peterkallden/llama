@@ -28,6 +28,7 @@ public:
                 }
             }
             definition.input_schema_json = operation.input_schema_json;
+            definition.result_schema_json = operation.result_schema_json;
             definition.read_only = operation.read_only;
             definition.requires_confirmation = operation.requires_confirmation;
             definition.uses_network = true;

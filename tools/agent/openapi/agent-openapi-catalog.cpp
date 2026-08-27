@@ -108,6 +108,30 @@ std::string operation_input_schema(
     return schema.dump();
 }
 
+std::string operation_result_schema(
+        const nlohmann::json & document,
+        const nlohmann::json & operation) {
+    if (!operation.contains("responses") || !operation["responses"].is_object()) {
+        return R"({"type":"object"})";
+    }
+    const nlohmann::json * response = nullptr;
+    for (const auto code : {"200", "201", "202", "default"}) {
+        const auto it = operation["responses"].find(code);
+        if (it != operation["responses"].end() && it->is_object()) {
+            response = &*it;
+            break;
+        }
+    }
+    if (response == nullptr) return R"({"type":"object"})";
+    const auto content = response->value("content", nlohmann::json::object());
+    if (!content.is_object() || !content.contains("application/json") ||
+            !content["application/json"].is_object()) return R"({"type":"object"})";
+    auto schema = content["application/json"].value("schema", nlohmann::json({{"type", "object"}}));
+    std::set<std::string> seen;
+    resolve_local_refs(document, schema, seen);
+    return schema.dump();
+}
+
 std::string collection_path_for(const std::string & path, std::string & item_parameter) {
     item_parameter.clear();
     std::string collection_path;
@@ -173,6 +197,7 @@ bool build_agent_openapi_catalog(
             operation.read_only = operation.access == agent_openapi_access::read;
             operation.requires_confirmation = !operation.read_only;
             operation.input_schema_json = operation_input_schema(document, value, operation.path_parameters, operation.query_parameters);
+            operation.result_schema_json = operation_result_schema(document, value);
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;

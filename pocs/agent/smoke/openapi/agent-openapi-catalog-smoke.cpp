@@ -12,12 +12,14 @@ int main() {
         {"paths", {
             {"/sales", {
                 {"get", {{"operationId", "listSales"}, {"summary", "List sales"},
-                    {"parameters", {{{"name", "id"}, {"in", "query"}, {"x-agent-inferable", true}, {"schema", {{"type", "string"}}}}}}}},
+                    {"parameters", {{{"name", "id"}, {"in", "query"}, {"x-agent-inferable", true}, {"schema", {{"type", "string"}}}}}},
+                    {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "array"}, {"items", {{"type", "object"}}}}}}}}}}}}}}},
                 {"post", {{"operationId", "createSale"}, {"summary", "Create sale"}}},
             }},
             {"/sales/{id}", {
                 {"get", {{"operationId", "getSale"}, {"summary", "Get sale"},
-                    {"parameters", {{{"name", "id"}, {"in", "path"}, {"required", true}, {"schema", {{"type", "string"}}}}}}}},
+                    {"parameters", {{{"name", "id"}, {"in", "path"}, {"required", true}, {"schema", {{"type", "string"}}}}}},
+                    {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "object"}}}}}}}}}}}}},
                 {"delete", {{"operationId", "deleteSale"}}},
             }},
         }},
@@ -34,7 +36,8 @@ int main() {
             catalog.operations[0].operation_id != "listSales" ||
             !catalog.operations[0].read_only ||
             catalog.operations[0].input_schema_json.find("\"type\":\"string\"") == std::string::npos ||
-            catalog.operations[0].input_schema_json.find("x-agent-autowire-fields") == std::string::npos) {
+            catalog.operations[0].input_schema_json.find("x-agent-autowire-fields") == std::string::npos ||
+            catalog.operations[0].result_schema_json.find("\"type\":\"array\"") == std::string::npos) {
         std::cerr << "OpenAPI catalog inferability contract failed: " << error
                   << " operations=" << catalog.operations.size();
         if (!catalog.operations.empty()) {

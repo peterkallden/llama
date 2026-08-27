@@ -164,6 +164,7 @@ struct mcp_agent_tool_definition {
     bool writes_memory = false;
     bool writes_plan = false;
     size_t max_result_bytes = 16 * 1024;
+    std::string result_schema_json = R"({"type":"object"})";
 };
 
 struct mcp_agent_tool_call_result {
