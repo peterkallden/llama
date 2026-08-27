@@ -9,7 +9,7 @@ int main() {
     catalog.prefix = "sales";
     catalog.operations.push_back({
         "listSales", "get", "/sales", "List sales", "List sales", R"({"type":"object"})",
-        agent_openapi_access::read, true, false});
+        {}, {}, agent_openapi_access::read, true, false});
     bool called = false;
     agent_openapi_tool_provider provider(std::move(catalog),
         [&](const agent_tool_context &, const agent_openapi_operation & operation,

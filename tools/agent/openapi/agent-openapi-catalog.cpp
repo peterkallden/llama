@@ -44,7 +44,10 @@ bool policy_allows(
     return access == "read" || access == "write" || access == "destructive";
 }
 
-std::string operation_input_schema(const nlohmann::json & operation) {
+std::string operation_input_schema(
+        const nlohmann::json & operation,
+        std::vector<std::string> & path_parameters,
+        std::vector<std::string> & query_parameters) {
     nlohmann::json schema = {
         {"type", "object"},
         {"properties", nlohmann::json::object()},
@@ -54,6 +57,8 @@ std::string operation_input_schema(const nlohmann::json & operation) {
         for (const auto & parameter : operation["parameters"]) {
             if (!parameter.is_object() || !parameter.value("name", "").size()) continue;
             const std::string name = parameter.value("name", "");
+            if (parameter.value("in", "") == "path") path_parameters.push_back(name);
+            if (parameter.value("in", "") == "query") query_parameters.push_back(name);
             schema["properties"][name] = parameter.value("schema", nlohmann::json({{"type", "string"}}));
             if (parameter.value("required", false)) schema["required"].push_back(name);
         }
@@ -114,7 +119,7 @@ bool build_agent_openapi_catalog(
             operation.access = default_access(method);
             operation.read_only = operation.access == agent_openapi_access::read;
             operation.requires_confirmation = !operation.read_only;
-            operation.input_schema_json = operation_input_schema(value);
+            operation.input_schema_json = operation_input_schema(value, operation.path_parameters, operation.query_parameters);
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;

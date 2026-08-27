@@ -8,7 +8,8 @@
 
 int main() {
     httplib::Server server;
-    server.Get("/sales/42", [](const httplib::Request &, httplib::Response & response) {
+    server.Get("/sales/42", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_param_value("limit") == "10");
         response.set_content(R"({"id":42,"total":7})", "application/json");
     });
     const int port = server.bind_to_any_port("127.0.0.1");
@@ -26,7 +27,7 @@ int main() {
     catalog.prefix = "sales";
     catalog.operations.push_back({
         "getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-        agent_openapi_access::read, true, false});
+        {"id"}, {"limit"}, agent_openapi_access::read, true, false});
 
     agent_openapi_tool_provider provider(std::move(catalog), make_agent_openapi_http_executor(config));
     agent_tool_context context;
@@ -42,7 +43,8 @@ int main() {
     agent_openapi_tool_provider denied_provider(std::move(agent_openapi_catalog{
         "sales-api", config.base_url, "sales", {
             {"getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
-                agent_openapi_access::read, true, false}}}), make_agent_openapi_http_executor(config));
+                {"id"}, {"limit"}, agent_openapi_access::read, true, false}}}),
+        make_agent_openapi_http_executor(config));
     auto denied_view = denied_provider.resolve_tools(context, error);
     assert(denied_view != nullptr);
     const auto denied = denied_view->call({"http-2", "sales.getSale", R"({"id":"42"})"}, error);

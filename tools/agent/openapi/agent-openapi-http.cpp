@@ -55,10 +55,18 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         const auto arguments = nlohmann::json::parse(arguments_json, nullptr, false);
         if (!arguments.is_object()) { error = "OpenAPI tool arguments must be a JSON object"; return false; }
         std::string path = operation.path;
-        for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-            const std::string marker = "{" + it.key() + "}";
+        for (const auto & name : operation.path_parameters) {
+            const auto it = arguments.find(name);
+            if (it == arguments.end() || !it->is_string()) { error = "OpenAPI path parameter is missing or not a string: " + name; return false; }
+            const std::string marker = "{" + name + "}";
             const auto position = path.find(marker);
-            if (position != std::string::npos && it.value().is_string()) path.replace(position, marker.size(), it.value().get<std::string>());
+            if (position != std::string::npos) path.replace(position, marker.size(), httplib::encode_uri_component(it->get<std::string>()));
+        }
+        httplib::Params query;
+        for (const auto & name : operation.query_parameters) {
+            const auto it = arguments.find(name);
+            if (it == arguments.end()) continue;
+            query.emplace(name, it->is_string() ? it->get<std::string>() : it->dump());
         }
         httplib::Headers headers;
         if (config.auth_type == "bearer" && !config.token_env.empty()) {
@@ -66,8 +74,9 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             if (token == nullptr || *token == '\0') { error = "OpenAPI bearer token environment variable is missing"; return false; }
             headers.emplace("Authorization", std::string("Bearer ") + token);
         }
-        const std::string request_path = join_path(url.base_path, path);
-        const std::string body = arguments.contains("body") ? arguments["body"].dump() : arguments_json;
+        std::string request_path = join_path(url.base_path, path);
+        request_path = httplib::append_query_params(request_path, query);
+        const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
         if (url.scheme == "http") {
             httplib::Client client(url.host, url.port); configure(client, config);

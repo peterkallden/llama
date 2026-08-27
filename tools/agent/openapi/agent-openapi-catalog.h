@@ -20,6 +20,8 @@ struct agent_openapi_operation {
     std::string summary;
     std::string description;
     std::string input_schema_json = R"({"type":"object"})";
+    std::vector<std::string> path_parameters;
+    std::vector<std::string> query_parameters;
     agent_openapi_access access = agent_openapi_access::write;
     bool read_only = false;
     bool requires_confirmation = false;
@@ -45,4 +47,3 @@ std::string agent_openapi_exposed_tool_name(
     const agent_openapi_operation & operation);
 
 std::string agent_openapi_access_name(agent_openapi_access access);
-
