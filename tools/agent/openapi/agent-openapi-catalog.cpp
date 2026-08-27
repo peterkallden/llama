@@ -108,6 +108,26 @@ std::string operation_input_schema(
     return schema.dump();
 }
 
+std::string collection_path_for(const std::string & path, std::string & item_parameter) {
+    item_parameter.clear();
+    std::string collection_path;
+    size_t cursor = 0;
+    while (cursor < path.size()) {
+        const size_t open = path.find('{', cursor);
+        if (open == std::string::npos) {
+            collection_path += path.substr(cursor);
+            break;
+        }
+        collection_path += path.substr(cursor, open - cursor);
+        const size_t close = path.find('}', open + 1);
+        if (close == std::string::npos || !item_parameter.empty()) return {};
+        item_parameter = path.substr(open + 1, close - open - 1);
+        cursor = close + 1;
+    }
+    while (collection_path.size() > 1 && collection_path.back() == '/') collection_path.pop_back();
+    return collection_path.empty() ? "/" : collection_path;
+}
+
 }
 
 std::string agent_openapi_access_name(agent_openapi_access access) {
@@ -169,6 +189,20 @@ bool build_agent_openapi_catalog(
                 }
             }
             catalog.operations.push_back(std::move(operation));
+        }
+    }
+    for (const auto & item : catalog.operations) {
+        std::string item_parameter;
+        const std::string collection_path = collection_path_for(item.path, item_parameter);
+        if (item_parameter.empty() || collection_path.empty()) continue;
+        for (const auto & collection : catalog.operations) {
+            if (collection.operation_id == item.operation_id || collection.path != collection_path) continue;
+            if (!collection.read_only || item.method != "get") continue;
+            catalog.relations.push_back({
+                collection.operation_id,
+                item.operation_id,
+                collection_path,
+                item_parameter});
         }
     }
     if (catalog.operations.empty() && config.exposure == "include") {

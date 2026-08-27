@@ -15,6 +15,8 @@ int main() {
                 {"post", {{"operationId", "createSale"}, {"summary", "Create sale"}}},
             }},
             {"/sales/{id}", {
+                {"get", {{"operationId", "getSale"}, {"summary", "Get sale"},
+                    {"parameters", {{{"name", "id"}, {"in", "path"}, {"required", true}, {"schema", {{"type", "string"}}}}}}}},
                 {"delete", {{"operationId", "deleteSale"}}},
             }},
         }},
@@ -63,6 +65,14 @@ int main() {
     config.operations["listSales"].access = "read";
     assert(build_agent_openapi_catalog(document, config, catalog, error));
     assert(catalog.operations.size() == 1);
+
+    config.exposure = "auto";
+    config.access = "read_only";
+    assert(build_agent_openapi_catalog(document, config, catalog, error));
+    assert(catalog.relations.size() == 1);
+    assert(catalog.relations[0].collection_operation_id == "listSales");
+    assert(catalog.relations[0].item_operation_id == "getSale");
+    assert(catalog.relations[0].item_parameter == "id");
 
     std::cout << "agent-openapi-catalog-smoke: ok\n";
     return 0;

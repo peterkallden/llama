@@ -27,11 +27,19 @@ struct agent_openapi_operation {
     bool requires_confirmation = false;
 };
 
+struct agent_openapi_relation {
+    std::string collection_operation_id;
+    std::string item_operation_id;
+    std::string resource_path;
+    std::string item_parameter;
+};
+
 struct agent_openapi_catalog {
     std::string provider_id;
     std::string base_url;
     std::string prefix;
     std::vector<agent_openapi_operation> operations;
+    std::vector<agent_openapi_relation> relations;
 };
 
 // Parse an OpenAPI 3 document and apply the host-owned exposure policy. This
