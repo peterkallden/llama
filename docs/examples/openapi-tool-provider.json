@@ -1,0 +1,28 @@
+{
+  "type": "openapi",
+  "id": "sales-api",
+  "enabled": true,
+  "required": false,
+  "spec_path": "configs/sales.openapi.json",
+  "base_url": "https://api.example.test",
+  "prefix": "sales",
+  "allow_private_network": false,
+  "policy": {
+    "access": "read_only",
+    "exposure": "auto",
+    "operations": {
+      "searchSales": {
+        "access": "read"
+      }
+    }
+  },
+  "auth": {
+    "type": "bearer",
+    "token_env": "SALES_API_TOKEN"
+  },
+  "limits": {
+    "connect_timeout_ms": 5000,
+    "request_timeout_ms": 30000,
+    "max_result_bytes": 1048576
+  }
+}

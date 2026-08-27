@@ -27,6 +27,9 @@ Host configuration is JSON. OpenAPI entries use the existing
 
 The initial contract is:
 
+See also the copyable provider fragment
+[`openapi-tool-provider.json`](../examples/openapi-tool-provider.json).
+
 ```json
 {
   "tools": {
