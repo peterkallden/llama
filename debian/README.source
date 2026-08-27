@@ -35,6 +35,11 @@ default.
 PPA remain portable. A downstream maintainer building for a controlled host
 may set it to `on`.
 
+The CUDA release package declares a dependency on `cuda-cudart-13-3`. It also
+requires a compatible NVIDIA driver on the target host; the driver remains a
+host-level choice because its Debian package name varies by distribution and
+hardware support policy.
+
 The resulting package installs the daemon and bootstrap helper under
 /usr/sbin, client and web-adapter binaries under /usr/bin, examples under
 /usr/share/doc/llama-agent/examples (including the source and Nginx example

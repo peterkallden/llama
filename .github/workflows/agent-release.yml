@@ -430,6 +430,12 @@ jobs:
 
           control = Path("debian/control")
           text = control.read_text()
+          if backend == "cuda":
+              generic_depends = "Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser"
+              cuda_depends = generic_depends + ", cuda-cudart-13-3"
+              if text.count(generic_depends) != 1:
+                  raise SystemExit("expected exactly one generic Debian dependency stanza")
+              text = text.replace(generic_depends, cuda_depends, 1)
           other_packages = [
               f"llama-agent-{candidate}"
               for candidate in ("cpu", "cuda", "vulkan")
