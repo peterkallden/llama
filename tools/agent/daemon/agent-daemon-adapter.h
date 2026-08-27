@@ -5,6 +5,7 @@
 #include "agent/data-store.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
+#include "../host/agent-host-openapi-provider-config.h"
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
 #include "../runtime/agent-runtime-execution.h"
@@ -60,6 +61,7 @@ struct daemon_options {
     std::string mcp_tool_server_name = "mcp";
     std::string mcp_tool_prefix;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
+    std::vector<agent_host_openapi_provider_config> openapi_providers;
     std::string resource_blob_backend = "auto";
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";

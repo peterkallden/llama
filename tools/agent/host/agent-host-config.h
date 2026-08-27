@@ -7,6 +7,7 @@
 #include "agent/sandbox/sandbox-policy.h"
 #include "agent/workspace-contract.h"
 #include "agent-diagnostics-config.h"
+#include "agent-host-openapi-provider-config.h"
 #include "resource/resource-contract.h"
 
 #include <cstdint>
@@ -68,6 +69,7 @@ struct agent_host_config {
     std::string repository_root;
     agent_host_diagnostics_config diagnostics;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
+    std::vector<agent_host_openapi_provider_config> openapi_providers;
     bool inbound_mcp_enabled = false;
     std::string inbound_mcp_listen_address = "127.0.0.1";
     int inbound_mcp_port = 0;

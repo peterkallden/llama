@@ -101,6 +101,28 @@ int main(int argc, char ** argv) {
                         {"prefix", "github_alt"},
                         {"server_name", "github-alt"},
                     },
+                    json{
+                        {"type", "openapi"},
+                        {"id", "sales-api"},
+                        {"spec_path", "sales.openapi.json"},
+                        {"base_url", "https://api.example.test"},
+                        {"policy", {
+                            {"access", "read_only"},
+                            {"exposure", "auto"},
+                            {"operations", {
+                                {"searchSales", {{"access", "read"}}},
+                            }},
+                        }},
+                        {"auth", {
+                            {"type", "bearer"},
+                            {"token_env", "SALES_API_TOKEN"},
+                        }},
+                        {"limits", {
+                            {"connect_timeout_ms", 4000},
+                            {"request_timeout_ms", 15000},
+                            {"max_result_bytes", 1048576},
+                        }},
+                    },
                 })},
             }},
             {"limits", {
@@ -175,6 +197,15 @@ int main(int argc, char ** argv) {
     if (loaded_config.mcp_providers.empty() ||
             !loaded_config.mcp_providers.front().required) {
         std::fprintf(stderr, "host config MCP required policy mismatch\n");
+        return 1;
+    }
+    if (loaded_config.openapi_providers.size() != 1 ||
+            loaded_config.openapi_providers.front().id != "sales-api" ||
+            loaded_config.openapi_providers.front().access != "read_only" ||
+            loaded_config.openapi_providers.front().exposure != "auto" ||
+            loaded_config.openapi_providers.front().operations.size() != 1 ||
+            loaded_config.openapi_providers.front().token_env != "SALES_API_TOKEN") {
+        std::fprintf(stderr, "host config OpenAPI provider contract failed\n");
         return 1;
     }
     if (loaded_config.runtime_context_size != 4096 || loaded_config.n_threads != 4) {
@@ -265,6 +296,14 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "SQLite plan backend without a path was accepted\n");
         return 1;
     }
+    agent_host_config invalid_openapi_config = loaded_config;
+    invalid_openapi_config.openapi_providers.front().auth_type = "bearer";
+    invalid_openapi_config.openapi_providers.front().token_env.clear();
+    if (validate_agent_host_config(invalid_openapi_config, error) ||
+            error.find("OpenAPI bearer auth requires token_env") == std::string::npos) {
+        std::fprintf(stderr, "OpenAPI bearer provider without token_env was accepted\n");
+        return 1;
+    }
     const json roundtrip = agent_host_config_to_json(loaded_config);
     if (!roundtrip.is_object() ||
             roundtrip.value("schema_version", 0) != 1 ||
@@ -281,6 +320,14 @@ int main(int argc, char ** argv) {
             roundtrip["runtime"]["context_budgets"]["working_state"]["max_tool_results"] != 8 ||
             roundtrip["limits"]["max_continuations"] != 3) {
         std::fprintf(stderr, "host context budgets roundtrip mismatch\n");
+        return 1;
+    }
+    if (!roundtrip["tools"]["providers"].is_array() ||
+            roundtrip["tools"]["providers"].size() != 3 ||
+            roundtrip["tools"]["providers"][2]["type"] != "openapi" ||
+            roundtrip["tools"]["providers"][2]["policy"]["access"] != "read_only" ||
+            roundtrip["tools"]["providers"][2]["auth"]["token_env"] != "SALES_API_TOKEN") {
+        std::fprintf(stderr, "host config OpenAPI roundtrip mismatch\n");
         return 1;
     }
 

@@ -215,6 +215,76 @@ bool read_mcp_provider(
     return true;
 }
 
+bool read_openapi_provider(
+        const json & value,
+        agent_host_openapi_provider_config & provider,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "OpenAPI provider entry must be an object";
+        return false;
+    }
+    read_optional(value, "type", provider.type);
+    read_optional(value, "id", provider.id);
+    read_optional(value, "enabled", provider.enabled);
+    read_optional(value, "required", provider.required);
+    read_optional(value, "spec_path", provider.spec_path);
+    read_optional(value, "base_url", provider.base_url);
+    read_optional(value, "prefix", provider.prefix);
+    read_optional(value, "access", provider.access);
+    read_optional(value, "exposure", provider.exposure);
+    read_optional(value, "auth_type", provider.auth_type);
+    read_optional(value, "token_env", provider.token_env);
+    read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
+    read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
+    read_optional(value, "max_result_bytes", provider.max_result_bytes);
+
+    if (value.contains("policy")) {
+        if (!value["policy"].is_object()) {
+            error = "OpenAPI provider policy must be an object";
+            return false;
+        }
+        const auto & policy = value["policy"];
+        read_optional(policy, "access", provider.access);
+        read_optional(policy, "exposure", provider.exposure);
+        if (policy.contains("operations")) {
+            if (!policy["operations"].is_object()) {
+                error = "OpenAPI provider policy.operations must be an object";
+                return false;
+            }
+            provider.operations.clear();
+            for (auto it = policy["operations"].begin(); it != policy["operations"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "OpenAPI provider operation policies must be objects";
+                    return false;
+                }
+                agent_host_openapi_operation_policy operation;
+                read_optional(it.value(), "enabled", operation.enabled);
+                read_optional(it.value(), "access", operation.access);
+                provider.operations.emplace(it.key(), std::move(operation));
+            }
+        }
+    }
+    if (value.contains("auth")) {
+        if (!value["auth"].is_object()) {
+            error = "OpenAPI provider auth must be an object";
+            return false;
+        }
+        read_optional(value["auth"], "type", provider.auth_type);
+        read_optional(value["auth"], "token_env", provider.token_env);
+    }
+    if (value.contains("limits")) {
+        if (!value["limits"].is_object()) {
+            error = "OpenAPI provider limits must be an object";
+            return false;
+        }
+        read_optional(value["limits"], "connect_timeout_ms", provider.connect_timeout_ms);
+        read_optional(value["limits"], "request_timeout_ms", provider.request_timeout_ms);
+        read_optional(value["limits"], "max_result_bytes", provider.max_result_bytes);
+    }
+    error.clear();
+    return true;
+}
+
 bool read_inbound_token(
         const json & value,
         agent_host_mcp_inbound_token_config & token,
@@ -523,12 +593,29 @@ bool parse_agent_host_config_json(
                 return false;
             }
             config.mcp_providers.clear();
+            config.openapi_providers.clear();
             for (const auto & entry : tools["providers"]) {
-                agent_host_mcp_provider_config provider;
-                if (!read_mcp_provider(entry, provider, error)) {
+                if (!entry.is_object()) {
+                    error = "tools.providers entries must be objects";
                     return false;
                 }
-                config.mcp_providers.push_back(std::move(provider));
+                if (entry.contains("type") && !entry["type"].is_string()) {
+                    error = "tools.providers.type must be a string";
+                    return false;
+                }
+                const std::string type = entry.value("type", "mcp");
+                if (type == "mcp") {
+                    agent_host_mcp_provider_config provider;
+                    if (!read_mcp_provider(entry, provider, error)) return false;
+                    config.mcp_providers.push_back(std::move(provider));
+                } else if (type == "openapi") {
+                    agent_host_openapi_provider_config provider;
+                    if (!read_openapi_provider(entry, provider, error)) return false;
+                    config.openapi_providers.push_back(std::move(provider));
+                } else {
+                    error = "unsupported tools.providers type: " + type;
+                    return false;
+                }
             }
         }
     }
@@ -742,6 +829,38 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"prefix", provider.prefix},
             {"server_name", provider.server_name},
             {"command", provider.command},
+        });
+    }
+    for (const auto & provider : config.openapi_providers) {
+        json operations = json::object();
+        for (const auto & operation : provider.operations) {
+            operations[operation.first] = {
+                {"enabled", operation.second.enabled},
+                {"access", operation.second.access},
+            };
+        }
+        providers.push_back({
+            {"type", "openapi"},
+            {"id", provider.id},
+            {"enabled", provider.enabled},
+            {"required", provider.required},
+            {"spec_path", provider.spec_path},
+            {"base_url", provider.base_url},
+            {"prefix", provider.prefix},
+            {"policy", {
+                {"access", provider.access},
+                {"exposure", provider.exposure},
+                {"operations", std::move(operations)},
+            }},
+            {"auth", {
+                {"type", provider.auth_type},
+                {"token_env", provider.token_env},
+            }},
+            {"limits", {
+                {"connect_timeout_ms", provider.connect_timeout_ms},
+                {"request_timeout_ms", provider.request_timeout_ms},
+                {"max_result_bytes", provider.max_result_bytes},
+            }},
         });
     }
     json capabilities = json::object();
@@ -1361,6 +1480,53 @@ bool validate_agent_host_config(
             return false;
         }
     }
+    for (const auto & provider : config.openapi_providers) {
+        if (provider.id.empty()) {
+            error = "OpenAPI provider is missing a stable id";
+            return false;
+        }
+        if (!provider_ids.insert(provider.id).second) {
+            error = "provider ids must be unique: " + provider.id;
+            return false;
+        }
+        if (!provider.enabled) {
+            continue;
+        }
+        if (provider.spec_path.empty() || provider.base_url.empty()) {
+            error = "enabled OpenAPI provider requires spec_path and base_url";
+            return false;
+        }
+        if (provider.access != "read_only" && provider.access != "read_write" && provider.access != "full") {
+            error = "OpenAPI provider access must be read_only, read_write or full";
+            return false;
+        }
+        if (provider.exposure != "auto" && provider.exposure != "include" && provider.exposure != "exclude") {
+            error = "OpenAPI provider exposure must be auto, include or exclude";
+            return false;
+        }
+        if (provider.auth_type != "none" && provider.auth_type != "bearer") {
+            error = "OpenAPI provider auth type must be none or bearer";
+            return false;
+        }
+        if (provider.auth_type == "bearer" && provider.token_env.empty()) {
+            error = "OpenAPI bearer auth requires token_env";
+            return false;
+        }
+        if (provider.connect_timeout_ms == 0 || provider.request_timeout_ms == 0 || provider.max_result_bytes == 0) {
+            error = "OpenAPI provider limits must be greater than zero";
+            return false;
+        }
+        for (const auto & operation : provider.operations) {
+            if (operation.first.empty() ||
+                    (operation.second.access != "" &&
+                     operation.second.access != "read" &&
+                     operation.second.access != "write" &&
+                     operation.second.access != "destructive")) {
+                error = "OpenAPI operation policy has an invalid access value: " + operation.first;
+                return false;
+            }
+        }
+    }
     error.clear();
     return true;
 }
@@ -1428,6 +1594,7 @@ void apply_agent_host_config_to_daemon_options(
         options.mcp_tool_prefix = provider.prefix;
     }
     options.mcp_providers = config.mcp_providers;
+    options.openapi_providers = config.openapi_providers;
     options.http_enabled = config.inbound_mcp_enabled;
     options.http_listen_address = config.inbound_mcp_listen_address;
     options.http_port = config.inbound_mcp_port;

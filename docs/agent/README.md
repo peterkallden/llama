@@ -157,7 +157,8 @@ remote MCP providers, status/readiness, and Docker usage.
   execution. See [Agent Runtime](agent-runtime.md).
 - **Tools and capabilities** — host-owned profiles, local tools, diagnostics,
   repository/workspace operations, data tools, resources, and optional remote
-  MCP providers.
+  MCP providers. The OpenAPI provider design and configuration contract are
+  documented in [OpenAPI tool provider](agent-openapi-tool-provider.md).
 - **Memory, plans, and resources** — persistent Cozo-backed stores and a
   resource boundary for turn inputs, generated artifacts, and resource
   references.
