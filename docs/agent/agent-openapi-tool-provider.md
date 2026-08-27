@@ -146,8 +146,9 @@ The provider must enforce all of the following:
   the document without policy validation;
 * HTTPS by default, with narrowly scoped localhost HTTP only for development;
 * private-network and redirect/SSRF checks; private/local targets require the
-  explicit host opt-in `allow_private_network: true`, and redirects are never
-  followed automatically;
+  explicit host opt-in `allow_private_network: true`, the validated DNS
+  address is pinned for the request, and redirects are never followed
+  automatically;
 * bounded request, response and timeout limits;
 * host-owned credentials and a safe header allowlist;
 * caller policy intersected with provider policy for inbound MCP;

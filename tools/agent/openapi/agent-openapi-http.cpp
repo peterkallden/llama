@@ -55,19 +55,25 @@ bool private_address(const sockaddr * address) {
     return true;
 }
 
-bool host_is_private(const std::string & host) {
+bool resolve_validated_host(const std::string & host, std::string & address, bool & private_result) {
     addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC;
     addrinfo * results = nullptr;
-    if (getaddrinfo(host.c_str(), nullptr, &hints, &results) != 0) return true;
-    bool result = false;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &results) != 0) return false;
+    private_result = false;
+    bool have_address = false;
     for (auto * item = results; item != nullptr; item = item->ai_next) {
-        if (private_address(item->ai_addr)) { result = true; break; }
+        if (private_address(item->ai_addr)) private_result = true;
+        char numeric[NI_MAXHOST] = {};
+        if (!have_address && getnameinfo(item->ai_addr, item->ai_addrlen, numeric, sizeof(numeric), nullptr, 0, NI_NUMERICHOST) == 0) {
+            address = numeric;
+            have_address = true;
+        }
     }
     freeaddrinfo(results);
-    return result;
+    return have_address;
 }
 #else
-bool host_is_private(const std::string &) {
+bool resolve_validated_host(const std::string &, std::string &, bool &) {
     // Fail closed when the platform resolver policy is not implemented yet.
     return true;
 }
@@ -94,7 +100,17 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         if (!context.allow_network) { error = "OpenAPI tool requires network capability"; return false; }
         url_parts url;
         if (!parse_url(config.base_url, url, error)) return false;
-        if (!config.allow_private_network && host_is_private(url.host)) {
+        std::string validated_address;
+        bool private_address_result = true;
+#ifndef _WIN32
+        if (!resolve_validated_host(url.host, validated_address, private_address_result)) {
+            error = "OpenAPI base_url host could not be resolved";
+            return false;
+        }
+#else
+        resolve_validated_host(url.host, validated_address, private_address_result);
+#endif
+        if (!config.allow_private_network && private_address_result) {
             error = "OpenAPI request targets a private or local network address";
             return false;
         }
@@ -125,7 +141,7 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
         if (url.scheme == "http") {
-            httplib::Client client(url.host, url.port); client.set_follow_location(false); configure(client, config);
+            httplib::Client client(url.host, url.port); client.set_hostname_addr_map({{url.host, validated_address}}); client.set_follow_location(false); configure(client, config);
             if (operation.method == "get") response = client.Get(request_path, headers);
             else if (operation.method == "head") response = client.Head(request_path, headers);
             else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
@@ -135,7 +151,7 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             else { error = "unsupported OpenAPI HTTP method"; return false; }
         } else {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-            httplib::SSLClient client(url.host, url.port); client.set_follow_location(false); configure(client, config);
+            httplib::SSLClient client(url.host, url.port); client.set_hostname_addr_map({{url.host, validated_address}}); client.set_follow_location(false); configure(client, config);
             if (operation.method == "get") response = client.Get(request_path, headers);
             else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
             else if (operation.method == "put") response = client.Put(request_path, headers, body, "application/json");
