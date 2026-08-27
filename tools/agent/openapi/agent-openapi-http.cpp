@@ -3,10 +3,12 @@
 #include <cpp-httplib/httplib.h>
 
 #include <cstdlib>
+#ifndef _WIN32
 #include <cstring>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#endif
 #include <sstream>
 
 namespace {
@@ -36,6 +38,7 @@ bool parse_url(const std::string & input, url_parts & url, std::string & error) 
     return true;
 }
 
+#ifndef _WIN32
 bool private_address(const sockaddr * address) {
     if (address->sa_family == AF_INET) {
         const auto value = ntohl(reinterpret_cast<const sockaddr_in *>(address)->sin_addr.s_addr);
@@ -63,6 +66,12 @@ bool host_is_private(const std::string & host) {
     freeaddrinfo(results);
     return result;
 }
+#else
+bool host_is_private(const std::string &) {
+    // Fail closed when the platform resolver policy is not implemented yet.
+    return true;
+}
+#endif
 
 template<typename Client>
 void configure(Client & client, const agent_host_openapi_provider_config & config) {
