@@ -1,4 +1,5 @@
 #include "tools/agent/openapi/agent-openapi-catalog.h"
+#include "tools/agent/openapi/agent-openapi-provider.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <cassert>
@@ -29,7 +30,7 @@ int main() {
     agent_openapi_catalog catalog;
     std::string error;
     if (!build_agent_openapi_catalog(document, config, catalog, error) ||
-            catalog.operations.size() != 1 ||
+            catalog.operations.size() != 2 ||
             catalog.operations[0].operation_id != "listSales" ||
             !catalog.operations[0].read_only ||
             catalog.operations[0].input_schema_json.find("\"type\":\"string\"") == std::string::npos ||
@@ -57,8 +58,8 @@ int main() {
     config.access = "read_write";
     config.operations["createSale"].access = "write";
     assert(build_agent_openapi_catalog(document, config, catalog, error));
-    assert(catalog.operations.size() == 2);
-    assert(catalog.operations[1].requires_confirmation);
+    assert(catalog.operations.size() == 3);
+    assert(catalog.operations[2].requires_confirmation);
 
     config.exposure = "include";
     config.operations.clear();

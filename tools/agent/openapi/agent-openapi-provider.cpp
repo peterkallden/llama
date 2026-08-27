@@ -15,6 +15,18 @@ public:
             definition.provider_id = catalog.provider_id;
             definition.name = operation.operation_id;
             definition.description = operation.description.empty() ? operation.summary : operation.description;
+            for (const auto & relation : catalog.relations) {
+                if (relation.collection_operation_id == operation.operation_id) {
+                    definition.description += " workflow: " + catalog.prefix + "." +
+                        relation.collection_operation_id + " -> choose/bind " +
+                        relation.item_parameter + " -> " + catalog.prefix + "." +
+                        relation.item_operation_id + ".";
+                } else if (relation.item_operation_id == operation.operation_id) {
+                    definition.description += " workflow input: " + catalog.prefix + "." +
+                        relation.collection_operation_id + " produces " +
+                        relation.item_parameter + ".";
+                }
+            }
             definition.input_schema_json = operation.input_schema_json;
             definition.read_only = operation.read_only;
             definition.requires_confirmation = operation.requires_confirmation;

@@ -10,6 +10,10 @@ int main() {
     catalog.operations.push_back({
         "listSales", "get", "/sales", "List sales", "List sales", R"({"type":"object"})",
         {}, {}, agent_openapi_access::read, true, false});
+    catalog.operations.push_back({
+        "getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
+        {"id"}, {}, agent_openapi_access::read, true, false});
+    catalog.relations.push_back({"listSales", "getSale", "/sales", "id"});
     bool called = false;
     agent_openapi_tool_provider provider(std::move(catalog),
         [&](const agent_tool_context &, const agent_openapi_operation & operation,
@@ -23,8 +27,9 @@ int main() {
     std::string error;
     auto view = provider.resolve_tools(context, error);
     assert(view != nullptr);
-    assert(view->chat_tools().size() == 1);
+    assert(view->chat_tools().size() == 2);
     assert(view->chat_tools()[0].name == "sales.listSales");
+    assert(view->chat_tools()[0].description.find("workflow: sales.listSales -> choose/bind id -> sales.getSale") != std::string::npos);
     assert(view->is_read_only("sales.listSales"));
     assert(!view->is_policy_gated("sales.listSales"));
     agent_tool_call call{"call-1", "sales.listSales", R"({"limit":10})"};
