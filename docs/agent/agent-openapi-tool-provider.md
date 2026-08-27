@@ -148,6 +148,29 @@ The model cannot replace the path, method, base URL, authentication or
 headers. The advertised schema is the bounded subset understood by the
 agent's existing JSON-schema validator.
 
+### Collection and item relations
+
+The catalog recognizes a conservative REST-shaped relation when a read
+operation on a collection path has a matching read `GET` operation on the same
+path with one templated segment, for example:
+
+```text
+GET /sales             -> sales.listSales
+GET /sales/{sale_id}   -> sales.getSale
+```
+
+The catalog records this as a host-side relation with `sale_id` as the item
+parameter. It is a planning hint, not an instruction to issue a second HTTP
+request automatically. Deliberate planning may use the relation to create the
+bounded sequence `list/search -> choose or bind ID -> get`. The host remains
+responsible for ordering, candidate selection and argument binding.
+
+The relation is intentionally not inferred from path similarity alone when the
+item operation is not a read `GET`, or when the collection operation is not
+admitted as read-only. Ambiguous APIs can add an explicit provider-level
+relation contract later; OpenAPI Links remain hints and never trigger hidden
+follow-up calls.
+
 Results are bounded and should contain status, content type and a bounded
 response body. Credentials, unrestricted response headers and unbounded
 binary payloads must not enter model context.
