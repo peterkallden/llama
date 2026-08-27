@@ -90,6 +90,23 @@ int main() {
         agent_openapi_result_projection_limits{}, projection, error));
     assert(projection.kind == agent_openapi_result_projection_kind::json_resource);
 
+    std::vector<agent_openapi_item_reference> references;
+    assert(make_agent_openapi_item_references(
+        catalog, "listSales", R"([{"id":"s1","region":"north"},{"id":"s2"}])",
+        agent_openapi_result_projection_limits{}, references, error));
+    assert(references.size() == 2);
+    assert(references[0].candidate == "getSale#1");
+    assert(references[0].item_value == "s1");
+    assert(references[0].item_parameter == "id");
+    assert(references[0].provider_id == "sales-api");
+    assert(references[1].row_index == 1);
+
+    agent_openapi_result_projection_limits small_limits;
+    small_limits.max_rows = 1;
+    assert(!make_agent_openapi_item_references(
+        catalog, "listSales", R"([{"id":"s1"},{"id":"s2"}])",
+        small_limits, references, error));
+
     std::cout << "agent-openapi-catalog-smoke: ok\n";
     return 0;
 }

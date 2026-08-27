@@ -302,3 +302,57 @@ std::string agent_openapi_exposed_tool_name(
         const agent_openapi_operation & operation) {
     return catalog.prefix.empty() ? operation.operation_id : catalog.prefix + "." + operation.operation_id;
 }
+
+bool make_agent_openapi_item_references(
+        const agent_openapi_catalog & catalog,
+        const std::string & collection_operation_id,
+        const std::string & structured_content_json,
+        const agent_openapi_result_projection_limits & limits,
+        std::vector<agent_openapi_item_reference> & references,
+        std::string & error) {
+    references.clear();
+    if (structured_content_json.size() > limits.max_bytes) {
+        error = "OpenAPI collection exceeds the materialization byte limit";
+        return false;
+    }
+    const auto value = nlohmann::json::parse(structured_content_json, nullptr, false);
+    if (value.is_discarded() || !value.is_array()) {
+        error = "OpenAPI item references require a JSON collection";
+        return false;
+    }
+    if (value.size() > limits.max_rows) {
+        error = "OpenAPI collection exceeds the materialization row limit";
+        return false;
+    }
+    const auto relation_it = std::find_if(
+        catalog.relations.begin(), catalog.relations.end(),
+        [&](const agent_openapi_relation & relation) {
+            return relation.collection_operation_id == collection_operation_id;
+        });
+    if (relation_it == catalog.relations.end()) {
+        error = "OpenAPI collection operation has no item relation";
+        return false;
+    }
+    for (size_t index = 0; index < value.size(); ++index) {
+        const auto & row = value[index];
+        if (!row.is_object()) continue;
+        const auto item_it = row.find(relation_it->item_parameter);
+        if (item_it == row.end() || item_it->is_null() ||
+                !(item_it->is_string() || item_it->is_boolean() || item_it->is_number())) continue;
+        std::string item_value;
+        if (item_it->is_string()) item_value = item_it->get<std::string>();
+        else if (item_it->is_boolean()) item_value = item_it->get<bool>() ? "true" : "false";
+        else item_value = item_it->dump();
+        if (item_value.empty()) continue;
+        references.push_back({
+            relation_it->item_operation_id + "#" + std::to_string(index + 1),
+            catalog.provider_id,
+            relation_it->collection_operation_id,
+            relation_it->item_operation_id,
+            relation_it->item_parameter,
+            std::move(item_value),
+            index});
+    }
+    error.clear();
+    return true;
+}

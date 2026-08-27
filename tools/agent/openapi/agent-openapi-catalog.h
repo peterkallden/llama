@@ -35,6 +35,8 @@ struct agent_openapi_relation {
     std::string item_parameter;
 };
 
+struct agent_openapi_catalog;
+
 enum class agent_openapi_result_projection_kind {
     dataset,
     json_resource,
@@ -52,6 +54,16 @@ struct agent_openapi_result_projection {
     size_t row_count = 0;
     std::vector<std::string> columns;
     std::string reason;
+};
+
+struct agent_openapi_item_reference {
+    std::string candidate;
+    std::string provider_id;
+    std::string collection_operation_id;
+    std::string item_operation_id;
+    std::string item_parameter;
+    std::string item_value;
+    size_t row_index = 0;
 };
 
 struct agent_openapi_catalog {
@@ -81,3 +93,14 @@ bool classify_agent_openapi_result_json(
     const agent_openapi_result_projection_limits & limits,
     agent_openapi_result_projection & projection,
     std::string & error);
+
+// Create deterministic, host-owned candidate handles from a bounded
+// collection result. Only rows containing a scalar item identifier are
+// selectable; the candidate never contains a URL or credentials.
+bool make_agent_openapi_item_references(
+        const agent_openapi_catalog & catalog,
+        const std::string & collection_operation_id,
+        const std::string & structured_content_json,
+        const agent_openapi_result_projection_limits & limits,
+        std::vector<agent_openapi_item_reference> & references,
+        std::string & error);
