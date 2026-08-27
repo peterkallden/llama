@@ -6,9 +6,11 @@
 int main() {
     const nlohmann::json document = {
         {"openapi", "3.0.3"},
+        {"components", {"schemas", {{"SaleId", {{"type", "string"}}}}}},
         {"paths", {
             {"/sales", {
-                {"get", {{"operationId", "listSales"}, {"summary", "List sales"}}},
+                {"get", {{"operationId", "listSales"}, {"summary", "List sales"},
+                    {"parameters", {{{"name", "id"}, {"in", "query"}, {"schema", {{"$ref", "#/components/schemas/SaleId"}}}}}}}},
                 {"post", {{"operationId", "createSale"}, {"summary", "Create sale"}}},
             }},
             {"/sales/{id}", {
@@ -27,6 +29,7 @@ int main() {
     assert(catalog.operations.size() == 1);
     assert(catalog.operations[0].operation_id == "listSales");
     assert(catalog.operations[0].read_only);
+    assert(catalog.operations[0].input_schema_json.find("\"type\":\"string\"") != std::string::npos);
     assert(agent_openapi_exposed_tool_name(catalog, catalog.operations[0]) == "sales.listSales");
 
     config.access = "read_write";

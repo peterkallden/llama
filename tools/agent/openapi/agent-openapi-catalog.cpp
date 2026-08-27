@@ -44,7 +44,28 @@ bool policy_allows(
     return access == "read" || access == "write" || access == "destructive";
 }
 
+void resolve_local_refs(const nlohmann::json & document, nlohmann::json & value, std::set<std::string> & seen) {
+    if (value.is_object() && value.contains("$ref") && value["$ref"].is_string()) {
+        const std::string ref = value["$ref"].get<std::string>();
+        const std::string prefix = "#/components/schemas/";
+        if (ref.rfind(prefix, 0) == 0 && seen.insert(ref).second) {
+            const auto it = document.find("components");
+            if (it != document.end() && it->is_object() && (*it).contains("schemas") && (*it)["schemas"].is_object()) {
+                const auto schema_it = (*it)["schemas"].find(ref.substr(prefix.size()));
+                if (schema_it != (*it)["schemas"].end()) {
+                    value = *schema_it;
+                    resolve_local_refs(document, value, seen);
+                }
+            }
+        }
+        return;
+    }
+    if (value.is_object()) for (auto & item : value.items()) resolve_local_refs(document, item.value(), seen);
+    if (value.is_array()) for (auto & item : value) resolve_local_refs(document, item, seen);
+}
+
 std::string operation_input_schema(
+        const nlohmann::json & document,
         const nlohmann::json & operation,
         std::vector<std::string> & path_parameters,
         std::vector<std::string> & query_parameters) {
@@ -60,6 +81,8 @@ std::string operation_input_schema(
             if (parameter.value("in", "") == "path") path_parameters.push_back(name);
             if (parameter.value("in", "") == "query") query_parameters.push_back(name);
             schema["properties"][name] = parameter.value("schema", nlohmann::json({{"type", "string"}}));
+            std::set<std::string> seen;
+            resolve_local_refs(document, schema["properties"][name], seen);
             if (parameter.value("required", false)) schema["required"].push_back(name);
         }
     }
@@ -67,7 +90,11 @@ std::string operation_input_schema(
         const auto & content = operation["requestBody"].value("content", nlohmann::json::object());
         if (content.is_object() && content.contains("application/json")) {
             const auto & media = content["application/json"];
-            if (media.is_object() && media.contains("schema")) schema["properties"]["body"] = media["schema"];
+            if (media.is_object() && media.contains("schema")) {
+                schema["properties"]["body"] = media["schema"];
+                std::set<std::string> seen;
+                resolve_local_refs(document, schema["properties"]["body"], seen);
+            }
             if (operation["requestBody"].value("required", false)) schema["required"].push_back("body");
         }
     }
@@ -119,7 +146,7 @@ bool build_agent_openapi_catalog(
             operation.access = default_access(method);
             operation.read_only = operation.access == agent_openapi_access::read;
             operation.requires_confirmation = !operation.read_only;
-            operation.input_schema_json = operation_input_schema(value, operation.path_parameters, operation.query_parameters);
+            operation.input_schema_json = operation_input_schema(document, value, operation.path_parameters, operation.query_parameters);
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;
