@@ -5,8 +5,9 @@
 
 class agent_openapi_tool_provider::client : public agent_mcp_tool_client {
 public:
-    client(const agent_openapi_catalog & catalog, agent_openapi_executor executor)
-        : catalog(catalog), executor(std::move(executor)) {}
+    client(const agent_openapi_catalog & catalog, agent_openapi_executor executor,
+            agent_openapi_result_materializer materializer)
+        : catalog(catalog), executor(std::move(executor)), materializer(std::move(materializer)) {}
 
     bool list_tools(const agent_tool_context &, std::vector<mcp_agent_tool_definition> & tools,
                     std::string &) override {
@@ -49,6 +50,7 @@ public:
         }
         agent_openapi_execution_result execution;
         if (!executor || !executor(context, *it, arguments_json, execution, error)) return false;
+        if (materializer && !materializer(context, *it, execution, error)) return false;
         result.ok = execution.ok;
         result.structured_content_json = execution.structured_content_json;
         result.text_content = execution.text_content;
@@ -64,13 +66,16 @@ public:
 private:
     const agent_openapi_catalog & catalog;
     agent_openapi_executor executor;
+    agent_openapi_result_materializer materializer;
 };
 
 agent_openapi_tool_provider::agent_openapi_tool_provider(
-        agent_openapi_catalog catalog, agent_openapi_executor executor)
+        agent_openapi_catalog catalog, agent_openapi_executor executor,
+        agent_openapi_result_materializer materializer)
     : catalog(std::move(catalog))
     , executor(std::move(executor))
-    , client_impl(std::make_unique<client>(this->catalog, this->executor))
+    , materializer(std::move(materializer))
+    , client_impl(std::make_unique<client>(this->catalog, this->executor, this->materializer))
     , delegate(std::make_unique<mcp_agent_tool_provider>(
         this->catalog.provider_id,
         *client_impl,

@@ -25,12 +25,24 @@ using agent_openapi_executor = std::function<bool(
     agent_openapi_execution_result & result,
     std::string & error)>;
 
+// Optional host-owned post-processor. It may attach turn/session-scoped
+// resource or dataset references using the existing stores. It must not issue
+// a second model step or follow an unvalidated URL.
+using agent_openapi_result_materializer = std::function<bool(
+    const agent_tool_context & context,
+    const agent_openapi_operation & operation,
+    agent_openapi_execution_result & result,
+    std::string & error)>;
+
 // Exposes a filtered OpenAPI catalog through the same agent_tool_view contract
 // as MCP. The executor is host-owned; this class never lets the model choose a
 // URL, credentials, or operation outside the already filtered catalog.
 class agent_openapi_tool_provider : public agent_tool_provider {
 public:
-    agent_openapi_tool_provider(agent_openapi_catalog catalog, agent_openapi_executor executor);
+    agent_openapi_tool_provider(
+        agent_openapi_catalog catalog,
+        agent_openapi_executor executor,
+        agent_openapi_result_materializer materializer = {});
     ~agent_openapi_tool_provider() override;
     std::unique_ptr<agent_tool_view> resolve_tools(
         const agent_tool_context & context, std::string & error) override;
@@ -39,6 +51,7 @@ private:
     class client;
     agent_openapi_catalog catalog;
     agent_openapi_executor executor;
+    agent_openapi_result_materializer materializer;
     std::unique_ptr<client> client_impl;
     std::unique_ptr<mcp_agent_tool_provider> delegate;
 };

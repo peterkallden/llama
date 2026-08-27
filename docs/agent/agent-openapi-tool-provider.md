@@ -250,6 +250,23 @@ Collection pagination is explicit. Only the configured first-page/response
 limits may be materialized in one step; `next`, `cursor` and export links are
 host-validated continuations and require a later plan step.
 
+The provider exposes this boundary through an optional host-owned result
+materializer callback. The HTTP executor only returns the bounded response;
+the callback may classify it, register a turn/session-scoped resource or
+dataset using the existing stores, and attach the resulting references to the
+tool result. The callback is deliberately not part of the model contract: it
+must not issue another model generation, follow an unvalidated URL, or turn
+pagination into hidden background work. When no callback is installed, the
+provider returns the bounded JSON inline and does not persist a dataset.
+
+Collection rows that have a scalar item identifier may also receive opaque
+host-owned candidates such as `getSale#1`. The candidate is only a selection
+handle; the host retains the provider, collection operation, item operation,
+parameter name, row position and actual identifier. Selecting it therefore
+binds `/sales/{id}` through the catalog rather than allowing the model to
+invent a URL or path. Rows without a valid scalar identifier are not
+selectable, and duplicate identifiers remain distinguishable by row position.
+
 ## Verification targets
 
 The provider work should add tests in this order:
