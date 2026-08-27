@@ -258,3 +258,47 @@ The launcher previously mapped `tools.repository_root` to an empty temporary
 workspace. It now defaults that binding to the checkout and passes it as an
 explicit daemon override, while `LLAMA_AGENT_REPOSITORY_ROOT` remains
 available for a deliberately different fixture.
+
+## CUDA release verification needs toolkit stubs and Debian dependency handling
+
+- Status: Workflow fix verified partially; release rerun pending
+- Affected area: CUDA agent release builds, CUDA agent tests, and Debian CUDA
+  package creation
+
+### Symptoms
+
+The CUDA release build initially timed out during `llama-agent-build-pack`
+because the Linux release job had a 60-minute limit. After the timeout was
+extended, the CUDA agent tests built successfully but could not start on a
+GitHub-hosted runner because no NVIDIA driver is present:
+
+    error while loading shared libraries: libcuda.so.1
+
+The first stub workaround used the wrong toolkit location, and the second
+attempt tried to create a symlink inside `/usr/local/cuda-13.3`, which is not
+writable by the runner. The workflow now discovers CUDA's `libcuda.so` stub,
+creates a `libcuda.so.1` symlink in `$RUNNER_TEMP`, and uses that directory
+only while running the agent tests. The Linux CUDA agent tests subsequently
+passed.
+
+The Debian CUDA package then failed in `dpkg-shlibdeps` because NVIDIA's
+`libcuda.so.1` and `libcudart.so.13` do not provide Debian shlibs metadata.
+The package workflow now excludes the bundled CUDA backend library from
+automatic shlib analysis, declares `cuda-cudart-13-3` explicitly, and
+documents the compatible NVIDIA driver as a host-level requirement.
+
+### Boundary
+
+The stub is a test-runner accommodation, not a replacement for CUDA. It
+validates agent contracts and startup paths without GPU execution. Actual
+CUDA inference still requires a compatible NVIDIA driver and GPU. A separate
+GPU-backed smoke test remains desirable if release validation must cover real
+CUDA execution rather than package buildability and agent tests.
+
+### Reproduction and follow-up
+
+The failures were observed in release workflow runs `33041796523`,
+`33050775631`, and `33060156841`. The workflow fixes are committed on the
+release branches; this documentation entry is intentionally local and has
+not been committed or pushed in this work session. The current release rerun
+is `33068725061`.
