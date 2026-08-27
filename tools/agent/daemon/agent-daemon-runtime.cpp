@@ -270,6 +270,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.sandbox = options.sandbox;
     tool_request.resource_processor_policies = options.resource_processor_policies;
     append_configured_stdio_mcp_providers(options.mcp_providers, tool_request.mcp_providers);
+    tool_request.openapi_providers = options.openapi_providers;
     if (tool_request.mcp_providers.empty()) {
         append_legacy_stdio_mcp_provider(
             options.mcp_tool_command,
@@ -341,6 +342,10 @@ bool resolve_agent_daemon_tooling(
     for (auto & mcp_client : selection.mcp_clients) {
         tooling.owned_resources.push_back(std::static_pointer_cast<void>(
             std::shared_ptr<agent_mcp_tool_client>(std::move(mcp_client))));
+    }
+    for (auto & openapi_provider : selection.openapi_providers) {
+        tooling.owned_resources.push_back(std::static_pointer_cast<void>(
+            std::shared_ptr<agent_tool_provider>(std::move(openapi_provider))));
     }
     if (selection.tool_view) {
         auto shared_view = std::shared_ptr<agent_tool_view>(std::move(selection.tool_view));

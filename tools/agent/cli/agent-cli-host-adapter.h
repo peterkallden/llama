@@ -3,6 +3,7 @@
 #include "tools/agent/cli/agent-cli-options.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
+#include "../host/agent-host-openapi-provider-config.h"
 #include "../resource/agent-resource-store.h"
 #include "../resource/agent-resource-processing-service.h"
 #include "agent/sandbox/sandbox-host-config.h"
@@ -23,6 +24,7 @@ struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
     std::unique_ptr<agent_tool_view> tool_view;
     std::vector<std::unique_ptr<agent_mcp_tool_client>> mcp_clients;
+    std::vector<std::unique_ptr<agent_tool_provider>> openapi_providers;
     std::unique_ptr<agent_embedding_provider> embedding_provider;
     std::unique_ptr<agent_resource_store> owned_resource_store;
     std::vector<std::shared_ptr<agent_resource_processor>> resource_processors;
@@ -54,6 +56,7 @@ struct agent_host_tool_selection_request {
     common_agent_data_store_config data_store_config;
     common_agent_data_store * data_store = nullptr;
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
+    std::vector<agent_host_openapi_provider_config> openapi_providers;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;

@@ -1,4 +1,5 @@
 #include "agent-cli-host-adapter.h"
+#include "../openapi/agent-openapi-http.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "tools/agent/resource/assembly/agent-resource-processor-factory.h"
@@ -22,6 +23,7 @@
 #include "tools/agent/cli/agent-cli-scope.h"
 
 #include <algorithm>
+#include <fstream>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -627,13 +629,41 @@ bool resolve_agent_host_tool_selection(
         mcp_providers.push_back(std::move(provider));
     }
 
-    if (native_provider || !mcp_providers.empty()) {
+    for (const auto & provider_config : request.openapi_providers) {
+        if (!provider_config.enabled) continue;
+        std::ifstream spec_file(provider_config.spec_path);
+        if (!spec_file) {
+            if (provider_config.required) {
+                error = "required OpenAPI spec could not be opened: " + provider_config.spec_path;
+                return false;
+            }
+            continue;
+        }
+        nlohmann::json spec;
+        try { spec_file >> spec; }
+        catch (const std::exception & exception) {
+            error = "OpenAPI spec could not be parsed: " + std::string(exception.what());
+            return false;
+        }
+        agent_openapi_catalog catalog;
+        if (!build_agent_openapi_catalog(spec, provider_config, catalog, error)) {
+            error = "OpenAPI provider '" + provider_config.id + "' failed: " + error;
+            return false;
+        }
+        selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
+            std::move(catalog), make_agent_openapi_http_executor(provider_config)));
+    }
+
+    if (native_provider || !mcp_providers.empty() || !selection.openapi_providers.empty()) {
         composite_agent_tool_provider provider;
         if (native_provider) {
             provider.add_provider(*native_provider);
         }
         for (const auto & mcp_provider : mcp_providers) {
             provider.add_provider(*mcp_provider);
+        }
+        for (const auto & openapi_provider : selection.openapi_providers) {
+            provider.add_provider(*openapi_provider);
         }
 
         if (!(selection.tool_view = provider.resolve_tools(resolved_tool_context, error))) {
