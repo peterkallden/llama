@@ -13,6 +13,11 @@ int main() {
     descriptor.ref.column_count = 2;
     descriptor.ref.source_resource_uri = "agent-resource://uploads/sales.xlsx";
     descriptor.ref.source_representation = "xlsx:worksheet";
+    descriptor.ref.source_provider = "sales";
+    descriptor.ref.source_operation = "listSales";
+    descriptor.ref.source_request_json = R"({"query":{"limit":20}})";
+    descriptor.ref.retrieved_at = 1787748689;
+    descriptor.ref.content_hash = "sha256:collection-result";
     descriptor.columns = {
         {"customer_id", common_agent_dataset_column_type::integer, false},
         {"amount", common_agent_dataset_column_type::decimal, true},
@@ -30,6 +35,11 @@ int main() {
     std::string error;
     assert(validate_common_agent_dataset_descriptor(
         descriptor, common_agent_dataset_limits{}, error));
+    assert(descriptor.ref.source_provider == "sales");
+    assert(descriptor.ref.source_operation == "listSales");
+    assert(descriptor.ref.source_request_json == R"({"query":{"limit":20}})");
+    assert(descriptor.ref.retrieved_at > 0);
+    assert(descriptor.ref.content_hash == "sha256:collection-result");
 
     double confidence = 0.0;
     std::string reason;

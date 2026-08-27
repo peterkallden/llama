@@ -129,6 +129,16 @@ struct common_runtime_resource_metadata {
     std::string resolved_language;
     double language_confidence = 0.0;
     std::string language_source;
+
+    // Sanitized provenance for host-derived representations. The request
+    // string must be canonical and must not contain credentials or secrets.
+    // These fields are appended so existing aggregate initialization remains
+    // source-compatible.
+    std::string source_provider;
+    std::string source_operation;
+    std::string source_request_json;
+    int64_t retrieved_at = 0;
+    std::string content_hash;
 };
 
 // Derived resources, such as bounded chunks, retain explicit lineage to the

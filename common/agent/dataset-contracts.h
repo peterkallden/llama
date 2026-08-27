@@ -40,6 +40,14 @@ struct common_agent_dataset_ref {
     size_t column_count = 0;
     std::string source_resource_uri;
     std::string source_representation;
+
+    // Host-owned provenance for derived API datasets. source_request_json is
+    // canonicalized and sanitized before it reaches this contract.
+    std::string source_provider;
+    std::string source_operation;
+    std::string source_request_json;
+    int64_t retrieved_at = 0;
+    std::string content_hash;
 };
 
 struct common_agent_dataset_lineage {
