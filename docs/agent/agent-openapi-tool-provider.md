@@ -148,6 +148,13 @@ The model cannot replace the path, method, base URL, authentication or
 headers. The advertised schema is the bounded subset understood by the
 agent's existing JSON-schema validator.
 
+Before a deliberate plan starts, the resolved tool view validates dynamic
+collection-to-item bindings. A reference such as `$previous.id` for an item
+operation is accepted only when the matching collection/search operation
+precedes it in the plan. An explicitly supplied literal ID remains valid for a
+direct item lookup. This check is host-owned and is also applied through a
+composite provider view.
+
 ### Collection and item relations
 
 The catalog recognizes a conservative REST-shaped relation when a read
