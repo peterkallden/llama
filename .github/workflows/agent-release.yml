@@ -207,6 +207,11 @@ jobs:
           BACKEND: ${{ matrix.backend }}
         run: |
           set -euo pipefail
+          if [[ "$BACKEND" == cuda ]]; then
+            # The hosted runner has no NVIDIA driver. CUDA-linked test
+            # binaries only need the toolkit's runtime stub here.
+            export LD_LIBRARY_PATH="/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}"
+          fi
           ctest --test-dir "build-agent-release-$BACKEND" \
             -L agent \
             --output-on-failure \
@@ -282,7 +287,8 @@ jobs:
   build-debian-release:
     name: Build Debian ${{ matrix.backend }} release package
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    # CUDA Debian packaging can exceed 75 minutes on GitHub-hosted runners.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
