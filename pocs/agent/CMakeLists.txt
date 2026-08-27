@@ -14,6 +14,7 @@ set(AGENT_RUNTIME_SOURCES
     ../../tools/agent/host/agent-host-config.cpp
     ../../tools/agent/openapi/agent-openapi-catalog.cpp
     ../../tools/agent/openapi/agent-openapi-provider.cpp
+    ../../tools/agent/openapi/agent-openapi-http.cpp
     ../../tools/agent/host/agent-sandbox-assembly.cpp
     ../../tools/agent/mcp/agent-mcp-http-client.cpp
     ../../tools/agent/mcp/agent-mcp-http-transport.cpp
