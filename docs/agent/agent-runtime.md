@@ -2709,6 +2709,23 @@ their bounded `rows` and optional `dataset` result. The host-owned execution
 schema may still contain additional policy and materialization fields, but
 those fields are not needed to understand the dataflow.
 
+OpenAPI results follow the same typed boundary. A bounded, stable JSON
+collection may be projected by the host into a temporary `dataset_ref`; a
+file-shaped response becomes a `resource_ref` and is handed to the existing
+resource processor/importer; a single or heterogeneous JSON response remains
+a bounded JSON/resource representation. The projection is host-owned and does
+not add a hidden model-visible step. The original API result remains the
+provenance source, while the derived dataset carries provider, operation,
+canonical request, retrieval time, content hash and lineage metadata.
+
+Rows that can feed a related OpenAPI item operation also carry a host-owned
+item binding. The model may select a bounded candidate or bind a typed output,
+but it never constructs the URI or chooses the provider. The host resolves the
+candidate back to the API parameter only after validating the collection-to-item
+relation and plan order. Pagination and continuation links are explicit plan
+steps, not implicit background fetches. API-derived datasets are turn/session
+scoped by default and are not promoted to persistent memory automatically.
+
 Normal model plans must contain a tool step or an explicit `mode: reasoning`
 step. Final synthesis is host-owned and is added by the host when the model
 has not supplied one. An empty/default-final model step is rejected at the

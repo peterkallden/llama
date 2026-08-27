@@ -221,6 +221,35 @@ OpenAPI Links are dataflow hints. They may be returned through
 `describe_tool_dataflow()` for planning, but they must not silently trigger
 follow-up HTTP calls or create automatic operation chains.
 
+## API result representations
+
+An OpenAPI result is first an ephemeral, host-owned API result. The host may
+derive a second representation when the bounded response is useful for later
+work:
+
+```text
+tabular JSON collection       -> temporary dataset view
+CSV/Excel or other file body  -> resource -> existing processor/importer
+JSON object or heterogeneous   -> bounded JSON resource
+```
+
+The conversion is host-side and is not an additional model-visible tool call.
+A collection is eligible for a dataset view only when it is a bounded array of
+reasonably stable objects. The original response remains the source material;
+the dataset is an analysis projection and may be discarded with the turn or
+session. A single object is normally a record/resource, not a one-row dataset.
+
+Every derived view must preserve provenance back to the provider, operation,
+canonical request parameters, retrieval time and content hash. Dataset lineage
+also records the source representation and operation. Sensitive response
+content may be allowed by an explicitly local deployment policy, but it must
+not be copied into credentials, provenance fields or unbounded event/log
+payloads.
+
+Collection pagination is explicit. Only the configured first-page/response
+limits may be materialized in one step; `next`, `cursor` and export links are
+host-validated continuations and require a later plan step.
+
 ## Verification targets
 
 The provider work should add tests in this order:
