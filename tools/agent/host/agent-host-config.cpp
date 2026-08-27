@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <unordered_set>
 
@@ -286,6 +287,35 @@ bool read_openapi_provider(
     return true;
 }
 
+bool read_provider_fragment(
+        const json & value,
+        agent_host_config & config,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "provider fragment must be a JSON object";
+        return false;
+    }
+    if (value.contains("type") && !value["type"].is_string()) {
+        error = "provider fragment type must be a string";
+        return false;
+    }
+    const std::string type = value.value("type", "mcp");
+    if (type == "mcp") {
+        agent_host_mcp_provider_config provider;
+        if (!read_mcp_provider(value, provider, error)) return false;
+        config.mcp_providers.push_back(std::move(provider));
+        return true;
+    }
+    if (type == "openapi") {
+        agent_host_openapi_provider_config provider;
+        if (!read_openapi_provider(value, provider, error)) return false;
+        config.openapi_providers.push_back(std::move(provider));
+        return true;
+    }
+    error = "unsupported provider fragment type: " + type;
+    return false;
+}
+
 bool read_inbound_token(
         const json & value,
         agent_host_mcp_inbound_token_config & token,
@@ -535,6 +565,7 @@ bool parse_agent_host_config_json(
         const auto & tools = parsed["tools"];
         read_optional(tools, "profile", config.tool_profile);
         read_optional(tools, "repository_root", config.repository_root);
+        read_optional(tools, "include_dir", config.tools_include_dir);
         if (tools.contains("capabilities")) {
             if (!tools["capabilities"].is_object()) {
                 error = "tools.capabilities must be an object mapping capability ids to tool arrays";
@@ -746,7 +777,73 @@ bool load_agent_host_config(
         error = "host config must be a JSON object";
         return false;
     }
-    return parse_agent_host_config_json(parsed, config, error);
+    if (!parse_agent_host_config_json(parsed, config, error)) {
+        return false;
+    }
+
+    const std::filesystem::path config_directory =
+        std::filesystem::absolute(std::filesystem::path(path)).parent_path();
+    for (auto & provider : config.openapi_providers) {
+        provider.source_directory = config_directory.string();
+    }
+
+    if (!config.tools_include_dir.empty()) {
+        const std::filesystem::path include_directory =
+            std::filesystem::path(config.tools_include_dir).is_absolute()
+                ? std::filesystem::path(config.tools_include_dir)
+                : config_directory / config.tools_include_dir;
+        std::error_code directory_error;
+        if (!std::filesystem::is_directory(include_directory, directory_error)) {
+            error = "tools.include_dir is not a directory: " + include_directory.string();
+            return false;
+        }
+
+        std::vector<std::filesystem::path> fragments;
+        for (const auto & entry : std::filesystem::directory_iterator(include_directory, directory_error)) {
+            if (directory_error) break;
+            if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+            fragments.push_back(entry.path());
+        }
+        if (directory_error) {
+            error = "failed to enumerate tools.include_dir: " + include_directory.string();
+            return false;
+        }
+        std::sort(fragments.begin(), fragments.end(),
+            [](const auto & left, const auto & right) {
+                return left.filename().string() < right.filename().string();
+            });
+
+        for (const auto & fragment_path : fragments) {
+            std::ifstream fragment_input(fragment_path);
+            if (!fragment_input.is_open()) {
+                error = "failed to open provider fragment: " + fragment_path.string();
+                return false;
+            }
+            json fragment = json::parse(fragment_input, nullptr, false);
+            if (fragment.is_discarded()) {
+                error = "provider fragment is not valid JSON: " + fragment_path.string();
+                return false;
+            }
+            const size_t mcp_count = config.mcp_providers.size();
+            const size_t openapi_count = config.openapi_providers.size();
+            std::string fragment_error;
+            if (!read_provider_fragment(fragment, config, fragment_error)) {
+                error = fragment_path.string() + ": " + fragment_error;
+                return false;
+            }
+            if (config.mcp_providers.size() > mcp_count) {
+                config.included_provider_ids.insert(config.mcp_providers.back().id);
+            } else if (config.openapi_providers.size() > openapi_count) {
+                config.openapi_providers.back().source_directory = config_directory.string();
+                config.included_provider_ids.insert(config.openapi_providers.back().id);
+            }
+        }
+        if (!validate_agent_host_config(config, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
 
 bool resolve_agent_host_config_path(
@@ -814,6 +911,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         const agent_host_config & config) {
     json providers = json::array();
     for (const auto & provider : config.mcp_providers) {
+        if (config.included_provider_ids.count(provider.id) != 0) continue;
         providers.push_back({
             {"type", provider.type},
             {"id", provider.id},
@@ -833,6 +931,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         });
     }
     for (const auto & provider : config.openapi_providers) {
+        if (config.included_provider_ids.count(provider.id) != 0) continue;
         json operations = json::object();
         for (const auto & operation : provider.operations) {
             operations[operation.first] = {
@@ -978,6 +1077,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"tools", {
             {"profile", config.tool_profile},
             {"repository_root", config.repository_root},
+            {"include_dir", config.tools_include_dir},
             {"capabilities", std::move(capabilities)},
             {"profiles", std::move(profiles)},
             {"providers", std::move(providers)},

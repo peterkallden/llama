@@ -75,6 +75,12 @@ exposes it through the normal `agent_tool_view`, and provides a bounded
 host-owned HTTP executor. A missing optional spec is skipped; a missing or
 invalid required spec fails provider resolution.
 
+Provider entries may be kept in separate files with `tools.include_dir`; see
+[Agent configuration fragments](agent-config-fragments.md). Each OpenAPI
+fragment is one complete provider definition. The fragment directory is a
+deployment/configuration concern and does not change the model-facing tool
+contract.
+
 ## Access and exposure policy
 
 The global `policy.access` is an upper bound:
@@ -91,7 +97,7 @@ Default method classification is conservative:
 GET / HEAD  -> read
 PUT / PATCH -> write
 DELETE     -> destructive
-POST       -> unknown until explicitly classified
+POST       -> write unless explicitly classified as `read`
 ```
 
 An operation override may restrict or classify an operation, but may not
@@ -116,8 +122,7 @@ host diagnostic explaining why.
 The provider creates a stable tool name from the provider identity and
 OpenAPI `operationId`, for example `sales.searchSales`. The current schema
 projection supports OpenAPI parameters and an `application/json` request body.
-Path parameters are substituted by the host; a future refinement will expose
-explicit sections such as:
+The model supplies explicit sections such as:
 
 ```json
 {

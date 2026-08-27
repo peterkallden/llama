@@ -355,6 +355,10 @@ provide those values through the process environment at runtime. Use
 `--providers-file none` to explicitly generate a configuration without remote
 providers.
 
+For a persistent deployment, provider objects can instead be split into
+`tools.include_dir`; see [Agent configuration fragments](agent-config-fragments.md).
+The directory is rescanned when the main configuration is reloaded.
+
 The provider allowlist and the caller allowlist are independent: provider
 `allowed_tools` limits what the daemon imports from a remote MCP server, while
 `--enable-tools` limits what an authenticated MCP/JSONL caller can invoke.
@@ -654,7 +658,7 @@ Configuration can be reloaded by the local JSONL administration channel:
 ```
 
 The daemon validates the complete candidate configuration before applying it.
-Timeouts, repository root, bounded tool limits and MCP providers can be applied
+Timeouts, repository root, bounded tool limits and MCP/OpenAPI providers can be applied
 to new operations. A repository root must resolve to a directory. Provider IDs
 are stable: new IDs are added, missing IDs are removed for future operations,
 and changed IDs are replaced. Existing operations keep their provider clients

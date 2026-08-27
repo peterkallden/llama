@@ -22,6 +22,8 @@ struct agent_host_openapi_provider_config {
     // The first implementation accepts a local JSON document. The provider
     // may later gain a separately approved remote spec source.
     std::string spec_path;
+    // Runtime-only origin for resolving relative spec_path values.
+    std::string source_directory;
     std::string base_url;
     std::string prefix;
 

@@ -365,6 +365,27 @@ int main(int argc, char ** argv) {
                 a.max_result_bytes == b.max_result_bytes &&
                 a.prefix == b.prefix && a.server_name == b.server_name;
         };
+        auto openapi_provider_equal = [](const auto & a, const auto & b) {
+            if (a.operations.size() != b.operations.size()) return false;
+            for (const auto & operation : a.operations) {
+                const auto other = b.operations.find(operation.first);
+                if (other == b.operations.end() ||
+                        other->second.enabled != operation.second.enabled ||
+                        other->second.access != operation.second.access) {
+                    return false;
+                }
+            }
+            return a.id == b.id && a.enabled == b.enabled && a.required == b.required &&
+                a.type == b.type && a.spec_path == b.spec_path && a.base_url == b.base_url &&
+                a.source_directory == b.source_directory &&
+                a.prefix == b.prefix && a.access == b.access && a.exposure == b.exposure &&
+                a.auth_type == b.auth_type &&
+                a.token_env == b.token_env &&
+                a.allow_private_network == b.allow_private_network &&
+                a.connect_timeout_ms == b.connect_timeout_ms &&
+                a.request_timeout_ms == b.request_timeout_ms &&
+                a.max_result_bytes == b.max_result_bytes;
+        };
         for (const auto & next : candidate.mcp_providers) {
             auto current = std::find_if(options.mcp_providers.begin(), options.mcp_providers.end(),
                 [&](const auto & provider) { return provider.id == next.id; });
@@ -378,6 +399,22 @@ int main(int argc, char ** argv) {
             auto next = std::find_if(candidate.mcp_providers.begin(), candidate.mcp_providers.end(),
                 [&](const auto & provider) { return provider.id == current.id; });
             if (next == candidate.mcp_providers.end()) {
+                result.providers_removed.push_back(current.id);
+            }
+        }
+        for (const auto & next : candidate.openapi_providers) {
+            auto current = std::find_if(options.openapi_providers.begin(), options.openapi_providers.end(),
+                [&](const auto & provider) { return provider.id == next.id; });
+            if (current == options.openapi_providers.end()) {
+                result.providers_added.push_back(next.id);
+            } else if (!openapi_provider_equal(*current, next)) {
+                result.providers_replaced.push_back(next.id);
+            }
+        }
+        for (const auto & current : options.openapi_providers) {
+            auto next = std::find_if(candidate.openapi_providers.begin(), candidate.openapi_providers.end(),
+                [&](const auto & provider) { return provider.id == current.id; });
+            if (next == candidate.openapi_providers.end()) {
                 result.providers_removed.push_back(current.id);
             }
         }

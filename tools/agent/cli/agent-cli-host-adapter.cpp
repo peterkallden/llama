@@ -631,10 +631,15 @@ bool resolve_agent_host_tool_selection(
 
     for (const auto & provider_config : request.openapi_providers) {
         if (!provider_config.enabled) continue;
-        std::ifstream spec_file(provider_config.spec_path);
+        const std::filesystem::path configured_spec_path(provider_config.spec_path);
+        const std::filesystem::path spec_path = configured_spec_path.is_absolute() ||
+                provider_config.source_directory.empty()
+            ? configured_spec_path
+            : std::filesystem::path(provider_config.source_directory) / configured_spec_path;
+        std::ifstream spec_file(spec_path);
         if (!spec_file) {
             if (provider_config.required) {
-                error = "required OpenAPI spec could not be opened: " + provider_config.spec_path;
+                error = "required OpenAPI spec could not be opened: " + spec_path.string();
                 return false;
             }
             continue;

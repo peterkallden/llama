@@ -15,6 +15,7 @@
 
 #include <string>
 #include <map>
+#include <set>
 #include <vector>
 
 struct daemon_options;
@@ -70,6 +71,12 @@ struct agent_host_config {
     agent_host_diagnostics_config diagnostics;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
+    // Optional directory of provider-object JSON fragments. The loader
+    // expands these into the provider vectors before validation/runtime use.
+    std::string tools_include_dir;
+    // Provider ids loaded from tools_include_dir are omitted by the canonical
+    // serializer so an effective config cannot accidentally duplicate them.
+    std::set<std::string> included_provider_ids;
     bool inbound_mcp_enabled = false;
     std::string inbound_mcp_listen_address = "127.0.0.1";
     int inbound_mcp_port = 0;

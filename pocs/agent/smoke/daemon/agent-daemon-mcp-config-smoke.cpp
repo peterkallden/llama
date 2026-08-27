@@ -331,6 +331,64 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    // The provider directory is an additive alternative to the inline array.
+    // Verify that both provider families are loaded, sorted deterministically,
+    // and not duplicated when the effective config is serialized.
+    const auto fragment_directory = config_root / "providers.d";
+    std::filesystem::create_directories(fragment_directory);
+    {
+        std::ofstream out(fragment_directory / "20-openapi.json");
+        out << json{
+            {"type", "openapi"},
+            {"id", "fragment-api"},
+            {"spec_path", "fragment.openapi.json"},
+            {"base_url", "https://api.example.test"},
+        }.dump(2);
+    }
+    {
+        std::ofstream out(fragment_directory / "10-mcp.json");
+        out << json{
+            {"type", "mcp"},
+            {"id", "fragment-mcp"},
+            {"transport", "stdio"},
+            {"command", json::array({server_path.string()})},
+        }.dump(2);
+    }
+    const auto fragmented_config_path = config_root / "fragmented-config.json";
+    {
+        std::ofstream out(fragmented_config_path);
+        out << json{
+            {"schema_version", 1},
+            {"model", {{"path", "fake.gguf"}}},
+            {"tools", {{"include_dir", "providers.d"}}},
+        }.dump(2);
+    }
+    agent_host_config fragmented_config;
+    if (!load_agent_host_config(fragmented_config_path.string(), fragmented_config, error) ||
+            fragmented_config.tools_include_dir != "providers.d" ||
+            fragmented_config.mcp_providers.size() != 1 ||
+            fragmented_config.openapi_providers.size() != 1 ||
+            fragmented_config.mcp_providers.front().id != "fragment-mcp" ||
+            fragmented_config.openapi_providers.front().id != "fragment-api" ||
+            fragmented_config.openapi_providers.front().source_directory != config_root.string()) {
+        std::fprintf(stderr, "provider directory configuration failed: %s\n", error.c_str());
+        return 1;
+    }
+    const json fragmented_roundtrip = agent_host_config_to_json(fragmented_config);
+    if (fragmented_roundtrip["tools"]["include_dir"] != "providers.d" ||
+            !fragmented_roundtrip["tools"]["providers"].is_array() ||
+            !fragmented_roundtrip["tools"]["providers"].empty()) {
+        std::fprintf(stderr, "provider directory roundtrip duplicated effective providers\n");
+        return 1;
+    }
+    agent_host_config fragmented_reloaded;
+    if (!load_agent_host_config(fragmented_config_path.string(), fragmented_reloaded, error) ||
+            fragmented_reloaded.mcp_providers.size() != 1 ||
+            fragmented_reloaded.openapi_providers.size() != 1) {
+        std::fprintf(stderr, "provider directory reload failed: %s\n", error.c_str());
+        return 1;
+    }
+
     agent_host_config legacy_config;
     const json legacy_config_json = {
         {"schema_version", 1},
