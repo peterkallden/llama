@@ -34,6 +34,14 @@
       "post": {
         "operationId": "searchSales",
         "summary": "Search sales",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "x-agent-inferable": true,
+            "schema": {"type": "string"}
+          }
+        ],
         "requestBody": {
           "required": false,
           "content": {

@@ -74,6 +74,7 @@ std::string operation_input_schema(
         {"properties", nlohmann::json::object()},
         {"required", nlohmann::json::array()},
     };
+    nlohmann::json inferable = nlohmann::json::array();
     if (operation.contains("parameters") && operation["parameters"].is_array()) {
         for (const auto & parameter : operation["parameters"]) {
             if (!parameter.is_object() || !parameter.value("name", "").size()) continue;
@@ -83,6 +84,10 @@ std::string operation_input_schema(
             schema["properties"][name] = parameter.value("schema", nlohmann::json({{"type", "string"}}));
             std::set<std::string> seen;
             resolve_local_refs(document, schema["properties"][name], seen);
+            if (parameter.value("x-agent-inferable", false)) {
+                schema["properties"][name]["x-agent-inferable"] = true;
+                inferable.push_back(name);
+            }
             if (parameter.value("required", false)) schema["required"].push_back(name);
         }
     }
@@ -98,6 +103,7 @@ std::string operation_input_schema(
             if (operation["requestBody"].value("required", false)) schema["required"].push_back("body");
         }
     }
+    if (!inferable.empty()) schema["x-agent-autowire-fields"] = std::move(inferable);
     if (schema["required"].empty()) schema.erase("required");
     return schema.dump();
 }

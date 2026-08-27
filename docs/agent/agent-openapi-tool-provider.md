@@ -137,6 +137,12 @@ The model supplies explicit sections such as:
 }
 ```
 
+An OpenAPI parameter is included in the compact contract as `may be inferred`
+only when the contract explicitly opts in with the vendor extension
+`x-agent-inferable: true` on that parameter. This keeps the shared autowire
+meaning safe: ordinary path and query parameters remain explicit, while a
+host-approved parameter can participate in the existing bounded binding path.
+
 The host maps these fields to the fixed operation in the OpenAPI catalog.
 The model cannot replace the path, method, base URL, authentication or
 headers. The advertised schema is the bounded subset understood by the
