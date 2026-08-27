@@ -640,15 +640,22 @@ bool resolve_agent_host_tool_selection(
             continue;
         }
         nlohmann::json spec;
+        std::string provider_error;
         try { spec_file >> spec; }
         catch (const std::exception & exception) {
-            error = "OpenAPI spec could not be parsed: " + std::string(exception.what());
-            return false;
+            provider_error = "OpenAPI spec could not be parsed: " + std::string(exception.what());
+        }
+        if (!provider_error.empty()) {
+            if (provider_config.required) { error = provider_error; return false; }
+            continue;
         }
         agent_openapi_catalog catalog;
-        if (!build_agent_openapi_catalog(spec, provider_config, catalog, error)) {
-            error = "OpenAPI provider '" + provider_config.id + "' failed: " + error;
-            return false;
+        if (!build_agent_openapi_catalog(spec, provider_config, catalog, provider_error)) {
+            if (provider_config.required) {
+                error = "OpenAPI provider '" + provider_config.id + "' failed: " + provider_error;
+                return false;
+            }
+            continue;
         }
         selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
             std::move(catalog), make_agent_openapi_http_executor(provider_config)));

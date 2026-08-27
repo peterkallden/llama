@@ -125,7 +125,7 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
         if (url.scheme == "http") {
-            httplib::Client client(url.host, url.port); configure(client, config);
+            httplib::Client client(url.host, url.port); client.set_follow_location(false); configure(client, config);
             if (operation.method == "get") response = client.Get(request_path, headers);
             else if (operation.method == "head") response = client.Head(request_path, headers);
             else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
@@ -135,7 +135,7 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             else { error = "unsupported OpenAPI HTTP method"; return false; }
         } else {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-            httplib::SSLClient client(url.host, url.port); configure(client, config);
+            httplib::SSLClient client(url.host, url.port); client.set_follow_location(false); configure(client, config);
             if (operation.method == "get") response = client.Get(request_path, headers);
             else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
             else if (operation.method == "put") response = client.Put(request_path, headers, body, "application/json");
