@@ -178,6 +178,21 @@ admitted as read-only. Ambiguous APIs can add an explicit provider-level
 relation contract later; OpenAPI Links remain hints and never trigger hidden
 follow-up calls.
 
+### Deliberate and research boundaries
+
+Collection-to-item relations belong to the deliberate plan because they are
+ordered dataflow: a collection/search result must first produce a candidate
+identifier before an item operation can consume it. The host validates that
+ordering before execution and keeps the binding explicit in the plan.
+
+Research has a different contract. Its runner uses explicitly selected research
+tools and records bounded evidence; it must not silently turn an OpenAPI
+relation into extra API calls. A research task may carry dependencies, and the
+runner will not execute it until every dependency is completed. OpenAPI
+collection/item execution in research therefore requires a future explicit
+research-task adapter or plan handoff; the current provider exposes the
+relation to deliberate planning only.
+
 Results are bounded and should contain status, content type and a bounded
 response body. Credentials, unrestricted response headers and unbounded
 binary payloads must not enter model context.
