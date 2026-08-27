@@ -805,6 +805,17 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-openapi-http-smoke)
+add_executable(${TARGET}
+    smoke/openapi/agent-openapi-http-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
@@ -1726,6 +1737,7 @@ set(AGENT_MCP_SERVER_LIBRARY_TARGETS
     llama-agent-daemon-mcp-config-smoke
     llama-agent-openapi-catalog-smoke
     llama-agent-openapi-provider-smoke
+    llama-agent-openapi-http-smoke
     llama-agent-daemon
 )
 foreach(TARGET ${AGENT_MCP_SERVER_LIBRARY_TARGETS})
@@ -1986,6 +1998,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-openapi-provider-ctest
         COMMAND $<TARGET_FILE:llama-agent-openapi-provider-smoke>)
     set_property(TEST llama-agent-openapi-provider-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-openapi-http-ctest
+        COMMAND $<TARGET_FILE:llama-agent-openapi-http-smoke>)
+    set_property(TEST llama-agent-openapi-http-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-config-discovery-ctest
         COMMAND $<TARGET_FILE:llama-agent-config-discovery-smoke>)
