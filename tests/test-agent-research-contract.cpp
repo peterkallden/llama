@@ -102,6 +102,12 @@ int main() {
     assert(common_agent_research_record_evidence(workspace, evidence, error));
     assert(common_agent_research_update_coverage(workspace, {1, 1, 0, 0, 1.0, 0.9, 1.0}, error));
     assert(common_agent_research_workspace_validate(workspace, error));
+    auto invalid_dependency_workspace = workspace;
+    invalid_dependency_workspace.tasks.push_back({
+        "task-2", "gap-1", "Use the first result", common_agent_research_task_kind::fetch,
+        {"resource_read"}, {"missing-task"}, 1, 0, 1});
+    assert(!common_agent_research_workspace_validate(invalid_dependency_workspace, error));
+    assert(error.find("invalid task dependency") != std::string::npos);
     assert(!common_agent_research_record_evidence(workspace, workspace.evidence.front(), error));
     assert(error.find("already exists") != std::string::npos);
     workspace.evidence.push_back(workspace.evidence.front());

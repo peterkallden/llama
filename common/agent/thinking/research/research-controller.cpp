@@ -246,6 +246,7 @@ common_agent_research_action schedule_next_gap(
     action.gap_id = task.gap_id;
     action.instruction = task.instruction;
     action.preferred_tools = task.preferred_tools;
+    action.dependency_ids = task.dependency_ids;
     error.clear();
     return action;
 }

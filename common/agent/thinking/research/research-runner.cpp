@@ -323,8 +323,24 @@ common_agent_research_result common_agent_research_runner::run(
         emit_lifecycle({common_agent_research_lifecycle_event_type::task_started,
             action.gap_id, action.task_id, iterations});
         common_agent_research_event event;
+        bool dependencies_ready = true;
+        for (const auto & dependency_id : action.dependency_ids) {
+            const auto dependency = std::find_if(workspace.tasks.begin(), workspace.tasks.end(),
+                [&](const auto & task) { return task.task_id == dependency_id; });
+            if (dependency == workspace.tasks.end() ||
+                    dependency->status != common_agent_research_task_status::completed) {
+                dependencies_ready = false;
+                break;
+            }
+        }
+        if (!dependencies_ready) {
+            event.type = common_agent_research_event_type::task_failed;
+            event.failure_code = "research.dependency_not_ready";
+            event.failure_summary = "Research task dependency is missing or incomplete.";
+            event.retryable = false;
+        }
         ++workspace.tool_calls;
-        if (!executor.execute(action, workspace, event, error)) return controller.finalize(workspace);
+        if (dependencies_ready && !executor.execute(action, workspace, event, error)) return controller.finalize(workspace);
         emit_lifecycle({
             event.type == common_agent_research_event_type::task_failed
                 ? common_agent_research_lifecycle_event_type::task_failed

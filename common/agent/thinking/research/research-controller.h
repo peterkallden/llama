@@ -48,6 +48,7 @@ struct common_agent_research_action {
     std::string gap_id;
     std::string instruction;
     std::vector<std::string> preferred_tools;
+    std::vector<std::string> dependency_ids;
     common_agent_research_stop_reason stop_reason = common_agent_research_stop_reason::budget_exhausted;
 };
 

@@ -242,6 +242,16 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
     for (const auto & task : workspace.tasks) if (task.task_id.empty() || task.gap_id.empty() || task.attempt < 0 || task.max_attempts < 1 || task.attempt > task.max_attempts || !ids.insert(task.task_id).second) {
         error = "research workspace contains an invalid or duplicate task"; return false;
     }
+    for (const auto & task : workspace.tasks) {
+        for (const auto & dependency_id : task.dependency_ids) {
+            if (dependency_id.empty() || dependency_id == task.task_id ||
+                    std::none_of(workspace.tasks.begin(), workspace.tasks.end(),
+                        [&](const auto & candidate) { return candidate.task_id == dependency_id; })) {
+                error = "research workspace contains an invalid task dependency";
+                return false;
+            }
+        }
+    }
     ids.clear();
     for (const auto & source : workspace.sources) if (source.source_id.empty() || source.quality_score < 0.0 || source.quality_score > 1.0 ||
             (source.kind == common_agent_research_source_kind::memory && source.memory_id.empty()) ||
