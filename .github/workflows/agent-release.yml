@@ -92,6 +92,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
           echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
           echo "CUDA_HOME=/usr/local/cuda" >> "$GITHUB_ENV"
+          cuda_stub="$(find /usr/local/cuda* -type f -path '*/stubs/libcuda.so' -print -quit)"
+          test -n "$cuda_stub"
+          cuda_stub_dir="$(dirname "$cuda_stub")"
+          ln -sf libcuda.so "$cuda_stub_dir/libcuda.so.1"
+          echo "CUDA_STUB_DIR=$cuda_stub_dir" >> "$GITHUB_ENV"
           export PATH="/usr/local/cuda/bin:$PATH"
           nvcc --version
 
@@ -210,7 +215,7 @@ jobs:
           if [[ "$BACKEND" == cuda ]]; then
             # The hosted runner has no NVIDIA driver. CUDA-linked test
             # binaries only need the toolkit's runtime stub here.
-            export LD_LIBRARY_PATH="/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}"
+            export LD_LIBRARY_PATH="$CUDA_STUB_DIR:${LD_LIBRARY_PATH:-}"
           fi
           ctest --test-dir "build-agent-release-$BACKEND" \
             -L agent \
