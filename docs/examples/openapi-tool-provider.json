@@ -3,7 +3,7 @@
   "id": "sales-api",
   "enabled": true,
   "required": false,
-  "spec_path": "configs/sales.openapi.json",
+  "spec_path": "openapi-sales-contract.json",
   "base_url": "https://api.example.test",
   "prefix": "sales",
   "allow_private_network": false,

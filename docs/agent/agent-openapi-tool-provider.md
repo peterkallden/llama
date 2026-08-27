@@ -29,6 +29,8 @@ The initial contract is:
 
 See also the copyable provider fragment
 [`openapi-tool-provider.json`](../examples/openapi-tool-provider.json).
+Its standalone OpenAPI contract is
+[`openapi-sales-contract.json`](../examples/openapi-sales-contract.json).
 
 ```json
 {

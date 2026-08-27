@@ -199,6 +199,7 @@ Copyable configurations and protocol fixtures are available in
 - [`agent-host-config-capabilities.json`](../examples/agent-host-config-capabilities.json)
 - [`agent-host-config-remote-http.json`](../examples/agent-host-config-remote-http.json)
 - [`openapi-tool-provider.json`](../examples/openapi-tool-provider.json)
+- [`openapi-sales-contract.json`](../examples/openapi-sales-contract.json)
 - [`agent-host-config-stdio.json`](../examples/agent-host-config-stdio.json)
 - [`agent-host-config-jsonl-tcp.json`](../examples/agent-host-config-jsonl-tcp.json)
 - [`agent-host-config-jsonl-unix.json`](../examples/agent-host-config-jsonl-unix.json)

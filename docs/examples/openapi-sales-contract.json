@@ -1,0 +1,80 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Sales API example",
+    "version": "1.0.0",
+    "description": "Small read-only OpenAPI contract used by the llama-agent provider example."
+  },
+  "paths": {
+    "/sales/{sale_id}": {
+      "get": {
+        "operationId": "getSale",
+        "summary": "Get one sale",
+        "parameters": [
+          {
+            "name": "sale_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sale",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Sale"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sales/search": {
+      "post": {
+        "operationId": "searchSales",
+        "summary": "Search sales",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "customer": {"type": "string"},
+                  "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching sales",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {"$ref": "#/components/schemas/Sale"}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Sale": {
+        "type": "object",
+        "required": ["id", "amount"],
+        "properties": {
+          "id": {"type": "string"},
+          "customer": {"type": "string"},
+          "amount": {"type": "number"}
+        }
+      }
+    }
+  }
+}
