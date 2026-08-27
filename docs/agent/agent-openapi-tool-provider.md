@@ -68,9 +68,11 @@ OpenAPI document, endpoint, HTTP method, credential, or arbitrary header.
 Secrets are referenced by environment-variable name and are not written into
 the serialized configuration or model-facing tool description.
 
-The current configuration layer validates the provider shape and preserves it
-through JSON roundtrip. Runtime catalog discovery and HTTP execution are
-implemented in later provider work on this branch.
+The configuration layer validates the provider shape and preserves it through
+JSON roundtrip. The current branch also builds a filtered OpenAPI 3 catalog,
+exposes it through the normal `agent_tool_view`, and provides a bounded
+host-owned HTTP executor. A missing optional spec is skipped; a missing or
+invalid required spec fails provider resolution.
 
 ## Access and exposure policy
 
@@ -111,8 +113,10 @@ host diagnostic explaining why.
 ## Model-facing operation contract
 
 The provider creates a stable tool name from the provider identity and
-OpenAPI `operationId`, for example `sales.searchSales`. The operation's
-request arguments should use explicit sections:
+OpenAPI `operationId`, for example `sales.searchSales`. The current schema
+projection supports OpenAPI parameters and an `application/json` request body.
+Path parameters are substituted by the host; a future refinement will expose
+explicit sections such as:
 
 ```json
 {
@@ -135,12 +139,13 @@ binary payloads must not enter model context.
 
 The provider must enforce all of the following:
 
-* local specification loading by default; remote specifications require a
-  separately approved capability;
+* local specification loading by default; the current implementation accepts
+  a host-provided local spec path;
 * an explicit host `base_url`, with no use of arbitrary `servers` values from
   the document without policy validation;
 * HTTPS by default, with narrowly scoped localhost HTTP only for development;
-* private-network and redirect/SSRF checks;
+* private-network and redirect/SSRF checks before production use (the current
+  local executor does not yet implement the complete SSRF/redirect policy);
 * bounded request, response and timeout limits;
 * host-owned credentials and a safe header allowlist;
 * caller policy intersected with provider policy for inbound MCP;
@@ -158,12 +163,14 @@ The provider work should add tests in this order:
 
 1. JSON parse, validation and roundtrip for mixed MCP/OpenAPI configuration.
 2. Method classification, access upper bounds and `auto`/`include`/`exclude`.
-3. OpenAPI schema projection and path/query/body argument mapping.
-4. A local fake HTTP server covering read calls, blocked writes, auth
-   isolation, redirects, timeouts and result limits.
+3. OpenAPI schema projection and path mapping.
+4. A local fake HTTP server covering read calls, network capability denial and
+   result limits. Auth, redirects and write-specific cases remain follow-up
+   coverage.
 5. Composite native/MCP/OpenAPI resolution and inbound MCP projection.
 6. Reload/readiness behavior and required-versus-optional provider failures.
 
 The configuration contract is covered by
-`llama-agent-daemon-mcp-config-ctest`. Runtime and HTTP smokes will be added
-as the provider implementation lands.
+`llama-agent-daemon-mcp-config-ctest`. Catalog, provider and local HTTP
+behavior are covered by `llama-agent-openapi-catalog-ctest`,
+`llama-agent-openapi-provider-ctest` and `llama-agent-openapi-http-ctest`.
