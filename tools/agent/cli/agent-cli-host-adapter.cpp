@@ -742,6 +742,15 @@ bool resolve_agent_host_tool_selection(
                         return false;
                     }
                     result.dataset_refs.push_back(imported.front().ref);
+                    result.structured_content_json = json({
+                        {"materialized", "dataset"},
+                        {"dataset", imported.front().ref.uri},
+                        {"source_resource", source_descriptor.uri},
+                        {"rows", imported.front().ref.row_count},
+                        {"columns", imported.front().ref.column_count},
+                        {"representation", "openapi:json"},
+                    }).dump();
+                    result.text_content = "OpenAPI collection materialized as dataset " + imported.front().ref.uri;
                     return true;
                 }
             }
