@@ -1704,7 +1704,7 @@ target_link_libraries(${TARGET} PRIVATE llama-agent-protocol cpp-httplib Threads
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
-    install(TARGETS llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-web RUNTIME)
+    install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-web RUNTIME)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)

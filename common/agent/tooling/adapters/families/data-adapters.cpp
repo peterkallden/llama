@@ -136,8 +136,14 @@ bool validate_dataset_descriptor_scope(
             "tool.dataset.invalid_reference", std::move(error));
         return false;
     }
-    if (bindings.resource_runtime.store == nullptr ||
-            is_current_turn_derived_dataset(descriptor, bindings.resource_runtime)) {
+    if (descriptor.origin.kind == "derived") {
+        if (is_current_turn_derived_dataset(descriptor, bindings.resource_runtime)) return true;
+        failure = common_adapter_not_found_failure(
+            "tool.dataset.out_of_scope", "derived dataset is not in the current turn",
+            "The derived dataset is outside the current host turn scope.");
+        return false;
+    }
+    if (bindings.resource_runtime.store == nullptr) {
         return true;
     }
 

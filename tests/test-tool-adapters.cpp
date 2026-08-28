@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 class test_resource_store final : public agent_resource_store {
 public:
@@ -18,16 +19,26 @@ public:
         return true;
     }
     bool read_text(const std::string &, const agent_resource_read_authority &, size_t, std::string &, std::string &) const override { return false; }
-    bool stat(const std::string &, const agent_resource_read_authority &, agent_resource_descriptor &, std::string &) const override { return false; }
+    bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
+        if (available_uris.count(uri) == 0) {
+            error = "resource was not found";
+            return false;
+        }
+        out.uri = uri;
+        out.name = "sales.xlsx";
+        out.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        return true;
+    }
     bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
     agent_resource_put_request last_request;
+    std::set<std::string> available_uris;
 };
 
 class test_data_store final : public common_agent_data_store {
 public:
     bool get_dataset_descriptor(const std::string & dataset_uri,
             common_agent_dataset_descriptor & descriptor, std::string & error) override {
-        if (dataset_uri != stored_descriptor.ref.uri) {
+        if (dataset_uri != stored_descriptor.ref.uri && dataset_uri != "dataset://tool-events") {
             error = "unknown dataset";
             return false;
         }
@@ -236,6 +247,7 @@ int main() {
     common_native_tool_bindings foundation_bindings = repository_bindings;
     test_resource_store foundation_resources;
     foundation_bindings.resource_runtime.store = &foundation_resources;
+    foundation_resources.available_uris.insert("resource://uploads/sales.xlsx");
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
     foundation_bindings.document_tables = [](const std::string & input) {
@@ -350,48 +362,48 @@ int main() {
     result = data_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":[{"left":"name","right":"name"}]})"});
     if (!result.ok || foundation_data.last_operation != "data.join") return 1;
     foundation_data.stored_descriptor = saved_descriptor;
-    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","limit":10})"});
     assert(result.ok && foundation_data.last_operation == "data.query");
-    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","where":{"status":"failed"}})"});
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":{"status":"failed"}})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find(R"("where":[{"field":"status","operator":"=","value":"failed"}])") != std::string::npos);
-    result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","where":"status -eq \"failed\" and attempt -gt 1"})"});
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":"status -eq \"failed\" and attempt -gt 1"})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find(R"("field":"status")") != std::string::npos &&
            foundation_data.last_request.find(R"("operator":"=","value":"failed")") != std::string::npos &&
            foundation_data.last_request.find(R"("field":"attempt","operator":">","value":1)") != std::string::npos);
-    result = foundation_registry.execute({"data.filter", R"({"dataset":"tool-events","conditions":[{"field":"status","operator":"=","value":"failed"}]})"});
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"dataset://tool-events","conditions":[{"field":"status","operator":"=","value":"failed"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.filter");
-    result = foundation_registry.execute({"data.filter", R"({"dataset":"tool-events","conditions":{"status":{"in":["failed","blocked"]}}})"});
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"dataset://tool-events","conditions":{"status":{"in":["failed","blocked"]}}})"});
     assert(result.ok && foundation_data.last_operation == "data.filter" &&
            foundation_data.last_request.find(R"("operator":"in","value":["failed","blocked"])") != std::string::npos);
-    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"tool-events","measures":[{"function":"count","column":"*"}]})"});
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"dataset://tool-events","measures":[{"function":"count","column":"*"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.aggregate");
-    result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":[{"left":"id","right":"id"}]})"});
+    result = foundation_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":[{"left":"id","right":"id"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.join");
-    result = foundation_registry.execute({"data.transform", R"({"dataset":"a","operations":[{"type":"rename","from":"x","to":"y"}]})"});
+    result = foundation_registry.execute({"data.transform", R"({"dataset":"dataset://analysis/sales","operations":[{"type":"rename","from":"x","to":"y"}]})"});
     assert(result.ok && foundation_data.last_operation == "data.transform");
-    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","columns":["value"]})"});
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","columns":["value"]})"});
     assert(result.ok && foundation_data.last_operation == "statistics.describe");
-    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"a","column":"value","group_by":"region"})"});
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","column":"value","group_by":"region"})"});
     assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
            foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
-    result = foundation_registry.execute({"statistics.outliers", R"({"dataset":"a","column":"value","group_by":"region"})"});
+    result = foundation_registry.execute({"statistics.outliers", R"({"dataset":"dataset://analysis/sales","column":"value","group_by":"region"})"});
     assert(result.ok && foundation_data.last_operation == "statistics.outliers" &&
            foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
-    result = foundation_registry.execute({"statistics.value_counts", R"({"dataset":"a","column":"region","limit":5})"});
+    result = foundation_registry.execute({"statistics.value_counts", R"({"dataset":"dataset://analysis/sales","column":"region","limit":5})"});
     assert(result.ok && foundation_data.last_operation == "statistics.value_counts");
-    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"a","group_by":"region","sum":"amount"})"});
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"dataset://analysis/sales","group_by":"region","sum":"amount"})"});
     assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
            foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos &&
            foundation_data.last_request.find(R"("function":"sum","column":"amount")" ) != std::string::npos);
-    result = foundation_registry.execute({"data.aggregate", R"json({"dataset":"a","select":"sum(amount)"})json"});
+    result = foundation_registry.execute({"data.aggregate", R"json({"dataset":"dataset://analysis/sales","select":"sum(amount)"})json"});
     assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
            foundation_data.last_request.find(R"("measures":[{"function":"sum","column":"amount"}])") != std::string::npos &&
            foundation_data.last_request.find(R"("select")") == std::string::npos);
-    result = foundation_registry.execute({"data.join", R"({"left":"a","right":"b","on":"id"})"});
+    result = foundation_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":"id"})"});
     assert(result.ok && foundation_data.last_operation == "data.join" &&
            foundation_data.last_request.find(R"("left":"id","right":"id")" ) != std::string::npos);
     result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","limit":1})"});

@@ -296,12 +296,30 @@ bool normalize_planner_host_dataset_references(
         const std::string & content,
         std::string & normalized,
         std::string & error) {
-    if (request.available_datasets.empty()) {
+    auto document = json::parse(content, nullptr, false);
+    if (document.is_discarded()) {
         normalized = content;
         return true;
     }
-    auto document = json::parse(content, nullptr, false);
-    if (document.is_discarded()) {
+    // Resource handles are host-owned values, not dataflow references. Check
+    // the raw model document before generic dataset normalization can turn a
+    // mistaken $datasets... resource into an internal binding object.
+    if (document.is_object() && document.contains("steps") && document["steps"].is_array()) {
+        for (const auto & step : document["steps"]) {
+            if (!step.is_object() || !step.contains("tool") || !step["tool"].is_string() ||
+                    (step["tool"].get<std::string>() != "dataset.inspect" &&
+                     step["tool"].get<std::string>() != "dataset.schema" &&
+                     step["tool"].get<std::string>() != "dataset.sample") ||
+                    !step.contains("args") || !step["args"].is_object() ||
+                    !step["args"].contains("resource") || !step["args"]["resource"].is_string()) continue;
+            const auto resource = step["args"]["resource"].get<std::string>();
+            if (!resource.empty() && resource.front() == '$') {
+                error = "plan.binding.resource_requires_handle: resource arguments must use an explicit rN or sN handle";
+                return false;
+            }
+        }
+    }
+    if (request.available_datasets.empty()) {
         normalized = content;
         return true;
     }
@@ -341,17 +359,6 @@ bool normalize_planner_host_dataset_references(
             // canonicalize it before the normal tool schema validation.
             for (size_t index = 0; index < document["steps"].size(); ++index) {
                 auto & step = document["steps"][index];
-                if (step.is_object() && step.contains("tool") && step["tool"].is_string() &&
-                        (step["tool"].get<std::string>() == "dataset.inspect" ||
-                         step["tool"].get<std::string>() == "dataset.schema" ||
-                         step["tool"].get<std::string>() == "dataset.sample") &&
-                        step.contains("args") && step["args"].is_object() &&
-                        step["args"].contains("resource") && step["args"]["resource"].is_string() &&
-                        !step["args"]["resource"].get<std::string>().empty() &&
-                        step["args"]["resource"].get<std::string>().front() == '$') {
-                    error = "plan.binding.resource_requires_handle: resource arguments must use an explicit rN or sN handle";
-                    return false;
-                }
                 if (step.is_object() && step.value("tool", std::string()) == "data.query" &&
                         step.contains("args") && step["args"].is_object() &&
                         step["args"].value("where", std::string()) == "true") {
@@ -409,7 +416,10 @@ bool normalize_planner_host_dataset_references(
 std::string render_planner_binding_repair_context(
         const common_agent_request & request,
         const std::string & parse_error) {
-    if (parse_error.rfind("plan.binding.", 0) != 0) return {};
+    // Required-tool retries also need the bounded resource/dataset inventory.
+    // A structurally invalid or unknown-tool plan can otherwise be regenerated
+    // without the handles needed to produce a usable tool step.
+    if (parse_error.rfind("plan.binding.", 0) != 0 && !request.require_tool_execution) return {};
 
     std::string repair = " The previous plan failed host binding validation with '" + parse_error + "'. "
         "Repair the complete plan now. A resource handle is not a dataset binding: do not use "
@@ -693,19 +703,21 @@ public:
                     common_plan_parse_proposal_json(
                         normalized_candidate, candidate_plan, candidate_operations, parse_error, 6);
                 if (parsed && request.require_tool_execution) {
+                    std::string unknown_tool;
                     const bool has_allowed_tool_step = std::any_of(
                         candidate_operations.begin(),
                         candidate_operations.end(),
-                        [this](const common_plan_operation & operation) {
-                            return operation.step && operation.step->tool_call &&
-                                std::find(
-                                    allowed_tools.begin(),
-                                    allowed_tools.end(),
-                                    operation.step->tool_call->name) != allowed_tools.end();
+                        [this, &unknown_tool](const common_plan_operation & operation) {
+                            if (!operation.step || !operation.step->tool_call) return false;
+                            const auto & name = operation.step->tool_call->name;
+                            if (std::find(allowed_tools.begin(), allowed_tools.end(), name) != allowed_tools.end()) return true;
+                            if (unknown_tool.empty()) unknown_tool = name;
+                            return false;
                         });
                     if (!has_allowed_tool_step) {
                         parsed = false;
                         parse_error = "required tool execution plan must contain at least one registered tool step";
+                        if (!unknown_tool.empty()) parse_error += "; unknown tool: " + unknown_tool;
                     }
                 }
                 if (!parsed && !parse_error.empty()) planner_attempt_errors.push_back(parse_error);

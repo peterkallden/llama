@@ -99,6 +99,7 @@ int main() {
     const auto denied = denied_view->call({"http-2", "sales.getSale", R"({"id":"42"})"}, error);
     assert(!denied.ok);
 
+    config.allow_private_network = true;
     setenv("OPENAPI_BASIC_USER", "user", 1);
     setenv("OPENAPI_BASIC_PASSWORD", "pass", 1);
     setenv("OPENAPI_API_KEY", "key-123", 1);

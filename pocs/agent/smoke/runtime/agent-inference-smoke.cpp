@@ -658,7 +658,9 @@ static void test_planner_resolves_compact_dataset_handles() {
     assert(join_arguments["on"].is_array() && join_arguments["on"].size() == 1);
     assert(join_arguments.value("materialize", false));
     assert(join_arguments.value("result_dataset", "").rfind("dataset://agent/turn/", 0) == 0);
-    assert(aggregate_arguments.value("dataset", "") == "dataset://seed/orders");
+    assert(aggregate_arguments["dataset"].is_object());
+    assert(aggregate_arguments["dataset"].value("$from_step", "") == "step_1");
+    assert(aggregate_arguments["dataset"].value("$json_pointer", "") == "/dataset");
 }
 
 static void test_planner_normalizes_unfiltered_query_shape() {
