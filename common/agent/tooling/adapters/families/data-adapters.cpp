@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -99,6 +100,31 @@ bool dataset_file(const common_native_tool_bindings & bindings,
     return true;
 }
 
+std::string dataset_scope_component(const std::string & value) {
+    std::string component;
+    for (const unsigned char character : value) {
+        if (std::isalnum(character) || character == '-' || character == '_') {
+            component += static_cast<char>(character);
+        } else {
+            component += '-';
+        }
+    }
+    return component.empty() ? "turn" : component;
+}
+
+bool is_current_turn_derived_dataset(
+        const common_agent_dataset_descriptor & descriptor,
+        const agent_resource_runtime & runtime) {
+    if (descriptor.origin.kind != "derived" || runtime.turn_id.empty()) return false;
+    const std::string prefix = "dataset://agent/turn/";
+    if (descriptor.ref.uri.rfind(prefix, 0) != 0) return false;
+    const auto component_start = prefix.size();
+    const auto component_end = descriptor.ref.uri.find('/', component_start);
+    if (component_end == std::string::npos) return false;
+    return descriptor.ref.uri.substr(component_start, component_end - component_start) ==
+        dataset_scope_component(runtime.turn_id);
+}
+
 common_tool_execution_result execute_data_backend(
         const common_native_tool_bindings & bindings,
         const std::string & operation, const std::string & input) {
@@ -128,7 +154,8 @@ common_tool_execution_result execute_data_backend(
             return common_adapter_validation_failure(
                 "tool.dataset.invalid_reference", std::move(lookup_error));
         }
-        if (bindings.resource_runtime.store != nullptr) {
+        if (bindings.resource_runtime.store != nullptr &&
+                !is_current_turn_derived_dataset(descriptor, bindings.resource_runtime)) {
             agent_resource_descriptor source;
             const auto authority = make_agent_resource_read_authority(
                 bindings.resource_runtime, std::time(nullptr));

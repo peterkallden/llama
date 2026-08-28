@@ -653,6 +653,8 @@ static void test_planner_resolves_compact_dataset_handles() {
     const auto aggregate_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
     assert(join_arguments.value("left", "") == "dataset://seed/orders");
     assert(join_arguments.value("right", "") == "dataset://seed/customers");
+    assert(join_arguments.value("materialize", false));
+    assert(join_arguments.value("result_dataset", "").rfind("dataset://agent/turn/", 0) == 0);
     assert(aggregate_arguments.value("dataset", "") == "dataset://seed/orders");
 }
 

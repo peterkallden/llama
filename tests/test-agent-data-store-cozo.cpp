@@ -151,6 +151,9 @@ int main() {
     TEST_ASSERT(store.get_dataset_descriptor("dataset://derived/north-orders", derived, error));
     TEST_ASSERT(derived.lineage.parent_dataset_uris.size() == 1 && derived.lineage.parent_dataset_uris[0] == "dataset://local/orders" &&
         derived.lineage.operation == "data.filter" && derived.ref.source_resource_uri == "resource://uploads/orders.csv");
+    TEST_ASSERT(store.execute("data.aggregate", R"({"dataset":"dataset://derived/north-orders","measures":[{"function":"count","column":"*","as":"count"}]})", output, error));
+    const auto derived_aggregate = json::parse(output);
+    TEST_ASSERT(derived_aggregate["row_count"] == 1 && derived_aggregate["rows"][0]["count"] == 3);
     TEST_ASSERT(!store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[],"max_scan_rows":1,"materialize":true,"result_dataset":"dataset://derived/truncated"})", output, error));
     TEST_ASSERT(error.find("truncated") != std::string::npos);
 
