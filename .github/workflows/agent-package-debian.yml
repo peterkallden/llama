@@ -7,7 +7,7 @@ on:
     types:
       - completed
     branches:
-      - master
+      - feature/llama-agent
   workflow_dispatch:
     inputs:
       source_ref:
@@ -34,6 +34,8 @@ jobs:
     name: Build Debian/Ubuntu package
     if: >-
       (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.source_ref == 'feature/llama-agent')
@@ -44,7 +46,7 @@ jobs:
       - name: Checkout verified source
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref || 'feature/llama-agent' }}
 
       - name: Install Debian and agent build dependencies
         shell: bash

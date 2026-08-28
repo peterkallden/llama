@@ -42,6 +42,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
+       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
