@@ -366,6 +366,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-tool-rounds.cpp
         test-memory-learning.cpp
         test-agent-learning-observation.cpp
+        test-agent-learning-transaction.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp
