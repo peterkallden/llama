@@ -33,6 +33,20 @@ the operation-specific tool contract. Descriptions are single-line and
 bounded to 240 characters. The bootstrap script accepts repeated
 `--family-description ID=TEXT` options for generating this section.
 
+For example:
+
+```sh
+scripts/agent-config-bootstrap.sh \
+  --family-description data='Transform, compare and join structured datasets' \
+  --family-description eurostat='Query Eurostat statistical datasets and JSON-stat data' \
+  --output config/agent-host.json
+```
+
+The resulting object is also shown in
+[`docs/examples/agent-tool-families.json`](../examples/agent-tool-families.json).
+It is a fragment-shaped example for copying values; it is not loaded through
+`tools.include_dir`, which is reserved for provider definitions.
+
 The family descriptions are part of the host-owned tooling snapshot. A JSONL
 `reload_config` validates them, but changing `tools.families` is reported as
 `restart_required`; restart the daemon before the new text is used for model

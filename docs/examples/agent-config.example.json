@@ -90,6 +90,17 @@
   "tools": {
     "profile": "all-configured",
     "repository_root": ".",
+    "families": {
+      "data": {
+        "description": "Transform, compare and join structured datasets"
+      },
+      "dataset": {
+        "description": "Select, inspect and materialize datasets for analysis"
+      },
+      "memory": {
+        "description": "Search and manage scoped runtime memory"
+      }
+    },
     "capabilities": {
       "utility.read": ["calculator", "time_now"],
       "memory.read": ["memory_search", "memory_get"]
