@@ -662,8 +662,55 @@ bool resolve_agent_host_tool_selection(
             }
             continue;
         }
+        const std::string provider_id = provider_config.id;
+        const auto materializer = [resource_store, provider_id](
+                const agent_tool_context & context,
+                const agent_openapi_operation & operation,
+                const std::string & arguments_json,
+                agent_openapi_execution_result & result,
+                std::string & materializer_error) {
+            const bool json_response = result.mime_type.rfind("application/json", 0) == 0;
+            if (json_response && result.structured_content_json.size() <= 2048) return true;
+            if (resource_store == nullptr) {
+                materializer_error = "OpenAPI result materialization requires a resource store";
+                return false;
+            }
+            agent_resource_put_request request;
+            request.name = provider_id + "-" + operation.operation_id + ".result";
+            request.description = "Bounded result from OpenAPI operation " + operation.operation_id;
+            request.mime_type = result.mime_type;
+            request.scope = common_runtime_resource_scope::turn;
+            request.namespace_id = context.scope.namespace_id;
+            request.session_id = context.scope.session_id;
+            request.project_id = context.scope.project_id;
+            request.turn_id = context.scope.turn_id;
+            request.source_provider = provider_id;
+            request.source_tool = operation.operation_id;
+            request.created_at = std::time(nullptr);
+            request.metadata.source_provider = provider_id;
+            request.metadata.source_operation = operation.operation_id;
+            request.metadata.source_request_json = arguments_json;
+            request.metadata.retrieved_at = request.created_at;
+            request.metadata.content_summary = "Bounded OpenAPI response retained for later resource/dataflow use.";
+            request.metadata.limitations = "Host-bounded response; pagination and links require explicit validation.";
+            agent_resource_descriptor descriptor;
+            const bool text_payload = json_response || result.mime_type.rfind("text/", 0) == 0;
+            bool stored = false;
+            if (text_payload) {
+                request.text = result.structured_content_json;
+                stored = resource_store->put_text(request, descriptor, materializer_error);
+            } else {
+                request.bytes = result.structured_content_json;
+                request.bytes_are_authoritative = true;
+                stored = resource_store->put_bytes(request, descriptor, materializer_error);
+            }
+            if (!stored) return false;
+            descriptor.metadata.content_hash = descriptor.sha256;
+            result.resource_refs.push_back(std::move(descriptor));
+            return true;
+        };
         selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
-            std::move(catalog), make_agent_openapi_http_executor(provider_config)));
+            std::move(catalog), make_agent_openapi_http_executor(provider_config), materializer));
     }
 
     if (native_provider || !mcp_providers.empty() || !selection.openapi_providers.empty()) {

@@ -50,7 +50,7 @@ public:
         }
         agent_openapi_execution_result execution;
         if (!executor || !executor(context, *it, arguments_json, execution, error)) return false;
-        if (materializer && !materializer(context, *it, execution, error)) return false;
+        if (materializer && !materializer(context, *it, arguments_json, execution, error)) return false;
         result.ok = execution.ok;
         result.structured_content_json = execution.structured_content_json;
         result.text_content = execution.text_content;

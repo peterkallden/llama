@@ -33,6 +33,7 @@ using agent_openapi_executor = std::function<bool(
 using agent_openapi_result_materializer = std::function<bool(
     const agent_tool_context & context,
     const agent_openapi_operation & operation,
+    const std::string & arguments_json,
     agent_openapi_execution_result & result,
     std::string & error)>;
 

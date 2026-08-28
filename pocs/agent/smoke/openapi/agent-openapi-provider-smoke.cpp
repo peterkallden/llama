@@ -25,6 +25,7 @@ int main() {
             return true;
         },
         [&](const agent_tool_context &, const agent_openapi_operation &,
+            const std::string &,
             agent_openapi_execution_result & result, std::string &) {
             materialized = true;
             common_runtime_resource_ref resource;

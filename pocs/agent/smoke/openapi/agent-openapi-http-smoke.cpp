@@ -34,6 +34,7 @@ int main() {
     std::string observed_mime;
     agent_openapi_tool_provider provider(std::move(catalog), make_agent_openapi_http_executor(config),
         [&](const agent_tool_context &, const agent_openapi_operation &,
+            const std::string &,
             agent_openapi_execution_result & execution, std::string &) {
             observed_status = execution.http_status;
             observed_mime = execution.mime_type;
