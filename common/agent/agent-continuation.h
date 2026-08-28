@@ -40,6 +40,7 @@ struct common_agent_continuation_checkpoint {
     common_agent_continuation_reason reason = common_agent_continuation_reason::context_pressure;
     std::vector<std::string> completed_step_ids;
     std::vector<common_runtime_resource_ref> resource_refs;
+    std::vector<common_agent_dataset_ref> dataset_refs;
     std::optional<common_agent_working_state> working_state;
     std::string chunk_parent_uri;
     size_t chunk_count = 0;

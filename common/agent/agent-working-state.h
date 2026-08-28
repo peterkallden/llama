@@ -20,6 +20,7 @@ struct common_agent_working_state {
     std::vector<std::string> constraints;
     std::vector<std::string> open_questions;
     std::vector<common_runtime_resource_ref> resource_refs;
+    std::vector<common_agent_dataset_ref> dataset_refs;
     std::vector<std::string> chunk_status;
     std::vector<std::string> tool_results;
     std::string continuation_action;
@@ -33,6 +34,7 @@ struct common_agent_working_state_limits {
     size_t max_constraints = 32;
     size_t max_open_questions = 32;
     size_t max_resource_refs = 32;
+    size_t max_dataset_refs = 32;
     size_t max_chunk_status = 64;
     size_t max_tool_results = 32;
 };
@@ -134,6 +136,14 @@ inline common_agent_working_state make_common_agent_working_state(
             }
             state.resource_refs.push_back(resource);
         }
+        for (const auto & dataset : observation.dataset_refs) {
+            if (state.dataset_refs.size() >= limits.max_dataset_refs || dataset.uri.empty() || std::any_of(
+                    state.dataset_refs.begin(), state.dataset_refs.end(),
+                    [&](const auto & existing) { return existing.uri == dataset.uri; })) {
+                continue;
+            }
+            state.dataset_refs.push_back(dataset);
+        }
         if (observation.source == "resource_chunk" && observation.resource_refs.size() == 1) {
             if (state.chunk_status.size() >= limits.max_chunk_status) continue;
             const auto & lineage = observation.resource_refs.front().lineage;
@@ -180,6 +190,7 @@ inline std::string render_common_agent_working_state(
     for (const auto & value : state.chunk_status) append("chunk", value);
     for (const auto & value : state.tool_results) append("tool_result", value);
     for (const auto & value : state.resource_refs) append("resource_ref", value.uri);
+    for (const auto & value : state.dataset_refs) append("dataset_ref", value.uri);
     if (rendered.size() > max_chars) rendered.resize(max_chars);
     return rendered;
 }

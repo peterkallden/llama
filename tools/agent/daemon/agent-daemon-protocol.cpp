@@ -689,6 +689,15 @@ json make_agent_daemon_turn_response(
                 {"size_bytes", resource.size_bytes},
             });
         }
+        json dataset_refs = json::array();
+        for (const auto & dataset : checkpoint.dataset_refs) {
+            dataset_refs.push_back({
+                {"uri", dataset.uri}, {"name", dataset.name},
+                {"row_count", dataset.row_count}, {"column_count", dataset.column_count},
+                {"source_resource_uri", dataset.source_resource_uri},
+                {"source_representation", dataset.source_representation},
+            });
+        }
         response["continuation_checkpoint"] = {
             {"checkpoint_id", checkpoint.checkpoint_id},
             {"request_id", checkpoint.request_id},
@@ -704,6 +713,7 @@ json make_agent_daemon_turn_response(
             {"chunk_count", checkpoint.chunk_count},
             {"completed_chunk_indexes", checkpoint.completed_chunk_indexes},
             {"resource_refs", std::move(resource_refs)},
+            {"dataset_refs", std::move(dataset_refs)},
         };
         if (checkpoint.working_state) {
             const auto & state = *checkpoint.working_state;
@@ -716,6 +726,15 @@ json make_agent_daemon_turn_response(
                     {"size_bytes", resource.size_bytes},
                 });
             }
+            json state_dataset_refs = json::array();
+            for (const auto & dataset : state.dataset_refs) {
+                state_dataset_refs.push_back({
+                    {"uri", dataset.uri}, {"name", dataset.name},
+                    {"row_count", dataset.row_count}, {"column_count", dataset.column_count},
+                    {"source_resource_uri", dataset.source_resource_uri},
+                    {"source_representation", dataset.source_representation},
+                });
+            }
             response["continuation_checkpoint"]["working_state"] = {
                 {"goal", state.goal},
                 {"current_phase", state.current_phase},
@@ -726,6 +745,7 @@ json make_agent_daemon_turn_response(
                 {"constraints", state.constraints},
                 {"open_questions", state.open_questions},
                 {"resource_refs", std::move(state_resource_refs)},
+                {"dataset_refs", std::move(state_dataset_refs)},
                 {"chunk_status", state.chunk_status},
                 {"tool_results", state.tool_results},
                 {"continuation_action", state.continuation_action},

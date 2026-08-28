@@ -412,6 +412,19 @@ bool parse_agent_daemon_jsonl_turn_response(
                 checkpoint.resource_refs.push_back(std::move(resource));
             }
         }
+        if (value.contains("dataset_refs") && value["dataset_refs"].is_array()) {
+            for (const auto & item : value["dataset_refs"]) {
+                if (!item.is_object()) continue;
+                common_agent_dataset_ref dataset;
+                dataset.uri = item.value("uri", std::string());
+                dataset.name = item.value("name", std::string());
+                dataset.row_count = item.value("row_count", size_t(0));
+                dataset.column_count = item.value("column_count", size_t(0));
+                dataset.source_resource_uri = item.value("source_resource_uri", std::string());
+                dataset.source_representation = item.value("source_representation", std::string());
+                checkpoint.dataset_refs.push_back(std::move(dataset));
+            }
+        }
         if (value.contains("working_state") && value["working_state"].is_object()) {
             common_agent_working_state state;
             const auto & state_value = value["working_state"];
@@ -432,6 +445,19 @@ bool parse_agent_daemon_jsonl_turn_response(
                     resource.mime_type = item.value("mime_type", std::string());
                     resource.size_bytes = item.value("size_bytes", size_t(0));
                     state.resource_refs.push_back(std::move(resource));
+                }
+            }
+            if (state_value.contains("dataset_refs") && state_value["dataset_refs"].is_array()) {
+                for (const auto & item : state_value["dataset_refs"]) {
+                    if (!item.is_object()) continue;
+                    common_agent_dataset_ref dataset;
+                    dataset.uri = item.value("uri", std::string());
+                    dataset.name = item.value("name", std::string());
+                    dataset.row_count = item.value("row_count", size_t(0));
+                    dataset.column_count = item.value("column_count", size_t(0));
+                    dataset.source_resource_uri = item.value("source_resource_uri", std::string());
+                    dataset.source_representation = item.value("source_representation", std::string());
+                    state.dataset_refs.push_back(std::move(dataset));
                 }
             }
             state.chunk_status = state_value.value("chunk_status", std::vector<std::string>());

@@ -18,6 +18,14 @@ int main() {
     checkpoint.active_step_id = "step-2";
     checkpoint.sequence = 1;
     checkpoint.reason = common_agent_continuation_reason::completion_limit;
+    common_agent_dataset_ref dataset;
+    dataset.uri = "dataset://sales";
+    dataset.name = "sales";
+    dataset.row_count = 2;
+    dataset.column_count = 3;
+    checkpoint.dataset_refs.push_back(dataset);
+    checkpoint.working_state = common_agent_working_state{};
+    checkpoint.working_state->dataset_refs.push_back(dataset);
 
     std::string error;
     assert(common_agent_continuation_checkpoint_valid(checkpoint, error));
@@ -51,5 +59,7 @@ int main() {
     execution.continuation_count = 1;
     assert(execution.continuation_checkpoint->checkpoint_id == "checkpoint-1");
     assert(execution.continuation_count == 1);
+    assert(execution.continuation_checkpoint->dataset_refs.front().uri == "dataset://sales");
+    assert(execution.continuation_checkpoint->working_state->dataset_refs.front().name == "sales");
     return 0;
 }

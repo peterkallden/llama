@@ -481,6 +481,8 @@ bool make_continuation_checkpoint(
     for (const auto & observation : plan->observations) {
         checkpoint.resource_refs.insert(
             checkpoint.resource_refs.end(), observation.resource_refs.begin(), observation.resource_refs.end());
+        checkpoint.dataset_refs.insert(
+            checkpoint.dataset_refs.end(), observation.dataset_refs.begin(), observation.dataset_refs.end());
         if (observation.source == "resource_chunk" && observation.resource_refs.size() == 1) {
             const auto & lineage = observation.resource_refs.front().lineage;
             if (checkpoint.chunk_parent_uri.empty()) {
