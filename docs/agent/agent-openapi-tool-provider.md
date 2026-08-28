@@ -127,12 +127,13 @@ host diagnostic explaining why.
 The provider creates a stable tool name from the provider identity and
 OpenAPI `operationId`, for example `sales.searchSales`. The current schema
 projection supports OpenAPI parameters and an `application/json` request body.
-The model supplies explicit sections such as:
+The model supplies one flat JSON object whose keys are the OpenAPI parameter
+and body names, for example:
 
 ```json
 {
-  "path": { "customer_id": "c-42" },
-  "query": { "limit": 20 },
+  "customer_id": "c-42",
+  "limit": 20,
   "body": {}
 }
 ```

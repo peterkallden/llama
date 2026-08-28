@@ -223,6 +223,11 @@ bool common_agent_cozo_data_store::put_dataset_descriptor(
         {"row_count", descriptor.ref.row_count}, {"column_count", descriptor.ref.column_count},
         {"source_resource_uri", descriptor.ref.source_resource_uri},
         {"source_representation", descriptor.ref.source_representation},
+        {"source_provider", descriptor.ref.source_provider},
+        {"source_operation", descriptor.ref.source_operation},
+        {"source_request_json", descriptor.ref.source_request_json},
+        {"retrieved_at", descriptor.ref.retrieved_at},
+        {"content_hash", descriptor.ref.content_hash},
         {"columns", columns}, {"source_workbook_name", descriptor.source_workbook_name},
         {"source_sheet_name", descriptor.source_sheet_name},
         {"source_sheet_index", descriptor.source_sheet_index ? json(*descriptor.source_sheet_index) : json()},
@@ -271,6 +276,11 @@ bool common_agent_cozo_data_store::get_dataset_descriptor(
     descriptor.ref.column_count = value.value("column_count", size_t(0));
     descriptor.ref.source_resource_uri = value.value("source_resource_uri", std::string());
     descriptor.ref.source_representation = value.value("source_representation", std::string());
+    descriptor.ref.source_provider = value.value("source_provider", std::string());
+    descriptor.ref.source_operation = value.value("source_operation", std::string());
+    descriptor.ref.source_request_json = value.value("source_request_json", std::string());
+    descriptor.ref.retrieved_at = value.value("retrieved_at", int64_t(0));
+    descriptor.ref.content_hash = value.value("content_hash", std::string());
     for (const auto & column : value.value("columns", json::array())) if (column.is_object()) {
         const auto type = column.value("type", std::string("unknown"));
         common_agent_dataset_column_type column_type = common_agent_dataset_column_type::unknown;
