@@ -292,7 +292,18 @@ bool resolve_agent_host_tool_selection(
                 return definition.name == "dataset.list" ||
                     definition.name == "dataset.select" ||
                     definition.executor_id == "builtin.dataset.list" ||
-                    definition.executor_id == "builtin.dataset.select";
+                    definition.executor_id == "builtin.dataset.select" ||
+                    definition.executor_id == "builtin.dataset.inspect" ||
+                    definition.executor_id == "builtin.dataset.schema" ||
+                    definition.executor_id == "builtin.dataset.sample" ||
+                    definition.executor_id == "builtin.data.query" ||
+                    definition.executor_id == "builtin.data.filter" ||
+                    definition.executor_id == "builtin.data.aggregate" ||
+                    definition.executor_id == "builtin.data.join" ||
+                    definition.executor_id == "builtin.data.transform" ||
+                    definition.executor_id == "builtin.statistics.describe" ||
+                    definition.executor_id == "builtin.statistics.outliers" ||
+                    definition.executor_id == "builtin.statistics.value_counts";
             });
         common_agent_data_store * inventory_store = request.data_store != nullptr
             ? request.data_store : selection.owned_data_store.get();
@@ -307,6 +318,8 @@ bool resolve_agent_host_tool_selection(
                         return left.ref.uri < right.ref.uri;
                     });
                 selection.tooling.available_datasets = std::move(descriptors);
+            } else if (!inventory_error.empty()) {
+                fprintf(stderr, "warning: scoped dataset inventory unavailable: %s\n", inventory_error.c_str());
             }
         }
         for (const auto & definition : profile_snapshot->tools) {
