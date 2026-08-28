@@ -115,10 +115,11 @@ OpenAPI provider was passing an undecorated prefix into the shared MCP naming
 helper, while the planner and documentation used dotted names such as
 `sales.listSales`. The provider now supplies a dotted prefix explicitly;
 ordinary MCP prefixes retain their underscore behavior. Separately, the host
-dataset scope guard recognized only `agent-dataset://`, although the existing
-dataset importer emits `dataset://`. A follow-up data operation could therefore
-use an OpenAPI dataset outside its turn. Both URI forms now go through the
-same descriptor and source-resource authority check.
+dataset scope guard had been written around an obsolete agent-prefixed URI,
+although the existing dataset importer emits `dataset://`. A follow-up data
+operation could therefore use an OpenAPI dataset outside its turn. The
+canonical scheme now goes through the descriptor and source-resource authority
+check, while the obsolete scheme is rejected.
 
 The provider smoke also enables the network capability explicitly and checks
 tool-view resolution without relying on `assert`, because release builds define

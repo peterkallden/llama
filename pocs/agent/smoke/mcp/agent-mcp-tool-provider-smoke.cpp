@@ -63,7 +63,7 @@ public:
             result.ok = true;
             result.structured_content_json = R"({"items":[{"title":"stub issue"}]})";
             common_agent_dataset_ref dataset;
-            dataset.uri = "agent-dataset://mcp/github/issues";
+            dataset.uri = "dataset://mcp/github/issues";
             dataset.name = "github issues";
             dataset.row_count = 1;
             dataset.column_count = 1;
@@ -125,7 +125,7 @@ int main() {
         return 1;
     }
     if (search_result.dataset_refs.size() != 1 ||
-            search_result.dataset_refs.front().uri != "agent-dataset://mcp/github/issues" ||
+            search_result.dataset_refs.front().uri != "dataset://mcp/github/issues" ||
             search_result.content_json.find("dataset_refs") == std::string::npos) {
         std::fprintf(stderr, "MCP dataset reference was not propagated in the compact result\n");
         return 1;

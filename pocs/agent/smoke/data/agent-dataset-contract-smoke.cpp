@@ -84,5 +84,12 @@ int main() {
     descriptor.ref.source_resource_uri.clear();
     assert(!validate_common_agent_dataset_ref(descriptor.ref, error));
     assert(error == "dataset reference requires source resource provenance");
+
+    descriptor.ref.source_resource_uri = "agent-resource://uploads/sales.xlsx";
+    descriptor.ref.uri = "agent-dataset://legacy/sales";
+    if (validate_common_agent_dataset_ref(descriptor.ref, error) ||
+            error != "dataset reference URI must use the canonical dataset:// scheme") {
+        return 1;
+    }
     return 0;
 }

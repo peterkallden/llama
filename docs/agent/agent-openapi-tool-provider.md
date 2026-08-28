@@ -282,8 +282,8 @@ bounded response inline or as a resource according to the same limits.
 The same `dataset_refs` result field is preserved when a native or MCP-backed
 tool returns a dataset reference. Native and MCP provider adapters first check
 the reference shape; when a `data.*` operation uses a host-owned `dataset://`
-or `agent-dataset://` URI, the host additionally resolves its descriptor and
-source resource under the current authority. An external MCP reference is not
+URI, the host additionally resolves its descriptor and source resource under
+the current authority. An external MCP reference is not
 automatically treated as a local dataset merely because its JSON shape is
 valid.
 

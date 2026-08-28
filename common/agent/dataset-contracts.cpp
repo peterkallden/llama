@@ -345,6 +345,10 @@ bool validate_common_agent_dataset_ref(
         error = "dataset reference requires uri and name";
         return false;
     }
+    if (ref.uri.rfind("dataset://", 0) != 0) {
+        error = "dataset reference URI must use the canonical dataset:// scheme";
+        return false;
+    }
     if (ref.source_resource_uri.empty()) {
         error = "dataset reference requires source resource provenance";
         return false;
