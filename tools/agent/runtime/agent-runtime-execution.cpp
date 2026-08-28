@@ -602,6 +602,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.prompt = execution.orchestration_config.prompt;
     request.input_resources = execution.input_resources;
     request.available_resources = execution.available_resources;
+    request.available_datasets = execution.tooling.available_datasets;
     request.working_state = execution.compact_working_state;
     if (!execution.current_plan_id.empty()) {
         request.plan_id = execution.current_plan_id;

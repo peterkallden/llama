@@ -910,7 +910,11 @@ static void test_agent_runtime_smoke() {
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id;
-    const auto tooling = make_runtime_tooling(tools);
+    auto tooling = make_runtime_tooling(tools);
+    common_agent_dataset_descriptor scoped_dataset;
+    scoped_dataset.ref.name = "orders";
+    scoped_dataset.ref.uri = "dataset://seed/orders";
+    tooling.available_datasets.push_back(scoped_dataset);
     common_agent_runtime_driver_execution execution{
         memories,
         plans,
@@ -937,6 +941,9 @@ static void test_agent_runtime_smoke() {
     assert(!result.plan_id->empty());
     assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen[0].messages.size() == 2);
+    assert(inference.seen[0].messages[1].content.find("<runtime_dataset_inventory>") != std::string::npos);
+    assert(inference.seen[0].messages[1].content.find("name=orders") != std::string::npos);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
