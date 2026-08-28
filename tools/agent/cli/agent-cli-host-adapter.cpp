@@ -682,7 +682,36 @@ bool resolve_agent_host_tool_selection(
                     return false;
                 }
                 if (projection.kind == agent_openapi_result_projection_kind::dataset) {
+                    if (resource_store == nullptr) {
+                        materializer_error = "OpenAPI dataset materialization requires a resource store";
+                        return false;
+                    }
                     const auto value = json::parse(result.structured_content_json, nullptr, false);
+                    agent_resource_put_request source_request;
+                    source_request.name = provider_id + "-" + operation.operation_id + ".json";
+                    source_request.description = "Raw bounded response from OpenAPI operation " + operation.operation_id;
+                    source_request.mime_type = result.mime_type;
+                    source_request.scope = common_runtime_resource_scope::turn;
+                    source_request.namespace_id = context.scope.namespace_id;
+                    source_request.session_id = context.scope.session_id;
+                    source_request.project_id = context.scope.project_id;
+                    source_request.turn_id = context.scope.turn_id;
+                    source_request.source_provider = provider_id;
+                    source_request.source_tool = operation.operation_id;
+                    source_request.created_at = std::time(nullptr);
+                    source_request.metadata.source_provider = provider_id;
+                    source_request.metadata.source_operation = operation.operation_id;
+                    source_request.metadata.source_request_json = arguments_json;
+                    source_request.metadata.retrieved_at = source_request.created_at;
+                    source_request.metadata.content_summary = "Bounded OpenAPI collection retained as dataset source.";
+                    source_request.metadata.limitations = "Host-bounded response; pagination requires an explicit plan step.";
+                    source_request.text = result.structured_content_json;
+                    agent_resource_descriptor source_descriptor;
+                    if (!resource_store->put_text(source_request, source_descriptor, materializer_error)) {
+                        return false;
+                    }
+                    source_descriptor.metadata.content_hash = source_descriptor.sha256;
+                    result.resource_refs.push_back(source_descriptor);
                     json worksheet = {{"name", operation.operation_id}, {"index", 0},
                         {"columns", json::array()}, {"rows", value}};
                     for (const auto & column : projection.columns) {
@@ -701,7 +730,7 @@ bool resolve_agent_host_tool_selection(
                             {"nullable", true}});
                     }
                     agent_dataset_import_request import;
-                    import.source_resource_uri = "api://" + provider_id + "/" + operation.operation_id + "/" + context.scope.turn_id;
+                    import.source_resource_uri = source_descriptor.uri;
                     import.source_workbook_name = provider_id + "-" + operation.operation_id;
                     import.source_representation = "openapi:json";
                     import.source_representation_uri = import.source_resource_uri;
