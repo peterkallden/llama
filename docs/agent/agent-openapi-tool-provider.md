@@ -236,9 +236,18 @@ JSON object or heterogeneous   -> bounded JSON resource
 
 The conversion is host-side and is not an additional model-visible tool call.
 A collection is eligible for a dataset view only when it is a bounded array of
-reasonably stable objects. The original response remains the source material;
-the dataset is an analysis projection and may be discarded with the turn or
-session. A single object is normally a record/resource, not a one-row dataset.
+reasonably stable, shallow objects with scalar values. The host stores the raw
+bounded response as a turn-scoped resource and returns a `dataset_refs` entry
+whose `source_resource_uri` points to that exact resource. The dataset is an
+analysis projection and may be discarded with the turn or session. A single
+object is normally a record/resource, not a one-row dataset.
+
+The dataset reference is host-generated and contains its URI, display name,
+row/column counts, source representation and provenance. It is attached to
+the tool result, plan observation, working state and continuation checkpoint;
+it is never accepted as a model-supplied dataset identity. If the response is
+nested, heterogeneous, oversized or otherwise outside the projection limits,
+the host keeps it as a bounded JSON resource instead.
 
 Every derived view must preserve provenance back to the provider, operation,
 canonical request parameters, retrieval time and content hash. Dataset lineage
@@ -257,8 +266,9 @@ the callback may classify it, register a turn/session-scoped resource or
 dataset using the existing stores, and attach the resulting references to the
 tool result. The callback is deliberately not part of the model contract: it
 must not issue another model generation, follow an unvalidated URL, or turn
-pagination into hidden background work. When no callback is installed, the
-provider returns the bounded JSON inline and does not persist a dataset.
+pagination into hidden background work. The standard CLI host materializer
+creates datasets only when both stores are available; otherwise it keeps the
+bounded response inline or as a resource according to the same limits.
 
 Collection rows that have a scalar item identifier may also receive opaque
 host-owned candidates such as `getSale#1`. The candidate is only a selection
