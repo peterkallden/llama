@@ -58,3 +58,35 @@ This mechanism deliberately handles provider definitions first. It does not
 perform a generic deep merge of arbitrary JSON objects. MCP tools are
 discovered from their MCP server at runtime; an MCP fragment can narrow that
 discovery with `allowed_tools`, but cannot define a remote MCP tool by itself.
+## Provider-helper
+
+För en enskild provider kan `scripts/agent-provider-bootstrap.sh` skapa ett
+fragment utan att secrets hamnar i JSON. OpenAPI kräver en base URL och kan få
+en lokal spec med `--spec`:
+
+```sh
+scripts/agent-provider-bootstrap.sh \
+  --type openapi --id sales --base-url https://sales.example.test \
+  --spec examples/sales-openapi.json \
+  --auth-type bearer --token-env SALES_API_TOKEN \
+  --output config/providers/sales.json
+```
+
+Om `--spec` utelämnas försöker helpern i ordning `/openapi.json`,
+`/swagger.json` och `/api-docs`, sparar det första giltiga JSON-dokumentet med
+`--spec-output` (eller `<id>-openapi.json`) och skriver den upptäckta adressen
+till stderr. Discovery följer inte redirects genom hostens konfiguration.
+
+Ett HTTP-MCP-fragment skapas exempelvis så här:
+
+```sh
+scripts/agent-provider-bootstrap.sh \
+  --type mcp --id github --transport streamable_http \
+  --url https://mcp.example.test/mcp --server-name github \
+  --auth-type bearer --token-env GITHUB_MCP_TOKEN \
+  --allowed-tool search_issues --output config/providers/github.json
+```
+
+Lägg sedan katalogen på `tools.include_dir` i huvudkonfigurationen. Helpern
+bygger bara hostens providerobjekt; den ändrar inte det modellvända
+toolkontraktet och den gör ingen implicit tool-allowlist för OpenAPI.

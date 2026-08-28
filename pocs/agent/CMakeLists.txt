@@ -1705,6 +1705,13 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
             ${PROJECT_SOURCE_DIR}/scripts/agent-config-bootstrap.sh
             DESTINATION bin
             RENAME llama-agent-config-bootstrap)
+        install(PROGRAMS
+            ${PROJECT_SOURCE_DIR}/scripts/agent-provider-bootstrap.sh
+            DESTINATION bin
+            RENAME llama-agent-provider-bootstrap)
+        install(FILES
+            ${PROJECT_SOURCE_DIR}/scripts/agent-provider-bootstrap.py
+            DESTINATION bin)
     endif()
 
     # Keep this install manifest explicit.  A CONFIGURE_DEPENDS glob here
