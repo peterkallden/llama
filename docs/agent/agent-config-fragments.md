@@ -11,6 +11,34 @@ also be split into a directory using `tools.include_dir`:
 }
 ```
 
+Family descriptions belong in the main configuration because a family may
+contain tools from several providers:
+
+```json
+{
+  "tools": {
+    "families": {
+      "eurostat": {
+        "description": "Query Eurostat statistical datasets and JSON-stat data"
+      }
+    }
+  }
+}
+```
+
+The family id is derived from the tool namespace (for example,
+`eurostat.getData` becomes `eurostat`). This section changes only the compact
+family preflight text; it does not create tools, grant capabilities or replace
+the operation-specific tool contract. Descriptions are single-line and
+bounded to 240 characters. The bootstrap script accepts repeated
+`--family-description ID=TEXT` options for generating this section.
+
+The family descriptions are part of the host-owned tooling snapshot. A JSONL
+`reload_config` validates them, but changing `tools.families` is reported as
+`restart_required`; restart the daemon before the new text is used for model
+preflight. This avoids changing the model-facing tool snapshot halfway through
+an active session.
+
 The directory is resolved relative to the main configuration file. Every
 regular file whose name ends in `.json` is read in lexical filename order. A
 fragment contains exactly one provider object, using the same contract as an

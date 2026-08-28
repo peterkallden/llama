@@ -65,6 +65,7 @@ struct agent_host_config {
 
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     agent_host_sandbox_config sandbox;
     std::string repository_root;

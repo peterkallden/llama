@@ -352,6 +352,8 @@ int main(int argc, char ** argv) {
         require_restart(candidate.tool_profile != options.tool_profile, "tools.profile");
         require_restart(!tool_capabilities_equal(candidate.tool_capabilities, options.tool_capabilities),
             "tools.capabilities");
+        require_restart(candidate.tool_family_descriptions != options.tool_family_descriptions,
+            "tools.families");
         require_restart(!tool_profiles_equal(candidate.tool_profiles, options.tool_profiles),
             "tools.profiles");
         auto provider_equal = [](const auto & a, const auto & b) {

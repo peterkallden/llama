@@ -264,6 +264,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     };
     tool_request.data_store_config = {options.data_backend, options.data_db};
     tool_request.tool_capabilities = options.tool_capabilities;
+    tool_request.tool_family_descriptions = options.tool_family_descriptions;
     tool_request.tool_profiles = options.tool_profiles;
     tool_request.sandbox = options.sandbox;
     tool_request.resource_processor_policies = options.resource_processor_policies;

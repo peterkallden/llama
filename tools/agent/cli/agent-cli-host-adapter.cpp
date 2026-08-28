@@ -95,6 +95,7 @@ agent_host_tool_selection_request make_agent_cli_tool_selection_request(
     };
     request.data_store_config = {options.data_backend, options.data_db};
     request.tool_capabilities = options.tool_capabilities;
+    request.tool_family_descriptions = options.tool_family_descriptions;
     request.tool_profiles = options.tool_profiles;
     request.sandbox = options.sandbox;
     request.resource_processor_policies = options.resource_processor_policies;
@@ -227,6 +228,7 @@ bool resolve_agent_host_tool_selection(
     selection.tooling.resource_runtime.session_id = request.tool_context.scope.session_id;
     selection.tooling.resource_runtime.project_id = request.tool_context.scope.project_id;
     selection.tooling.resource_runtime.turn_id = request.tool_context.scope.turn_id;
+    selection.tooling.family_descriptions = request.tool_family_descriptions;
 
     if (request.data_store == nullptr) {
         selection.owned_data_store = make_agent_data_store(request.data_store_config, error);

@@ -50,7 +50,8 @@ std::string family_description_for_id(const std::string & id) {
 } // namespace
 
 std::vector<common_tool_family_index> common_generate_tool_family_index(
-        const std::vector<common_chat_tool> & tools) {
+        const std::vector<common_chat_tool> & tools,
+        const std::map<std::string, std::string> & descriptions) {
     std::map<std::string, std::set<std::string>> grouped;
     for (const auto & tool : tools) {
         if (tool.name.empty()) continue;
@@ -62,7 +63,10 @@ std::vector<common_tool_family_index> common_generate_tool_family_index(
     for (auto & entry : grouped) {
         common_tool_family_index family;
         family.id = std::move(entry.first);
-        family.description = family_description_for_id(family.id);
+        const auto description = descriptions.find(family.id);
+        family.description = description == descriptions.end()
+            ? family_description_for_id(family.id)
+            : description->second;
         family.tool_names.assign(entry.second.begin(), entry.second.end());
         result.push_back(std::move(family));
     }

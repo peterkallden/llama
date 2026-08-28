@@ -3,6 +3,11 @@
   "model": {"backend": "server-context", "path": "models/model.gguf"},
   "tools": {
     "profile": "all-configured",
+    "families": {
+      "eurostat": {
+        "description": "Query Eurostat statistical datasets and JSON-stat data"
+      }
+    },
     "providers": [
       {
         "type": "openapi",

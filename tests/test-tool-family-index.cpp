@@ -23,6 +23,14 @@ int main() {
     };
     const auto * data_family = find_family("data");
     assert(data_family && data_family->description == "Query and transform datasets");
+    const auto configured = common_generate_tool_family_index(
+        tools, {{"data", "Query approved datasets from the configured API"}});
+    const auto configured_data = [&configured]() -> const common_tool_family_index * {
+        for (const auto & family : configured) if (family.id == "data") return &family;
+        return nullptr;
+    }();
+    assert(configured_data && configured_data->description ==
+        "Query approved datasets from the configured API");
     const auto rendered = common_render_tool_family_index(families);
     assert(rendered.find("data: Query and transform datasets") != std::string::npos);
     assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);

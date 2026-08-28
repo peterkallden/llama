@@ -13,6 +13,7 @@ Usage: agent-config-bootstrap.sh [options]
   --repository-root PATH     Controlled workspace root (default: .)
   --tool-profile NAME        Tool profile (default: all-configured)
   --providers-file PATH      JSON provider array; use - to read stdin
+  --family-description ID=TEXT  Model-facing description for a tool family (repeatable)
   --threads N                Inference threads (default: 4)
   --gpu-layers N             GPU layers (default: 0)
   --worker-count N           Scheduler workers (default: 2)
@@ -74,6 +75,7 @@ cozo_root=data
 repository_root=.
 tool_profile=all-configured
 providers_file=
+family_descriptions=()
 threads=4
 gpu_layers=0
 worker_count=2
@@ -163,6 +165,7 @@ while (($# > 0)); do
         --repository-root) repository_root=$2 ;;
         --tool-profile) tool_profile=$2 ;;
         --providers-file) providers_file=$2 ;;
+        --family-description) family_descriptions+=("$2") ;;
         --threads) threads=$2 ;;
         --gpu-layers) gpu_layers=$2 ;;
         --worker-count) worker_count=$2 ;;
@@ -319,6 +322,21 @@ if [[ -n $providers_file && $providers_file != none ]]; then
     }
 fi
 
+families_json=''
+for family_entry in "${family_descriptions[@]}"; do
+    family_id=${family_entry%%=*}
+    family_description=${family_entry#*=}
+    [[ -n $family_id && $family_id != "$family_entry" && $family_id != *[[:space:]]* ]] || {
+        echo "--family-description must use ID=TEXT with a non-empty id" >&2; exit 2;
+    }
+    [[ -n $family_description && ${#family_description} -le 240 &&
+        $family_description != *$'\n'* && $family_description != *$'\r'* ]] || {
+        echo "--family-description text must be non-empty, single-line and at most 240 characters" >&2; exit 2;
+    }
+    [[ -n $families_json ]] && families_json+=', '
+    families_json+="\"$(escape_json "$family_id")\":{\"description\":\"$(escape_json "$family_description")\"}"
+done
+
 authorization='"tokens": []'
 allowed_tools_suffix=
 if [[ $enable_tools_set == true ]]; then
@@ -367,7 +385,7 @@ cat > "$output" <<EOF
     "data":{"backend":"cozo","path":"$cozo_root/structured.cozo"}
   },
   "resources": {"blob_backend":"fs","blob_root":"$cozo_root/resources","metadata_backend":"cozo","metadata_db":"$cozo_root/resources.cozo"$processor_policies_suffix},
-  "tools": {"profile":"$tool_profile","repository_root":"$repository_root","providers":$providers_json},
+  "tools": {"profile":"$tool_profile","repository_root":"$repository_root","families":{$families_json},"providers":$providers_json},
   "sandbox": {"backend":"$sandbox","docker":{"executable":"$sandbox_executable","default_image":"llama-agent-dev:latest"},"lxc":{"executable":"$lxc_executable","default_image":"$lxc_image","network_mode":"$lxc_network_mode","network_profile":"$lxc_network_profile","network_profile_scope":"$lxc_network_profile_scope","cleanup":true},"kubernetes":{"namespace":"llama-agent","service_account":"llama-agent-runner","runtime_class":"standard","cleanup":true},"workspace":{"root":"$cozo_root/workspaces","artifact_root":"$cozo_root/artifacts","operation_mode":"ephemeral","project_mode":"persistent"},"defaults":{"timeout_ms":60000,"cpu_count":1,"max_output_bytes":65536,"network":"none","filesystem":"readonly","allow_artifacts":true}},
   "diagnostics": {"semantic_backend":"auto","clang_executable":"clang","clangd_executable":"clangd","compile_commands":"auto"},
   "mcp": {"inbound":{"enabled":$inbound,"listen":"$listen","port":$port,"path":"/mcp","agent_tools":false,"max_delegation_depth":1,$authorization}},

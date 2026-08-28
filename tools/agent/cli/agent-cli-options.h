@@ -91,6 +91,7 @@ struct args {
     bool memory_global_opt_in = false;
     bool tool_profile_explicit = false;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
     bool thinking_mode_explicit = false;

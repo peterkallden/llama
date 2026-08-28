@@ -851,6 +851,29 @@ or:
 TOOLS: dataset, data
 ```
 
+The host may replace a built-in family description through the main JSON
+configuration under `tools.families`. The family id is the namespace before
+the first dot, for example `eurostat` for `eurostat.getData`:
+
+```json
+{
+  "tools": {
+    "families": {
+      "eurostat": {
+        "description": "Query Eurostat statistical datasets and JSON-stat data"
+      }
+    }
+  }
+}
+```
+
+This is presentation metadata for the compact preflight only. It does not
+create tools, grant capabilities, or replace an operation-specific contract.
+Descriptions are single-line and limited to 240 characters. The session
+manager keeps the host-owned tooling snapshot immutable during a session, so
+changing `tools.families` through `reload_config` is restart-required rather
+than a partial hot update.
+
 This deliberately avoids asking a small model to satisfy the full JSON tool
 grammar before the host knows whether tools are needed. `NO_TOOLS` routes the
 turn directly to ordinary conversation with an empty tool list. This remains

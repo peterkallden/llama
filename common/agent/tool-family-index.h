@@ -3,6 +3,7 @@
 #include "chat.h"
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,8 @@ struct common_tool_family_selection {
 };
 
 std::vector<common_tool_family_index> common_generate_tool_family_index(
-    const std::vector<common_chat_tool> & tools);
+    const std::vector<common_chat_tool> & tools,
+    const std::map<std::string, std::string> & descriptions = {});
 
 std::string common_render_tool_family_index(
     const std::vector<common_tool_family_index> & families,

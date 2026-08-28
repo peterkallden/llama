@@ -55,7 +55,8 @@ param(
     [string]$PandocBackend = 'auto',
     [string]$PandocExecutable = 'pandoc',
     [string]$PandocExpectedVersion = '',
-    [string]$ProvidersFile
+    [string]$ProvidersFile,
+    [string[]]$FamilyDescription = @()
 )
 
 if ($ListTools) {
@@ -125,6 +126,22 @@ if ($ProvidersFile) {
     }
 }
 
+$families = [ordered]@{}
+foreach ($entry in $FamilyDescription) {
+    $separator = $entry.IndexOf('=')
+    if ($separator -le 0) { throw 'FamilyDescription must use ID=TEXT' }
+    $familyId = $entry.Substring(0, $separator)
+    $description = $entry.Substring($separator + 1)
+    if ([string]::IsNullOrWhiteSpace($familyId) -or $familyId -match '\s') {
+        throw 'FamilyDescription id must be non-empty and contain no whitespace'
+    }
+    if ([string]::IsNullOrWhiteSpace($description) -or $description.Length -gt 240 -or
+        $description.Contains("`r") -or $description.Contains("`n")) {
+        throw 'FamilyDescription text must be non-empty, single-line and at most 240 characters'
+    }
+    $families[$familyId] = [ordered]@{ description = $description }
+}
+
 $config = [ordered]@{
     schema_version = 1
     model = [ordered]@{ backend = 'server-context'; path = $Model; embedding_model = $EmbeddingModel }
@@ -143,7 +160,7 @@ $config = [ordered]@{
         blob_backend = 'fs'; blob_root = "$CozoRoot/resources"
         metadata_backend = 'cozo'; metadata_db = "$CozoRoot/resources.cozo"
     }
-    tools = [ordered]@{ profile = $ToolProfile; repository_root = $RepositoryRoot; providers = $providers }
+    tools = [ordered]@{ profile = $ToolProfile; repository_root = $RepositoryRoot; families = $families; providers = $providers }
     sandbox = [ordered]@{
         backend = $Sandbox
         docker = [ordered]@{ executable = $SandboxExecutable; default_image = 'llama-agent-dev:latest' }

@@ -38,7 +38,8 @@ bool select_model_tool_families(
         return true;
     }
 
-    const auto families = common_generate_tool_family_index(execution.tooling.tools);
+    const auto families = common_generate_tool_family_index(
+        execution.tooling.tools, execution.tooling.family_descriptions);
     const std::string family_view = common_render_tool_family_index(families, 2048);
     common_chat_msg system{
         "system",

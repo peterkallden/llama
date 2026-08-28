@@ -52,6 +52,7 @@ struct daemon_options {
     std::string agent_blueprint = "off";
     std::string tool_profile;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
     std::string repository_root;

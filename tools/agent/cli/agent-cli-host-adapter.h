@@ -58,6 +58,7 @@ struct agent_host_tool_selection_request {
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
     std::map<std::string, agent_resource_processor_execution_policy> resource_processor_policies;

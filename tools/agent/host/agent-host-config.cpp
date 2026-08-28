@@ -625,6 +625,27 @@ bool parse_agent_host_config_json(
         read_optional(tools, "profile", config.tool_profile);
         read_optional(tools, "repository_root", config.repository_root);
         read_optional(tools, "include_dir", config.tools_include_dir);
+        if (tools.contains("families")) {
+            if (!tools["families"].is_object()) {
+                error = "tools.families must be an object mapping family ids to metadata";
+                return false;
+            }
+            config.tool_family_descriptions.clear();
+            for (auto it = tools["families"].begin(); it != tools["families"].end(); ++it) {
+                if (!it.value().is_object() || !it.value().contains("description") ||
+                        !it.value()["description"].is_string()) {
+                    error = "tools.families entries must contain a string description";
+                    return false;
+                }
+                const std::string description = it.value()["description"].get<std::string>();
+                if (it.key().empty() || description.empty() || description.size() > 240 ||
+                        description.find_first_of("\r\n") != std::string::npos) {
+                    error = "tools.families descriptions must be non-empty, single-line and at most 240 characters";
+                    return false;
+                }
+                config.tool_family_descriptions[it.key()] = description;
+            }
+        }
         if (tools.contains("capabilities")) {
             if (!tools["capabilities"].is_object()) {
                 error = "tools.capabilities must be an object mapping capability ids to tool arrays";
@@ -1051,6 +1072,11 @@ nlohmann::ordered_json agent_host_config_to_json(
         capabilities[entry.first] = entry.second;
     }
 
+    json families = json::object();
+    for (const auto & entry : config.tool_family_descriptions) {
+        families[entry.first] = { {"description", entry.second} };
+    }
+
     json profiles = json::object();
     for (const auto & entry : config.tool_profiles) {
         json profile = {
@@ -1161,6 +1187,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"repository_root", config.repository_root},
             {"include_dir", config.tools_include_dir},
             {"capabilities", std::move(capabilities)},
+            {"families", std::move(families)},
             {"profiles", std::move(profiles)},
             {"providers", std::move(providers)},
         }},
@@ -1292,6 +1319,14 @@ nlohmann::ordered_json agent_host_config_to_json(
 bool validate_agent_host_config(
         const agent_host_config & config,
         std::string & error) {
+    for (const auto & [family_id, description] : config.tool_family_descriptions) {
+        if (family_id.empty() || description.empty() || description.size() > 240 ||
+                family_id.find_first_of(" \t\r\n") != std::string::npos ||
+                description.find_first_of("\r\n") != std::string::npos) {
+            error = "tools.families entries must have non-empty ids and single-line descriptions at most 240 characters";
+            return false;
+        }
+    }
     if (config.jsonl_tcp_enabled && config.jsonl_unix_socket_enabled) {
         error = "jsonl.tcp and jsonl.unix_socket cannot both be enabled for one JSONL host";
         return false;
@@ -1741,6 +1776,7 @@ void apply_agent_host_config_to_daemon_options(
     options.data_db = config.data_db;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
+    options.tool_family_descriptions = config.tool_family_descriptions;
     options.tool_profiles = config.tool_profiles;
     options.sandbox = config.sandbox;
     options.diagnostics = config.diagnostics;
@@ -1822,6 +1858,7 @@ void apply_agent_host_config_to_args(
     options.n_gpu_layers = config.n_gpu_layers;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
+    options.tool_family_descriptions = config.tool_family_descriptions;
     options.tool_profiles = config.tool_profiles;
     options.sandbox = config.sandbox;
     // CLI options do not currently expose semantic provider overrides; keep

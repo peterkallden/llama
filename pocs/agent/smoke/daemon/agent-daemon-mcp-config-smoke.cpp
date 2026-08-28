@@ -81,6 +81,9 @@ int main(int argc, char ** argv) {
             }},
             {"tools", {
                 {"profile", "research"},
+                {"families", {
+                    {"eurostat", {{"description", "Query Eurostat statistical datasets"}}},
+                }},
                 {"providers", json::array({
                     json{
                         {"type", "mcp"},
@@ -210,13 +213,21 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "host config OpenAPI provider contract failed\n");
         return 1;
     }
+    if (loaded_config.tool_family_descriptions.size() != 1 ||
+            loaded_config.tool_family_descriptions.at("eurostat") !=
+                "Query Eurostat statistical datasets") {
+        std::fprintf(stderr, "host config tool family description failed\n");
+        return 1;
+    }
     if (loaded_config.runtime_context_size != 4096 || loaded_config.n_threads != 4) {
         std::fprintf(stderr, "host config n_threads mismatch\n");
         return 1;
     }
     daemon_options applied_daemon_options;
     apply_agent_host_config_to_daemon_options(loaded_config, applied_daemon_options);
-    if (applied_daemon_options.context_size != 4096 || applied_daemon_options.n_threads != 4) {
+    if (applied_daemon_options.context_size != 4096 || applied_daemon_options.n_threads != 4 ||
+            applied_daemon_options.tool_family_descriptions.at("eurostat") !=
+                "Query Eurostat statistical datasets") {
         std::fprintf(stderr, "host config n_threads was not applied to daemon options\n");
         return 1;
     }
@@ -306,6 +317,13 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "OpenAPI bearer provider without token_env was accepted\n");
         return 1;
     }
+    agent_host_config invalid_family_config = loaded_config;
+    invalid_family_config.tool_family_descriptions["eurostat"] = "line one\nline two";
+    if (validate_agent_host_config(invalid_family_config, error) ||
+            error.find("tools.families") == std::string::npos) {
+        std::fprintf(stderr, "invalid tool family description was accepted\n");
+        return 1;
+    }
     const json roundtrip = agent_host_config_to_json(loaded_config);
     if (!roundtrip.is_object() ||
             roundtrip.value("schema_version", 0) != 1 ||
@@ -331,6 +349,11 @@ int main(int argc, char ** argv) {
             roundtrip["tools"]["providers"][2]["auth"]["scheme"] != "bearerAuth" ||
             roundtrip["tools"]["providers"][2]["auth"]["token_env"] != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI roundtrip mismatch\n");
+        return 1;
+    }
+    if (roundtrip["tools"]["families"]["eurostat"]["description"] !=
+            "Query Eurostat statistical datasets") {
+        std::fprintf(stderr, "host config tool family roundtrip mismatch\n");
         return 1;
     }
 
