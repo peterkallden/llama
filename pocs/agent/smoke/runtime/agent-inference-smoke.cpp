@@ -624,7 +624,7 @@ static void test_planner_resolves_compact_dataset_handles() {
     fake_agent_inference inference;
     inference.queued = {
         make_success(R"({"goal":"Analyze datasets","steps":[
-            {"tool":"data.join","args":{"left":"d1","right":"d2","on":[{"left":"customer_id","right":"customer_id"}]},"as":"joined","mode":"tool"},
+            {"tool":"data.join","args":{"left":"d1","right":"d2","on":{"left":"customer_id","right":"customer_id"}},"as":"joined","mode":"tool"},
             {"tool":"data.aggregate","args":{"dataset":"joined","measures":[{"function":"sum","column":"amount"}]},"as":"aggregated","mode":"tool"}
         ]})")
     };
@@ -653,6 +653,7 @@ static void test_planner_resolves_compact_dataset_handles() {
     const auto aggregate_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
     assert(join_arguments.value("left", "") == "dataset://seed/orders");
     assert(join_arguments.value("right", "") == "dataset://seed/customers");
+    assert(join_arguments["on"].is_array() && join_arguments["on"].size() == 1);
     assert(join_arguments.value("materialize", false));
     assert(join_arguments.value("result_dataset", "").rfind("dataset://agent/turn/", 0) == 0);
     assert(aggregate_arguments.value("dataset", "") == "dataset://seed/orders");

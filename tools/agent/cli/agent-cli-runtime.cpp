@@ -344,6 +344,23 @@ bool normalize_planner_host_dataset_references(
                 prior_aliases.push_back(alias);
             }
 
+            // Small models sometimes emit one join condition as an object
+            // instead of the contract's array-of-conditions form. A single
+            // well-shaped condition is unambiguous, so the host can safely
+            // canonicalize it before the normal tool schema validation.
+            for (size_t index = 0; index < document["steps"].size(); ++index) {
+                auto & step = document["steps"][index];
+                if (!step.is_object() || step.value("tool", std::string()) != "data.join" ||
+                        !step.contains("args") || !step["args"].is_object()) continue;
+                auto & arguments = step["args"];
+                if (!arguments.contains("on") || !arguments["on"].is_object()) continue;
+                const auto & condition = arguments["on"];
+                if (!condition.contains("left") || !condition["left"].is_string() ||
+                        !condition.contains("right") || !condition["right"].is_string()) continue;
+                arguments["on"] = json::array({condition});
+                changed = true;
+            }
+
             // A dataset-producing data step must materialize its bounded rows
             // when a later step consumes its dataset output. The model should
             // not have to invent a result URI; this is a host-owned plan

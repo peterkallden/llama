@@ -12,7 +12,7 @@ printf '%s\n' 'customer_id,segment' '10,enterprise' '11,consumer' > "$customers"
 seed_log="$work_dir/seed.log"; agent_log="$work_dir/data-research.log"
 agent_smoke_run_logged "$seed_log" "$seed_bin" --db "$data_db" --orders "$orders" --customers "$customers"
 grep -Eq 'seeded_orders=[1-9]' "$seed_log"; grep -Eq 'seeded_customers=[1-9]' "$seed_log"
-prompt='Perform a bounded data-analysis task using the two CSV datasets in the workspace. Discover and inspect them, join orders with customers on customer_id using data.join on:[{left:customer_id,right:customer_id}], aggregate the joined rows by segment using data.aggregate measures:[{function:sum,column:amount}], and use statistics.describe on amount. Report the exact total 40 and mention the tools/results used. Do not guess; use the data tools.'
+prompt='Discover and inspect the two CSV datasets, join orders and customers on customer_id, aggregate joined rows by segment summing amount as total_amount, independently describe amount on the joined dataset, and report the exact total 40 with tools/results. Do not guess; use data tools.'
 # The planner reserves at least 512 tokens and reflection reserves 384.  Keep
 # enough draft/context/time budget for the CPU smoke to complete after the
 # tool chain, especially when tracing is enabled.
