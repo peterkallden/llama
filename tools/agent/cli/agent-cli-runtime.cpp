@@ -347,6 +347,7 @@ public:
         user.role = "user";
         user.content = "[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars, request.available_resources) + "\n" +
+            common_agent_render_dataset_inventory(request.available_datasets, generation_config.context_budgets.input_resources_chars) +
             build_staged_memory_prompt_context(
                 derive_request_policy_pack(request),
                 std::nullopt,

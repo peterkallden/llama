@@ -13,6 +13,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
     auto turn_request = context.turn_request;
     turn_request.request.enable_memory = turn_request.memory_enabled;
     turn_request.request.memories = context.memories;
+    turn_request.request.available_datasets = context.tooling.available_datasets;
     if (turn_request.request.prompt.empty()) {
         turn_request.request.prompt = turn_request.orchestration_config.prompt;
     }
@@ -41,6 +42,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_agent_inputs(
     turn_request.orchestration_config = orchestration_config;
     turn_request.request.enable_memory = turn_request.memory_enabled;
     turn_request.request.memories = context.memories;
+    turn_request.request.available_datasets = context.tooling.available_datasets;
     if (turn_request.request.prompt.empty()) {
         turn_request.request.prompt = turn_request.orchestration_config.prompt;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chat.h"
+#include "agent/dataset-contracts.h"
 #include "resource/resource-contract.h"
 
 #include <memory>
@@ -20,4 +21,8 @@ struct common_agent_runtime_tooling {
     // Host-owned resource store used by controller-side bounded chunk planning.
     // Tool execution remains bound through the resolved tool view.
     agent_resource_runtime resource_runtime;
+    // Host-owned dataset inventory captured from the active scoped data store.
+    // The runtime copies this into each turn request; it is never a model alias
+    // unless the planner explicitly uses the documented host inventory form.
+    std::vector<common_agent_dataset_descriptor> available_datasets;
 };

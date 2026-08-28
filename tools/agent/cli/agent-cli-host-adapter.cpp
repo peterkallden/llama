@@ -286,6 +286,29 @@ bool resolve_agent_host_tool_selection(
             }
             profile_snapshot->tools = std::move(available_tools);
         }
+        const bool exposes_dataset_tools = std::any_of(
+            profile_snapshot->tools.begin(), profile_snapshot->tools.end(),
+            [](const common_tool_definition & definition) {
+                return definition.name == "dataset.list" ||
+                    definition.name == "dataset.select" ||
+                    definition.executor_id == "builtin.dataset.list" ||
+                    definition.executor_id == "builtin.dataset.select";
+            });
+        common_agent_data_store * inventory_store = request.data_store != nullptr
+            ? request.data_store : selection.owned_data_store.get();
+        if (exposes_dataset_tools && inventory_store != nullptr) {
+            std::vector<common_agent_dataset_descriptor> descriptors;
+            std::string inventory_error;
+            if (inventory_store->list_dataset_descriptors(descriptors, inventory_error)) {
+                std::sort(descriptors.begin(), descriptors.end(),
+                    [](const common_agent_dataset_descriptor & left,
+                       const common_agent_dataset_descriptor & right) {
+                        if (left.ref.name != right.ref.name) return left.ref.name < right.ref.name;
+                        return left.ref.uri < right.ref.uri;
+                    });
+                selection.tooling.available_datasets = std::move(descriptors);
+            }
+        }
         for (const auto & definition : profile_snapshot->tools) {
             selection.tooling.capabilities.insert(selection.tooling.capabilities.end(),
                 definition.capabilities.begin(), definition.capabilities.end());

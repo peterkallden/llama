@@ -215,6 +215,20 @@ int main() {
     TEST_ASSERT(rendered_resources.find("agent-resource://turn/t/document.json") == std::string::npos);
     TEST_ASSERT(rendered_resources.find("second.csv") != std::string::npos);
 
+    common_agent_dataset_descriptor orders;
+    orders.ref.name = "orders";
+    orders.ref.uri = "dataset://local/orders";
+    orders.ref.source_resource_uri = "agent-resource://turn/t/orders.csv";
+    common_agent_dataset_descriptor customers;
+    customers.ref.name = "customers";
+    customers.ref.uri = "dataset://local/customers";
+    request.available_datasets = {orders, customers};
+    const auto rendered_datasets = common_agent_render_dataset_inventory(request.available_datasets);
+    TEST_ASSERT(rendered_datasets.find("id=d1 name=orders uri=dataset://local/orders") != std::string::npos);
+    TEST_ASSERT(rendered_datasets.find("id=d2 name=customers uri=dataset://local/customers") != std::string::npos);
+    TEST_ASSERT(rendered_datasets.find("$datasets.datasets[index].dataset") != std::string::npos);
+    TEST_ASSERT(rendered_datasets.find("agent-resource://turn/t/orders.csv") != std::string::npos);
+
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(

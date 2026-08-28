@@ -4,6 +4,7 @@
 #include "agent/agent-generation.h"
 #include "agent/agent-scope.h"
 #include "agent/agent-working-state.h"
+#include "agent/dataset-contracts.h"
 #include "agent/contracts/agent-events.h"
 #include "agent/contracts/agent-learning.h"
 #include "agent/thinking/deliberation-policy.h"
@@ -55,6 +56,9 @@ struct common_agent_request {
     // Host-owned candidates discovered from the scoped resource store. These
     // are available for selection but are not current-turn inputs.
     std::vector<common_agent_input_resource> available_resources;
+    // Host-owned, scoped dataset inventory captured for this turn. These are
+    // lookup candidates, not model-created plan aliases.
+    std::vector<common_agent_dataset_descriptor> available_datasets;
     std::optional<common_agent_working_state> working_state;
     std::optional<common_agent_objective> objective;
     std::optional<common_memory_policy_pack> policy_pack;
