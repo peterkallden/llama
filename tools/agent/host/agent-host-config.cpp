@@ -182,7 +182,15 @@ bool read_mcp_provider(
             return false;
         }
         read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "scheme", provider.auth.scheme);
         read_optional(value["auth"], "token_env", provider.auth.token_env);
+        read_optional(value["auth"], "username_env", provider.auth.username_env);
+        read_optional(value["auth"], "password_env", provider.auth.password_env);
+        read_optional(value["auth"], "client_id_env", provider.auth.client_id_env);
+        read_optional(value["auth"], "client_secret_env", provider.auth.client_secret_env);
+        read_optional(value["auth"], "client_cert_path_env", provider.auth.client_cert_path_env);
+        read_optional(value["auth"], "client_key_path_env", provider.auth.client_key_path_env);
+        read_optional(value["auth"], "ca_cert_path_env", provider.auth.ca_cert_path_env);
     }
     read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
     read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
@@ -277,7 +285,15 @@ bool read_openapi_provider(
             return false;
         }
         read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "scheme", provider.auth.scheme);
         read_optional(value["auth"], "token_env", provider.auth.token_env);
+        read_optional(value["auth"], "username_env", provider.auth.username_env);
+        read_optional(value["auth"], "password_env", provider.auth.password_env);
+        read_optional(value["auth"], "client_id_env", provider.auth.client_id_env);
+        read_optional(value["auth"], "client_secret_env", provider.auth.client_secret_env);
+        read_optional(value["auth"], "client_cert_path_env", provider.auth.client_cert_path_env);
+        read_optional(value["auth"], "client_key_path_env", provider.auth.client_key_path_env);
+        read_optional(value["auth"], "ca_cert_path_env", provider.auth.ca_cert_path_env);
     }
     if (value.contains("limits")) {
         if (!value["limits"].is_object()) {
@@ -350,6 +366,22 @@ bool read_inbound_token(
             }
             token.allowed_tools.push_back(tool.get<std::string>());
         }
+    }
+    error.clear();
+    return true;
+}
+
+bool validate_provider_auth(
+        const agent_host_provider_auth_config & auth,
+        const std::string & provider_kind,
+        std::string & error) {
+    if (auth.type != "none" && auth.type != "bearer") {
+        error = provider_kind + " provider auth type is not supported yet: " + auth.type;
+        return false;
+    }
+    if (auth.type == "bearer" && auth.token_env.empty()) {
+        error = provider_kind + " bearer auth requires token_env";
+        return false;
     }
     error.clear();
     return true;
@@ -926,7 +958,15 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"url", provider.url},
             {"auth", {
                 {"type", provider.auth.type},
+                {"scheme", provider.auth.scheme},
                 {"token_env", provider.auth.token_env},
+                {"username_env", provider.auth.username_env},
+                {"password_env", provider.auth.password_env},
+                {"client_id_env", provider.auth.client_id_env},
+                {"client_secret_env", provider.auth.client_secret_env},
+                {"client_cert_path_env", provider.auth.client_cert_path_env},
+                {"client_key_path_env", provider.auth.client_key_path_env},
+                {"ca_cert_path_env", provider.auth.ca_cert_path_env},
             }},
             {"allowed_tools", provider.allowed_tools},
             {"connect_timeout_ms", provider.connect_timeout_ms},
@@ -962,7 +1002,15 @@ nlohmann::ordered_json agent_host_config_to_json(
             }},
             {"auth", {
                 {"type", provider.auth.type},
+                {"scheme", provider.auth.scheme},
                 {"token_env", provider.auth.token_env},
+                {"username_env", provider.auth.username_env},
+                {"password_env", provider.auth.password_env},
+                {"client_id_env", provider.auth.client_id_env},
+                {"client_secret_env", provider.auth.client_secret_env},
+                {"client_cert_path_env", provider.auth.client_cert_path_env},
+                {"client_key_path_env", provider.auth.client_key_path_env},
+                {"ca_cert_path_env", provider.auth.ca_cert_path_env},
             }},
             {"allow_private_network", provider.allow_private_network},
             {"limits", {
@@ -1568,6 +1616,9 @@ bool validate_agent_host_config(
         if (!provider.enabled) {
             continue;
         }
+        if (!validate_provider_auth(provider.auth, "MCP", error)) {
+            return false;
+        }
         if (provider.transport.empty()) {
             error = "enabled MCP provider is missing a transport";
             return false;
@@ -1614,12 +1665,7 @@ bool validate_agent_host_config(
             error = "OpenAPI provider exposure must be auto, include or exclude";
             return false;
         }
-        if (provider.auth.type != "none" && provider.auth.type != "bearer") {
-            error = "OpenAPI provider auth type must be none or bearer";
-            return false;
-        }
-        if (provider.auth.type == "bearer" && provider.auth.token_env.empty()) {
-            error = "OpenAPI bearer auth requires token_env";
+        if (!validate_provider_auth(provider.auth, "OpenAPI", error)) {
             return false;
         }
         if (provider.connect_timeout_ms == 0 || provider.request_timeout_ms == 0 || provider.max_result_bytes == 0) {

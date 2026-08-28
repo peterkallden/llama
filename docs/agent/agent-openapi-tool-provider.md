@@ -61,6 +61,7 @@ Its standalone OpenAPI contract is
         },
         "auth": {
           "type": "bearer",
+          "scheme": "bearerAuth",
           "token_env": "SALES_API_TOKEN"
         },
         "limits": {
@@ -78,6 +79,13 @@ Its standalone OpenAPI contract is
 OpenAPI document, endpoint, HTTP method, credential, or arbitrary header.
 Secrets are referenced by environment-variable name and are not written into
 the serialized configuration or model-facing tool description.
+
+The auth object deliberately stays flat and provider-scoped. `type` selects the
+host implementation, `token_env` names the environment variable containing the
+credential, and optional `scheme` selects an OpenAPI `securitySchemes` entry.
+The scheme supplies placement details such as the header name; the provider
+configuration does not repeat them. Future methods add their credential
+references as sibling fields rather than introducing a nested credential graph.
 
 The configuration layer validates the provider shape and preserves it through
 JSON roundtrip. The current branch also builds a filtered OpenAPI 3 catalog,

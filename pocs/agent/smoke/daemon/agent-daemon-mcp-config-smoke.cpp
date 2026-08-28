@@ -115,6 +115,7 @@ int main(int argc, char ** argv) {
                         }},
                         {"auth", {
                             {"type", "bearer"},
+                            {"scheme", "bearerAuth"},
                             {"token_env", "SALES_API_TOKEN"},
                         }},
                         {"limits", {
@@ -204,6 +205,7 @@ int main(int argc, char ** argv) {
             loaded_config.openapi_providers.front().access != "read_only" ||
             loaded_config.openapi_providers.front().exposure != "auto" ||
             loaded_config.openapi_providers.front().operations.size() != 1 ||
+            loaded_config.openapi_providers.front().auth.scheme != "bearerAuth" ||
             loaded_config.openapi_providers.front().auth.token_env != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI provider contract failed\n");
         return 1;
@@ -326,6 +328,7 @@ int main(int argc, char ** argv) {
             roundtrip["tools"]["providers"].size() != 3 ||
             roundtrip["tools"]["providers"][2]["type"] != "openapi" ||
             roundtrip["tools"]["providers"][2]["policy"]["access"] != "read_only" ||
+            roundtrip["tools"]["providers"][2]["auth"]["scheme"] != "bearerAuth" ||
             roundtrip["tools"]["providers"][2]["auth"]["token_env"] != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI roundtrip mismatch\n");
         return 1;

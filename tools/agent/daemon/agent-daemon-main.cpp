@@ -358,7 +358,15 @@ int main(int argc, char ** argv) {
             return a.id == b.id && a.enabled == b.enabled && a.required == b.required &&
                 a.type == b.type && a.transport == b.transport &&
                 a.command == b.command && a.url == b.url &&
-                a.auth.type == b.auth.type && a.auth.token_env == b.auth.token_env &&
+                a.auth.type == b.auth.type && a.auth.scheme == b.auth.scheme &&
+                a.auth.token_env == b.auth.token_env &&
+                a.auth.username_env == b.auth.username_env &&
+                a.auth.password_env == b.auth.password_env &&
+                a.auth.client_id_env == b.auth.client_id_env &&
+                a.auth.client_secret_env == b.auth.client_secret_env &&
+                a.auth.client_cert_path_env == b.auth.client_cert_path_env &&
+                a.auth.client_key_path_env == b.auth.client_key_path_env &&
+                a.auth.ca_cert_path_env == b.auth.ca_cert_path_env &&
                 a.allowed_tools == b.allowed_tools &&
                 a.connect_timeout_ms == b.connect_timeout_ms &&
                 a.request_timeout_ms == b.request_timeout_ms &&
@@ -380,8 +388,15 @@ int main(int argc, char ** argv) {
                 a.type == b.type && a.spec_path == b.spec_path && a.base_url == b.base_url &&
                 a.source_directory == b.source_directory &&
                 a.prefix == b.prefix && a.access == b.access && a.exposure == b.exposure &&
-                a.auth.type == b.auth.type &&
+                a.auth.type == b.auth.type && a.auth.scheme == b.auth.scheme &&
                 a.auth.token_env == b.auth.token_env &&
+                a.auth.username_env == b.auth.username_env &&
+                a.auth.password_env == b.auth.password_env &&
+                a.auth.client_id_env == b.auth.client_id_env &&
+                a.auth.client_secret_env == b.auth.client_secret_env &&
+                a.auth.client_cert_path_env == b.auth.client_cert_path_env &&
+                a.auth.client_key_path_env == b.auth.client_key_path_env &&
+                a.auth.ca_cert_path_env == b.auth.ca_cert_path_env &&
                 a.allow_private_network == b.allow_private_network &&
                 a.connect_timeout_ms == b.connect_timeout_ms &&
                 a.request_timeout_ms == b.request_timeout_ms &&
