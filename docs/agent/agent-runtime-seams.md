@@ -51,6 +51,56 @@ There is one runtime execution path. Family routing, workflow slot filling and
 provider adapters are projections or adapters around that path; they do not
 grant authority or introduce a second plan representation.
 
+## Helper placement and ownership
+
+Cross-cutting helpers follow the contract they interpret, not the caller that
+happens to need them. This keeps the implementation discoverable and prevents
+CLI, daemon and provider layers from growing parallel versions of the same
+rule:
+
+| Helper responsibility | Home | Must not depend on |
+| --- | --- | --- |
+| Agent scope, turn identity and request contracts | `common/agent/` | CLI, daemon or a provider |
+| Dataset refs, dataset URI, provenance and dataset scope | `common/agent/` dataset contract area | OpenAPI or a transport |
+| Resource identity and read authority | `common/resource/` | Tool selection or model prompts |
+| Runtime inventory and policy snapshots | `tools/agent/runtime/` or a shared common contract when transport-independent | CLI-specific defaults |
+| Tool exposure facts and policy projection | `tools/agent/tooling/` | One particular transport |
+| OpenAPI response materialization | `tools/agent/openapi/` | Native/MCP implementation details |
+
+Helpers should have names that state the contract they serve, such as
+`dataset-uri`, `dataset-ref-json`, `agent-turn-inventory` or
+`agent-tool-policy`. Avoid generic `utils` files for rules that affect
+authority, binding, persistence or model-visible output.
+
+The distinction is important:
+
+```text
+same meaning + same safety invariant
+    -> one shared helper at the lower common layer
+
+same meaning + different boundary representation
+    -> shared codec/projection with an explicit representation name
+
+same-looking condition + different authority
+    -> separate helpers, composed at the owning boundary
+```
+
+For example, native and MCP tool filtering should share normalized exposure
+facts and policy predicates, but retain transport-specific authentication and
+caller-session checks. Likewise, a full dataset checkpoint projection must not
+be silently substituted for a compact model-facing dataset inventory.
+
+Every new helper should answer three questions in its header or documentation:
+
+1. Which canonical object or contract does it interpret?
+2. Which layer owns the decision and which layers only consume the result?
+3. Is its output full, checkpoint-safe, model-facing, or another bounded
+   projection?
+
+This is deliberately not a single universal validator. Small helpers at the
+correct level are preferable to a central utility that accumulates CLI,
+daemon, provider and persistence policy.
+
 ## Identity and representation vocabulary
 
 The following values look similar in logs but have different owners:
