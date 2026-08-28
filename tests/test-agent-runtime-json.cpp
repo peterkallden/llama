@@ -1,5 +1,6 @@
 #include "agent/runtime-json-contracts.h"
 #include "agent/input-resources.h"
+#include "agent/dataset-contracts.h"
 #include "plan/plan-json.h"
 
 #include <cassert>
@@ -11,6 +12,33 @@
 } while (false)
 
 int main() {
+    common_agent_dataset_ref provenance_ref;
+    provenance_ref.uri = "dataset://local/orders";
+    provenance_ref.name = "orders";
+    provenance_ref.row_count = 2;
+    provenance_ref.column_count = 3;
+    provenance_ref.source_resource_uri = "resource://turn/t/orders.json";
+    provenance_ref.source_representation = "openapi:json-array";
+    provenance_ref.source_provider = "sales-api";
+    provenance_ref.source_operation = "listOrders";
+    provenance_ref.source_request_json = R"({"limit":2})";
+    provenance_ref.retrieved_at = 123;
+    provenance_ref.content_hash = "sha256:abc";
+    std::string error;
+    const auto compact_ref = common_agent_dataset_ref_to_json(
+        provenance_ref, common_agent_dataset_ref_json_projection::compact);
+    TEST_ASSERT(!compact_ref.contains("source_provider"));
+    TEST_ASSERT(!compact_ref.contains("source_request_json"));
+    const auto full_ref = common_agent_dataset_ref_to_json(
+        provenance_ref, common_agent_dataset_ref_json_projection::full);
+    common_agent_dataset_ref decoded_ref;
+    TEST_ASSERT(common_agent_dataset_ref_from_json(full_ref, decoded_ref, error));
+    TEST_ASSERT(decoded_ref.source_provider == provenance_ref.source_provider);
+    TEST_ASSERT(decoded_ref.source_operation == provenance_ref.source_operation);
+    TEST_ASSERT(decoded_ref.source_request_json == provenance_ref.source_request_json);
+    TEST_ASSERT(decoded_ref.retrieved_at == provenance_ref.retrieved_at);
+    TEST_ASSERT(decoded_ref.content_hash == provenance_ref.content_hash);
+
     const auto reasoning_object = common_agent_runtime_reasoning_observation_to_json(
         R"({"summary":"grounded","citations":["obs-1"]})");
     TEST_ASSERT(reasoning_object.is_object());
@@ -28,7 +56,6 @@ int main() {
 
     nlohmann::ordered_json normalized;
     bool changed = false;
-    std::string error;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
         "web_search",

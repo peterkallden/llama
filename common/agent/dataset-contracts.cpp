@@ -265,6 +265,50 @@ const char * common_agent_dataset_column_type_name(
     return "unknown";
 }
 
+nlohmann::ordered_json common_agent_dataset_ref_to_json(
+        const common_agent_dataset_ref & ref,
+        common_agent_dataset_ref_json_projection projection) {
+    nlohmann::ordered_json value = {
+        {"uri", ref.uri},
+        {"name", ref.name},
+        {"row_count", ref.row_count},
+        {"column_count", ref.column_count},
+        {"source_resource_uri", ref.source_resource_uri},
+        {"source_representation", ref.source_representation},
+    };
+    if (projection == common_agent_dataset_ref_json_projection::full) {
+        value["source_provider"] = ref.source_provider;
+        value["source_operation"] = ref.source_operation;
+        value["source_request_json"] = ref.source_request_json;
+        value["retrieved_at"] = ref.retrieved_at;
+        value["content_hash"] = ref.content_hash;
+    }
+    return value;
+}
+
+bool common_agent_dataset_ref_from_json(
+        const nlohmann::ordered_json & value,
+        common_agent_dataset_ref & ref,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "dataset ref JSON must be an object";
+        return false;
+    }
+    ref = {};
+    ref.uri = value.value("uri", std::string{});
+    ref.name = value.value("name", std::string{});
+    ref.row_count = value.value("row_count", size_t(0));
+    ref.column_count = value.value("column_count", size_t(0));
+    ref.source_resource_uri = value.value("source_resource_uri", std::string{});
+    ref.source_representation = value.value("source_representation", std::string{});
+    ref.source_provider = value.value("source_provider", std::string{});
+    ref.source_operation = value.value("source_operation", std::string{});
+    ref.source_request_json = value.value("source_request_json", std::string{});
+    ref.retrieved_at = value.value("retrieved_at", int64_t(0));
+    ref.content_hash = value.value("content_hash", std::string{});
+    return validate_common_agent_dataset_ref(ref, error);
+}
+
 const char * common_agent_table_header_mode_name(
         common_agent_table_header_mode mode) {
     switch (mode) {

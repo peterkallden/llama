@@ -18,14 +18,37 @@ std::string text_column(common_sqlite_statement & statement, int index) {
 json descriptor_json(const common_agent_dataset_descriptor & descriptor) {
     json columns = json::array();
     for (const auto & column : descriptor.columns) columns.push_back({{"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)}, {"nullable", column.nullable}});
-    return {{"uri", descriptor.ref.uri}, {"name", descriptor.ref.name}, {"row_count", descriptor.ref.row_count}, {"column_count", descriptor.ref.column_count}, {"source_resource_uri", descriptor.ref.source_resource_uri}, {"source_representation", descriptor.ref.source_representation}, {"columns", columns}, {"source_workbook_name", descriptor.source_workbook_name}, {"source_sheet_name", descriptor.source_sheet_name}, {"source_sheet_index", descriptor.source_sheet_index}, {"source_range", descriptor.source_range}, {"source_object", descriptor.source_object}, {"import_processor_id", descriptor.import_processor_id}, {"import_processor_version", descriptor.import_processor_version}, {"parent_dataset_uris", descriptor.lineage.parent_dataset_uris}, {"operation", descriptor.lineage.operation}, {"operation_summary", descriptor.lineage.operation_summary}, {"origin_kind", descriptor.origin.kind}, {"origin_source_representation_uri", descriptor.origin.source_representation_uri}, {"origin_source_node_id", descriptor.origin.source_node_id}, {"origin_table_index", descriptor.origin.table_index}, {"origin_section_path", descriptor.origin.section_path}, {"origin_caption", descriptor.origin.caption}, {"origin_notes", descriptor.origin.notes}, {"origin_header_mode", common_agent_table_header_mode_name(descriptor.origin.header_mode)}, {"origin_header_confidence", descriptor.origin.header_confidence}, {"origin_header_reason", descriptor.origin.header_reason}};
+    json value = common_agent_dataset_ref_to_json(
+        descriptor.ref, common_agent_dataset_ref_json_projection::full);
+    value["columns"] = std::move(columns);
+    value["source_workbook_name"] = descriptor.source_workbook_name;
+    value["source_sheet_name"] = descriptor.source_sheet_name;
+    value["source_sheet_index"] = descriptor.source_sheet_index;
+    value["source_range"] = descriptor.source_range;
+    value["source_object"] = descriptor.source_object;
+    value["import_processor_id"] = descriptor.import_processor_id;
+    value["import_processor_version"] = descriptor.import_processor_version;
+    value["parent_dataset_uris"] = descriptor.lineage.parent_dataset_uris;
+    value["operation"] = descriptor.lineage.operation;
+    value["operation_summary"] = descriptor.lineage.operation_summary;
+    value["origin_kind"] = descriptor.origin.kind;
+    value["origin_source_representation_uri"] = descriptor.origin.source_representation_uri;
+    value["origin_source_node_id"] = descriptor.origin.source_node_id;
+    value["origin_table_index"] = descriptor.origin.table_index;
+    value["origin_section_path"] = descriptor.origin.section_path;
+    value["origin_caption"] = descriptor.origin.caption;
+    value["origin_notes"] = descriptor.origin.notes;
+    value["origin_header_mode"] = common_agent_table_header_mode_name(descriptor.origin.header_mode);
+    value["origin_header_confidence"] = descriptor.origin.header_confidence;
+    value["origin_header_reason"] = descriptor.origin.header_reason;
+    return value;
 }
 
 bool parse_descriptor(const std::string & text, common_agent_dataset_descriptor & descriptor, std::string & error) {
     const auto value = json::parse(text, nullptr, false);
     if (!value.is_object()) { error = "sqlite dataset descriptor is invalid"; return false; }
     descriptor = {};
-    descriptor.ref.uri = value.value("uri", std::string{}); descriptor.ref.name = value.value("name", std::string{}); descriptor.ref.row_count = value.value("row_count", size_t(0)); descriptor.ref.column_count = value.value("column_count", size_t(0)); descriptor.ref.source_resource_uri = value.value("source_resource_uri", std::string{}); descriptor.ref.source_representation = value.value("source_representation", std::string{});
+    if (!common_agent_dataset_ref_from_json(value, descriptor.ref, error)) return false;
     for (const auto & item : value.value("columns", json::array())) {
         common_agent_dataset_column column; column.name = item.value("name", std::string{}); column.nullable = item.value("nullable", true); const auto type = item.value("type", std::string("unknown"));
         for (int index = 0; index <= static_cast<int>(common_agent_dataset_column_type::unknown); ++index) { const auto candidate = static_cast<common_agent_dataset_column_type>(index); if (type == common_agent_dataset_column_type_name(candidate)) { column.type = candidate; break; } }

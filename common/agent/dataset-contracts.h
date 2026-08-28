@@ -50,6 +50,25 @@ struct common_agent_dataset_ref {
     std::string content_hash;
 };
 
+// Dataset refs cross several boundaries. Keep the canonical field mapping in
+// the dataset contract library instead of duplicating it in SQLite, daemon or
+// provider code. A projection is named because model-facing output must not
+// accidentally expose persistence-only provenance.
+enum class common_agent_dataset_ref_json_projection {
+    compact,
+    full,
+};
+
+nlohmann::ordered_json common_agent_dataset_ref_to_json(
+        const common_agent_dataset_ref & ref,
+        common_agent_dataset_ref_json_projection projection =
+            common_agent_dataset_ref_json_projection::compact);
+
+bool common_agent_dataset_ref_from_json(
+        const nlohmann::ordered_json & value,
+        common_agent_dataset_ref & ref,
+        std::string & error);
+
 struct common_agent_dataset_lineage {
     std::vector<std::string> parent_dataset_uris;
     std::string operation;
