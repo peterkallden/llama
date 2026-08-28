@@ -39,7 +39,7 @@ public:
     virtual common_agent_tool_repair_context make_repair_context(
             const common_agent_tool_call & call,
             const std::string & validation_error) const {
-        return {call.name, validation_error, {}, {}, {}, call.arguments_json, false};
+        return {call.name, validation_error, {}, {}, {}, call.arguments_json, false, {}};
     }
     virtual common_tool_execution_result execute(const common_agent_tool_call & call) const = 0;
     virtual bool supports_async(const common_agent_tool_call &) const { return false; }
