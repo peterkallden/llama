@@ -319,7 +319,8 @@ int main() {
     result = dataset_only_registry.execute({"dataset.select", R"({"name":"sales"})"});
     assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos);
     result = dataset_only_registry.execute({"dataset.select", R"({"name":"missing"})"});
-    assert(!result.ok && result.failure_code == "tool.dataset.select.not_found");
+    assert(!result.ok && result.failure_code == "tool.dataset.select.not_found" &&
+           result.detail.find("choose one of: Sales (dataset://analysis/sales)") != std::string::npos);
     result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
     assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});

@@ -360,6 +360,19 @@ bool common_try_register_data_tool_adapter(
             }
             common_agent_dataset_descriptor descriptor;
             if (!bindings.data_store->find_dataset_by_name(arguments["name"].get<std::string>(), descriptor, error)) {
+                if (error == "dataset name was not found") {
+                    std::vector<common_agent_dataset_descriptor> candidates;
+                    std::string list_error;
+                    if (bindings.data_store->list_dataset_descriptors(candidates, list_error) && !candidates.empty()) {
+                        std::string choices;
+                        for (const auto & candidate : candidates) {
+                            if (candidate.ref.name.empty() || candidate.ref.uri.empty()) continue;
+                            if (!choices.empty()) choices += ", ";
+                            choices += candidate.ref.name + " (" + candidate.ref.uri + ")";
+                        }
+                        if (!choices.empty()) error += "; choose one of: " + choices;
+                    }
+                }
                 return common_adapter_not_found_failure("tool.dataset.select.not_found", std::move(error), "The named dataset was not found.");
             }
             return common_adapter_success_json({
