@@ -152,6 +152,44 @@ std::string collection_path_for(const std::string & path, std::string & item_par
     return collection_path.empty() ? "/" : collection_path;
 }
 
+bool operation_security(
+        const nlohmann::json & document,
+        const nlohmann::json & operation,
+        const std::set<std::string> & known_schemes,
+        bool & required,
+        std::vector<std::string> & schemes,
+        std::string & error) {
+    required = false;
+    schemes.clear();
+    const nlohmann::json * security = nullptr;
+    if (operation.contains("security")) security = &operation["security"];
+    else if (document.contains("security")) security = &document["security"];
+    if (security == nullptr) return true;
+    if (!security->is_array()) {
+        error = "OpenAPI security must be an array";
+        return false;
+    }
+    // An empty security requirement explicitly makes the operation public.
+    if (security->empty()) return true;
+    for (const auto & requirement : *security) {
+        if (!requirement.is_object()) {
+            error = "OpenAPI security requirements must be objects";
+            return false;
+        }
+        for (const auto & item : requirement.items()) {
+            if (!known_schemes.count(item.key())) {
+                error = "OpenAPI operation references unknown security scheme: " + item.key();
+                return false;
+            }
+            if (std::find(schemes.begin(), schemes.end(), item.key()) == schemes.end()) {
+                schemes.push_back(item.key());
+            }
+        }
+    }
+    required = !schemes.empty();
+    return true;
+}
+
 }
 
 bool classify_agent_openapi_result_json(
@@ -241,6 +279,24 @@ bool build_agent_openapi_catalog(
     catalog.base_url = config.base_url;
     catalog.prefix = config.prefix.empty() ? config.id : config.prefix;
 
+    std::set<std::string> known_security_schemes;
+    const auto components = document.value("components", nlohmann::json::object());
+    const auto schemes = components.value("securitySchemes", nlohmann::json::object());
+    if (schemes.is_object()) {
+        for (const auto & item : schemes.items()) {
+            if (!item.value().is_object()) continue;
+            agent_openapi_security_scheme scheme;
+            scheme.name = item.key();
+            scheme.type = item.value().value("type", "");
+            scheme.scheme = item.value().value("scheme", "");
+            scheme.parameter_name = item.value().value("name", "");
+            scheme.location = item.value().value("in", "");
+            if (scheme.type.empty()) continue;
+            known_security_schemes.insert(scheme.name);
+            catalog.security_schemes.push_back(std::move(scheme));
+        }
+    }
+
     for (auto path_it = document["paths"].begin(); path_it != document["paths"].end(); ++path_it) {
         if (!path_it.value().is_object()) continue;
         for (auto operation_it = path_it.value().begin(); operation_it != path_it.value().end(); ++operation_it) {
@@ -256,6 +312,10 @@ bool build_agent_openapi_catalog(
             operation.access = default_access(method);
             operation.read_only = operation.access == agent_openapi_access::read;
             operation.requires_confirmation = !operation.read_only;
+            if (!operation_security(document, value, known_security_schemes,
+                    operation.auth_required, operation.security_schemes, error)) {
+                return false;
+            }
             operation.input_schema_json = operation_input_schema(document, value, operation.path_parameters, operation.query_parameters);
             operation.result_schema_json = operation_result_schema(document, value);
 

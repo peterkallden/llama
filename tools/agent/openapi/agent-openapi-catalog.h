@@ -25,7 +25,17 @@ struct agent_openapi_operation {
     agent_openapi_access access = agent_openapi_access::write;
     bool read_only = false;
     bool requires_confirmation = false;
+    bool auth_required = false;
+    std::vector<std::string> security_schemes;
     std::string result_schema_json = R"({"type":"object"})";
+};
+
+struct agent_openapi_security_scheme {
+    std::string name;
+    std::string type;
+    std::string scheme;
+    std::string parameter_name;
+    std::string location;
 };
 
 struct agent_openapi_relation {
@@ -72,6 +82,7 @@ struct agent_openapi_catalog {
     std::string prefix;
     std::vector<agent_openapi_operation> operations;
     std::vector<agent_openapi_relation> relations;
+    std::vector<agent_openapi_security_scheme> security_schemes;
 };
 
 // Parse an OpenAPI 3 document and apply the host-owned exposure policy. This

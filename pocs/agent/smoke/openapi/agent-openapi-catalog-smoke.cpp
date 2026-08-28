@@ -8,7 +8,13 @@
 int main() {
     const nlohmann::json document = {
         {"openapi", "3.0.3"},
-        {"components", {"schemas", {{"SaleId", {{"type", "string"}}}}}},
+        {"components", {
+            {"schemas", {{"SaleId", {{"type", "string"}}}}},
+            {"securitySchemes", {
+                {"bearerAuth", {{"type", "http"}, {"scheme", "bearer"}, {"bearerFormat", "JWT"}}},
+            }},
+        }},
+        {"security", json::array({json({{"bearerAuth", json::array()}})})},
         {"paths", {
             {"/sales", {
                 {"get", {{"operationId", "listSales"}, {"summary", "List sales"},
@@ -37,7 +43,12 @@ int main() {
             !catalog.operations[0].read_only ||
             catalog.operations[0].input_schema_json.find("\"type\":\"string\"") == std::string::npos ||
             catalog.operations[0].input_schema_json.find("x-agent-autowire-fields") == std::string::npos ||
-            catalog.operations[0].result_schema_json.find("\"type\":\"array\"") == std::string::npos) {
+            catalog.operations[0].result_schema_json.find("\"type\":\"array\"") == std::string::npos ||
+            !catalog.operations[0].auth_required ||
+            catalog.operations[0].security_schemes.size() != 1 ||
+            catalog.operations[0].security_schemes[0] != "bearerAuth" ||
+            catalog.security_schemes.size() != 1 ||
+            catalog.security_schemes[0].parameter_name != "") {
         std::cerr << "OpenAPI catalog inferability contract failed: " << error
                   << " operations=" << catalog.operations.size();
         if (!catalog.operations.empty()) {
