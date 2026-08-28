@@ -25,14 +25,17 @@ The local branch currently contains the first contract slices:
 - append-only in-memory and JSONL transaction stores with duplicate suppression;
 - destination qualification and a bounded training-candidate contract;
 - a deterministic JSONL corpus builder requiring explicitly approved
-  candidates.
+  candidates;
+- an external training job/result contract and a validated adapter registry
+  with explicit candidate/active/retired/rejected transitions.
 
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
 reproducibility. Resource and artifact integrity must continue to use the
 existing SHA-256 stores. Scope-aware bootstrap configuration, redaction and
-revocation propagation, semantic replay, trainer jobs, adapter import, and
-model activation remain later sweeps.
+revocation propagation, semantic replay, an actual trainer worker, adapter
+artifact import, model-profile loading, and inference activation remain later
+sweeps. The current registry is metadata-only and does not load an adapter.
 
 ## Review conclusion and recommended adjustments
 
