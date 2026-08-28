@@ -887,6 +887,18 @@ int main() {
         "agent-resource://resource/original";
     turn_result.turn_result.continuation_checkpoint->chunk_count = 3;
     turn_result.turn_result.continuation_checkpoint->completed_chunk_indexes = {0, 1};
+    common_agent_dataset_ref checkpoint_dataset;
+    checkpoint_dataset.uri = "dataset://sales";
+    checkpoint_dataset.name = "sales";
+    checkpoint_dataset.row_count = 2;
+    checkpoint_dataset.column_count = 1;
+    checkpoint_dataset.source_resource_uri = "resource://turn/turn-1/sales.json";
+    checkpoint_dataset.source_provider = "sales-api";
+    checkpoint_dataset.source_operation = "listSales";
+    checkpoint_dataset.source_request_json = "{}";
+    checkpoint_dataset.retrieved_at = 123;
+    checkpoint_dataset.content_hash = "sha256:sales";
+    turn_result.turn_result.continuation_checkpoint->dataset_refs.push_back(checkpoint_dataset);
     common_runtime_resource_ref checkpoint_resource;
     checkpoint_resource.uri = "workspace://checkpoint/resource";
     checkpoint_resource.name = "checkpoint resource";
@@ -958,6 +970,11 @@ int main() {
             turn_response["continuation_checkpoint"]["working_state"]["resource_refs"].size() != 1 ||
             turn_response["continuation_checkpoint"]["working_state"]["resource_refs"][0].value("uri", "") !=
                 "workspace://checkpoint/resource" ||
+            turn_response["continuation_checkpoint"]["dataset_refs"].size() != 1 ||
+            turn_response["continuation_checkpoint"]["dataset_refs"][0].value("source_provider", "") !=
+                "sales-api" ||
+            turn_response["continuation_checkpoint"]["dataset_refs"][0].value("content_hash", "") !=
+                "sha256:sales" ||
             !turn_response.contains("turn_summary") ||
             turn_response["turn_summary"].value("mode", "") != "agent" ||
             turn_response["turn_summary"].value("status", "") != "completed") {

@@ -457,6 +457,15 @@ int main() {
                      {"description", "checkpoint log"}, {"mime_type", "text/plain"},
                      {"size_bytes", 12}}
                 })},
+                {"dataset_refs", json::array({
+                    {{"uri", "dataset://sales"}, {"name", "sales"},
+                     {"row_count", 2}, {"column_count", 1},
+                     {"source_resource_uri", "resource://turn/turn-1/sales.json"},
+                     {"source_provider", "sales-api"},
+                     {"source_operation", "listSales"},
+                     {"source_request_json", "{}"},
+                     {"retrieved_at", 123}, {"content_hash", "sha256:sales"}}
+                })},
             }},
         },
         turn_response,
@@ -475,7 +484,10 @@ int main() {
                 common_agent_continuation_reason::completion_limit ||
             turn_response.continuation_checkpoint->resource_refs.size() != 1 ||
             turn_response.continuation_checkpoint->resource_refs[0].uri !=
-                "workspace://checkpoint/log") {
+                "workspace://checkpoint/log" ||
+            turn_response.continuation_checkpoint->dataset_refs.size() != 1 ||
+            turn_response.continuation_checkpoint->dataset_refs[0].source_provider != "sales-api" ||
+            turn_response.continuation_checkpoint->dataset_refs[0].content_hash != "sha256:sales") {
         std::fprintf(stderr, "turn response contract mismatch: %s\n", error.c_str());
         return 1;
     }

@@ -1,6 +1,7 @@
 #include "agent-daemon-jsonl-protocol.h"
 
 #include "../../../common/agent/protocol/agent-jsonl.h"
+#include "../../../common/agent/dataset-contracts.h"
 #include "base64.hpp"
 
 using json = nlohmann::ordered_json;
@@ -416,12 +417,7 @@ bool parse_agent_daemon_jsonl_turn_response(
             for (const auto & item : value["dataset_refs"]) {
                 if (!item.is_object()) continue;
                 common_agent_dataset_ref dataset;
-                dataset.uri = item.value("uri", std::string());
-                dataset.name = item.value("name", std::string());
-                dataset.row_count = item.value("row_count", size_t(0));
-                dataset.column_count = item.value("column_count", size_t(0));
-                dataset.source_resource_uri = item.value("source_resource_uri", std::string());
-                dataset.source_representation = item.value("source_representation", std::string());
+                if (!common_agent_dataset_ref_from_json(item, dataset, error)) return false;
                 checkpoint.dataset_refs.push_back(std::move(dataset));
             }
         }
@@ -451,12 +447,7 @@ bool parse_agent_daemon_jsonl_turn_response(
                 for (const auto & item : state_value["dataset_refs"]) {
                     if (!item.is_object()) continue;
                     common_agent_dataset_ref dataset;
-                    dataset.uri = item.value("uri", std::string());
-                    dataset.name = item.value("name", std::string());
-                    dataset.row_count = item.value("row_count", size_t(0));
-                    dataset.column_count = item.value("column_count", size_t(0));
-                    dataset.source_resource_uri = item.value("source_resource_uri", std::string());
-                    dataset.source_representation = item.value("source_representation", std::string());
+                    if (!common_agent_dataset_ref_from_json(item, dataset, error)) return false;
                     state.dataset_refs.push_back(std::move(dataset));
                 }
             }

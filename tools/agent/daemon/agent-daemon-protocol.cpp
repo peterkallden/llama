@@ -691,12 +691,8 @@ json make_agent_daemon_turn_response(
         }
         json dataset_refs = json::array();
         for (const auto & dataset : checkpoint.dataset_refs) {
-            dataset_refs.push_back({
-                {"uri", dataset.uri}, {"name", dataset.name},
-                {"row_count", dataset.row_count}, {"column_count", dataset.column_count},
-                {"source_resource_uri", dataset.source_resource_uri},
-                {"source_representation", dataset.source_representation},
-            });
+            dataset_refs.push_back(common_agent_dataset_ref_to_json(
+                dataset, common_agent_dataset_ref_json_projection::full));
         }
         response["continuation_checkpoint"] = {
             {"checkpoint_id", checkpoint.checkpoint_id},
@@ -728,12 +724,8 @@ json make_agent_daemon_turn_response(
             }
             json state_dataset_refs = json::array();
             for (const auto & dataset : state.dataset_refs) {
-                state_dataset_refs.push_back({
-                    {"uri", dataset.uri}, {"name", dataset.name},
-                    {"row_count", dataset.row_count}, {"column_count", dataset.column_count},
-                    {"source_resource_uri", dataset.source_resource_uri},
-                    {"source_representation", dataset.source_representation},
-                });
+                state_dataset_refs.push_back(common_agent_dataset_ref_to_json(
+                    dataset, common_agent_dataset_ref_json_projection::full));
             }
             response["continuation_checkpoint"]["working_state"] = {
                 {"goal", state.goal},
