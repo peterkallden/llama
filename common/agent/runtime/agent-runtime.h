@@ -32,8 +32,11 @@ public:
             common_agent_context_budget_config context_budgets = {},
             size_t context_size_tokens = 0,
             size_t reserved_output_tokens = 0,
-            common_agent_context_token_estimator context_token_estimator = {},
-            common_agent_adaptation_observer * adaptation_observer = nullptr);
+            common_agent_context_token_estimator context_token_estimator = {});
+
+    // Optional adaptation capture is attached after construction so the
+    // existing shared-library constructor ABI remains unchanged.
+    void set_adaptation_observer(common_agent_adaptation_observer * observer);
 
     common_agent_result run(const common_agent_request & request);
 

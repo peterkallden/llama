@@ -75,7 +75,8 @@ int main() {
     planner p; executor e; reflector r;
     test_tool_runtime_registry_adapter tool_runtime(registry);
     adaptation_observer adaptation;
-    common_agent_runtime runtime(store, p, e, r, &tool_runtime, nullptr, nullptr, {}, 0, 0, {}, &adaptation);
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
+    runtime.set_adaptation_observer(&adaptation);
     common_agent_request request;
     request.prompt = "fetch";
     request.max_tool_batches = 1;
