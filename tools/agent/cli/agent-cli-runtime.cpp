@@ -350,6 +350,15 @@ bool normalize_planner_host_dataset_references(
             // canonicalize it before the normal tool schema validation.
             for (size_t index = 0; index < document["steps"].size(); ++index) {
                 auto & step = document["steps"][index];
+                if (step.is_object() && step.value("tool", std::string()) == "data.query" &&
+                        step.contains("args") && step["args"].is_object() &&
+                        step["args"].value("where", std::string()) == "true") {
+                    // "where: true" is the common compact-model spelling
+                    // for an unfiltered query. The data contract expresses
+                    // that case by omitting where entirely.
+                    step["args"].erase("where");
+                    changed = true;
+                }
                 if (!step.is_object() || step.value("tool", std::string()) != "data.join" ||
                         !step.contains("args") || !step["args"].is_object()) continue;
                 auto & arguments = step["args"];

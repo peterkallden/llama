@@ -165,6 +165,16 @@ bool common_parse_tool_family_selection_text(
     selection.needs_tools = true;
     while (stream >> id) {
         if (!available.count(id)) {
+            // Compact models occasionally copy the rendered catalogue entry
+            // as "family:description". Accept only the exact known family
+            // prefix; never turn an arbitrary token into a family selection.
+            const auto separator = id.find(':');
+            if (separator != std::string::npos && separator > 0) {
+                const auto prefix = id.substr(0, separator);
+                if (available.count(prefix)) id = prefix;
+            }
+        }
+        if (!available.count(id)) {
             error = "tool family selection returned unknown family: " + id;
             return false;
         }

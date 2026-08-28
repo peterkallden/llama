@@ -659,6 +659,35 @@ static void test_planner_resolves_compact_dataset_handles() {
     assert(aggregate_arguments.value("dataset", "") == "dataset://seed/orders");
 }
 
+static void test_planner_normalizes_unfiltered_query_shape() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Inspect the dataset","steps":[
+            {"tool":"data.query","args":{"dataset":"d1","where":"true"},"as":"rows","mode":"tool"}
+        ]})")
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.require_tool_execution = true;
+    common_agent_dataset_descriptor dataset;
+    dataset.ref.name = "orders";
+    dataset.ref.uri = "dataset://seed/orders";
+    request.available_datasets = {dataset};
+    const std::vector<common_chat_tool> tools = {
+        {"data.query", "Query a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string"}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 1);
+    const auto arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
+    assert(arguments.value("dataset", "") == "dataset://seed/orders");
+    assert(!arguments.contains("where"));
+}
+
 static void test_required_planner_failure_preserves_diagnostics() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2252,6 +2281,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_resolves_host_dataset_inventory();
     } else if (name == "planner-compact-dataset-handles") {
         test_planner_resolves_compact_dataset_handles();
+    } else if (name == "planner-unfiltered-query-shape") {
+        test_planner_normalizes_unfiltered_query_shape();
     } else if (name == "planner-required-failure-diagnostics") {
         test_required_planner_failure_preserves_diagnostics();
     } else if (name == "reflection-regeneration") {
@@ -2326,6 +2357,7 @@ int main(int argc, char ** argv) {
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
         "planner-compact-dataset-handles",
+        "planner-unfiltered-query-shape",
         "planner-required-failure-diagnostics",
         "reflection-regeneration",
         "memory-regeneration",

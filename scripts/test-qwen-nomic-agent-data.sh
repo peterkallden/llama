@@ -12,7 +12,7 @@ printf '%s\n' 'customer_id,segment' '10,enterprise' '11,consumer' > "$customers"
 seed_log="$work_dir/seed.log"; agent_log="$work_dir/data-research.log"
 agent_smoke_run_logged "$seed_log" "$seed_bin" --db "$data_db" --orders "$orders" --customers "$customers"
 grep -Eq 'seeded_orders=[1-9]' "$seed_log"; grep -Eq 'seeded_customers=[1-9]' "$seed_log"
-prompt='Discover and inspect the two CSV datasets, join orders and customers on customer_id, aggregate joined rows by segment summing amount as total_amount, independently describe amount on the joined dataset, and report the exact total 40 with tools/results. Do not guess; use data tools.'
+prompt='Use the data and statistics tool families. Discover and inspect the two CSV datasets, join orders and customers on customer_id, aggregate joined rows by segment summing amount as total_amount, independently describe amount on the joined dataset, and report the exact total 40 with tools/results. Do not guess.'
 # The planner reserves at least 512 tokens and reflection reserves 384.  Keep
 # enough draft/context/time budget for the CPU smoke to complete after the
 # tool chain, especially when tracing is enabled.
