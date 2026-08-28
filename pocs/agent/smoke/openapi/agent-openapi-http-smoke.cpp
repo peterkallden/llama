@@ -30,7 +30,15 @@ int main() {
         "getSale", "get", "/sales/{id}", "Get sale", "Get sale", R"({"type":"object"})",
         {"id"}, {"limit"}, agent_openapi_access::read, true, false});
 
-    agent_openapi_tool_provider provider(std::move(catalog), make_agent_openapi_http_executor(config));
+    int observed_status = 0;
+    std::string observed_mime;
+    agent_openapi_tool_provider provider(std::move(catalog), make_agent_openapi_http_executor(config),
+        [&](const agent_tool_context &, const agent_openapi_operation &,
+            agent_openapi_execution_result & execution, std::string &) {
+            observed_status = execution.http_status;
+            observed_mime = execution.mime_type;
+            return true;
+        });
     agent_tool_context context;
     context.allow_network = true;
     std::string error;
@@ -39,6 +47,8 @@ int main() {
     const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42"})"}, error);
     assert(result.ok);
     assert(result.content_json.find("\"total\":7") != std::string::npos);
+    assert(observed_status == 200);
+    assert(observed_mime == "application/json");
 
     config.allow_private_network = false;
     agent_openapi_tool_provider private_denied_provider(

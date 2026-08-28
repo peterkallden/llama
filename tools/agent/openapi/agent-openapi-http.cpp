@@ -165,6 +165,9 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         if (!response) { error = "OpenAPI HTTP request failed: " + httplib::to_string(response.error()); return false; }
         if (response->body.size() > config.max_result_bytes) { error = "OpenAPI response exceeded max_result_bytes"; return false; }
         result.ok = response->status >= 200 && response->status < 300;
+        result.http_status = response->status;
+        result.mime_type = response->get_header_value("Content-Type");
+        if (result.mime_type.empty()) result.mime_type = "application/octet-stream";
         result.structured_content_json = response->body;
         result.text_content = response->body;
         if (!result.ok) { result.failure_code = "openapi.http_status"; result.safe_summary = "The OpenAPI request returned an error status."; error = "OpenAPI request returned HTTP " + std::to_string(response->status); }

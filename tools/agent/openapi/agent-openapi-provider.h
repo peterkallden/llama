@@ -8,6 +8,8 @@
 
 struct agent_openapi_execution_result {
     bool ok = false;
+    int http_status = 0;
+    std::string mime_type = "application/json";
     std::string structured_content_json;
     std::string text_content;
     std::vector<common_runtime_resource_ref> resource_refs;
