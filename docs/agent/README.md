@@ -154,7 +154,8 @@ remote MCP providers, status/readiness, and Docker usage.
 
 - **Runtime orchestration** — sessions, turns, thinking modes, reflection,
   deliberate planning, research, cancellation, deadlines, and bounded async
-  execution. See [Agent Runtime](agent-runtime.md).
+  execution. See [Agent Runtime](agent-runtime.md) and the cross-cutting
+  [runtime seams and ownership](agent-runtime-seams.md) guide.
 - **Tools and capabilities** — host-owned profiles, local tools, diagnostics,
   repository/workspace operations, data tools, resources, and optional remote
   MCP providers. The OpenAPI provider design and configuration contract are

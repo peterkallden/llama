@@ -2,6 +2,12 @@
 
 This note describes the current resident-agent runtime direction. The main completed step is the inference/runtime abstraction that now sits between agent behavior and the old CLI-local generation path, with a small foreground daemon layered on top as an admin/test transport.
 
+The cross-cutting ownership rules for host snapshots, compact model bindings,
+resources, datasets, providers and protocol projections are collected in
+[Agent runtime seams and ownership](agent-runtime-seams.md). Read that guide
+when changing a boundary between these components; this document remains the
+detailed runtime design and behavior reference.
+
 The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process, service, or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
 
 The Android work follows the same boundary. Model and inference settings that

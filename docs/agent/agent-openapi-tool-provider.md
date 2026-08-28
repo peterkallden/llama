@@ -4,6 +4,11 @@ This document describes the host-owned OpenAPI provider for `llama-agent`.
 The provider turns approved OpenAPI operations into ordinary agent tools. It
 does not add a second planner or a second tool runtime.
 
+The ownership and result-flow rules shared with native and MCP providers are
+documented in [Agent runtime seams and ownership](agent-runtime-seams.md).
+This document focuses on OpenAPI-specific configuration, operation
+classification, path binding and response materialization.
+
 ## Position in the runtime
 
 OpenAPI is a provider beside native tools and MCP:

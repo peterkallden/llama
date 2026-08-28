@@ -1041,6 +1041,26 @@ previous result when the branch or test configuration changes.
   deadline.
 - Registered inventory: 64 total CTest cases, with 20 under the `agent` label.
 
+### 2026-08-28 - Dataset inventory and dataflow seam checkpoint
+
+- Branch: `kallden/agent-openapi-provider`, commit `1b5cb7fbc`.
+- Scope: verified that host-selected dataset descriptors survive the
+  host-to-runtime request boundary and are rendered in the first planner
+  request as a bounded `<runtime_dataset_inventory>` with stable compact
+  references.
+- Focused CTest: **4/4 passed** — runtime JSON, tool adapters, inference
+  runtime and data manipulation.
+- Direct checks: the release-built runtime inventory smoke and runtime JSON
+  contract both passed. The inventory check is explicit rather than relying
+  on `assert`, because `RelWithDebInfo` defines `NDEBUG`.
+- Model-backed check: the Qwen+Nomic data smoke passed through dataset
+  selection, join, aggregate/statistics execution and final reflection. The
+  retained log is `/tmp/llama-agent-qwen-nomic-data.oaHd61/data-research.log`.
+- This is a focused seam checkpoint, not a replacement for the complete agent
+  assurance run. The older 2026-08-17 model-backed failures below remain as
+  historical evidence of the source-step binding problem that this branch
+  subsequently corrected.
+
 ### 2026-08-17 - Linux agent and Qwen/Nomic compatibility checkpoint
 
 - Branch: `kallden/agent-multimodal`. This checkpoint deliberately excludes
