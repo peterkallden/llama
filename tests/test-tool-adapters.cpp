@@ -277,8 +277,8 @@ int main() {
     assert(result.ok && result.output.find("formatted") != std::string::npos && result.output.find("sample.cpp") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"a.h -> b.h\nb.h -> c.h\n"})"});
     assert(result.ok && result.output.find("a.h") != std::string::npos && result.output.find("c.h") != std::string::npos);
-    result = foundation_registry.execute({"dataset.list", R"({"path":"datasets"})"});
-    assert(result.ok && result.output.find("sample.csv") != std::string::npos);
+    result = foundation_registry.execute({"dataset.list", "{}"});
+    assert(result.ok && result.output.find("Sales") != std::string::npos);
     result = foundation_registry.execute({"dataset.inspect", R"({"path":"datasets/sample.csv"})"});
     assert(result.ok && result.output.find("csv") != std::string::npos);
     result = foundation_registry.execute({"dataset.schema", R"({"path":"datasets/sample.csv"})"});

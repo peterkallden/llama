@@ -341,6 +341,17 @@ bool normalize_planner_host_dataset_references(
             // canonicalize it before the normal tool schema validation.
             for (size_t index = 0; index < document["steps"].size(); ++index) {
                 auto & step = document["steps"][index];
+                if (step.is_object() && step.contains("tool") && step["tool"].is_string() &&
+                        (step["tool"].get<std::string>() == "dataset.inspect" ||
+                         step["tool"].get<std::string>() == "dataset.schema" ||
+                         step["tool"].get<std::string>() == "dataset.sample") &&
+                        step.contains("args") && step["args"].is_object() &&
+                        step["args"].contains("resource") && step["args"]["resource"].is_string() &&
+                        !step["args"]["resource"].get<std::string>().empty() &&
+                        step["args"]["resource"].get<std::string>().front() == '$') {
+                    error = "plan.binding.resource_requires_handle: resource arguments must use an explicit rN or sN handle";
+                    return false;
+                }
                 if (step.is_object() && step.value("tool", std::string()) == "data.query" &&
                         step.contains("args") && step["args"].is_object() &&
                         step["args"].value("where", std::string()) == "true") {

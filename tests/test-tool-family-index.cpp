@@ -13,10 +13,11 @@ int main() {
         {"time_now", "time", "{}", "{}"},
         {"calculator", "calculate", "{}", "{}"},
         {"memory_search", "search memory", "{}", "{}"},
+        {"statistics.describe", "describe", "{}", "{}"},
     };
 
     const auto families = common_generate_tool_family_index(tools);
-    assert(families.size() == 7);
+    assert(families.size() == 8);
     const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == id) return &family;
         return nullptr;

@@ -3,6 +3,7 @@
 #include <cpp-httplib/httplib.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
@@ -35,6 +36,9 @@ int main() {
     const int port = server.bind_to_any_port("127.0.0.1");
     assert(port > 0);
     std::thread server_thread([&server] { server.listen_after_bind(); });
+    // Sanitizer-instrumented clients can reach the test before the listener
+    // thread has entered its accept loop.
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
     agent_host_openapi_provider_config config;
     config.id = "sales-api";
