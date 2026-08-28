@@ -316,6 +316,16 @@ bool build_agent_openapi_catalog(
                     operation.auth_required, operation.security_schemes, error)) {
                 return false;
             }
+            for (const auto & security_name : operation.security_schemes) {
+                const auto scheme_it = std::find_if(
+                    catalog.security_schemes.begin(), catalog.security_schemes.end(),
+                    [&](const agent_openapi_security_scheme & scheme) {
+                        return scheme.name == security_name;
+                    });
+                if (scheme_it != catalog.security_schemes.end()) {
+                    operation.security_definitions.push_back(*scheme_it);
+                }
+            }
             operation.input_schema_json = operation_input_schema(document, value, operation.path_parameters, operation.query_parameters);
             operation.result_schema_json = operation_result_schema(document, value);
 

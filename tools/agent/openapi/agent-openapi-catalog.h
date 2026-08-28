@@ -13,6 +13,14 @@ enum class agent_openapi_access {
     destructive,
 };
 
+struct agent_openapi_security_scheme {
+    std::string name;
+    std::string type;
+    std::string scheme;
+    std::string parameter_name;
+    std::string location;
+};
+
 struct agent_openapi_operation {
     std::string operation_id;
     std::string method;
@@ -27,15 +35,8 @@ struct agent_openapi_operation {
     bool requires_confirmation = false;
     bool auth_required = false;
     std::vector<std::string> security_schemes;
+    std::vector<agent_openapi_security_scheme> security_definitions;
     std::string result_schema_json = R"({"type":"object"})";
-};
-
-struct agent_openapi_security_scheme {
-    std::string name;
-    std::string type;
-    std::string scheme;
-    std::string parameter_name;
-    std::string location;
 };
 
 struct agent_openapi_relation {

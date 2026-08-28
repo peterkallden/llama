@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #endif
 #include <sstream>
+#include <algorithm>
+#include <memory>
 
 namespace {
 struct url_parts { std::string scheme, host, base_path; int port = 0; };
@@ -90,6 +92,52 @@ std::string join_path(const std::string & base, const std::string & path) {
     if (path.empty()) return base;
     return base.back() == '/' && path.front() == '/' ? base + path.substr(1) : base + path;
 }
+
+template<typename Client>
+bool configure_basic_auth(
+        Client & client,
+        const agent_host_openapi_provider_config & config,
+        const char * username,
+        const char * password,
+        std::string & error) {
+    if (config.auth.type == "basic") {
+        if (username == nullptr || password == nullptr) {
+            error = "OpenAPI basic auth environment variable is missing";
+            return false;
+        }
+        client.set_basic_auth(username, password);
+    }
+    return true;
+}
+
+const agent_openapi_security_scheme * selected_security_scheme(
+        const agent_openapi_operation & operation,
+        const agent_host_openapi_provider_config & config,
+        std::string & error) {
+    if (!operation.auth_required) return nullptr;
+    if (config.auth.type == "none") {
+        error = "OpenAPI operation requires authentication but provider auth is none";
+        return nullptr;
+    }
+    std::string selected = config.auth.scheme;
+    if (selected.empty() && operation.security_schemes.size() == 1) {
+        selected = operation.security_schemes.front();
+    }
+    if (selected.empty()) {
+        error = "OpenAPI operation has multiple authentication alternatives; auth.scheme is required";
+        return nullptr;
+    }
+    if (std::find(operation.security_schemes.begin(), operation.security_schemes.end(), selected) ==
+            operation.security_schemes.end()) {
+        error = "OpenAPI auth.scheme is not allowed by this operation: " + selected;
+        return nullptr;
+    }
+    for (const auto & scheme : operation.security_definitions) {
+        if (scheme.name == selected) return &scheme;
+    }
+    error = "OpenAPI auth.scheme was not found in the catalog: " + selected;
+    return nullptr;
+}
 }
 
 agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provider_config config) {
@@ -116,6 +164,8 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         }
         const auto arguments = nlohmann::json::parse(arguments_json, nullptr, false);
         if (!arguments.is_object()) { error = "OpenAPI tool arguments must be a JSON object"; return false; }
+        const auto * security_scheme = selected_security_scheme(operation, config, error);
+        if (operation.auth_required && security_scheme == nullptr) return false;
         std::string path = operation.path;
         for (const auto & name : operation.path_parameters) {
             const auto it = arguments.find(name);
@@ -131,17 +181,46 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             query.emplace(name, it->is_string() ? it->get<std::string>() : it->dump());
         }
         httplib::Headers headers;
-        if (config.auth.type == "bearer" && !config.auth.token_env.empty()) {
-            const char * token = std::getenv(config.auth.token_env.c_str());
-            if (token == nullptr || *token == '\0') { error = "OpenAPI bearer token environment variable is missing"; return false; }
+        const char * token = nullptr;
+        if (operation.auth_required && (config.auth.type == "bearer" || config.auth.type == "api_key")) {
+            token = std::getenv(config.auth.token_env.c_str());
+            if (token == nullptr || *token == '\0') { error = "OpenAPI credential environment variable is missing"; return false; }
+        }
+        if (security_scheme != nullptr && config.auth.type == "bearer") {
+            if (security_scheme->type != "http" || security_scheme->scheme != "bearer") {
+                error = "OpenAPI bearer auth does not match the selected security scheme"; return false;
+            }
             headers.emplace("Authorization", std::string("Bearer ") + token);
+        } else if (security_scheme != nullptr && config.auth.type == "api_key") {
+            if (security_scheme->type != "apiKey" || security_scheme->parameter_name.empty()) {
+                error = "OpenAPI api_key auth does not match the selected security scheme"; return false;
+            }
+            if (security_scheme->location == "header") headers.emplace(security_scheme->parameter_name, token);
+            else if (security_scheme->location == "query") query.emplace(security_scheme->parameter_name, token);
+            else if (security_scheme->location == "cookie") headers.emplace("Cookie", security_scheme->parameter_name + "=" + token);
+            else { error = "OpenAPI api_key security scheme has an unsupported location"; return false; }
+        }
+        const char * username = nullptr;
+        const char * password = nullptr;
+        if (operation.auth_required && config.auth.type == "basic") {
+            username = std::getenv(config.auth.username_env.c_str());
+            password = std::getenv(config.auth.password_env.c_str());
+            if (security_scheme == nullptr || security_scheme->type != "http" || security_scheme->scheme != "basic") {
+                error = "OpenAPI basic auth does not match the selected security scheme"; return false;
+            }
+        }
+        if (operation.auth_required && config.auth.type == "mutual_tls" &&
+                (security_scheme == nullptr || security_scheme->type != "mutualTLS")) {
+            error = "OpenAPI mutual_tls auth does not match the selected security scheme"; return false;
         }
         std::string request_path = join_path(url.base_path, path);
         request_path = httplib::append_query_params(request_path, query);
         const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
         if (url.scheme == "http") {
+            if (config.auth.type == "mutual_tls") { error = "OpenAPI mutual_tls requires HTTPS"; return false; }
             httplib::Client client(url.host, url.port); client.set_hostname_addr_map({{url.host, validated_address}}); client.set_follow_location(false); configure(client, config);
+            if (!configure_basic_auth(client, config, username, password, error)) return false;
             if (operation.method == "get") response = client.Get(request_path, headers);
             else if (operation.method == "head") response = client.Head(request_path, headers);
             else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
@@ -151,12 +230,27 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             else { error = "unsupported OpenAPI HTTP method"; return false; }
         } else {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-            httplib::SSLClient client(url.host, url.port); client.set_hostname_addr_map({{url.host, validated_address}}); client.set_follow_location(false); configure(client, config);
-            if (operation.method == "get") response = client.Get(request_path, headers);
-            else if (operation.method == "post") response = client.Post(request_path, headers, body, "application/json");
-            else if (operation.method == "put") response = client.Put(request_path, headers, body, "application/json");
-            else if (operation.method == "patch") response = client.Patch(request_path, headers, body, "application/json");
-            else if (operation.method == "delete") response = client.Delete(request_path, headers, body, "application/json");
+            std::unique_ptr<httplib::SSLClient> client;
+            if (config.auth.type == "mutual_tls") {
+                const char * cert = std::getenv(config.auth.client_cert_path_env.c_str());
+                const char * key = std::getenv(config.auth.client_key_path_env.c_str());
+                if (cert == nullptr || *cert == '\0' || key == nullptr || *key == '\0') { error = "OpenAPI client certificate path environment variable is missing"; return false; }
+                client = std::make_unique<httplib::SSLClient>(url.host, url.port, cert, key);
+            } else {
+                client = std::make_unique<httplib::SSLClient>(url.host, url.port);
+            }
+            client->set_hostname_addr_map({{url.host, validated_address}}); client->set_follow_location(false); configure(*client, config);
+            if (!configure_basic_auth(*client, config, username, password, error)) return false;
+            if (!config.auth.ca_cert_path_env.empty()) {
+                const char * ca_path = std::getenv(config.auth.ca_cert_path_env.c_str());
+                if (ca_path == nullptr || *ca_path == '\0') { error = "OpenAPI CA certificate path environment variable is missing"; return false; }
+                client->set_ca_cert_path(ca_path);
+            }
+            if (operation.method == "get") response = client->Get(request_path, headers);
+            else if (operation.method == "post") response = client->Post(request_path, headers, body, "application/json");
+            else if (operation.method == "put") response = client->Put(request_path, headers, body, "application/json");
+            else if (operation.method == "patch") response = client->Patch(request_path, headers, body, "application/json");
+            else if (operation.method == "delete") response = client->Delete(request_path, headers, body, "application/json");
             else { error = "unsupported OpenAPI HTTPS method"; return false; }
 #else
             error = "HTTPS OpenAPI transport requires OpenSSL"; return false;

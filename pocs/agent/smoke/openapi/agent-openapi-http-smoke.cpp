@@ -3,6 +3,7 @@
 #include <cpp-httplib/httplib.h>
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
@@ -11,6 +12,14 @@ int main() {
     server.Get("/sales/42", [](const httplib::Request & request, httplib::Response & response) {
         assert(request.get_param_value("limit") == "10");
         response.set_content(R"({"id":42,"total":7})", "application/json");
+    });
+    server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_header_value("Authorization") == "Basic dXNlcjpwYXNz");
+        response.set_content(R"({"ok":true})", "application/json");
+    });
+    server.Get("/key", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_param_value("api_key") == "key-123");
+        response.set_content(R"({"ok":true})", "application/json");
     });
     const int port = server.bind_to_any_port("127.0.0.1");
     assert(port > 0);
@@ -74,6 +83,60 @@ int main() {
     assert(denied_view != nullptr);
     const auto denied = denied_view->call({"http-2", "sales.getSale", R"({"id":"42"})"}, error);
     assert(!denied.ok);
+
+    setenv("OPENAPI_BASIC_USER", "user", 1);
+    setenv("OPENAPI_BASIC_PASSWORD", "pass", 1);
+    setenv("OPENAPI_API_KEY", "key-123", 1);
+    context.allow_network = true;
+    auto run_authenticated = [&](agent_host_openapi_provider_config authenticated_config,
+            agent_openapi_operation authenticated_operation) {
+        agent_openapi_catalog authenticated_catalog;
+        authenticated_catalog.provider_id = authenticated_config.id;
+        authenticated_catalog.base_url = authenticated_config.base_url;
+        authenticated_catalog.prefix = authenticated_config.prefix;
+        authenticated_catalog.operations.push_back(std::move(authenticated_operation));
+        agent_openapi_tool_provider authenticated_provider(
+            std::move(authenticated_catalog),
+            make_agent_openapi_http_executor(authenticated_config));
+        std::string authenticated_error;
+        auto authenticated_view = authenticated_provider.resolve_tools(context, authenticated_error);
+        assert(authenticated_view != nullptr);
+        const auto authenticated_result = authenticated_view->call(
+            {"auth-call", authenticated_config.prefix + ".auth", "{}"}, authenticated_error);
+        assert(authenticated_result.ok);
+    };
+    agent_openapi_operation basic_operation;
+    basic_operation.operation_id = "auth";
+    basic_operation.method = "get";
+    basic_operation.path = "/basic";
+    basic_operation.access = agent_openapi_access::read;
+    basic_operation.read_only = true;
+    basic_operation.auth_required = true;
+    basic_operation.security_schemes = {"basicAuth"};
+    basic_operation.security_definitions = {{"basicAuth", "http", "basic", "", ""}};
+    agent_host_openapi_provider_config basic_config = config;
+    basic_config.prefix = "basic";
+    basic_config.auth.type = "basic";
+    basic_config.auth.scheme = "basicAuth";
+    basic_config.auth.username_env = "OPENAPI_BASIC_USER";
+    basic_config.auth.password_env = "OPENAPI_BASIC_PASSWORD";
+    run_authenticated(basic_config, basic_operation);
+
+    agent_openapi_operation api_key_operation;
+    api_key_operation.operation_id = "auth";
+    api_key_operation.method = "get";
+    api_key_operation.path = "/key";
+    api_key_operation.access = agent_openapi_access::read;
+    api_key_operation.read_only = true;
+    api_key_operation.auth_required = true;
+    api_key_operation.security_schemes = {"apiKeyAuth"};
+    api_key_operation.security_definitions = {{"apiKeyAuth", "apiKey", "", "api_key", "query"}};
+    agent_host_openapi_provider_config api_key_config = config;
+    api_key_config.prefix = "key";
+    api_key_config.auth.type = "api_key";
+    api_key_config.auth.scheme = "apiKeyAuth";
+    api_key_config.auth.token_env = "OPENAPI_API_KEY";
+    run_authenticated(api_key_config, api_key_operation);
 
     server.stop();
     server_thread.join();

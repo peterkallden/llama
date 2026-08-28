@@ -374,13 +374,25 @@ bool read_inbound_token(
 bool validate_provider_auth(
         const agent_host_provider_auth_config & auth,
         const std::string & provider_kind,
+        bool allow_extended,
         std::string & error) {
-    if (auth.type != "none" && auth.type != "bearer") {
+    if (auth.type != "none" && auth.type != "bearer" &&
+            (!allow_extended || (auth.type != "basic" &&
+             auth.type != "api_key" && auth.type != "mutual_tls"))) {
         error = provider_kind + " provider auth type is not supported yet: " + auth.type;
         return false;
     }
-    if (auth.type == "bearer" && auth.token_env.empty()) {
-        error = provider_kind + " bearer auth requires token_env";
+    if ((auth.type == "bearer" || auth.type == "api_key") && auth.token_env.empty()) {
+        error = provider_kind + " " + auth.type + " auth requires token_env";
+        return false;
+    }
+    if (auth.type == "basic" && (auth.username_env.empty() || auth.password_env.empty())) {
+        error = provider_kind + " basic auth requires username_env and password_env";
+        return false;
+    }
+    if (auth.type == "mutual_tls" &&
+            (auth.client_cert_path_env.empty() || auth.client_key_path_env.empty())) {
+        error = provider_kind + " mutual_tls auth requires client_cert_path_env and client_key_path_env";
         return false;
     }
     error.clear();
@@ -1616,7 +1628,7 @@ bool validate_agent_host_config(
         if (!provider.enabled) {
             continue;
         }
-        if (!validate_provider_auth(provider.auth, "MCP", error)) {
+        if (!validate_provider_auth(provider.auth, "MCP", false, error)) {
             return false;
         }
         if (provider.transport.empty()) {
@@ -1665,7 +1677,7 @@ bool validate_agent_host_config(
             error = "OpenAPI provider exposure must be auto, include or exclude";
             return false;
         }
-        if (!validate_provider_auth(provider.auth, "OpenAPI", error)) {
+        if (!validate_provider_auth(provider.auth, "OpenAPI", true, error)) {
             return false;
         }
         if (provider.connect_timeout_ms == 0 || provider.request_timeout_ms == 0 || provider.max_result_bytes == 0) {
