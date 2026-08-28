@@ -176,6 +176,23 @@ int main() {
         std::cerr << "dataset dataflow failed: " << error << "\n";
         server.stop(); server_thread.join(); return 1;
     }
+    auto wrong_scope_request = request;
+    wrong_scope_request.tool_context.turn_id = "turn-2";
+    wrong_scope_request.tool_context.scope.turn_id = "turn-2";
+    common_agent_cli_tool_selection wrong_scope_selection;
+    if (!resolve_agent_host_tool_selection(memory, nullptr, nullptr, nullptr,
+            profile.id, wrong_scope_request, query, nullptr,
+            wrong_scope_selection, error) || !wrong_scope_selection.tool_view) {
+        std::cerr << "wrong-scope selection failed to resolve: " << error << "\n";
+        server.stop(); server_thread.join(); return 1;
+    }
+    const auto wrong_scope_result = wrong_scope_selection.tool_view->call({
+        "wrong-scope", "data.query",
+        std::string("{\"dataset\":\"") + list.dataset_refs.front().uri + "\"}"}, error);
+    if (wrong_scope_result.ok || wrong_scope_result.failure_code != "tool.dataset.out_of_scope") {
+        std::cerr << "dataset was usable outside its turn scope\n";
+        server.stop(); server_thread.join(); return 1;
+    }
 
     auto complex = selection.tool_view->call({"complex", "sales_complex", "{}"}, error);
     if (!complex.ok || !complex.dataset_refs.empty() || complex.resource_refs.size() != 1 ||
