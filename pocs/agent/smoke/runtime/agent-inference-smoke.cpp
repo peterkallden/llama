@@ -19,6 +19,8 @@
 #include "tools/agent/cli/agent-cli-scope.h"
 
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <string>
 
@@ -958,8 +960,10 @@ static void test_agent_runtime_smoke() {
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
     std::string error;
-    assert(memories.open("", error));
-    assert(plans.open("", error));
+    if (!memories.open("", error) || !plans.open("", error)) {
+        std::fprintf(stderr, "runtime inventory smoke setup failed: %s\n", error.c_str());
+        std::abort();
+    }
 
     args options = make_test_args();
     options.prompt = "Check status";
@@ -1001,12 +1005,22 @@ static void test_agent_runtime_smoke() {
     };
 
     common_agent_result result;
-    assert(run_agent_runtime_driver(execution, result, error));
+    if (!run_agent_runtime_driver(execution, result, error)) {
+        std::fprintf(stderr, "runtime inventory smoke failed to run: %s\n", error.c_str());
+        std::abort();
+    }
     assert(error.empty());
     assert(result.error.empty());
     assert(result.response == "draft-content");
     assert(result.plan_id);
     assert(!result.plan_id->empty());
+    if (inference.seen.size() < 1 || inference.seen[0].messages.size() < 2 ||
+            inference.seen[0].messages[1].content.find("<runtime_dataset_inventory>") == std::string::npos ||
+            inference.seen[0].messages[1].content.find("ref=$datasets.datasets[0].dataset") == std::string::npos ||
+            inference.seen[0].messages[1].content.find("uri=dataset://seed/orders") == std::string::npos) {
+        std::fprintf(stderr, "runtime planner request did not contain the host dataset inventory\n");
+        std::abort();
+    }
     assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[0].messages.size() == 2);

@@ -105,6 +105,33 @@ Multiple matches fail with a bounded `Choose one of` diagnostic; an unknown
 resource-only name fails with the candidate list rather than being interpreted
 as a filesystem path.
 
+## Dataset inventory was lost before planner generation
+
+- Status: Fixed locally; release-safe runtime and JSON contract tests pass,
+  and the Qwen+Nomic data smoke completes
+- Affected area: host-to-runtime request construction for registered datasets
+- Symptom: Qwen first emitted self-bindings and then a reference such as
+  `$datasets.datasets[0]`, but the planner request contained no visible dataset
+  inventory. The runtime consequently rejected the alias as undeclared or
+  could not bind it to a host dataset.
+
+The host had already selected and scoped the available dataset descriptors. The
+bug was at the boundary where the host execution state was copied into a new
+`common_agent_request`: `available_resources` was copied, but
+`available_datasets` was omitted. The planner therefore had code to render the
+inventory, but received an empty vector. The request builder now preserves the
+same scoped inventory that the host selected, and each entry explicitly shows
+its stable model-facing reference (`$datasets.datasets[index].dataset`) beside
+the host-approved name and URI.
+
+The regression test initially failed to catch this in release builds because
+its call to the runtime driver was inside `assert`; with `NDEBUG`, the runtime
+was never invoked. The inventory smoke now executes setup and the driver
+unconditionally and checks the first planner request with an explicit
+release-safe failure. This test protects both halves of the contract: the
+host must pass the inventory, and the compact planner context must make the
+binding visible to the model.
+
 ## OpenAPI dataset URI and exposed-name drift
 
 - Status: Fixed locally; OpenAPI host and provider tests pass

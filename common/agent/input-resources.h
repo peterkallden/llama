@@ -21,6 +21,7 @@ inline std::string common_agent_render_dataset_inventory(
         out << "Dataset: id=d" << (index + 1);
         if (!descriptor.ref.name.empty()) out << " name=" << common_agent_escape_input_resource_text(descriptor.ref.name);
         if (!descriptor.ref.uri.empty()) out << " uri=" << common_agent_escape_input_resource_text(descriptor.ref.uri);
+        out << " ref=$datasets.datasets[" << index << "].dataset";
         if (!descriptor.ref.source_resource_uri.empty()) out << " source=" << common_agent_escape_input_resource_text(descriptor.ref.source_resource_uri);
         out << "\n";
     }
