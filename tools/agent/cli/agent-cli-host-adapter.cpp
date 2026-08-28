@@ -241,6 +241,9 @@ bool resolve_agent_host_tool_selection(
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
     agent_tool_context resolved_tool_context = request.tool_context;
+    // The caller supplies the profile as the resolver argument. Keep the
+    // effective context identity in sync before providers validate snapshots.
+    resolved_tool_context.profile_id = tool_profile;
     if (!tool_profile.empty()) {
         common_tool_bootstrap_result bootstrap;
         if (!tool_catalog.bootstrap(
@@ -754,7 +757,12 @@ bool resolve_agent_host_tool_selection(
                     return true;
                 }
             }
-            if (json_response && result.structured_content_json.size() <= 2048) return true;
+            // Once a data store is available, non-tabular JSON must remain a
+            // resource as well. Keeping it inline would make the model see a
+            // complex response without a stable resource handle, while the
+            // dataset path above deliberately returns a compact summary.
+            if (json_response && openapi_data_store == nullptr &&
+                    result.structured_content_json.size() <= 2048) return true;
             if (resource_store == nullptr) {
                 materializer_error = "OpenAPI result materialization requires a resource store";
                 return false;
