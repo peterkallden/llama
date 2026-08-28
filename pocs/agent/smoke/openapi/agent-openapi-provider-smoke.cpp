@@ -33,6 +33,14 @@ int main() {
             resource.name = "sales-list";
             resource.scope = common_runtime_resource_scope::turn;
             result.resource_refs.push_back(std::move(resource));
+            common_agent_dataset_ref dataset;
+            dataset.uri = "dataset://openapi/sales";
+            dataset.name = "sales";
+            dataset.row_count = 1;
+            dataset.column_count = 2;
+            dataset.source_resource_uri = "resource://openapi/sales/list-1";
+            dataset.source_representation = "openapi:json";
+            result.dataset_refs.push_back(std::move(dataset));
             return true;
         });
     agent_tool_context context;
@@ -59,8 +67,11 @@ int main() {
     assert(view->validate(call, error));
     const auto result = view->call(call, error);
     assert(result.ok && called && materialized);
-    assert(result.content_json == R"({"count":1})");
+    assert(result.content_json.find(R"("count":1)") != std::string::npos);
     assert(result.resource_refs.size() == 1);
     assert(result.resource_refs.front().uri == "resource://openapi/sales/list-1");
+    assert(result.dataset_refs.size() == 1);
+    assert(result.dataset_refs.front().uri == "dataset://openapi/sales");
+    assert(result.content_json.find(R"("dataset_refs")") != std::string::npos);
     std::cout << "agent-openapi-provider-smoke: ok\n";
 }

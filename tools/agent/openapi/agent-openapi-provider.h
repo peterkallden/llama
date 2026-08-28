@@ -13,6 +13,7 @@ struct agent_openapi_execution_result {
     std::string structured_content_json;
     std::string text_content;
     std::vector<common_runtime_resource_ref> resource_refs;
+    std::vector<common_agent_dataset_ref> dataset_refs;
     std::string failure_code;
     common_tool_failure_class failure_class = common_tool_failure_class::execution;
     bool retryable = false;

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <optional>
 #include "resource/resource-contract.h"
+#include "agent/dataset-contracts.h"
 #include <string>
 #include <vector>
 
@@ -27,6 +28,7 @@ struct common_plan_observation {
     std::vector<std::string> evidence_ids;
     std::vector<common_runtime_resource_ref> resource_refs;
     int64_t created_at = 0;
+    std::vector<common_agent_dataset_ref> dataset_refs;
 };
 
 inline bool common_plan_chunk_observations_valid(

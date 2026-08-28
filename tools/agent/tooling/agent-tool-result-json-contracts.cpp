@@ -69,12 +69,28 @@ void attach_agent_tool_resource_refs_json(
     payload["resources"] = std::move(rendered);
 }
 
+void attach_agent_tool_dataset_refs_json(
+        const std::vector<common_agent_dataset_ref> & datasets,
+        json & payload) {
+    if (datasets.empty()) return;
+    json rendered = json::array();
+    for (const auto & dataset : datasets) {
+        rendered.push_back({
+            {"uri", dataset.uri}, {"name", dataset.name},
+            {"row_count", dataset.row_count}, {"column_count", dataset.column_count},
+            {"source_resource_uri", dataset.source_resource_uri},
+            {"source_representation", dataset.source_representation}});
+    }
+    payload["dataset_refs"] = std::move(rendered);
+}
+
 json make_agent_tool_failure_payload_json(
         const std::string & code,
         const std::string & message,
         bool retryable,
         common_tool_failure_class failure_class,
-        const std::vector<common_runtime_resource_ref> & resources) {
+        const std::vector<common_runtime_resource_ref> & resources,
+        const std::vector<common_agent_dataset_ref> & datasets) {
     json payload = {
         {"ok", false},
         {"error", {
@@ -85,13 +101,15 @@ json make_agent_tool_failure_payload_json(
         }},
     };
     attach_agent_tool_resource_refs_json(resources, payload);
+    attach_agent_tool_dataset_refs_json(datasets, payload);
     return payload;
 }
 
 json make_agent_tool_success_payload_json(
         const std::string & output_json_or_text,
         const std::string & summary,
-        const std::vector<common_runtime_resource_ref> & resources) {
+        const std::vector<common_runtime_resource_ref> & resources,
+        const std::vector<common_agent_dataset_ref> & datasets) {
     const auto value = json::parse(output_json_or_text, nullptr, false);
     json payload = value.is_discarded()
         ? json({{"ok", true}, {"result_text", output_json_or_text}})
@@ -100,13 +118,15 @@ json make_agent_tool_success_payload_json(
         payload["summary"] = summary;
     }
     attach_agent_tool_resource_refs_json(resources, payload);
+    attach_agent_tool_dataset_refs_json(datasets, payload);
     return payload;
 }
 
 json make_agent_tool_structured_success_payload_json(
         const std::string & structured_content_json,
         const std::string & summary,
-        const std::vector<common_runtime_resource_ref> & resources) {
+        const std::vector<common_runtime_resource_ref> & resources,
+        const std::vector<common_agent_dataset_ref> & datasets) {
     const auto value = json::parse(structured_content_json, nullptr, false);
     json payload = value.is_discarded()
         ? json({{"ok", true}, {"result_text", structured_content_json}})
@@ -115,13 +135,15 @@ json make_agent_tool_structured_success_payload_json(
         payload["summary"] = summary;
     }
     attach_agent_tool_resource_refs_json(resources, payload);
+    attach_agent_tool_dataset_refs_json(datasets, payload);
     return payload;
 }
 
 json make_agent_tool_text_success_payload_json(
         const std::string & text,
         const std::string & summary,
-        const std::vector<common_runtime_resource_ref> & resources) {
+        const std::vector<common_runtime_resource_ref> & resources,
+        const std::vector<common_agent_dataset_ref> & datasets) {
     json payload = {
         {"ok", true},
         {"result_text", text},
@@ -130,6 +152,7 @@ json make_agent_tool_text_success_payload_json(
         payload["summary"] = summary;
     }
     attach_agent_tool_resource_refs_json(resources, payload);
+    attach_agent_tool_dataset_refs_json(datasets, payload);
     return payload;
 }
 
@@ -140,7 +163,8 @@ agent_tool_result make_agent_tool_failure_result(
         bool retryable,
         const std::string & safe_summary,
         const std::string & raw_diagnostic,
-        std::vector<common_runtime_resource_ref> resources) {
+        std::vector<common_runtime_resource_ref> resources,
+        std::vector<common_agent_dataset_ref> datasets) {
     agent_tool_result result;
     result.ok = false;
     result.tool_call_id = call.id;
@@ -152,12 +176,13 @@ agent_tool_result make_agent_tool_failure_result(
     result.raw_diagnostic = raw_diagnostic;
     result.content_summary = result.safe_summary;
     result.resource_refs = std::move(resources);
+    result.dataset_refs = std::move(datasets);
     result.content_json = make_agent_tool_failure_payload_json(
         result.failure_code.empty() ? "tool_call_rejected" : result.failure_code,
         result.safe_summary.empty() ? "The tool call was rejected by its contract or executor." : result.safe_summary,
         result.retryable,
         result.failure_class,
-        result.resource_refs).dump();
+        result.resource_refs, result.dataset_refs).dump();
     return result;
 }
 
@@ -165,17 +190,19 @@ agent_tool_result make_agent_tool_json_success_result(
         const agent_tool_call & call,
         const std::string & output_json_or_text,
         const std::string & summary,
-        std::vector<common_runtime_resource_ref> resources) {
+        std::vector<common_runtime_resource_ref> resources,
+        std::vector<common_agent_dataset_ref> datasets) {
     agent_tool_result result;
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
     result.content_summary = summary;
     result.resource_refs = std::move(resources);
+    result.dataset_refs = std::move(datasets);
     result.content_json = make_agent_tool_success_payload_json(
         output_json_or_text,
         result.content_summary,
-        result.resource_refs).dump();
+        result.resource_refs, result.dataset_refs).dump();
     return result;
 }
 
@@ -183,17 +210,19 @@ agent_tool_result make_agent_tool_structured_success_result(
         const agent_tool_call & call,
         const std::string & structured_content_json,
         const std::string & summary,
-        std::vector<common_runtime_resource_ref> resources) {
+        std::vector<common_runtime_resource_ref> resources,
+        std::vector<common_agent_dataset_ref> datasets) {
     agent_tool_result result;
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
     result.content_summary = summary;
     result.resource_refs = std::move(resources);
+    result.dataset_refs = std::move(datasets);
     result.content_json = make_agent_tool_structured_success_payload_json(
         structured_content_json,
         result.content_summary,
-        result.resource_refs).dump();
+        result.resource_refs, result.dataset_refs).dump();
     return result;
 }
 
@@ -201,16 +230,18 @@ agent_tool_result make_agent_tool_text_success_result(
         const agent_tool_call & call,
         const std::string & text,
         const std::string & summary,
-        std::vector<common_runtime_resource_ref> resources) {
+        std::vector<common_runtime_resource_ref> resources,
+        std::vector<common_agent_dataset_ref> datasets) {
     agent_tool_result result;
     result.ok = true;
     result.tool_call_id = call.id;
     result.tool_name = call.name;
     result.content_summary = summary;
     result.resource_refs = std::move(resources);
+    result.dataset_refs = std::move(datasets);
     result.content_json = make_agent_tool_text_success_payload_json(
         text,
         result.content_summary,
-        result.resource_refs).dump();
+        result.resource_refs, result.dataset_refs).dump();
     return result;
 }

@@ -55,6 +55,7 @@ public:
         result.structured_content_json = execution.structured_content_json;
         result.text_content = execution.text_content;
         result.resource_refs = execution.resource_refs;
+        result.dataset_refs = execution.dataset_refs;
         result.failure_code = execution.failure_code;
         result.failure_class = execution.failure_class;
         result.retryable = execution.retryable;

@@ -1240,7 +1240,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             observed.plan_id = plan.id;
             observed.expected_version = plan.version;
             observed.reason_summary = "registered tool result";
-            observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0};
+            observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0, execution.dataset_refs};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             if (tool_step_id == "request") executed_request_tool = true; else {
                 executed_step_ids.insert(tool_step_id);

@@ -193,7 +193,7 @@ agent_tool_result normalize_execution_result(
         call,
         execution.output,
         execution.content_summary.empty() ? definition.description : execution.content_summary,
-        execution.resource_refs);
+        execution.resource_refs, execution.dataset_refs);
 }
 
 bool is_mcp_definition_allowed(
@@ -263,14 +263,14 @@ agent_tool_result normalize_mcp_execution_result(
             call,
             execution.structured_content_json,
             execution.text_content,
-            execution.resource_refs);
+            execution.resource_refs, execution.dataset_refs);
     }
 
     return make_agent_tool_text_success_result(
         call,
         execution.text_content,
         execution.text_content,
-        execution.resource_refs);
+        execution.resource_refs, execution.dataset_refs);
 }
 
 class native_agent_tool_view : public agent_tool_view {

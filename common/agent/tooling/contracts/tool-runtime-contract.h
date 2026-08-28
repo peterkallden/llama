@@ -1,6 +1,7 @@
 #pragma once
 
 #include "resource/resource-contract.h"
+#include "agent/dataset-contracts.h"
 
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ struct common_tool_execution_result {
     std::string raw_diagnostic;
     std::string content_summary;
     std::vector<common_runtime_resource_ref> resource_refs;
+    std::vector<common_agent_dataset_ref> dataset_refs;
 
     static common_tool_execution_result success(std::string output) { return {true, std::move(output)}; }
     static common_tool_execution_result success(
