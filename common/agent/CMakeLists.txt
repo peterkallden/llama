@@ -63,6 +63,7 @@ add_library(${TARGET}
     adaptation/learning-observation.cpp adaptation/learning-observation.h
     adaptation/adaptation-observer.h
     adaptation/learning-transaction.cpp adaptation/learning-transaction.h
+    adaptation/training-candidate.cpp adaptation/training-candidate.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
