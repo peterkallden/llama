@@ -24,6 +24,27 @@ same resolved `agent_tool_view` may be projected through the MCP server. The
 host must not create an internal MCP server and route its own OpenAPI calls
 through that transport.
 
+## Eurostat example
+
+Eurostat's public Statistics API is documented with WADL rather than OpenAPI.
+The repository therefore includes a deliberately small OpenAPI adapter and
+configuration in `docs/examples/eurostat-statistics-openapi.json` and
+`docs/examples/agent-host-config-eurostat.json`. The adapter describes the
+stable `/data/{datasetCode}` operation and leaves dataset codes and filters as
+normal tool arguments. It is an adapter for the generic provider, not a claim
+that the upstream WADL is an OpenAPI document.
+
+The live integration smoke is opt-in because it requires external network
+access:
+
+```sh
+./build-agent-packaging/bin/llama-agent-openapi-eurostat-live-smoke
+```
+
+It requests `DEMO_R_D3DENS` with `geo=SE` and `time=2020` and verifies the
+JSON-stat 2.0 dataset response. The live smoke is not registered as a default
+CTest so ordinary CI remains deterministic.
+
 ## Configuration
 
 Host configuration is JSON. OpenAPI entries use the existing

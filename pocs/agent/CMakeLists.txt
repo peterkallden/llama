@@ -816,6 +816,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# This target intentionally is not registered as a default CTest: it calls
+# the public Eurostat service and is therefore opt-in for live integration.
+set(TARGET llama-agent-openapi-eurostat-live-smoke)
+add_executable(${TARGET}
+    smoke/openapi/agent-openapi-eurostat-live-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
@@ -1726,7 +1739,9 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-jsonl-tcp.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-jsonl-unix.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-remote-http.json
-        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-stdio.json)
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-stdio.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-eurostat.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${AGENT_HOST_CONFIG_EXAMPLES}
