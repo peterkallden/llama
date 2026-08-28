@@ -285,6 +285,18 @@ std::string render_planner_binding_repair_context(
     std::string repair = " The previous plan failed host binding validation with '" + parse_error + "'. "
         "Repair the complete plan now. A resource handle is not a dataset binding: do not use "
         "expressions such as $datasets.datasets[] for an attached file. ";
+    if (!request.available_datasets.empty()) {
+        repair += "Host dataset choices for this scoped turn are: ";
+        for (size_t index = 0; index < request.available_datasets.size(); ++index) {
+            if (index != 0) repair += ", ";
+            repair += "d" + std::to_string(index + 1);
+            if (!request.available_datasets[index].ref.name.empty()) {
+                repair += " (" + request.available_datasets[index].ref.name + ")";
+            }
+        }
+        repair += ". Use dataset.select(name=<exact name>) or the host snapshot "
+            "$datasets.datasets[index].dataset; do not invent a datasets alias. ";
+    }
     if (request.input_resources.empty()) {
         return repair +
             "There are no current attached resources to choose from. Do not invent a resource "
@@ -514,6 +526,7 @@ public:
                 make_memory_context_config(generation_config.context_budgets),
                 make_overlay_config(generation_config.context_budgets));
         std::string parse_error;
+        std::vector<std::string> planner_attempt_errors;
         bool parsed = false;
         auto generate_plan = [&](bool regeneration) {
             common_chat_msg attempt = user;
@@ -566,6 +579,7 @@ public:
                         parse_error = "required tool execution plan must contain at least one registered tool step";
                     }
                 }
+                if (!parsed && !parse_error.empty()) planner_attempt_errors.push_back(parse_error);
                 if (parsed) {
                     proposal.plan = std::move(candidate_plan);
                     proposal.operations = std::move(candidate_operations);
@@ -607,6 +621,16 @@ public:
             return proposal;
         }
 
+        const std::string final_planner_error = planner_attempt_errors.empty()
+            ? parse_error
+            : planner_attempt_errors.back();
+        if (request.require_tool_execution) {
+            error = "planner failed after bounded regeneration: " + final_planner_error;
+            for (size_t index = 0; index + 1 < planner_attempt_errors.size(); ++index) {
+                error += " [attempt " + std::to_string(index + 1) + ": " + planner_attempt_errors[index] + "]";
+            }
+            return proposal;
+        }
         proposal.plan.goal = request.prompt;
         proposal.plan.success_criteria = "Provide a grounded, concise response.";
         proposal.plan.next_action = "draft answer";
@@ -618,7 +642,7 @@ public:
         proposal.plan.steps.push_back(std::move(step));
         proposal.plan.active_step_id = "answer";
         const auto preview = generation_result.content.substr(0, 768);
-        fprintf(stderr, "warning: planner JSON rejected; using bounded fallback plan (%s): %s\n", parse_error.c_str(), preview.c_str());
+        fprintf(stderr, "warning: planner JSON rejected; using bounded fallback plan (%s): %s\n", final_planner_error.c_str(), preview.c_str());
         error.clear();
         return proposal;
     }

@@ -620,6 +620,38 @@ static void test_planner_resolves_host_dataset_inventory() {
     assert(second_arguments.value("dataset", "") == "dataset://local/customers");
 }
 
+static void test_required_planner_failure_preserves_diagnostics() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Inspect the file","steps":[{"tool":"missing.tool","mode":"tool","args":{}}]})"),
+        make_success(R"({"goal":"Inspect the file","steps":[{"tool":"missing.tool","mode":"tool","args":{}}]})"),
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Tell me what the attached CSV contains";
+    request.require_tool_execution = true;
+    common_agent_input_resource resource;
+    resource.resource.name = "data.csv";
+    resource.resource.mime_type = "text/csv";
+    resource.resource.uri = "agent-resource://resource/data.csv";
+    request.input_resources.push_back(std::move(resource));
+    const std::vector<common_chat_tool> tools = {
+        {"dataset.sample", "Sample rows from an attached dataset.",
+            R"({"type":"object","additionalProperties":false,"properties":{"resource":{"type":"string"}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(proposal.operations.empty());
+    assert(error.find("planner failed after bounded regeneration") != std::string::npos);
+    assert(error.find("attempt 1") != std::string::npos);
+    assert(error.find("missing.tool") != std::string::npos);
+    assert(inference.seen.size() == 2);
+    assert(inference.seen[1].messages[1].content.find("current attachment choices are: r1") != std::string::npos);
+}
+
 static void test_reflection_regenerates_invalid_json() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2172,6 +2204,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
         test_planner_resolves_host_dataset_inventory();
+    } else if (name == "planner-required-failure-diagnostics") {
+        test_required_planner_failure_preserves_diagnostics();
     } else if (name == "reflection-regeneration") {
         test_reflection_regenerates_invalid_json();
     } else if (name == "memory-regeneration") {
@@ -2243,6 +2277,7 @@ int main(int argc, char ** argv) {
         "planner-regeneration",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
+        "planner-required-failure-diagnostics",
         "reflection-regeneration",
         "memory-regeneration",
         "selection-metadata",
