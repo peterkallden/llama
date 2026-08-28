@@ -2,8 +2,9 @@
 
 ## Status
 
-Design and implementation plan. No training corpus, trainer integration,
-adapter registry, model catalog, or automatic adapter activation exists yet.
+Design and implementation plan. Corpus contracts exist, but no external
+trainer integration, adapter registry, model catalog, or automatic adapter
+activation exists yet.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -12,6 +13,26 @@ is demonstrably more appropriate than memory, a procedure, or a blueprint.
 
 The preferred name is **model adaptation**. The host owns every promotion and
 activation decision.
+
+### Current implementation status
+
+The local branch currently contains the first contract slices:
+
+- host-owned learning observations with signal, scope, verification, and
+  idempotency fields;
+- an optional runtime observer seam that is invoked for qualifying signals,
+  including failed turns, without affecting the user-facing result;
+- append-only in-memory and JSONL transaction stores with duplicate suppression;
+- destination qualification and a bounded training-candidate contract;
+- a deterministic JSONL corpus builder requiring explicitly approved
+  candidates.
+
+The observation identity hash and corpus bundle hash are currently stable
+non-cryptographic identity hashes used for local deduplication and test
+reproducibility. Resource and artifact integrity must continue to use the
+existing SHA-256 stores. Scope-aware bootstrap configuration, redaction and
+revocation propagation, semantic replay, trainer jobs, adapter import, and
+model activation remain later sweeps.
 
 ## Review conclusion and recommended adjustments
 
