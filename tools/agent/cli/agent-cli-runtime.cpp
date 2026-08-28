@@ -267,6 +267,39 @@ bool normalize_host_dataset_references(
     return true;
 }
 
+bool json_references_dataset_alias(const json & value, const std::string & alias) {
+    if (value.is_string()) {
+        const auto supplied = value.get<std::string>();
+        const auto prefix = "$" + alias;
+        return supplied == prefix || supplied.rfind(prefix + ".", 0) == 0;
+    }
+    if (value.is_array()) {
+        return std::any_of(value.begin(), value.end(), [&alias](const json & item) {
+            return json_references_dataset_alias(item, alias);
+        });
+    }
+    if (value.is_object()) {
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            if (json_references_dataset_alias(it.value(), alias)) return true;
+        }
+    }
+    return false;
+}
+
+std::string planner_dataset_uri_component(const std::string & value) {
+    std::string component;
+    for (const unsigned char character : value) {
+        if (std::isalnum(character) || character == '-' || character == '_') component += static_cast<char>(character);
+        else component += '-';
+    }
+    return component.empty() ? "turn" : component;
+}
+
+bool is_materializable_data_tool(const std::string & tool) {
+    return tool == "data.query" || tool == "data.filter" || tool == "data.aggregate" ||
+        tool == "data.join" || tool == "data.transform";
+}
+
 bool normalize_planner_host_dataset_references(
         const common_agent_request & request,
         const std::string & content,
@@ -309,6 +342,35 @@ bool normalize_planner_host_dataset_references(
                 if (alias.empty()) continue;
                 if (!normalize_host_dataset_references(document["steps"][index], request, alias, {}, changed, error)) return false;
                 prior_aliases.push_back(alias);
+            }
+
+            // A dataset-producing data step must materialize its bounded rows
+            // when a later step consumes its dataset output. The model should
+            // not have to invent a result URI; this is a host-owned plan
+            // detail and remains stable across bounded regeneration.
+            for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
+                const auto & source_step = original["steps"][index];
+                if (!source_step.is_object() || !source_step.contains("as") || !source_step["as"].is_string() ||
+                        !source_step.contains("tool") || !source_step["tool"].is_string() ||
+                        !is_materializable_data_tool(source_step["tool"].get<std::string>())) continue;
+                const auto alias = source_step["as"].get<std::string>();
+                if (alias.empty() || !document["steps"][index].is_object() ||
+                        !document["steps"][index].contains("args") || !document["steps"][index]["args"].is_object()) continue;
+                bool consumed_as_dataset = false;
+                for (size_t later = index + 1; later < document["steps"].size() && !consumed_as_dataset; ++later) {
+                    const auto & later_step = document["steps"][later];
+                    if (!later_step.is_object() || !later_step.contains("args")) continue;
+                    consumed_as_dataset = json_references_dataset_alias(later_step["args"], alias);
+                }
+                if (!consumed_as_dataset) continue;
+                auto & arguments = document["steps"][index]["args"];
+                arguments["materialize"] = true;
+                if (!arguments.contains("result_dataset") || !arguments["result_dataset"].is_string() ||
+                        arguments["result_dataset"].get<std::string>().empty()) {
+                    arguments["result_dataset"] = "dataset://agent/turn/" +
+                        planner_dataset_uri_component(request.turn_id) + "/step-" + std::to_string(index + 1);
+                }
+                changed = true;
             }
         }
     }
