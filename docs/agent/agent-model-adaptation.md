@@ -528,6 +528,22 @@ candidate adapter
 
 Automatic promotion to active is out of scope for the first implementation.
 
+## Verification snapshot
+
+The adaptation contract tests currently pass as a focused group: observation,
+runtime observer, transaction store, candidate qualification, corpus builder,
+trainer protocol, and adapter registry. The local Qwen 1.5B plus nomic
+embedding baseline smoke also passes on CPU with three threads.
+
+The larger data and document Qwen smokes remain useful regression probes but
+are not adaptation failures. They currently expose an existing compact-model
+binding seam: Qwen sometimes emits an extra `mode` field for `data.query`, or
+emits a direct `document.tables(...)` call instead of the required family
+selection wrapper. Host validation correctly rejects these calls and defers
+the final answer. The next repair belongs to the model-facing tool binding
+path; adaptation must record such a failed/repaired turn, but must not silently
+train on it until the contract defect is classified and verified.
+
 ## Implementation plan and sweep gates
 
 Each sweep ends with a local commit and contract tests. A sweep is complete
