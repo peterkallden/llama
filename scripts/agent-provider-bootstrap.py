@@ -9,11 +9,16 @@ import urllib.error
 import urllib.request
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, msg, headers, newurl):
+        return None
+
+
 def fetch_openapi(base_url, spec_output):
     base = base_url.rstrip("/")
     candidates = ("/openapi.json", "/swagger.json", "/api-docs")
     opener = urllib.request.build_opener(
-        urllib.request.HTTPRedirectHandler())
+        NoRedirect())
     for suffix in candidates:
         url = base + suffix
         try:

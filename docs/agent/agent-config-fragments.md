@@ -75,7 +75,7 @@ scripts/agent-provider-bootstrap.sh \
 Om `--spec` utelämnas försöker helpern i ordning `/openapi.json`,
 `/swagger.json` och `/api-docs`, sparar det första giltiga JSON-dokumentet med
 `--spec-output` (eller `<id>-openapi.json`) och skriver den upptäckta adressen
-till stderr. Discovery följer inte redirects genom hostens konfiguration.
+till stderr. Discovery följer aldrig redirects.
 
 Ett HTTP-MCP-fragment skapas exempelvis så här:
 
