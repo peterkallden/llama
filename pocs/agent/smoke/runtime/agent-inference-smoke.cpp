@@ -620,6 +620,42 @@ static void test_planner_resolves_host_dataset_inventory() {
     assert(second_arguments.value("dataset", "") == "dataset://local/customers");
 }
 
+static void test_planner_resolves_compact_dataset_handles() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Analyze datasets","steps":[
+            {"tool":"data.join","args":{"left":"d1","right":"d2","on":[{"left":"customer_id","right":"customer_id"}]},"as":"joined","mode":"tool"},
+            {"tool":"data.aggregate","args":{"dataset":"joined","measures":[{"function":"sum","column":"amount"}]},"as":"aggregated","mode":"tool"}
+        ]})")
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.require_tool_execution = true;
+    common_agent_dataset_descriptor orders;
+    orders.ref.name = "orders";
+    orders.ref.uri = "dataset://seed/orders";
+    common_agent_dataset_descriptor customers;
+    customers.ref.name = "customers";
+    customers.ref.uri = "dataset://seed/customers";
+    request.available_datasets = {orders, customers};
+    const std::vector<common_chat_tool> tools = {
+        {"data.join", "Join datasets.", R"({"type":"object","properties":{"left":{"type":"string"},"right":{"type":"string"}}})"},
+        {"data.aggregate", "Aggregate a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string"},"measures":{"type":"array"}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 2);
+    const auto join_arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
+    const auto aggregate_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
+    assert(join_arguments.value("left", "") == "dataset://seed/orders");
+    assert(join_arguments.value("right", "") == "dataset://seed/customers");
+    assert(aggregate_arguments.value("dataset", "") == "dataset://seed/orders");
+}
+
 static void test_required_planner_failure_preserves_diagnostics() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2211,6 +2247,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
         test_planner_resolves_host_dataset_inventory();
+    } else if (name == "planner-compact-dataset-handles") {
+        test_planner_resolves_compact_dataset_handles();
     } else if (name == "planner-required-failure-diagnostics") {
         test_required_planner_failure_preserves_diagnostics();
     } else if (name == "reflection-regeneration") {
@@ -2284,6 +2322,7 @@ int main(int argc, char ** argv) {
         "planner-regeneration",
         "planner-resource-binding-repair",
         "planner-host-dataset-inventory",
+        "planner-compact-dataset-handles",
         "planner-required-failure-diagnostics",
         "reflection-regeneration",
         "memory-regeneration",

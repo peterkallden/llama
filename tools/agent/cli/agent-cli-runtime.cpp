@@ -177,6 +177,30 @@ bool resolve_host_dataset_reference(
         return !resolved.empty();
     }
 
+    if (value.size() >= 2 && value.front() == 'd' &&
+            std::all_of(value.begin() + 1, value.end(), [](const char character) {
+                return std::isdigit(static_cast<unsigned char>(character));
+            })) {
+        size_t index = 0;
+        try { index = static_cast<size_t>(std::stoull(value.substr(1))); }
+        catch (...) {
+            error = "plan.binding.invalid_syntax: compact host dataset handle is out of range";
+            return false;
+        }
+        if (index == 0 || index > request.available_datasets.size()) {
+            error = "plan.binding.unknown_dataset: compact host dataset handle is unavailable; Choose one of:";
+            for (size_t candidate = 0; candidate < request.available_datasets.size(); ++candidate) {
+                error += " d" + std::to_string(candidate + 1);
+                if (!request.available_datasets[candidate].ref.name.empty()) {
+                    error += " (" + request.available_datasets[candidate].ref.name + ")";
+                }
+            }
+            return false;
+        }
+        resolved = request.available_datasets[index - 1].ref.uri;
+        return !resolved.empty();
+    }
+
     const std::string self_prefix = "$" + current_step_alias + ".dataset";
     if (!current_step_alias.empty() && value == self_prefix) {
         bool ambiguous = false;
@@ -265,11 +289,26 @@ bool normalize_planner_host_dataset_references(
         // later dataflow aliases are not confused with catalog names.
         auto original = json::parse(content, nullptr, false);
         if (original.is_object() && original.contains("steps") && original["steps"].is_array()) {
+            std::vector<std::string> prior_aliases;
             for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
                 const auto & source_step = original["steps"][index];
                 const std::string alias = source_step.is_object() ? source_step.value("as", std::string()) : std::string();
+                if (document["steps"][index].is_object() && document["steps"][index].contains("args") &&
+                        document["steps"][index]["args"].is_object()) {
+                    auto & arguments = document["steps"][index]["args"];
+                    for (const char * field : {"dataset", "left", "right"}) {
+                        if (!arguments.contains(field) || !arguments[field].is_string()) continue;
+                        const auto supplied = arguments[field].get<std::string>();
+                        if (supplied.empty() || supplied.front() == '$' || supplied.find("://") != std::string::npos) continue;
+                        if (std::find(prior_aliases.begin(), prior_aliases.end(), supplied) != prior_aliases.end()) {
+                            arguments[field] = "$" + supplied + ".dataset";
+                            changed = true;
+                        }
+                    }
+                }
                 if (alias.empty()) continue;
                 if (!normalize_host_dataset_references(document["steps"][index], request, alias, {}, changed, error)) return false;
+                prior_aliases.push_back(alias);
             }
         }
     }
