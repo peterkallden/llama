@@ -119,6 +119,164 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
     return names.empty() ? "none" : names;
 }
 
+const common_agent_dataset_descriptor * find_unique_inventory_dataset(
+        const common_agent_request & request,
+        const std::string & name,
+        bool & ambiguous) {
+    ambiguous = false;
+    const common_agent_dataset_descriptor * match = nullptr;
+    for (const auto & dataset : request.available_datasets) {
+        if (dataset.ref.name != name) continue;
+        if (match != nullptr) {
+            ambiguous = true;
+            return nullptr;
+        }
+        match = &dataset;
+    }
+    return match;
+}
+
+bool resolve_host_dataset_reference(
+        const common_agent_request & request,
+        const std::string & value,
+        const std::string & current_step_alias,
+        std::string & resolved,
+        std::string & error) {
+    const std::string prefix = "$datasets.datasets[";
+    if (value.rfind(prefix, 0) == 0) {
+        const auto close = value.find(']', prefix.size());
+        if (close == std::string::npos ||
+                (value.size() != close + 1 && value.substr(close + 1) != ".dataset")) {
+            error = "plan.binding.invalid_syntax: host dataset inventory reference must be '$datasets.datasets[index]'";
+            return false;
+        }
+        const auto index_text = value.substr(prefix.size(), close - prefix.size());
+        if (index_text.empty() || !std::all_of(index_text.begin(), index_text.end(), [](const char character) {
+                return std::isdigit(static_cast<unsigned char>(character));
+            })) {
+            error = "plan.binding.invalid_syntax: host dataset inventory index must be numeric";
+            return false;
+        }
+        size_t index = 0;
+        try { index = static_cast<size_t>(std::stoull(index_text)); }
+        catch (...) {
+            error = "plan.binding.invalid_syntax: host dataset inventory index is out of range";
+            return false;
+        }
+        if (index >= request.available_datasets.size()) {
+            error = "plan.binding.unknown_dataset: host dataset inventory index is out of range; Choose one of:";
+            for (size_t candidate = 0; candidate < request.available_datasets.size(); ++candidate) {
+                error += " d" + std::to_string(candidate + 1);
+                if (!request.available_datasets[candidate].ref.name.empty()) {
+                    error += " (" + request.available_datasets[candidate].ref.name + ")";
+                }
+            }
+            return false;
+        }
+        resolved = request.available_datasets[index].ref.uri;
+        return !resolved.empty();
+    }
+
+    const std::string self_prefix = "$" + current_step_alias + ".dataset";
+    if (!current_step_alias.empty() && value == self_prefix) {
+        bool ambiguous = false;
+        const auto * dataset = find_unique_inventory_dataset(request, current_step_alias, ambiguous);
+        if (dataset != nullptr && !dataset->ref.uri.empty()) {
+            resolved = dataset->ref.uri;
+            return true;
+        }
+        if (ambiguous) {
+            error = "plan.binding.ambiguous_dataset: dataset name '" + current_step_alias + "' is ambiguous; Choose one of:";
+            for (const auto & candidate : request.available_datasets) {
+                if (candidate.ref.name == current_step_alias) {
+                    error += " " + candidate.ref.name + " (" + candidate.ref.uri + ")";
+                }
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+bool normalize_host_dataset_references(
+        json & value,
+        const common_agent_request & request,
+        const std::string & current_step_alias,
+        const std::string & field_name,
+        bool & changed,
+        std::string & error) {
+    if (value.is_string()) {
+        const auto supplied = value.get<std::string>();
+        std::string resolved;
+        if (resolve_host_dataset_reference(request, supplied, current_step_alias, resolved, error)) {
+            value = resolved;
+            changed = true;
+            return true;
+        }
+        if (!error.empty()) return false;
+        if (field_name == "dataset" && supplied.find("://") == std::string::npos) {
+            bool ambiguous = false;
+            const auto * dataset = find_unique_inventory_dataset(request, supplied, ambiguous);
+            if (dataset != nullptr && !dataset->ref.uri.empty()) {
+                value = dataset->ref.uri;
+                changed = true;
+            } else if (ambiguous) {
+                error = "plan.binding.ambiguous_dataset: dataset name '" + supplied + "' is ambiguous; Choose one of:";
+                for (const auto & candidate : request.available_datasets) {
+                    if (candidate.ref.name == supplied) error += " " + candidate.ref.name + " (" + candidate.ref.uri + ")";
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+    if (value.is_array()) {
+        for (auto & item : value) {
+            if (!normalize_host_dataset_references(item, request, current_step_alias, {}, changed, error)) return false;
+        }
+        return true;
+    }
+    if (!value.is_object()) return true;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        if (!normalize_host_dataset_references(it.value(), request, current_step_alias, it.key(), changed, error)) return false;
+    }
+    return true;
+}
+
+bool normalize_planner_host_dataset_references(
+        const common_agent_request & request,
+        const std::string & content,
+        std::string & normalized,
+        std::string & error) {
+    if (request.available_datasets.empty()) {
+        normalized = content;
+        return true;
+    }
+    auto document = json::parse(content, nullptr, false);
+    if (document.is_discarded()) {
+        normalized = content;
+        return true;
+    }
+    bool changed = false;
+    if (!normalize_host_dataset_references(document, request, {}, {}, changed, error)) return false;
+    if (document.is_object() && document.contains("steps") && document["steps"].is_array()) {
+        // Re-run self-alias resolution with the alias declared by each step;
+        // this is intentionally separate from generic recursive resolution so
+        // later dataflow aliases are not confused with catalog names.
+        auto original = json::parse(content, nullptr, false);
+        if (original.is_object() && original.contains("steps") && original["steps"].is_array()) {
+            for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
+                const auto & source_step = original["steps"][index];
+                const std::string alias = source_step.is_object() ? source_step.value("as", std::string()) : std::string();
+                if (alias.empty()) continue;
+                if (!normalize_host_dataset_references(document["steps"][index], request, alias, {}, changed, error)) return false;
+            }
+        }
+    }
+    normalized = changed ? document.dump() : content;
+    return true;
+}
+
 std::string render_planner_binding_repair_context(
         const common_agent_request & request,
         const std::string & parse_error) {
@@ -387,8 +545,11 @@ public:
                 // be returned or become input state for the next attempt.
                 common_plan_state candidate_plan = proposal.plan;
                 std::vector<common_plan_operation> candidate_operations;
-                parsed = common_plan_parse_proposal_json(
-                    candidate.content, candidate_plan, candidate_operations, parse_error, 6);
+                std::string normalized_candidate;
+                parsed = normalize_planner_host_dataset_references(
+                    request, candidate.content, normalized_candidate, parse_error) &&
+                    common_plan_parse_proposal_json(
+                        normalized_candidate, candidate_plan, candidate_operations, parse_error, 6);
                 if (parsed && request.require_tool_execution) {
                     const bool has_allowed_tool_step = std::any_of(
                         candidate_operations.begin(),

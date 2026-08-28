@@ -581,6 +581,45 @@ static void test_planner_repairs_invalid_resource_binding() {
     assert(repair_prompt.find("resource:'r1'") != std::string::npos);
 }
 
+static void test_planner_resolves_host_dataset_inventory() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Join registered datasets","steps":[
+            {"tool":"data.query","mode":"tool","args":{"dataset":"$orders.dataset"},"as":"orders"},
+            {"tool":"data.query","mode":"tool","args":{"dataset":"$datasets.datasets[1]"},"as":"customers"},
+            {"tool":"data.join","mode":"tool","args":{"left":"$orders.dataset","right":"$customers.dataset","on":[{"left":"customer_id","right":"customer_id"}]},"as":"joined"}
+        ]})")
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.prompt = "Join the orders and customers datasets";
+    request.require_tool_execution = true;
+    common_agent_dataset_descriptor orders;
+    orders.ref.name = "orders";
+    orders.ref.uri = "dataset://local/orders";
+    common_agent_dataset_descriptor customers;
+    customers.ref.name = "customers";
+    customers.ref.uri = "dataset://local/customers";
+    request.available_datasets = {orders, customers};
+    const std::vector<common_chat_tool> tools = {
+        {"data.query", "Query a dataset.",
+            R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"}}})"},
+        {"data.join", "Join two datasets.",
+            R"({"type":"object","additionalProperties":false,"properties":{"left":{"type":"string"},"right":{"type":"string"},"on":{"type":"array"}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    assert(error.empty());
+    assert(proposal.operations.size() == 3);
+    const auto first_arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
+    const auto second_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
+    assert(first_arguments.value("dataset", "") == "dataset://local/orders");
+    assert(second_arguments.value("dataset", "") == "dataset://local/customers");
+}
+
 static void test_reflection_regenerates_invalid_json() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2131,6 +2170,8 @@ static bool run_named_test(const std::string & name) {
         test_planner_regenerates_truncated_json();
     } else if (name == "planner-resource-binding-repair") {
         test_planner_repairs_invalid_resource_binding();
+    } else if (name == "planner-host-dataset-inventory") {
+        test_planner_resolves_host_dataset_inventory();
     } else if (name == "reflection-regeneration") {
         test_reflection_regenerates_invalid_json();
     } else if (name == "memory-regeneration") {
@@ -2201,6 +2242,7 @@ int main(int argc, char ** argv) {
         "runtime-metadata",
         "planner-regeneration",
         "planner-resource-binding-repair",
+        "planner-host-dataset-inventory",
         "reflection-regeneration",
         "memory-regeneration",
         "selection-metadata",
