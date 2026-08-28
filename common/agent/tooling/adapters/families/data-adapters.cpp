@@ -125,6 +125,23 @@ bool is_current_turn_derived_dataset(
         dataset_scope_component(runtime.turn_id);
 }
 
+bool repository_source_is_available(
+        const common_native_tool_bindings & bindings,
+        const common_agent_dataset_descriptor & descriptor) {
+    if (bindings.repository_root.empty() || descriptor.ref.source_representation.empty()) return false;
+    const std::filesystem::path source(descriptor.ref.source_representation);
+    if (!source.is_absolute()) return false;
+    std::error_code fs_error;
+    const auto base = std::filesystem::weakly_canonical(bindings.repository_root, fs_error);
+    if (fs_error) return false;
+    const auto requested = std::filesystem::weakly_canonical(source, fs_error);
+    if (fs_error) return false;
+    const auto base_text = base.generic_string();
+    const auto requested_text = requested.generic_string();
+    return (requested_text == base_text || requested_text.rfind(base_text + "/", 0) == 0) &&
+        std::filesystem::is_regular_file(requested, fs_error) && !fs_error;
+}
+
 common_tool_execution_result execute_data_backend(
         const common_native_tool_bindings & bindings,
         const std::string & operation, const std::string & input) {
@@ -161,9 +178,11 @@ common_tool_execution_result execute_data_backend(
                 bindings.resource_runtime, std::time(nullptr));
             if (!bindings.resource_runtime.store->stat(
                     descriptor.ref.source_resource_uri, authority, source, lookup_error)) {
-                return common_adapter_not_found_failure(
-                    "tool.dataset.out_of_scope", std::move(lookup_error),
-                    "The dataset source is unavailable in the current host scope.");
+                if (!repository_source_is_available(bindings, descriptor)) {
+                    return common_adapter_not_found_failure(
+                        "tool.dataset.out_of_scope", std::move(lookup_error),
+                        "The dataset source is unavailable in the current host scope.");
+                }
             }
         }
     }

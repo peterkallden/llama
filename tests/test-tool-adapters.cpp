@@ -255,6 +255,7 @@ int main() {
     };
     foundation_bindings.resource_runtime.namespace_id = "test";
     foundation_bindings.resource_runtime.session_id = "session-1";
+    foundation_bindings.resource_runtime.turn_id = "turn-1";
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
     result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
     assert(result.ok && result.output.find("content_hash") != std::string::npos);
@@ -325,6 +326,15 @@ int main() {
     assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    const auto saved_descriptor = foundation_data.stored_descriptor;
+    foundation_data.stored_descriptor.origin.kind = "derived";
+    foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-1/step-1";
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-1/step-1"})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-2/step-1";
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-2/step-1"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.out_of_scope");
+    foundation_data.stored_descriptor = saved_descriptor;
     result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});
     assert(result.ok && foundation_data.last_operation == "data.query");
     result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","where":{"status":"failed"}})"});
