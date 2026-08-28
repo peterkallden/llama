@@ -1,13 +1,14 @@
 #include "agent-data-store-sqlite.h"
 
 #include <filesystem>
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
 
 #define TEST_ASSERT(expr) do { \
     const bool test_result = static_cast<bool>(expr); \
-    if (!test_result) return 1; \
+    if (!test_result) { std::cerr << "failed: " << #expr << " error=" << error << '\\n'; return 1; } \
 } while (false)
 
 int main() {
@@ -26,6 +27,7 @@ int main() {
     descriptor.ref.retrieved_at = 123;
     descriptor.ref.content_hash = "sha256:abc";
     descriptor.origin.header_mode = common_agent_table_header_mode::explicit_;
+    descriptor.import_processor_id = "openapi-json-array";
     descriptor.columns.push_back({"amount", common_agent_dataset_column_type::integer, false});
     descriptor.ref.column_count = 1;
 

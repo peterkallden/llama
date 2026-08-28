@@ -385,12 +385,10 @@ The failures were observed in release workflow runs `33041796523`,
 release branches; this documentation entry is intentionally local and has
 not been committed or pushed in this work session. The current release rerun
 is `33068725061`.
-## SQLite dataset provenance smoke requires SQLite development headers
+## SQLite dataset provenance smoke build prerequisite
 
-The release-like build profile can compile the common dataset-ref codec without
-SQLite, but the SQLite datastore smoke requires both the SQLite library and
-the development header `sqlite3.h`. An environment with only the runtime
-library cannot configure `LLAMA_AGENT_STORAGE_SQLITE=ON`, so the provenance
-round-trip smoke must be run in the CI/storage image or another environment
-with SQLite development packages installed. This is an environment gap, not a
-reason to weaken the test or silently disable it.
+The SQLite datastore smoke is an optional storage-profile test. A build with
+`LLAMA_AGENT_STORAGE_SQLITE=ON` requires the SQLite development package
+`libsqlite3-dev`, which supplies both the library and `sqlite3.h`. Runtime-only
+profiles intentionally keep SQLite disabled. This is a build prerequisite, not
+a runtime defect and not a reason to weaken or silently disable the smoke.
