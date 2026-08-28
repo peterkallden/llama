@@ -276,6 +276,12 @@ resource-only lookup fails with candidates rather than becoming a filesystem
 path. CSV materialization continues through the
 existing host-owned `dataset_from_resource` callback.
 
+All structured-data inputs use the same scope rule. This includes the single
+`dataset` input used by query, aggregate and statistics operations and both
+`left` and `right` inputs used by joins. Descriptor inspection, selection and
+listing apply the same rule, so a handle shown by discovery is also usable by
+the next authorized data operation.
+
 `llama-agent-research-runtime-smoke` covers two gaps, tool execution,
 source/evidence creation, provenance, answer verification and cancellation
 without network access. The common runtime emits structured research events

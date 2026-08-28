@@ -327,6 +327,14 @@ int main() {
     result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
     const auto saved_descriptor = foundation_data.stored_descriptor;
+    common_tool_catalog data_catalog;
+    common_tool_bootstrap_result data_bootstrap;
+    if (!data_catalog.bootstrap("analysis", data_bootstrap, error)) return 1;
+    common_tool_registry data_registry;
+    common_tool_adapter_result data_adapters;
+    if (!common_register_native_tool_adapters(
+            data_catalog, "analysis", foundation_bindings, data_registry,
+            data_adapters, error) || !data_registry.contains("data.join")) return 1;
     foundation_data.stored_descriptor.origin.kind = "derived";
     foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-1/step-1";
     result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-1/step-1"})"});
@@ -334,6 +342,13 @@ int main() {
     foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-2/step-1";
     result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-2/step-1"})"});
     assert(!result.ok && result.failure_code == "tool.dataset.out_of_scope");
+    result = data_registry.execute({"data.join", R"({"left":"dataset://agent/turn/turn-2/step-1","right":"dataset://agent/turn/turn-2/step-1","on":[{"left":"id","right":"id"}]})"});
+    if (result.ok || result.failure_code != "tool.dataset.out_of_scope") return 1;
+    foundation_data.stored_descriptor = saved_descriptor;
+    foundation_data.stored_descriptor.ref.source_representation =
+        (repository / "datasets" / "sample.csv").string();
+    result = data_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":[{"left":"name","right":"name"}]})"});
+    if (!result.ok || foundation_data.last_operation != "data.join") return 1;
     foundation_data.stored_descriptor = saved_descriptor;
     result = foundation_registry.execute({"data.query", R"({"dataset":"tool-events","limit":10})"});
     assert(result.ok && foundation_data.last_operation == "data.query");

@@ -146,6 +146,14 @@ not create duplicate resource-store entries. Repository-backed sources are
 therefore checked against that root; turn-scoped resource-backed datasets still
 use the normal resource authority and fail outside their turn.
 
+The adapter now applies one shared dataset-scope helper to every structured-data
+input, including both sides of a join, and to descriptor inspection, selection
+and listing. A descriptor is accepted only when its source is readable through
+the active resource authority, is a current-turn derived dataset, or is a
+repository-backed file below the configured repository root. Listing therefore
+does not advertise descriptors that a subsequent operation would be unable to
+use.
+
 Small models also emitted a single join condition as an object, `where: true`
 for an unfiltered query, or copied a family description after the family ID.
 The host accepts only these unambiguous canonicalizations: one `{left,right}`
