@@ -189,6 +189,19 @@ agent_tool_result normalize_execution_result(
             "tool result bytes exceeded configured limit");
     }
 
+    for (const auto & dataset : execution.dataset_refs) {
+        std::string dataset_error;
+        if (!validate_common_agent_dataset_ref(dataset, dataset_error)) {
+            return make_failure_result(
+                call,
+                "tool_dataset_ref_invalid",
+                common_tool_failure_class::validation,
+                false,
+                "The native tool returned an invalid dataset reference.",
+                dataset_error);
+        }
+    }
+
     return make_agent_tool_json_success_result(
         call,
         execution.output,
@@ -256,6 +269,19 @@ agent_tool_result normalize_mcp_execution_result(
             false,
             "The MCP tool result exceeded the configured result limit.",
             "MCP tool result bytes exceeded configured limit");
+        }
+
+    for (const auto & dataset : execution.dataset_refs) {
+        std::string dataset_error;
+        if (!validate_common_agent_dataset_ref(dataset, dataset_error)) {
+            return make_failure_result(
+                call,
+                "tool_dataset_ref_invalid",
+                common_tool_failure_class::validation,
+                false,
+                "The MCP tool returned an invalid dataset reference.",
+                dataset_error);
+        }
     }
 
     if (!execution.structured_content_json.empty()) {

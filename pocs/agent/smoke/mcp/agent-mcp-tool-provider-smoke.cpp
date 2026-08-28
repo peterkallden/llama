@@ -69,6 +69,9 @@ public:
             dataset.column_count = 1;
             dataset.source_resource_uri = "agent-resource://mcp/github/issues";
             dataset.source_representation = "mcp:json";
+            if (arguments_json.find("invalid") != std::string::npos) {
+                dataset.source_resource_uri.clear();
+            }
             result.dataset_refs = {std::move(dataset)};
             error.clear();
             return true;
@@ -129,6 +132,17 @@ int main() {
     }
     if (client.last_arguments != R"({"query":"resident inference"})") {
         std::fprintf(stderr, "MCP provider did not execute normalized arguments: %s\n", client.last_arguments.c_str());
+        return 1;
+    }
+    const auto invalid_dataset_result = read_only_view->call({
+        "call-invalid-dataset",
+        "github_search_issues",
+        R"({"query":"invalid"})",
+    }, error);
+    if (invalid_dataset_result.ok ||
+            invalid_dataset_result.failure_code != "tool_dataset_ref_invalid" ||
+            invalid_dataset_result.failure_class != common_tool_failure_class::validation) {
+        std::fprintf(stderr, "invalid MCP dataset reference was not rejected\n");
         return 1;
     }
 
