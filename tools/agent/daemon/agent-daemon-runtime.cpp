@@ -238,16 +238,14 @@ agent_host_tool_selection_request make_daemon_tool_request(
     tool_request.tool_context.allow_network =
         has_enabled_mcp_provider(options.mcp_providers) ||
         !options.mcp_tool_command.empty();
-    tool_request.tool_context.allow_policy_gated_writes = false;
+    bool policy_gated_writes = false;
     if (allow_policy_gated_writes.has_value()) {
-        tool_request.tool_context.allow_policy_gated_writes = *allow_policy_gated_writes;
+        policy_gated_writes = *allow_policy_gated_writes;
     } else if (request.allow_policy_gated_writes.has_value()) {
-        tool_request.tool_context.allow_policy_gated_writes = *request.allow_policy_gated_writes;
+        policy_gated_writes = *request.allow_policy_gated_writes;
     }
-    tool_request.tool_context.allow_memory_proposals =
-        tool_request.tool_context.allow_policy_gated_writes;
-    tool_request.tool_context.allow_plan_proposals =
-        tool_request.tool_context.allow_policy_gated_writes;
+    agent_tool_context_apply_policy_gated_writes(
+        tool_request.tool_context, policy_gated_writes);
     tool_request.tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
     tool_request.tool_context.execution_control = request.execution_control;
     tool_request.tool_context.default_timeout_ms =

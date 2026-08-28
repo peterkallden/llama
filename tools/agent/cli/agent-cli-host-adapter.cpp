@@ -66,9 +66,7 @@ agent_tool_context make_agent_cli_tool_context(
     tool_context.profile_id = options.tool_profile;
     tool_context.repository_root = repository_root;
     tool_context.allow_network = !options.mcp_tool_command.empty();
-    tool_context.allow_policy_gated_writes = false;
-    tool_context.allow_memory_proposals = tool_context.allow_policy_gated_writes;
-    tool_context.allow_plan_proposals = tool_context.allow_policy_gated_writes;
+    agent_tool_context_apply_policy_gated_writes(tool_context, false);
     tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
     tool_context.default_timeout_ms = options.tool_timeout_ms > 0 ? options.tool_timeout_ms : tool_context.default_timeout_ms;
     tool_context.execution_control = make_common_agent_runtime_execution_control({
@@ -335,9 +333,8 @@ bool resolve_agent_host_tool_selection(
                 resolved_tool_context.allow_network = *resolved_profile->allow_network;
             }
             if (resolved_profile->allow_policy_gated_writes.has_value()) {
-                resolved_tool_context.allow_policy_gated_writes = *resolved_profile->allow_policy_gated_writes;
-                resolved_tool_context.allow_memory_proposals = *resolved_profile->allow_policy_gated_writes;
-                resolved_tool_context.allow_plan_proposals = *resolved_profile->allow_policy_gated_writes;
+                agent_tool_context_apply_policy_gated_writes(
+                    resolved_tool_context, *resolved_profile->allow_policy_gated_writes);
             }
         }
 

@@ -54,6 +54,18 @@ struct agent_tool_context {
     common_agent_runtime_execution_control execution_control;
 };
 
+// Projects the host's single write-policy decision onto the context flags
+// consumed by native tool filtering. Keep this here because it is a tooling
+// contract, not a CLI or daemon default; callers still own how the decision
+// was obtained.
+inline void agent_tool_context_apply_policy_gated_writes(
+        agent_tool_context & context,
+        bool allowed) {
+    context.allow_policy_gated_writes = allowed;
+    context.allow_memory_proposals = allowed;
+    context.allow_plan_proposals = allowed;
+}
+
 class agent_embedding_provider {
 public:
     virtual ~agent_embedding_provider() = default;
