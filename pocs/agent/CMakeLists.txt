@@ -1421,7 +1421,7 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/agent/resource
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-sandbox-local-runtime-smoke)
