@@ -86,6 +86,11 @@ private:
         std::string & result_json,
         std::string & error) const;
 
+    bool load_provenance(
+        const std::string & uri,
+        agent_resource_descriptor & descriptor,
+        std::string & error) const;
+
     int32_t db_id_ = -1;
     uint64_t next_id_ = 1;
 };

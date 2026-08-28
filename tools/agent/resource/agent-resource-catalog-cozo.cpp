@@ -114,6 +114,27 @@ std::string agent_resource_cozo_schema_script() {
     )COZO";
 }
 
+std::string agent_resource_cozo_provenance_schema_script() {
+    return R"COZO(
+        {
+            ?[uri, source_operation, source_request_json, retrieved_at, content_hash] <- [[
+                'agent-resource://schema/provenance', '', '', 0, ''
+            ]]
+            :create agent_resource_provenance {
+                uri: String =>
+                source_operation: String,
+                source_request_json: String,
+                retrieved_at: Int,
+                content_hash: String
+            }
+        }
+        {
+            ?[uri] <- [['agent-resource://schema/provenance']]
+            :delete agent_resource_provenance { uri }
+        }
+    )COZO";
+}
+
 agent_resource_descriptor descriptor_from_row(const json & row) {
     agent_resource_descriptor descriptor;
     descriptor.uri = row.at(0).get<std::string>();
@@ -221,14 +242,19 @@ bool agent_cozo_resource_catalog::open(const std::string & path, std::string & e
     }
 
     bool has_resource = false;
+    bool has_provenance = false;
     for (const auto & row : relations["rows"]) {
         if (row.is_array() && !row.empty() && row[0].is_string() && row[0].get<std::string>() == "agent_resource") {
             has_resource = true;
-            break;
         }
+        if (row.is_array() && !row.empty() && row[0].is_string() && row[0].get<std::string>() == "agent_resource_provenance") has_provenance = true;
     }
 
     if (!has_resource && !run(agent_resource_cozo_schema_script(), "{}", result, error)) {
+        close();
+        return false;
+    }
+    if (!has_provenance && !run(agent_resource_cozo_provenance_schema_script(), "{}", result, error)) {
         close();
         return false;
     }
@@ -315,11 +341,43 @@ bool agent_cozo_resource_catalog::put_descriptor(
         })})},
     };
     std::string result;
-    return run(
+    if (!run(
         "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source }",
         params.dump(),
         result,
+            error)) return false;
+    const json provenance = {{"rows", json::array({json::array({
+        descriptor.uri,
+        descriptor.metadata.source_operation,
+        descriptor.metadata.source_request_json,
+        descriptor.metadata.retrieved_at,
+        descriptor.metadata.content_hash,
+    })})}};
+    return run(
+        "?[uri, source_operation, source_request_json, retrieved_at, content_hash] <- $rows :put agent_resource_provenance { uri => source_operation, source_request_json, retrieved_at, content_hash }",
+        provenance.dump(),
+        result,
         error);
+}
+
+bool agent_cozo_resource_catalog::load_provenance(
+        const std::string & uri,
+        agent_resource_descriptor & descriptor,
+        std::string & error) const {
+    std::string result;
+    if (!run(
+            "?[source_operation, source_request_json, retrieved_at, content_hash] := *agent_resource_provenance[uri, source_operation, source_request_json, retrieved_at, content_hash], uri == $uri",
+            json({{"uri", uri}}).dump(), result, error)) return false;
+    const auto parsed = json::parse(result, nullptr, false);
+    if (parsed.is_object() && parsed.contains("rows") && parsed["rows"].is_array() && !parsed["rows"].empty() && parsed["rows"][0].is_array()) {
+        const auto & row = parsed["rows"][0];
+        descriptor.metadata.source_operation = row.at(0).get<std::string>();
+        descriptor.metadata.source_request_json = row.at(1).get<std::string>();
+        descriptor.metadata.retrieved_at = row.at(2).get<int64_t>();
+        descriptor.metadata.content_hash = row.at(3).get<std::string>();
+    }
+    error.clear();
+    return true;
 }
 
 bool agent_cozo_resource_catalog::find_descriptor(
@@ -342,6 +400,7 @@ bool agent_cozo_resource_catalog::find_descriptor(
         return false;
     }
     out = descriptor_from_row(parsed["rows"][0]);
+    if (!load_provenance(uri, out, error)) return false;
     error.clear();
     return true;
 }
@@ -368,6 +427,7 @@ bool agent_cozo_resource_catalog::list_descriptors(
     for (const auto & row : parsed["rows"]) {
         if (row.is_array()) {
             out.push_back(descriptor_from_row(row));
+            if (!load_provenance(out.back().uri, out.back(), error)) return false;
         }
     }
     error.clear();
