@@ -13,6 +13,48 @@ is demonstrably more appropriate than memory, a procedure, or a blueprint.
 The preferred name is **model adaptation**. The host owns every promotion and
 activation decision.
 
+## Review conclusion and recommended adjustments
+
+The proposed direction is sound, provided that adaptation is treated as a
+second, offline lifecycle rather than as another runtime learning mode. The
+important boundary is:
+
+```text
+resident agent runtime  ->  evidence and bounded learning transactions
+external worker         ->  corpus build and training
+adapter registry        ->  validation, evaluation, activation, rollback
+```
+
+I recommend the following adjustments before implementation:
+
+1. A normal successful turn must not automatically become a training record.
+   Create a transaction only when a qualifying host signal exists, such as a
+   failure, a verified recovery, or an explicit correction. Ordinary success
+   may still contribute aggregate metrics, but must not silently grow a corpus.
+2. `successful_recovery` is evidence that a repaired path completed. It is not
+   by itself proof that the original model behavior was wrong, general, or
+   safe to teach. The candidate gate must require host verification and must
+   distinguish a model defect from a contract, policy, metadata, or missing
+   evidence defect.
+3. Keep one source of truth for runtime evidence. Existing plan observations,
+   memory, procedures, and resources remain evidence sources; adaptation
+   transactions and candidates are immutable derived records. Do not copy all
+   tool output or reflection text into a second durable store.
+4. Make deterministic qualification automatic but make corpus inclusion and
+   adapter activation explicit at first. This preserves throughput without
+   allowing an ambiguous correction to change model behavior silently.
+5. Start with one narrow behavior and SFT. Tool-contract compliance on
+   redacted fixture data is a better first target than free-form planning or
+   project-specific facts. DPO requires same-context chosen/rejected pairs,
+   which a recovery often does not provide.
+6. Start with one active adapter and an adapter-free baseline profile. A full
+   multi-model catalog is useful, but it should not block the first complete
+   transaction-to-adapter path.
+
+These adjustments keep the feature small enough to verify and prevent a
+second, competing memory system from emerging beside the existing learning
+and resource flows.
+
 ## Current foundations
 
 The runtime already records several useful signals as bounded plan
@@ -93,6 +135,13 @@ A learning transaction is an immutable, append-only record of host-observed
 experience. It is not automatically training data. It references source data
 by identity and hash, preserving the facts needed to later audit why a case
 was considered.
+
+The capture rule is deliberately sparse: no transaction is created for an
+ordinary successful turn unless a configured sampling policy explicitly asks
+for a metric-only observation. A qualifying transaction must identify the
+signal, its bounded evidence, and the scope that authorized collection. A
+duplicate signal for the same source turn and evidence hashes must be
+idempotent.
 
 Conceptual shape:
 
@@ -242,6 +291,30 @@ Remote execution does not weaken the local promotion gate: the local registry
 still verifies hashes, base compatibility, evaluation provenance, and policy
 before a returned adapter becomes selectable.
 
+## Persistence boundary and deduplication
+
+The system should not introduce a second unstructured copy of the runtime's
+knowledge. The recommended split is:
+
+| Layer | Responsibility | Durable content |
+| --- | --- | --- |
+| Existing runtime stores | plan observations, memories, procedures, resources | source evidence under existing scope rules |
+| Adaptation ledger/index | immutable transactions and candidate state | ids, scope, hashes, signal classification, provenance, status |
+| Corpus/artifact store | portable revisions and model artifacts | canonical JSONL, manifests, adapters, evaluation reports |
+
+The adaptation interface should follow the existing scoped-store conventions.
+The first backend may use a local append-only representation, but the contract
+must leave room for an indexed backend so filtering by scope, status, source,
+and revision does not require scanning every corpus file. Payloads should be
+referenced by content hash where possible; the ledger should not duplicate
+large resource or tool-result bodies merely to make export convenient.
+
+Every write needs an idempotency key, atomic completion semantics, and a
+content hash. A crash may leave a pending write, but it must not create two
+different meanings for the same source event. Revocation must invalidate
+derived candidates and corpus revisions without rewriting historical audit
+records.
+
 ## Inference and model profiles
 
 The current runtime supports one generation model per host configuration. The
@@ -374,80 +447,205 @@ candidate adapter
 
 Automatic promotion to active is out of scope for the first implementation.
 
-## Implementation plan
+## Implementation plan and sweep gates
+
+Each sweep ends with a local commit and contract tests. A sweep is complete
+only when its exit gate passes; a later sweep must not hide a failed contract
+in an end-to-end smoke. The first usable path is deliberately staged as
+evidence -> candidate -> corpus -> external training -> evaluation -> manual
+activation.
+
+### Sweep 0 — contract fixtures and target definition
+
+Deliverables:
+
+- Choose one first behavior target, preferably valid tool-call structure and
+  argument binding in redacted fixture contexts.
+- Define canonical serialization, content-hash rules, scope inheritance, and
+  the difference between source evidence, a learning transaction, a candidate,
+  and a corpus row.
+- Add minimal fixtures for a failure, a verified recovery, an explicit user
+  correction, a host-contract defect, and an ordinary successful turn.
+
+Tests and exit gate:
+
+- model-free CTests validate schema shape, enum values, canonical hashes,
+  scope checks, bounded payloads, and the rule that ordinary success creates no
+  training transaction;
+- fixtures show that the same source event is idempotent and that a resource
+  body is referenced rather than copied by default.
+
+This sweep prevents the later implementation from guessing what “learning”
+means. It is documentation and contracts only; there is no export or model
+loading.
 
 ### Sweep 1 — durable learning transactions
 
+Deliverables:
+
 - Add host-neutral contracts under `common/agent/adaptation/` for transactions,
-  payload classification, hashes, and source references.
-- Add an append-only store interface and a local backend following the existing
+  source references, payload classes, hashes, and collection policy.
+- Add an append-only store interface and a local backend following existing
   scoped-store conventions.
-- Record bounded transaction candidates from the existing runtime signals and
-  completed-plan evidence.
-- Add contract tests for scope isolation, append-only semantics, hashes,
-  source provenance, and rejection of oversized/unclassified payloads.
+- Capture bounded records from existing runtime signals only when the
+  qualification trigger is present; preserve plan/tool provenance without
+  persisting raw scratch or unrestricted tool output.
+- Make writes idempotent and recoverable after interruption.
+
+Tests and exit gate:
+
+- CTests cover namespace/project/session isolation, append-only behavior,
+  duplicate suppression, provenance, hash stability, size limits, revoked
+  scope, and partial-write recovery;
+- an integration fixture proves that a failed turn, a verified recovery, and a
+  user correction produce distinct signal records;
+- an ordinary `hi there`-style successful turn contributes metrics only.
 
 No training data is exported in this sweep.
 
 ### Sweep 2 — qualification policy and training candidates
 
-- Add an explicit destination policy: retain, memory, procedure/blueprint,
-  training candidate, or reject.
-- Require repeated compatible observations, verified recovery or user-approved
-  correction, no unresolved contradiction, and a host-approved target shape.
-- Add a curator seam; start with deterministic host rules and optional manual
-  approval rather than model self-certification.
-- Test that project-specific facts and raw resources cannot be promoted as
-  general behavior candidates by default.
+Deliverables:
+
+- Add an explicit destination classifier: retain, memory,
+  procedure/blueprint, training candidate, or reject.
+- Add the defect classification seam: model behavior, host contract/policy,
+  missing evidence, or project-specific knowledge.
+- Require repeated compatible observations, host-verified recovery or
+  user-approved correction, no unresolved contradiction, and an approved target
+  shape. Deterministic rules may mark a candidate eligible; corpus inclusion
+  remains explicit initially.
+- Add a curator/approval seam without allowing the model to self-certify.
+
+Tests and exit gate:
+
+- CTests cover occurrence thresholds, contradictory examples, cross-context
+  similarity, user-correction provenance, and approval transitions;
+- project facts, raw resources, credentials, and a bad tool description are
+  rejected as general behavior candidates or routed to the correct destination;
+- a successful recovery with no host verification cannot qualify by itself.
+
+The key tradeoff is automation versus safety. Automatic eligibility keeps the
+ledger useful, while explicit corpus approval prevents a single ambiguous
+correction from changing future model behavior.
 
 ### Sweep 3 — deterministic corpus builder
 
+Deliverables:
+
 - Build versioned JSONL bundles and manifests from approved candidates.
-- Implement redaction, deletion/revocation propagation, deduplication, split
-  assignment, and bounded semantic replay selection.
-- Add a CLI/admin export command for local inspection only.
-- Test deterministic reconstruction and held-out/replay separation.
+- Implement redaction, revocation propagation, deduplication, stable ordering,
+  train/validation/test split assignment, and bounded semantic replay selection.
+- Keep held-out evaluation cases out of both training and replay selection.
+- Add a local inspection/export command; remote export remains opt-in.
+
+Tests and exit gate:
+
+- the same candidate ids, policy, builder version, and seed produce a byte-for-
+  byte identical bundle and manifest;
+- tests verify no secret/path leakage, no revoked candidate, no split overlap,
+  stable deduplication, row/byte bounds, and correct provenance;
+- a fixture can reconstruct the exact corpus revision from its manifest.
+
+The principal choice is JSONL versus an indexed database. JSONL is portable
+and reproducible; an index is better for scoped queries. The recommended
+boundary is an indexed adaptation ledger plus canonical JSONL artifact bundles,
+rather than two independent sources of truth.
 
 ### Sweep 4 — external trainer protocol
 
-- Define local-worker job files first, then an optional remote export/import
-  protocol using the same bundle and result manifests.
-- Keep trainer implementation outside the daemon runtime; Python PEFT/TRL or
-  another compatible worker is an implementation detail of this boundary.
-- Require a returned adapter manifest, artifact hash, trainer version, base
-  compatibility data, and evaluation report.
-- Test malformed, mismatched, and incomplete results are rejected.
+Deliverables:
+
+- Define local-worker job files first, then optional remote export/import using
+  the same corpus and result manifests.
+- Keep Python PEFT/TRL or another trainer outside the daemon and outside agent
+  session lanes. The first worker may be a deterministic fake trainer used to
+  validate the protocol.
+- Require returned adapter artifact, manifest, hash, trainer version, base
+  training fingerprint, conversion information, and evaluation report.
+
+Tests and exit gate:
+
+- malformed, incomplete, duplicate, expired, mismatched-base, and
+  unauthorized results are rejected;
+- a local worker smoke produces a reproducible fake result without CUDA;
+- import never changes an active profile automatically.
+
+Training must bind to a compatible training checkpoint, not silently train the
+deployment Q4 GGUF in place. The conversion manifest must connect the training
+checkpoint to the serving base.
 
 ### Sweep 5 — adapter registry and single-profile inference
 
+Deliverables:
+
 - Add adapter registry validation and lifecycle states: candidate, active,
   retired, rejected.
-- Extend model-load identity and status/readiness/traces with profile and
+- Extend model-load identity, status/readiness, and traces with profile and
   adapter revision.
-- Support one configured active adapter plus an adapter-free baseline against
-  the same base model. Clear or partition caches when profile identity changes.
-- Add lifecycle tests for load, rollback, incompatible adapter rejection, and
-  session profile pinning.
+- Support one explicitly configured active adapter and an adapter-free baseline
+  against the same base model. Partition or clear KV/resident state when the
+  profile identity changes.
+- Pin a session to its profile for a turn and make activation/rollback host
+  operations.
 
-### Sweep 6 — model catalog and controlled routing
+Tests and exit gate:
 
-- Introduce schema version 2 with named base models and profiles.
-- Migrate the existing single-model configuration once; do not retain two
-  long-lived parallel configuration semantics.
-- Add bounded resident/lazy load policy, profile-aware scheduler admission,
-  and explicit host-controlled profile escalation.
-- Test configuration validation, memory limits, lazy loading, and refusal of
-  unapproved caller/model routing overrides.
+- CTests cover manifest compatibility, load/rollback, cache isolation,
+  incompatible adapter rejection, session pinning, and readiness failure;
+- an inference stub proves baseline and adapter profiles are distinguishable;
+- a real Qwen smoke is added only after the contract tests pass.
 
-### Sweep 7 — evaluation, replay, and canary promotion
+The first deployment should use an overlay, not merge weights into a new base:
+unloading the adapter provides a simple rollback and A/B comparison.
 
-- Add an adapter evaluation suite with held-out behavior cases and existing
-  agent contract/smoke coverage.
-- Add baseline versus candidate comparison and runtime-intervention metrics.
-- Add manual canary activation and reversible rollback.
-- Consider DPO only after comparable same-context rejected/chosen pairs are
-  demonstrably available. Consider broader continual-learning strategies only
-  after SFT, replay, and regression gates are stable.
+### Sweep 6 — evaluation, replay, and canary promotion
+
+Deliverables:
+
+- Add held-out behavior cases, replay/retention cases, existing agent contract
+  tests, and planning/tool regression coverage.
+- Compare candidate against the adapter-free baseline with the same tool
+  catalog, resource snapshot, profile limits, and reproducibility settings.
+- Record runtime intervention rate: contract violations, failed selections,
+  plan revisions, reflection repairs, and host recoveries.
+- Add manual canary activation and reversible rollback. Automatic promotion is
+  explicitly out of scope.
+
+Tests and exit gate:
+
+- candidate must pass intended-behavior, old-learning retention, and agent
+  regression gates;
+- evaluation metadata binds to corpus, base, adapter, and test revisions;
+- rollback returns to baseline without changing the base model.
+
+Only after this gate should DPO be considered, and only for genuinely
+same-context chosen/rejected pairs. Broader continual-learning strategies are
+later work.
+
+### Sweep 7 — model catalog and controlled routing
+
+Deliverables:
+
+- Introduce named bases and profiles only when the single-profile path is
+  proven. Migrate the current single-model configuration once; do not retain
+  two long-lived configuration semantics.
+- Add bounded resident/lazy loading, profile-aware scheduler admission, and
+  explicit host-controlled escalation between a small model, baseline, and
+  research model.
+- Keep the embedding model separate from generation profiles.
+
+Tests and exit gate:
+
+- configuration tests cover named profiles, adapter references, memory limits,
+  lazy loading, eviction, and refusal of caller-supplied model overrides;
+- a scheduler fixture proves profile pinning and no cache reuse across model or
+  adapter identity changes;
+- small-model operation remains valid when no adaptation profile is active.
+
+This ordering is intentional: multi-model routing is valuable for production,
+but it is not required to prove the adaptation lifecycle and adds a substantial
+memory/scheduling surface.
 
 ## Initial non-goals
 
