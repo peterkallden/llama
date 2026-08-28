@@ -291,6 +291,14 @@ bool build_agent_openapi_catalog(
             scheme.scheme = item.value().value("scheme", "");
             scheme.parameter_name = item.value().value("name", "");
             scheme.location = item.value().value("in", "");
+            if (scheme.type == "oauth2") {
+                const auto flows = item.value().value("flows", nlohmann::json::object());
+                if (flows.is_object() && flows.contains("clientCredentials") &&
+                        flows["clientCredentials"].is_object()) {
+                    scheme.flow = "clientCredentials";
+                    scheme.token_url = flows["clientCredentials"].value("tokenUrl", "");
+                }
+            }
             if (scheme.type.empty()) continue;
             known_security_schemes.insert(scheme.name);
             catalog.security_schemes.push_back(std::move(scheme));

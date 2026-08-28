@@ -87,6 +87,24 @@ The scheme supplies placement details such as the header name; the provider
 configuration does not repeat them. Future methods add their credential
 references as sibling fields rather than introducing a nested credential graph.
 
+The first extended method is `oauth2_client_credentials`:
+
+```json
+"auth": {
+  "type": "oauth2_client_credentials",
+  "scheme": "salesOAuth",
+  "client_id_env": "SALES_CLIENT_ID",
+  "client_secret_env": "SALES_CLIENT_SECRET",
+  "scopes": ["sales.read"]
+}
+```
+
+The token endpoint is taken from the selected OpenAPI OAuth
+`clientCredentials` flow unless `token_url` is explicitly supplied by the
+host. The host caches the bounded token in memory, never exposes it to the
+model or event stream, rejects redirects, and applies the same HTTPS/private
+network policy as the API request.
+
 The configuration layer validates the provider shape and preserves it through
 JSON roundtrip. The current branch also builds a filtered OpenAPI 3 catalog,
 exposes it through the normal `agent_tool_view`, and provides a bounded

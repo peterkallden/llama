@@ -11,10 +11,17 @@
 #endif
 #include <sstream>
 #include <algorithm>
+#include <chrono>
 #include <memory>
+#include <mutex>
 
 namespace {
 struct url_parts { std::string scheme, host, base_path; int port = 0; };
+struct oauth_token_cache {
+    std::mutex mutex;
+    std::string access_token;
+    std::chrono::steady_clock::time_point expires_at{};
+};
 
 bool parse_url(const std::string & input, url_parts & url, std::string & error) {
     const auto scheme_end = input.find("://");
@@ -138,10 +145,113 @@ const agent_openapi_security_scheme * selected_security_scheme(
     error = "OpenAPI auth.scheme was not found in the catalog: " + selected;
     return nullptr;
 }
+
+bool acquire_oauth_client_credentials_token(
+        const agent_host_openapi_provider_config & config,
+        const agent_openapi_security_scheme & scheme,
+        const std::shared_ptr<oauth_token_cache> & cache,
+        std::string & token,
+        std::string & error) {
+    std::lock_guard<std::mutex> lock(cache->mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (!cache->access_token.empty() && cache->expires_at > now + std::chrono::seconds(30)) {
+        token = cache->access_token;
+        return true;
+    }
+    const std::string token_url = config.auth.token_url.empty()
+        ? scheme.token_url : config.auth.token_url;
+    if (token_url.empty()) {
+        error = "OpenAPI OAuth client credentials requires token_url";
+        return false;
+    }
+    url_parts url;
+    if (!parse_url(token_url, url, error)) {
+        error = "OpenAPI OAuth token_url is invalid: " + error;
+        return false;
+    }
+    if (url.scheme != "https" && !(url.scheme == "http" && config.allow_private_network)) {
+        error = "OpenAPI OAuth token_url must use HTTPS";
+        return false;
+    }
+    std::string validated_address;
+    bool private_address_result = true;
+#ifndef _WIN32
+    if (!resolve_validated_host(url.host, validated_address, private_address_result)) {
+        error = "OpenAPI OAuth token_url host could not be resolved";
+        return false;
+    }
+#else
+    resolve_validated_host(url.host, validated_address, private_address_result);
+#endif
+    if (!config.allow_private_network && private_address_result) {
+        error = "OpenAPI OAuth token_url targets a private or local network address";
+        return false;
+    }
+    const char * client_id = std::getenv(config.auth.client_id_env.c_str());
+    const char * client_secret = std::getenv(config.auth.client_secret_env.c_str());
+    if (client_id == nullptr || *client_id == '\0' || client_secret == nullptr || *client_secret == '\0') {
+        error = "OpenAPI OAuth client credential environment variable is missing";
+        return false;
+    }
+    httplib::Params form;
+    form.emplace("grant_type", "client_credentials");
+    if (!config.auth.scopes.empty()) {
+        std::string scope;
+        for (const auto & item : config.auth.scopes) {
+            if (!scope.empty()) scope += ' ';
+            scope += item;
+        }
+        form.emplace("scope", scope);
+    }
+    httplib::Headers headers{{"Accept", "application/json"}};
+    httplib::Result response;
+    if (url.scheme == "http") {
+        httplib::Client client(url.host, url.port);
+        client.set_hostname_addr_map({{url.host, validated_address}});
+        client.set_follow_location(false);
+        configure(client, config);
+        client.set_basic_auth(client_id, client_secret);
+        response = client.Post(url.base_path.empty() ? "/" : url.base_path, headers, form);
+    } else {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+        httplib::SSLClient client(url.host, url.port);
+        client.set_hostname_addr_map({{url.host, validated_address}});
+        client.set_follow_location(false);
+        configure(client, config);
+        client.set_basic_auth(client_id, client_secret);
+        response = client.Post(url.base_path.empty() ? "/" : url.base_path, headers, form);
+#else
+        error = "HTTPS OpenAPI OAuth token transport requires OpenSSL";
+        return false;
+#endif
+    }
+    if (!response) {
+        error = "OpenAPI OAuth token request failed: " + httplib::to_string(response.error());
+        return false;
+    }
+    if (response->status < 200 || response->status >= 300) {
+        error = "OpenAPI OAuth token endpoint returned HTTP " + std::to_string(response->status);
+        return false;
+    }
+    if (response->body.size() > config.max_result_bytes) {
+        error = "OpenAPI OAuth token response exceeded max_result_bytes";
+        return false;
+    }
+    const auto value = nlohmann::json::parse(response->body, nullptr, false);
+    if (!value.is_object() || !value.value("access_token", "").size()) {
+        error = "OpenAPI OAuth token response did not contain access_token";
+        return false;
+    }
+    token = value.value("access_token", "");
+    const auto expires_in = value.value("expires_in", int64_t(300));
+    cache->access_token = token;
+    cache->expires_at = now + std::chrono::seconds(std::max<int64_t>(60, expires_in - 30));
+    return true;
+}
 }
 
 agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provider_config config) {
-    return [config = std::move(config)](
+    return [config = std::move(config), oauth_cache = std::make_shared<oauth_token_cache>()](
             const agent_tool_context & context, const agent_openapi_operation & operation,
             const std::string & arguments_json, agent_openapi_execution_result & result,
             std::string & error) {
@@ -181,14 +291,25 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             query.emplace(name, it->is_string() ? it->get<std::string>() : it->dump());
         }
         httplib::Headers headers;
-        const char * token = nullptr;
+        std::string token;
         if (operation.auth_required && (config.auth.type == "bearer" || config.auth.type == "api_key")) {
-            token = std::getenv(config.auth.token_env.c_str());
-            if (token == nullptr || *token == '\0') { error = "OpenAPI credential environment variable is missing"; return false; }
+            const char * value = std::getenv(config.auth.token_env.c_str());
+            if (value == nullptr || *value == '\0') { error = "OpenAPI credential environment variable is missing"; return false; }
+            token = value;
+        } else if (operation.auth_required && config.auth.type == "oauth2_client_credentials") {
+            if (security_scheme->type != "oauth2" || security_scheme->flow != "clientCredentials") {
+                error = "OpenAPI OAuth auth does not match a clientCredentials security scheme"; return false;
+            }
+            if (!acquire_oauth_client_credentials_token(config, *security_scheme, oauth_cache, token, error)) return false;
         }
-        if (security_scheme != nullptr && config.auth.type == "bearer") {
-            if (security_scheme->type != "http" || security_scheme->scheme != "bearer") {
+        if (security_scheme != nullptr && (config.auth.type == "bearer" ||
+                config.auth.type == "oauth2_client_credentials")) {
+            if (config.auth.type == "bearer" &&
+                    (security_scheme->type != "http" || security_scheme->scheme != "bearer")) {
                 error = "OpenAPI bearer auth does not match the selected security scheme"; return false;
+            }
+            if (config.auth.type == "oauth2_client_credentials" && security_scheme->type != "oauth2") {
+                error = "OpenAPI OAuth auth does not match the selected security scheme"; return false;
             }
             headers.emplace("Authorization", std::string("Bearer ") + token);
         } else if (security_scheme != nullptr && config.auth.type == "api_key") {

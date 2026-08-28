@@ -21,6 +21,17 @@ int main() {
         assert(request.get_param_value("api_key") == "key-123");
         response.set_content(R"({"ok":true})", "application/json");
     });
+    int oauth_token_requests = 0;
+    server.Post("/token", [&oauth_token_requests](const httplib::Request & request, httplib::Response & response) {
+        ++oauth_token_requests;
+        assert(request.get_header_value("Authorization") == "Basic b2F1dGgtaWQ6b2F1dGgtc2VjcmV0");
+        assert(request.get_param_value("grant_type") == "client_credentials");
+        response.set_content(R"({"access_token":"oauth-access","expires_in":300})", "application/json");
+    });
+    server.Get("/oauth", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_header_value("Authorization") == "Bearer oauth-access");
+        response.set_content(R"({"ok":true})", "application/json");
+    });
     const int port = server.bind_to_any_port("127.0.0.1");
     assert(port > 0);
     std::thread server_thread([&server] { server.listen_after_bind(); });
@@ -104,6 +115,9 @@ int main() {
         const auto authenticated_result = authenticated_view->call(
             {"auth-call", authenticated_config.prefix + ".auth", "{}"}, authenticated_error);
         assert(authenticated_result.ok);
+        const auto cached_result = authenticated_view->call(
+            {"auth-call-2", authenticated_config.prefix + ".auth", "{}"}, authenticated_error);
+        assert(cached_result.ok);
     };
     agent_openapi_operation basic_operation;
     basic_operation.operation_id = "auth";
@@ -137,6 +151,27 @@ int main() {
     api_key_config.auth.scheme = "apiKeyAuth";
     api_key_config.auth.token_env = "OPENAPI_API_KEY";
     run_authenticated(api_key_config, api_key_operation);
+
+    setenv("OPENAPI_OAUTH_ID", "oauth-id", 1);
+    setenv("OPENAPI_OAUTH_SECRET", "oauth-secret", 1);
+    agent_openapi_operation oauth_operation;
+    oauth_operation.operation_id = "auth";
+    oauth_operation.method = "get";
+    oauth_operation.path = "/oauth";
+    oauth_operation.access = agent_openapi_access::read;
+    oauth_operation.read_only = true;
+    oauth_operation.auth_required = true;
+    oauth_operation.security_schemes = {"oauthAuth"};
+    oauth_operation.security_definitions = {{"oauthAuth", "oauth2", "", "", "", "clientCredentials", ""}};
+    agent_host_openapi_provider_config oauth_config = config;
+    oauth_config.prefix = "oauth";
+    oauth_config.auth.type = "oauth2_client_credentials";
+    oauth_config.auth.scheme = "oauthAuth";
+    oauth_config.auth.token_url = "http://127.0.0.1:" + std::to_string(port) + "/token";
+    oauth_config.auth.client_id_env = "OPENAPI_OAUTH_ID";
+    oauth_config.auth.client_secret_env = "OPENAPI_OAUTH_SECRET";
+    run_authenticated(oauth_config, oauth_operation);
+    assert(oauth_token_requests == 1);
 
     server.stop();
     server_thread.join();

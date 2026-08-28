@@ -183,6 +183,8 @@ bool read_mcp_provider(
         }
         read_optional(value["auth"], "type", provider.auth.type);
         read_optional(value["auth"], "scheme", provider.auth.scheme);
+        read_optional(value["auth"], "token_url", provider.auth.token_url);
+        read_optional(value["auth"], "scopes", provider.auth.scopes);
         read_optional(value["auth"], "token_env", provider.auth.token_env);
         read_optional(value["auth"], "username_env", provider.auth.username_env);
         read_optional(value["auth"], "password_env", provider.auth.password_env);
@@ -286,6 +288,8 @@ bool read_openapi_provider(
         }
         read_optional(value["auth"], "type", provider.auth.type);
         read_optional(value["auth"], "scheme", provider.auth.scheme);
+        read_optional(value["auth"], "token_url", provider.auth.token_url);
+        read_optional(value["auth"], "scopes", provider.auth.scopes);
         read_optional(value["auth"], "token_env", provider.auth.token_env);
         read_optional(value["auth"], "username_env", provider.auth.username_env);
         read_optional(value["auth"], "password_env", provider.auth.password_env);
@@ -378,7 +382,8 @@ bool validate_provider_auth(
         std::string & error) {
     if (auth.type != "none" && auth.type != "bearer" &&
             (!allow_extended || (auth.type != "basic" &&
-             auth.type != "api_key" && auth.type != "mutual_tls"))) {
+             auth.type != "api_key" && auth.type != "mutual_tls" &&
+             auth.type != "oauth2_client_credentials"))) {
         error = provider_kind + " provider auth type is not supported yet: " + auth.type;
         return false;
     }
@@ -393,6 +398,11 @@ bool validate_provider_auth(
     if (auth.type == "mutual_tls" &&
             (auth.client_cert_path_env.empty() || auth.client_key_path_env.empty())) {
         error = provider_kind + " mutual_tls auth requires client_cert_path_env and client_key_path_env";
+        return false;
+    }
+    if (auth.type == "oauth2_client_credentials" &&
+            (auth.client_id_env.empty() || auth.client_secret_env.empty())) {
+        error = provider_kind + " oauth2_client_credentials requires client_id_env and client_secret_env";
         return false;
     }
     error.clear();
@@ -971,6 +981,8 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"auth", {
                 {"type", provider.auth.type},
                 {"scheme", provider.auth.scheme},
+                {"token_url", provider.auth.token_url},
+                {"scopes", provider.auth.scopes},
                 {"token_env", provider.auth.token_env},
                 {"username_env", provider.auth.username_env},
                 {"password_env", provider.auth.password_env},
@@ -1015,6 +1027,8 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"auth", {
                 {"type", provider.auth.type},
                 {"scheme", provider.auth.scheme},
+                {"token_url", provider.auth.token_url},
+                {"scopes", provider.auth.scopes},
                 {"token_env", provider.auth.token_env},
                 {"username_env", provider.auth.username_env},
                 {"password_env", provider.auth.password_env},

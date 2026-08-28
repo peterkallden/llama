@@ -19,6 +19,8 @@ struct agent_openapi_security_scheme {
     std::string scheme;
     std::string parameter_name;
     std::string location;
+    std::string flow;
+    std::string token_url;
 };
 
 struct agent_openapi_operation {

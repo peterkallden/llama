@@ -359,6 +359,7 @@ int main(int argc, char ** argv) {
                 a.type == b.type && a.transport == b.transport &&
                 a.command == b.command && a.url == b.url &&
                 a.auth.type == b.auth.type && a.auth.scheme == b.auth.scheme &&
+                a.auth.token_url == b.auth.token_url && a.auth.scopes == b.auth.scopes &&
                 a.auth.token_env == b.auth.token_env &&
                 a.auth.username_env == b.auth.username_env &&
                 a.auth.password_env == b.auth.password_env &&
@@ -389,6 +390,7 @@ int main(int argc, char ** argv) {
                 a.source_directory == b.source_directory &&
                 a.prefix == b.prefix && a.access == b.access && a.exposure == b.exposure &&
                 a.auth.type == b.auth.type && a.auth.scheme == b.auth.scheme &&
+                a.auth.token_url == b.auth.token_url && a.auth.scopes == b.auth.scopes &&
                 a.auth.token_env == b.auth.token_env &&
                 a.auth.username_env == b.auth.username_env &&
                 a.auth.password_env == b.auth.password_env &&
