@@ -105,6 +105,26 @@ Multiple matches fail with a bounded `Choose one of` diagnostic; an unknown
 resource-only name fails with the candidate list rather than being interpreted
 as a filesystem path.
 
+## OpenAPI dataset URI and exposed-name drift
+
+- Status: Fixed locally; OpenAPI host and provider tests pass
+- Affected area: OpenAPI result materialization and follow-up `data.*` calls
+
+Two small contract mismatches were easy to miss in release-style builds. The
+OpenAPI provider was passing an undecorated prefix into the shared MCP naming
+helper, while the planner and documentation used dotted names such as
+`sales.listSales`. The provider now supplies a dotted prefix explicitly;
+ordinary MCP prefixes retain their underscore behavior. Separately, the host
+dataset scope guard recognized only `agent-dataset://`, although the existing
+dataset importer emits `dataset://`. A follow-up data operation could therefore
+use an OpenAPI dataset outside its turn. Both URI forms now go through the
+same descriptor and source-resource authority check.
+
+The provider smoke also enables the network capability explicitly and checks
+tool-view resolution without relying on `assert`, because release builds define
+`NDEBUG`. This keeps a filtered-away OpenAPI catalog from becoming a null
+dereference and makes the policy prerequisite visible in the test.
+
 ## Family selection allowed an ungrounded answer fallback
 
 - Status: Fixed locally; deterministic contract tests and a Qwen web smoke are

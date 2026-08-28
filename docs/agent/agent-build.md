@@ -30,11 +30,13 @@ are related, but they are not all independent CTest suites:
 | Model-backed text flows | `scripts/test-qwen-*.sh` | Qwen chat, planning, resource synthesis, tools, Cozo, and Nomic embeddings | Qwen/Nomic |
 | Multimodal flows | `scripts/test-agent-multimodal-smoke.sh` | capability-gated native image/audio and OCR fallback | multimodal model/projector |
 
-The root CTest project aggregates the core contracts and the 37 POC tests
-labelled `agent`. Therefore `ctest --test-dir BUILD -L agent` is not a
-different implementation of the POC tests: it runs the 20 core agent tests
-plus those 37 POC tests. The two sandbox backend tests deliberately use the
-separate `sandbox-docker` and `sandbox-kubernetes` labels.
+The root CTest project aggregates the current agent-labelled contract and POC
+tests. The exact inventory is build/configuration dependent; do not hard-code
+layer counts in automation. In the current Linux packaging build,
+`ctest --test-dir BUILD -L agent` discovers 73 agent tests, including the
+OpenAPI catalog/provider and host materialization tests. The two sandbox
+backend tests deliberately use the separate `sandbox-docker` and
+`sandbox-kubernetes` labels.
 
 For the complete unique agent CTest set, use one root invocation:
 
@@ -44,10 +46,10 @@ ctest --test-dir build-agent-packaging \
   --output-on-failure
 ```
 
-This discovers 59 unique tests: 20 core contracts, 37 model-free POC tests,
-and two sandbox backend tests. Running CTest directly in
-`build-agent-packaging/pocs/agent` is useful for isolating the 39 POC tests,
-but it repeats the 37 POC tests already included by the root `agent` label.
+This discovers the complete configured set without relying on overlapping
+directory views. Running CTest directly in `build-agent-packaging/pocs/agent`
+is useful for isolating POC tests, but it may repeat tests already included by
+the root `agent` label.
 
 Model-backed shell smokes and multimodal smokes are intentionally outside
 CTest. They have model availability, inference quality, projector capability,

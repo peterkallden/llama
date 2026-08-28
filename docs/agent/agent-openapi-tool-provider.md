@@ -149,6 +149,15 @@ The model cannot replace the path, method, base URL, authentication or
 headers. The advertised schema is the bounded subset understood by the
 agent's existing JSON-schema validator.
 
+OpenAPI names use a dot between the configured provider prefix and the
+operation ID: `sales.listSales`, `sales.getSale`. This is the model-facing
+family-qualified name and is the name that must appear in a deliberate plan.
+The ordinary MCP provider keeps its existing underscore convention by default,
+for example `github_search_issues`; the two conventions are intentional and
+are not interchangeable aliases. A provider may still supply a prefix that
+already ends in `.` or `_`, in which case the host does not add a second
+separator.
+
 Before a deliberate plan starts, the resolved tool view validates dynamic
 collection-to-item bindings. A reference such as `$previous.id` for an item
 operation is accepted only when the matching collection/search operation
@@ -269,6 +278,14 @@ must not issue another model generation, follow an unvalidated URL, or turn
 pagination into hidden background work. The standard CLI host materializer
 creates datasets only when both stores are available; otherwise it keeps the
 bounded response inline or as a resource according to the same limits.
+
+The same `dataset_refs` result field is preserved when a native or MCP-backed
+tool returns a dataset reference. Native and MCP provider adapters first check
+the reference shape; when a `data.*` operation uses a host-owned `dataset://`
+or `agent-dataset://` URI, the host additionally resolves its descriptor and
+source resource under the current authority. An external MCP reference is not
+automatically treated as a local dataset merely because its JSON shape is
+valid.
 
 Collection rows that have a scalar item identifier may also receive opaque
 host-owned candidates such as `getSale#1`. The candidate is only a selection

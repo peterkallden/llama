@@ -2726,6 +2726,16 @@ relation and plan order. Pagination and continuation links are explicit plan
 steps, not implicit background fetches. API-derived datasets are turn/session
 scoped by default and are not promoted to persistent memory automatically.
 
+`dataset_refs` is a shared result contract, not an OpenAPI-only extension.
+Native and MCP providers carry valid returned references through tool results,
+observations, working state and checkpoints. Before a host `data.*` operation
+uses a local `dataset://` or `agent-dataset://` reference, the adapter resolves
+the dataset descriptor and checks the referenced source resource against the
+current namespace/session/project/turn authority. A syntactically valid
+reference from an external MCP server is therefore not, by itself, permission
+to read a local dataset. OpenAPI materialization additionally guarantees that
+`dataset_ref.source_resource_uri` points to the exact bounded response resource.
+
 Normal model plans must contain a tool step or an explicit `mode: reasoning`
 step. Final synthesis is host-owned and is added by the host when the model
 has not supplied one. An empty/default-final model step is rejected at the
