@@ -38,6 +38,11 @@ int main() {
     assert(transactions.front().observation.scope.project_id == "project-1");
     assert(transactions.front().observation.verification == common_learning_verification::unverified);
 
+    auto second_failure = failed;
+    second_failure.learning_signals.front().evidence_id = "evidence-2";
+    assert(observer.observe(req, pl, second_failure, error));
+    assert(memory_store.list(error).size() == 2);
+
     common_agent_result ordinary;
     ordinary.response = "hello";
     assert(observer.observe(req, pl, ordinary, error));

@@ -584,6 +584,14 @@ Tests and exit gate:
 
 No training data is exported in this sweep.
 
+The runtime integration deliberately preserves the existing constructor ABI.
+Adaptation observation is attached through an optional observer setter, so
+existing hosts and shared-library clients do not need a new constructor
+symbol. The observer is finalized after both successful and failed turns and
+must never change the user-facing result. Idempotency covers the complete
+signal/evidence identity for a turn; two distinct failures in the same turn
+must not collapse into one transaction.
+
 ### Sweep 2 — qualification policy and training candidates
 
 Deliverables:

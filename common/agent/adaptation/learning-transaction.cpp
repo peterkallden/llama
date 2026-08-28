@@ -7,6 +7,7 @@
 #include <ctime>
 #include <fstream>
 #include <set>
+#include <sstream>
 
 using json = nlohmann::ordered_json;
 
@@ -238,7 +239,15 @@ bool common_learning_transaction_observer::observe(
     for (const auto & signal : observation.signals) if (!signal.evidence_id.empty()) evidence.insert(signal.evidence_id);
     observation.evidence_ids.assign(evidence.begin(), evidence.end());
     if (observation.source_plan_id.empty() && !observation.signals.front().plan_id.empty()) observation.source_plan_id = observation.signals.front().plan_id;
-    observation.idempotency_key = observation.source_turn_id + ":" + observation.source_plan_id + ":" + common_learning_signal_type_name(observation.signals.front().type);
+    std::ostringstream idempotency;
+    idempotency << observation.source_turn_id << ":" << observation.source_plan_id;
+    for (const auto & signal : observation.signals) {
+        idempotency << ":" << common_learning_signal_type_name(signal.type)
+                    << ":" << signal.step_id
+                    << ":" << signal.tool_name
+                    << ":" << signal.evidence_id;
+    }
+    observation.idempotency_key = idempotency.str();
     observation.id = "learning://observation/" + observation.idempotency_key;
     observation.content_hash = common_learning_observation_hash(observation);
     for (const auto & signal : observation.signals) {
