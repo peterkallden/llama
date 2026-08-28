@@ -363,6 +363,11 @@ The provider allowlist and the caller allowlist are independent: provider
 `allowed_tools` limits what the daemon imports from a remote MCP server, while
 `--enable-tools` limits what an authenticated MCP/JSONL caller can invoke.
 
+Utgående HTTP-MCP använder hostens bearer-auth och följer inte redirects. En
+credential skickas alltså inte vidare till en annan adress. OAuth-discovery för
+MCP är ett separat senare steg; OpenAPI-providerens OAuth-fält ska inte kopieras
+in i MCP-konfigurationen.
+
 Its essential shape is:
 
 ```json

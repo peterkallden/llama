@@ -50,11 +50,13 @@ public:
         if (url.scheme == "http") {
             httplib::Client client(url.host, url.port);
             configure_client(client, request.connect_timeout_ms, request.request_timeout_ms);
+            client.set_follow_location(false);
             result = client.Post(url.path, headers, request.body, "application/json");
         } else {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
             httplib::SSLClient client(url.host, url.port);
             configure_client(client, request.connect_timeout_ms, request.request_timeout_ms);
+            client.set_follow_location(false);
             result = client.Post(url.path, headers, request.body, "application/json");
 #else
             error = "HTTPS MCP transport requires an OpenSSL-enabled transport";

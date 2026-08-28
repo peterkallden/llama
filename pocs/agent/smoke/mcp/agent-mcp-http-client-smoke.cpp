@@ -11,6 +11,10 @@ using json = nlohmann::ordered_json;
 int main() {
     httplib::Server server;
     bool auth_seen = false;
+    server.Post("/redirect", [](const httplib::Request &, httplib::Response & response) {
+        response.status = 307;
+        response.set_header("Location", "/mcp");
+    });
     server.Post("/mcp", [&auth_seen](const httplib::Request & request, httplib::Response & response) {
         if (!request.has_header("Authorization") ||
                 request.get_header_value("Authorization") != "Bearer smoke-token") {
@@ -103,9 +107,6 @@ int main() {
     mcp_agent_resource_read_result resource;
     const bool resource_read = resources_listed && client.read_resource(resources.front().resource.uri, resource, error);
 
-    server.stop();
-    if (server_thread.joinable()) server_thread.join();
-
     if (!listed || tools.size() != 1 || !called || !call_result.ok ||
             call_result.text_content != "http smoke result" || !resources_listed ||
             resources.size() != 1 || !resource_read || resource.text_content != R"({"ok":true})" ||
@@ -113,6 +114,27 @@ int main() {
         std::fprintf(stderr, "HTTP MCP client smoke failed: %s\n", error.c_str());
         return 1;
     }
+    agent_mcp_http_client redirect_client({
+        "http-smoke-redirect",
+        "http://127.0.0.1:" + std::to_string(port) + "/redirect",
+        "smoke-token",
+        {},
+        2000,
+        5000,
+        1000,
+        4096,
+    });
+    std::vector<mcp_agent_tool_definition> redirect_tools;
+    error.clear();
+    if (redirect_client.list_tools(context, redirect_tools, error) ||
+            error.find("status 307") == std::string::npos) {
+        std::fprintf(stderr, "HTTP MCP client followed or mishandled redirect: %s\n", error.c_str());
+        server.stop();
+        if (server_thread.joinable()) server_thread.join();
+        return 1;
+    }
+    server.stop();
+    if (server_thread.joinable()) server_thread.join();
     std::printf("http_mcp_tools=%zu\n", tools.size());
     std::printf("http_mcp_session=%s\n", "http-smoke-session");
     std::printf("http_mcp_resource=%s\n", resource.text_content.c_str());
