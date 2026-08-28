@@ -2730,11 +2730,25 @@ scoped by default and are not promoted to persistent memory automatically.
 Native and MCP providers carry valid returned references through tool results,
 observations, working state and checkpoints. Before a host `data.*` operation
 uses a local `dataset://` reference, the adapter resolves the dataset
-descriptor and checks the referenced source resource against the
-current namespace/session/project/turn authority. A syntactically valid
-reference from an external MCP server is therefore not, by itself, permission
-to read a local dataset. OpenAPI materialization additionally guarantees that
+descriptor and checks its source under the active authority. Resource-backed
+datasets must resolve their `source_resource_uri` in the current
+namespace/session/project/turn scope. A host-registered dataset backed by a
+repository file may instead be validated against the active repository root;
+the repository file is the source in that case and need not be duplicated in
+the resource store. A host-derived dataset is accepted without rereading its
+parent resource only when its generated `dataset://agent/turn/<turn>/...` URI
+belongs to the current turn. A syntactically valid reference from an external
+MCP server is therefore not, by itself, permission to read a local dataset.
+OpenAPI materialization additionally guarantees that
 `dataset_ref.source_resource_uri` points to the exact bounded response resource.
+
+When a plan feeds a data-producing step into a later step through a dataset
+binding, the host adds bounded materialization to the producer and assigns a
+turn-scoped result URI. This is a host execution detail, not a model-selected
+permission. The result remains subject to the same row/byte/truncation bounds;
+the host must never materialize a truncated result or silently fetch another
+page. A single data operation that is not consumed later may remain an inline
+bounded result.
 
 Normal model plans must contain a tool step or an explicit `mode: reasoning`
 step. Final synthesis is host-owned and is added by the host when the model

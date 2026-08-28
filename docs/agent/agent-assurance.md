@@ -182,8 +182,10 @@ derived resource. The current CSV/Cozo foundation does not yet prove full XLSX
 workbook fidelity, but the local OpenAPI host slice now proves bounded
 collection materialization, source-resource linkage, provenance and a following
 `data.query` step. Native and MCP result adapters also validate returned
-`dataset_refs`; local `data.*` execution checks the dataset's source resource
-against the active authority. The model-free XLSX
+`dataset_refs`; local `data.*` execution checks resource-backed dataset sources
+against the active authority, accepts host-registered repository-backed
+datasets under the repository root, and keeps generated derived datasets
+bound to their current turn URI. The model-free XLSX
 processor contract covers ZIP/XML-to-structured-JSON through the checked-in
 bounded normalizer, and the bounded worksheet
 importer now materializes separate typed dataset descriptors with source

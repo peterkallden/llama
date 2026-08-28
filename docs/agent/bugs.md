@@ -126,6 +126,33 @@ tool-view resolution without relying on `assert`, because release builds define
 `NDEBUG`. This keeps a filtered-away OpenAPI catalog from becoming a null
 dereference and makes the policy prerequisite visible in the test.
 
+## Dataflow results were not reusable by the next data step
+
+- Status: Fixed locally; Cozo, adapter, planner and Qwen+Nomic data smokes pass
+- Affected area: compact planner bindings and derived dataset scope
+
+The compact model could refer to a prior result as `joined` or `$joined.dataset`.
+The host now resolves bare prior aliases to the canonical dataset binding and
+automatically materializes a bounded result when a later plan step consumes the
+alias. The generated result uses `dataset://agent/turn/<turn>/step-<n>` and is
+accepted only in that turn. It is not a hidden extra model step, and it is not
+allowed to materialize truncated output.
+
+The same smoke exposed two older assumptions. A join has two dataset inputs
+(`left` and `right`), while aggregate/statistics use `dataset`; validation must
+not treat these forms as different kinds of resource. Also, the seed fixture
+registers datasets directly from CSV files under the repository root and does
+not create duplicate resource-store entries. Repository-backed sources are
+therefore checked against that root; turn-scoped resource-backed datasets still
+use the normal resource authority and fail outside their turn.
+
+Small models also emitted a single join condition as an object, `where: true`
+for an unfiltered query, or copied a family description after the family ID.
+The host accepts only these unambiguous canonicalizations: one `{left,right}`
+condition becomes a one-item array, `where: true` is omitted, and a
+`known-family:description` token is reduced to its exact known family prefix.
+Unknown families and other malformed expressions remain hard failures.
+
 ## Family selection allowed an ungrounded answer fallback
 
 - Status: Fixed locally; deterministic contract tests and a Qwen web smoke are
