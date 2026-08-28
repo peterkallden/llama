@@ -44,11 +44,22 @@ int main() {
             return true;
         });
     agent_tool_context context;
+    context.allow_network = true;
     std::string error;
     auto view = provider.resolve_tools(context, error);
-    assert(view != nullptr);
-    assert(view->chat_tools().size() == 2);
-    assert(view->chat_tools()[0].name == "sales.listSales");
+    if (!view) {
+        std::cerr << "OpenAPI tool view resolution failed: " << error << "\n";
+        return 1;
+    }
+    if (view->chat_tools().size() != 2) {
+        std::cerr << "OpenAPI tool view exposed " << view->chat_tools().size()
+                  << " tools instead of 2: " << error << "\n";
+        return 1;
+    }
+    if (view->chat_tools()[0].name != "sales.listSales") {
+        std::cerr << "OpenAPI exposed tool name was not family-qualified with a dot\n";
+        return 1;
+    }
     assert(view->chat_tools()[0].description.find("workflow: sales.listSales -> choose/bind id -> sales.getSale") != std::string::npos);
     common_plan_state invalid_plan;
     invalid_plan.steps.push_back({});

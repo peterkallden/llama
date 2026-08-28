@@ -80,7 +80,7 @@ agent_openapi_tool_provider::agent_openapi_tool_provider(
     , delegate(std::make_unique<mcp_agent_tool_provider>(
         this->catalog.provider_id,
         *client_impl,
-        this->catalog.prefix,
+        this->catalog.prefix + ".",
         [this](const common_plan_state & plan, std::string & error) {
             for (const auto & relation : this->catalog.relations) {
                 const std::string item_name = this->catalog.prefix + "." + relation.item_operation_id;

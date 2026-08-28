@@ -1,4 +1,5 @@
 #include "tools/agent/cli/agent-cli-host-adapter.h"
+#include "tools/agent/resource/agent-resource-store.h"
 
 #include "memory/memory-in-memory.h"
 #include "tools/agent/openapi/agent-openapi-catalog.h"
@@ -72,6 +73,9 @@ int main() {
     std::string error;
     if (!memory.open("", error)) { std::cerr << "memory setup failed: " << error << "\n"; return 1; }
     host_data_store data;
+    agent_catalogued_resource_store resource_store(
+        std::make_shared<agent_in_memory_blob_store>(),
+        std::make_unique<agent_in_memory_resource_catalog>());
     agent_host_tool_selection_request request;
     request.data_store = &data;
     request.resource_store_config.blob_backend = "in-memory";
@@ -118,7 +122,7 @@ int main() {
     common_memory_query query;
     query.scope = common_memory_scope::session;
     query.session_id = "session-1";
-    if (!resolve_agent_host_tool_selection(memory, nullptr, nullptr, nullptr,
+    if (!resolve_agent_host_tool_selection(memory, nullptr, &resource_store, nullptr,
         profile.id, request, query, nullptr, selection, error)) {
         std::cerr << "host selection failed: " << error << "\n";
         return 1;
@@ -134,8 +138,8 @@ int main() {
     bool has_list = false;
     bool has_complex = false;
     for (const auto & tool : selection.tool_view->chat_tools()) {
-        has_list = has_list || tool.name == "sales_listSales";
-        has_complex = has_complex || tool.name == "sales_complex";
+        has_list = has_list || tool.name == "sales.listSales";
+        has_complex = has_complex || tool.name == "sales.complex";
     }
     if (!has_list || !has_complex) {
         std::cerr << "expected OpenAPI tools were not exposed\n";
@@ -143,7 +147,7 @@ int main() {
         server_thread.join();
         return 1;
     }
-    auto list = selection.tool_view->call({"list", "sales_listSales", "{}"}, error);
+    auto list = selection.tool_view->call({"list", "sales.listSales", "{}"}, error);
     if (!list.ok || list.dataset_refs.size() != 1 || list.resource_refs.size() != 1) {
         std::cerr << "collection materialization failed: " << error << "\n";
         server.stop(); server_thread.join(); return 1;
@@ -161,8 +165,7 @@ int main() {
     agent_resource_descriptor source_descriptor;
     auto authority = make_agent_resource_read_authority(
         selection.tooling.resource_runtime, std::time(nullptr));
-    if (!selection.owned_resource_store ||
-            !selection.owned_resource_store->stat(
+    if (!resource_store.stat(
                 list.resource_refs.front().uri, authority, source_descriptor, error) ||
             source_descriptor.scope != common_runtime_resource_scope::turn ||
             source_descriptor.turn_id != "turn-1" ||
@@ -180,7 +183,7 @@ int main() {
     wrong_scope_request.tool_context.turn_id = "turn-2";
     wrong_scope_request.tool_context.scope.turn_id = "turn-2";
     common_agent_cli_tool_selection wrong_scope_selection;
-    if (!resolve_agent_host_tool_selection(memory, nullptr, nullptr, nullptr,
+    if (!resolve_agent_host_tool_selection(memory, nullptr, &resource_store, nullptr,
             profile.id, wrong_scope_request, query, nullptr,
             wrong_scope_selection, error) || !wrong_scope_selection.tool_view) {
         std::cerr << "wrong-scope selection failed to resolve: " << error << "\n";
@@ -194,7 +197,7 @@ int main() {
         server.stop(); server_thread.join(); return 1;
     }
 
-    auto complex = selection.tool_view->call({"complex", "sales_complex", "{}"}, error);
+    auto complex = selection.tool_view->call({"complex", "sales.complex", "{}"}, error);
     if (!complex.ok || !complex.dataset_refs.empty() || complex.resource_refs.size() != 1 ||
             complex.content_json.find("items") == std::string::npos) {
         std::cerr << "complex JSON projection failed: " << error << "\n";

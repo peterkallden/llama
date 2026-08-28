@@ -109,30 +109,34 @@ common_tool_execution_result execute_data_backend(
     }
     const auto arguments = json::parse(input, nullptr, false);
     if (arguments.is_object() && arguments.contains("dataset") &&
-            arguments["dataset"].is_string() &&
-            arguments["dataset"].get<std::string>().rfind("agent-dataset://", 0) == 0) {
+            arguments["dataset"].is_string()) {
         const std::string dataset_uri = arguments["dataset"].get<std::string>();
-        common_agent_dataset_descriptor descriptor;
-        std::string lookup_error;
-        if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, lookup_error)) {
-            return common_adapter_not_found_failure(
-                "tool.dataset.unavailable", std::move(lookup_error),
-                "The dataset reference is unavailable in the current host scope.");
-        }
-        common_agent_dataset_limits limits;
-        if (!validate_common_agent_dataset_descriptor(descriptor, limits, lookup_error)) {
-            return common_adapter_validation_failure(
-                "tool.dataset.invalid_reference", std::move(lookup_error));
-        }
-        if (bindings.resource_runtime.store != nullptr) {
-            agent_resource_descriptor source;
-            const auto authority = make_agent_resource_read_authority(
-                bindings.resource_runtime, std::time(nullptr));
-            if (!bindings.resource_runtime.store->stat(
-                    descriptor.ref.source_resource_uri, authority, source, lookup_error)) {
+        const bool is_host_dataset_uri =
+            dataset_uri.rfind("agent-dataset://", 0) == 0 ||
+            dataset_uri.rfind("dataset://", 0) == 0;
+        if (is_host_dataset_uri) {
+            common_agent_dataset_descriptor descriptor;
+            std::string lookup_error;
+            if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, lookup_error)) {
                 return common_adapter_not_found_failure(
-                    "tool.dataset.out_of_scope", std::move(lookup_error),
-                    "The dataset source is unavailable in the current host scope.");
+                    "tool.dataset.unavailable", std::move(lookup_error),
+                    "The dataset reference is unavailable in the current host scope.");
+            }
+            common_agent_dataset_limits limits;
+            if (!validate_common_agent_dataset_descriptor(descriptor, limits, lookup_error)) {
+                return common_adapter_validation_failure(
+                    "tool.dataset.invalid_reference", std::move(lookup_error));
+            }
+            if (bindings.resource_runtime.store != nullptr) {
+                agent_resource_descriptor source;
+                const auto authority = make_agent_resource_read_authority(
+                    bindings.resource_runtime, std::time(nullptr));
+                if (!bindings.resource_runtime.store->stat(
+                        descriptor.ref.source_resource_uri, authority, source, lookup_error)) {
+                    return common_adapter_not_found_failure(
+                        "tool.dataset.out_of_scope", std::move(lookup_error),
+                        "The dataset source is unavailable in the current host scope.");
+                }
             }
         }
     }

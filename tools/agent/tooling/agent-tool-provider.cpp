@@ -243,6 +243,9 @@ std::string make_mcp_exposed_name(
     if (prefix.empty()) {
         return tool_name;
     }
+    if (prefix.back() == '.' || prefix.back() == '_') {
+        return prefix + tool_name;
+    }
     return prefix + "_" + tool_name;
 }
 
