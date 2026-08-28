@@ -2225,6 +2225,10 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-data-store-cozo
     test-agent-runtime-contract
     test-agent-event-queue
+    llama-agent-cli-openapi-host-smoke
+    llama-agent-openapi-catalog-smoke
+    llama-agent-openapi-provider-smoke
+    llama-agent-openapi-http-smoke
 )
 set(AGENT_TEST_PACK_AVAILABLE_TARGETS)
 foreach(TARGET ${AGENT_TEST_PACK_CTEST_TARGETS})
