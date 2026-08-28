@@ -38,6 +38,11 @@ int main() {
     TEST_ASSERT(decoded_ref.source_request_json == provenance_ref.source_request_json);
     TEST_ASSERT(decoded_ref.retrieved_at == provenance_ref.retrieved_at);
     TEST_ASSERT(decoded_ref.content_hash == provenance_ref.content_hash);
+    TEST_ASSERT(common_agent_dataset_uri_scope_component("turn/a 1") == "turn-a-1");
+    TEST_ASSERT(common_agent_dataset_uri_is_current_turn(
+        "dataset://agent/turn/turn-a-1/step-2", "turn/a 1"));
+    TEST_ASSERT(!common_agent_dataset_uri_is_current_turn(
+        "dataset://agent/turn/other/step-2", "turn/a 1"));
 
     const auto reasoning_object = common_agent_runtime_reasoning_observation_to_json(
         R"({"summary":"grounded","citations":["obs-1"]})");

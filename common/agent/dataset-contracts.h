@@ -69,6 +69,15 @@ bool common_agent_dataset_ref_from_json(
         common_agent_dataset_ref & ref,
         std::string & error);
 
+// Returns the bounded URI component used for host-owned derived datasets.
+// Parsing remains structural: callers must still validate the resulting URI
+// against the active turn and resource authority.
+std::string common_agent_dataset_uri_scope_component(const std::string & value);
+
+bool common_agent_dataset_uri_is_current_turn(
+        const std::string & uri,
+        const std::string & turn_id);
+
 struct common_agent_dataset_lineage {
     std::vector<std::string> parent_dataset_uris;
     std::string operation;

@@ -286,15 +286,6 @@ bool json_references_dataset_alias(const json & value, const std::string & alias
     return false;
 }
 
-std::string planner_dataset_uri_component(const std::string & value) {
-    std::string component;
-    for (const unsigned char character : value) {
-        if (std::isalnum(character) || character == '-' || character == '_') component += static_cast<char>(character);
-        else component += '-';
-    }
-    return component.empty() ? "turn" : component;
-}
-
 bool is_materializable_data_tool(const std::string & tool) {
     return tool == "data.query" || tool == "data.filter" || tool == "data.aggregate" ||
         tool == "data.join" || tool == "data.transform";
@@ -394,7 +385,7 @@ bool normalize_planner_host_dataset_references(
                 if (!arguments.contains("result_dataset") || !arguments["result_dataset"].is_string() ||
                         arguments["result_dataset"].get<std::string>().empty()) {
                     arguments["result_dataset"] = "dataset://agent/turn/" +
-                        planner_dataset_uri_component(request.turn_id) + "/step-" + std::to_string(index + 1);
+                        common_agent_dataset_uri_scope_component(request.turn_id) + "/step-" + std::to_string(index + 1);
                 }
                 changed = true;
             }

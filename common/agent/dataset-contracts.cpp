@@ -309,6 +309,31 @@ bool common_agent_dataset_ref_from_json(
     return validate_common_agent_dataset_ref(ref, error);
 }
 
+std::string common_agent_dataset_uri_scope_component(const std::string & value) {
+    std::string component;
+    for (const unsigned char character : value) {
+        if (std::isalnum(character) || character == '-' || character == '_') {
+            component += static_cast<char>(character);
+        } else {
+            component += '-';
+        }
+    }
+    return component.empty() ? "turn" : component;
+}
+
+bool common_agent_dataset_uri_is_current_turn(
+        const std::string & uri,
+        const std::string & turn_id) {
+    if (turn_id.empty()) return false;
+    const std::string prefix = "dataset://agent/turn/";
+    if (uri.rfind(prefix, 0) != 0) return false;
+    const auto component_start = prefix.size();
+    const auto component_end = uri.find('/', component_start);
+    if (component_end == std::string::npos) return false;
+    return uri.substr(component_start, component_end - component_start) ==
+        common_agent_dataset_uri_scope_component(turn_id);
+}
+
 const char * common_agent_table_header_mode_name(
         common_agent_table_header_mode mode) {
     switch (mode) {
