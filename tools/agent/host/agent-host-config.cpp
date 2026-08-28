@@ -176,7 +176,14 @@ bool read_mcp_provider(
     read_optional(value, "required", provider.required);
     read_optional(value, "transport", provider.transport);
     read_optional(value, "url", provider.url);
-    read_optional(value, "token_env", provider.token_env);
+    if (value.contains("auth")) {
+        if (!value["auth"].is_object()) {
+            error = "MCP provider auth must be an object";
+            return false;
+        }
+        read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "token_env", provider.auth.token_env);
+    }
     read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
     read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
     read_optional(value, "shutdown_timeout_ms", provider.shutdown_timeout_ms);
@@ -233,8 +240,6 @@ bool read_openapi_provider(
     read_optional(value, "prefix", provider.prefix);
     read_optional(value, "access", provider.access);
     read_optional(value, "exposure", provider.exposure);
-    read_optional(value, "auth_type", provider.auth_type);
-    read_optional(value, "token_env", provider.token_env);
     read_optional(value, "allow_private_network", provider.allow_private_network);
     read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
     read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
@@ -271,8 +276,8 @@ bool read_openapi_provider(
             error = "OpenAPI provider auth must be an object";
             return false;
         }
-        read_optional(value["auth"], "type", provider.auth_type);
-        read_optional(value["auth"], "token_env", provider.token_env);
+        read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "token_env", provider.auth.token_env);
     }
     if (value.contains("limits")) {
         if (!value["limits"].is_object()) {
@@ -919,7 +924,10 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"required", provider.required},
             {"transport", provider.transport},
             {"url", provider.url},
-            {"token_env", provider.token_env},
+            {"auth", {
+                {"type", provider.auth.type},
+                {"token_env", provider.auth.token_env},
+            }},
             {"allowed_tools", provider.allowed_tools},
             {"connect_timeout_ms", provider.connect_timeout_ms},
             {"request_timeout_ms", provider.request_timeout_ms},
@@ -953,8 +961,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"operations", std::move(operations)},
             }},
             {"auth", {
-                {"type", provider.auth_type},
-                {"token_env", provider.token_env},
+                {"type", provider.auth.type},
+                {"token_env", provider.auth.token_env},
             }},
             {"allow_private_network", provider.allow_private_network},
             {"limits", {
@@ -1606,11 +1614,11 @@ bool validate_agent_host_config(
             error = "OpenAPI provider exposure must be auto, include or exclude";
             return false;
         }
-        if (provider.auth_type != "none" && provider.auth_type != "bearer") {
+        if (provider.auth.type != "none" && provider.auth.type != "bearer") {
             error = "OpenAPI provider auth type must be none or bearer";
             return false;
         }
-        if (provider.auth_type == "bearer" && provider.token_env.empty()) {
+        if (provider.auth.type == "bearer" && provider.auth.token_env.empty()) {
             error = "OpenAPI bearer auth requires token_env";
             return false;
         }

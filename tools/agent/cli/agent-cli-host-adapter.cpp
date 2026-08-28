@@ -152,8 +152,8 @@ void append_configured_stdio_mcp_providers(
         request_provider.request_timeout_ms = provider.request_timeout_ms;
         request_provider.shutdown_timeout_ms = provider.shutdown_timeout_ms;
         request_provider.max_result_bytes = provider.max_result_bytes;
-        if (!provider.token_env.empty()) {
-            const char * token = std::getenv(provider.token_env.c_str());
+        if (provider.auth.type == "bearer" && !provider.auth.token_env.empty()) {
+            const char * token = std::getenv(provider.auth.token_env.c_str());
             if (token != nullptr) request_provider.bearer_token = token;
         }
         request_providers.push_back(std::move(request_provider));

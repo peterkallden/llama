@@ -204,7 +204,7 @@ int main(int argc, char ** argv) {
             loaded_config.openapi_providers.front().access != "read_only" ||
             loaded_config.openapi_providers.front().exposure != "auto" ||
             loaded_config.openapi_providers.front().operations.size() != 1 ||
-            loaded_config.openapi_providers.front().token_env != "SALES_API_TOKEN") {
+            loaded_config.openapi_providers.front().auth.token_env != "SALES_API_TOKEN") {
         std::fprintf(stderr, "host config OpenAPI provider contract failed\n");
         return 1;
     }
@@ -297,8 +297,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
     agent_host_config invalid_openapi_config = loaded_config;
-    invalid_openapi_config.openapi_providers.front().auth_type = "bearer";
-    invalid_openapi_config.openapi_providers.front().token_env.clear();
+    invalid_openapi_config.openapi_providers.front().auth.type = "bearer";
+    invalid_openapi_config.openapi_providers.front().auth.token_env.clear();
     if (validate_agent_host_config(invalid_openapi_config, error) ||
             error.find("OpenAPI bearer auth requires token_env") == std::string::npos) {
         std::fprintf(stderr, "OpenAPI bearer provider without token_env was accepted\n");
@@ -567,7 +567,10 @@ int main(int argc, char ** argv) {
             {"enabled", true},
             {"transport", "streamable_http"},
             {"url", "https://mcp.example.test/mcp"},
-            {"token_env", "REMOTE_GITHUB_MCP_TOKEN"},
+            {"auth", {
+                {"type", "bearer"},
+                {"token_env", "REMOTE_GITHUB_MCP_TOKEN"},
+            }},
             {"allowed_tools", json::array({"search_issues"})},
             {"connect_timeout_ms", 4000},
             {"request_timeout_ms", 15000},
@@ -578,7 +581,7 @@ int main(int argc, char ** argv) {
     if (!parse_agent_host_config_json(remote_config_json, remote_config, error) ||
             remote_config.mcp_providers.size() != 1 ||
             remote_config.mcp_providers[0].url != "https://mcp.example.test/mcp" ||
-            remote_config.mcp_providers[0].token_env != "REMOTE_GITHUB_MCP_TOKEN" ||
+            remote_config.mcp_providers[0].auth.token_env != "REMOTE_GITHUB_MCP_TOKEN" ||
             remote_config.mcp_providers[0].allowed_tools.size() != 1 ||
             remote_config.mcp_providers[0].max_result_bytes != 1048576) {
         std::fprintf(stderr, "remote MCP provider config contract failed: %s\n", error.c_str());

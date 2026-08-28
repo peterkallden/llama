@@ -380,7 +380,10 @@ Its essential shape is:
         "enabled": true,
         "transport": "streamable_http",
         "url": "https://mcp.example.com/mcp",
-        "token_env": "REMOTE_GITHUB_MCP_TOKEN",
+        "auth": {
+          "type": "bearer",
+          "token_env": "REMOTE_GITHUB_MCP_TOKEN"
+        },
         "allowed_tools": ["search_issues", "read_issue"],
         "prefix": "github",
         "server_name": "github"

@@ -5,6 +5,8 @@
 #include <map>
 #include <string>
 
+#include "agent-host-provider-auth-config.h"
+
 // Host-owned policy for one OpenAPI provider. Secrets are referenced by
 // environment-variable name only; secret values never belong in this object
 // or in the model-facing tool catalog.
@@ -32,8 +34,7 @@ struct agent_host_openapi_provider_config {
     std::string exposure = "auto";
     std::map<std::string, agent_host_openapi_operation_policy> operations;
 
-    std::string auth_type = "none";
-    std::string token_env;
+    agent_host_provider_auth_config auth;
     bool allow_private_network = false;
     uint32_t connect_timeout_ms = 5000;
     uint32_t request_timeout_ms = 30000;

@@ -131,8 +131,8 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             query.emplace(name, it->is_string() ? it->get<std::string>() : it->dump());
         }
         httplib::Headers headers;
-        if (config.auth_type == "bearer" && !config.token_env.empty()) {
-            const char * token = std::getenv(config.token_env.c_str());
+        if (config.auth.type == "bearer" && !config.auth.token_env.empty()) {
+            const char * token = std::getenv(config.auth.token_env.c_str());
             if (token == nullptr || *token == '\0') { error = "OpenAPI bearer token environment variable is missing"; return false; }
             headers.emplace("Authorization", std::string("Bearer ") + token);
         }

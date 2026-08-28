@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "agent-host-provider-auth-config.h"
+
 struct agent_host_mcp_provider_config {
     std::string type = "mcp";
     std::string id;
@@ -11,7 +13,7 @@ struct agent_host_mcp_provider_config {
     std::string transport = "stdio";
     std::vector<std::string> command;
     std::string url;
-    std::string token_env;
+    agent_host_provider_auth_config auth;
     std::vector<std::string> allowed_tools;
     uint32_t connect_timeout_ms = 0;
     uint32_t request_timeout_ms = 0;

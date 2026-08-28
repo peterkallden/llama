@@ -358,7 +358,8 @@ int main(int argc, char ** argv) {
             return a.id == b.id && a.enabled == b.enabled && a.required == b.required &&
                 a.type == b.type && a.transport == b.transport &&
                 a.command == b.command && a.url == b.url &&
-                a.token_env == b.token_env && a.allowed_tools == b.allowed_tools &&
+                a.auth.type == b.auth.type && a.auth.token_env == b.auth.token_env &&
+                a.allowed_tools == b.allowed_tools &&
                 a.connect_timeout_ms == b.connect_timeout_ms &&
                 a.request_timeout_ms == b.request_timeout_ms &&
                 a.shutdown_timeout_ms == b.shutdown_timeout_ms &&
@@ -379,8 +380,8 @@ int main(int argc, char ** argv) {
                 a.type == b.type && a.spec_path == b.spec_path && a.base_url == b.base_url &&
                 a.source_directory == b.source_directory &&
                 a.prefix == b.prefix && a.access == b.access && a.exposure == b.exposure &&
-                a.auth_type == b.auth_type &&
-                a.token_env == b.token_env &&
+                a.auth.type == b.auth.type &&
+                a.auth.token_env == b.auth.token_env &&
                 a.allow_private_network == b.allow_private_network &&
                 a.connect_timeout_ms == b.connect_timeout_ms &&
                 a.request_timeout_ms == b.request_timeout_ms &&
