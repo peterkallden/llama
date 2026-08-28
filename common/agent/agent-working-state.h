@@ -20,10 +20,10 @@ struct common_agent_working_state {
     std::vector<std::string> constraints;
     std::vector<std::string> open_questions;
     std::vector<common_runtime_resource_ref> resource_refs;
-    std::vector<common_agent_dataset_ref> dataset_refs;
     std::vector<std::string> chunk_status;
     std::vector<std::string> tool_results;
     std::string continuation_action;
+    std::vector<common_agent_dataset_ref> dataset_refs;
 };
 
 struct common_agent_working_state_limits {
