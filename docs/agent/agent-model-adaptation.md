@@ -55,6 +55,63 @@ These adjustments keep the feature small enough to verify and prevent a
 second, competing memory system from emerging beside the existing learning
 and resource flows.
 
+## Integration with the existing learning path
+
+The existing learning path remains the first consumer of turn evidence. It
+already receives host-produced `learning_signals`, extracts bounded memory
+candidates, validates provenance and scope, stores accepted memory or
+procedures, and promotes verified procedures to blueprints. Model adaptation
+must be joined at the observation boundary, not by reusing the memory
+candidate schema or by creating a second interpretation of the turn.
+
+The shared lifecycle is:
+
+```text
+runtime completes or fails a turn
+             |
+             v
+     host learning observation
+        /                \
+       v                  v
+memory learner      adaptation observer
+       |                  |
+memory/procedure    transaction ledger
+       |                  |
+blueprint           qualification/corpus
+```
+
+The memory learner may continue to require a completed plan and final
+response. The adaptation observer must also be able to record a qualifying
+failure, because a failed turn can be important evidence even when no final
+answer exists. It must never make the runtime turn fail, train in the session
+lane, or change an active model.
+
+### Shared observation, separate destinations
+
+The existing `common_learning_signal` is the beginning of the shared
+observation contract. The adaptation seam should reuse its plan, step, tool,
+and evidence identity, while deriving namespace/project/session scope from
+the host request. It should add host-owned provenance and verification rather
+than asking the model to certify itself:
+
+- relation between a failure and a later recovery;
+- host classification of the suspected cause: model behavior, host contract,
+  policy, missing evidence, or project knowledge;
+- verification status and idempotency key;
+- bounded source references and content hashes.
+
+`common_memory_candidate` must not become the training-candidate contract.
+Memory candidates describe durable scoped knowledge; training candidates must
+describe an approved, redacted, potentially generalizable behavior with an
+explicit input and target. The two paths may share scope, hashing, and
+provenance helpers, but not their promotion policy.
+
+The current runtime derives `successful_recovery` late, after a response has
+been accepted. The future finalization seam must make that signal visible to
+both consumers. It should also invoke adaptation for an error result when a
+qualifying signal exists, while retaining the current rule that ordinary
+successful turns do not become training data.
+
 ## Current foundations
 
 The runtime already records several useful signals as bounded plan
