@@ -65,7 +65,7 @@ int main() {
     std::string error;
     auto view = provider.resolve_tools(context, error);
     assert(view != nullptr);
-    const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42"})"}, error);
+    const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42","limit":"10"})"}, error);
     assert(result.ok);
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);

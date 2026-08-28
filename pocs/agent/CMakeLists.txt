@@ -829,9 +829,9 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
-if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
-    install(TARGETS ${TARGET} RUNTIME)
-endif()
+# This target intentionally remains opt-in and is not part of the installed
+# package.  It calls the live Eurostat service and is neither a default CTest
+# nor part of the agent test build pack.
 
 set(TARGET llama-agent-resident-smoke)
 add_executable(${TARGET}

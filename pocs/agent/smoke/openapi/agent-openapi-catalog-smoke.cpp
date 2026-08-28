@@ -2,6 +2,7 @@
 #include "tools/agent/openapi/agent-openapi-provider.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 
@@ -73,7 +74,9 @@ int main() {
     config.operations["createSale"].access = "write";
     assert(build_agent_openapi_catalog(document, config, catalog, error));
     assert(catalog.operations.size() == 3);
-    assert(catalog.operations[2].requires_confirmation);
+    const auto create_sale = std::find_if(catalog.operations.begin(), catalog.operations.end(),
+        [](const agent_openapi_operation & operation) { return operation.operation_id == "createSale"; });
+    assert(create_sale != catalog.operations.end() && create_sale->requires_confirmation);
 
     config.exposure = "include";
     config.operations.clear();
