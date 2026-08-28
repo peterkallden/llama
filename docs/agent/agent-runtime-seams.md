@@ -289,6 +289,32 @@ OpenAPI results. It is not an instruction to the model and does not make an
 external URI local. A later `data.*` step must still pass the same source and
 scope authority checks.
 
+### Dataset-ref JSON projections
+
+`common_agent_dataset_ref` has one canonical codec in the dataset contract
+library. Callers must choose the projection explicitly:
+
+```text
+compact
+  uri, name, row_count, column_count,
+  source_resource_uri, source_representation
+
+full
+  compact fields + source_provider, source_operation,
+  source_request_json, retrieved_at, content_hash
+```
+
+Compact is for model-facing or bounded tool-result output. Full is for
+host-owned persistence and resumable state. A persistence backend must not
+silently reconstruct a compact ref and thereby lose provenance. Conversely,
+full provenance must not be added to a prompt merely because the underlying
+object contains it.
+
+SQLite and other dataset backends should round-trip the full projection. Their
+parity test should include provider, operation, canonical request, retrieval
+timestamp, content hash and source resource URI, not only the dataset name and
+row counts.
+
 ## Seam 5: provider execution and materialization
 
 Native, MCP and OpenAPI providers converge at `agent_tool_view`. They expose
