@@ -2,6 +2,7 @@
 #include "agent/agent-runtime-context.h"
 #include "agent/context-pressure.h"
 #include "agent/learning/memory-learning.h"
+#include "agent/adaptation/adaptation-observer.h"
 #include "agent/thinking/research/research-runner.h"
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/routing/tool-navigation.h"
@@ -572,12 +573,24 @@ static bool is_incomplete_tool_call(
     return false;
 }
 
-common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens, common_agent_context_token_estimator context_token_estimator) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens), context_token_estimator(std::move(context_token_estimator)) {}
+common_agent_runtime::common_agent_runtime(common_plan_store & store, common_planner & planner, common_action_executor & executor, common_reflection_engine & reflector, const common_agent_tool_runtime * tools, common_memory_post_turn_learner * memory_learner, const common_agent_research_answer_verifier * research_verifier, common_agent_context_budget_config context_budgets, size_t context_size_tokens, size_t reserved_output_tokens, common_agent_context_token_estimator context_token_estimator, common_agent_adaptation_observer * adaptation_observer) : store(store), planner(planner), executor(executor), reflector(reflector), tools(tools), memory_learner(memory_learner), research_verifier(research_verifier), context_budgets(std::move(context_budgets)), context_size_tokens(context_size_tokens), reserved_output_tokens(reserved_output_tokens), context_token_estimator(std::move(context_token_estimator)), adaptation_observer(adaptation_observer) {}
 
 common_agent_result common_agent_runtime::run(const common_agent_request & input_request) {
     common_agent_request request = input_request;
     common_agent_result result;
     std::string error;
+    common_plan_state plan;
+    struct adaptation_finalizer {
+        common_agent_adaptation_observer * observer;
+        const common_agent_request & request;
+        const common_plan_state & plan;
+        const common_agent_result & result;
+        ~adaptation_finalizer() {
+            if (!observer || result.learning_signals.empty()) return;
+            std::string ignored_error;
+            (void) observer->observe(request, plan, result, ignored_error);
+        }
+    } capture{adaptation_observer, request, plan, result};
     common_agent_runtime_turn_context turn{
         request,
         result,
@@ -716,7 +729,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
             "memory supplied to runtime", {}, {}, {}, hit.memory.id);
     }
-    common_plan_state plan;
     if (request.plan_id && !request.plan_id->empty()) {
         const auto existing = store.get(*request.plan_id, error);
         if (!error.empty()) { result.error = error; return result; }

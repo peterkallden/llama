@@ -1,4 +1,5 @@
 #include "agent/agent-runtime.h"
+#include "agent/adaptation/adaptation-observer.h"
 #include "agent/tooling/registry/tool-registry.h"
 #include "plan/plan-in-memory.h"
 #include "test-tool-runtime-registry-adapter.h"
@@ -45,6 +46,19 @@ public:
     }
 };
 
+class adaptation_observer final : public common_agent_adaptation_observer {
+public:
+    bool called = false;
+    bool observe(const common_agent_request &, const common_plan_state & plan,
+            const common_agent_result & result, std::string & error) override {
+        called = true;
+        assert(plan.id == "tool-failure");
+        assert(!result.learning_signals.empty());
+        error.clear();
+        return true;
+    }
+};
+
 int main() {
     std::string error;
     common_plan_in_memory_store store;
@@ -60,12 +74,14 @@ int main() {
     assert(registry.register_tool(std::move(tool), error));
     planner p; executor e; reflector r;
     test_tool_runtime_registry_adapter tool_runtime(registry);
-    common_agent_runtime runtime(store, p, e, r, &tool_runtime);
+    adaptation_observer adaptation;
+    common_agent_runtime runtime(store, p, e, r, &tool_runtime, nullptr, nullptr, {}, 0, 0, {}, &adaptation);
     common_agent_request request;
     request.prompt = "fetch";
     request.max_tool_batches = 1;
     const auto result = runtime.run(request);
     assert(result.error.empty() && result.response == "The lookup failed; no result was claimed.");
+    assert(adaptation.called);
     const auto plan = store.get("tool-failure", error);
     assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporarily unavailable") != std::string::npos);
     return 0;
