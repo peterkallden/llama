@@ -66,6 +66,7 @@ add_library(${TARGET}
     adaptation/training-candidate.cpp adaptation/training-candidate.h
     adaptation/corpus-builder.cpp adaptation/corpus-builder.h
     adaptation/trainer-protocol.cpp adaptation/trainer-protocol.h
+    adaptation/adapter-registry.cpp adaptation/adapter-registry.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
