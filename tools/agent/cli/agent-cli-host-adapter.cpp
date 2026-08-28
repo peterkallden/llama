@@ -1,5 +1,6 @@
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
+#include "../openapi/agent-openapi-catalog.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "tools/agent/resource/assembly/agent-resource-processor-factory.h"
@@ -663,13 +664,58 @@ bool resolve_agent_host_tool_selection(
             continue;
         }
         const std::string provider_id = provider_config.id;
-        const auto materializer = [resource_store, provider_id](
+        common_agent_data_store * openapi_data_store = request.data_store != nullptr
+            ? request.data_store : selection.owned_data_store.get();
+        const auto materializer = [resource_store, openapi_data_store, provider_id](
                 const agent_tool_context & context,
                 const agent_openapi_operation & operation,
                 const std::string & arguments_json,
                 agent_openapi_execution_result & result,
-                std::string & materializer_error) {
+            std::string & materializer_error) {
             const bool json_response = result.mime_type.rfind("application/json", 0) == 0;
+            if (json_response && openapi_data_store != nullptr) {
+                agent_openapi_result_projection projection;
+                if (!classify_agent_openapi_result_json(
+                        result.structured_content_json,
+                        agent_openapi_result_projection_limits{}, projection,
+                        materializer_error)) {
+                    return false;
+                }
+                if (projection.kind == agent_openapi_result_projection_kind::dataset) {
+                    const auto value = json::parse(result.structured_content_json, nullptr, false);
+                    json worksheet = {{"name", operation.operation_id}, {"index", 0},
+                        {"columns", json::array()}, {"rows", value}};
+                    for (const auto & column : projection.columns) {
+                        common_agent_dataset_column_type type = common_agent_dataset_column_type::unknown;
+                        for (const auto & row : value) {
+                            if (!row.contains(column) || row[column].is_null()) continue;
+                            if (row[column].is_boolean()) type = common_agent_dataset_column_type::boolean;
+                            else if (row[column].is_number_integer()) type = common_agent_dataset_column_type::integer;
+                            else if (row[column].is_number()) type = common_agent_dataset_column_type::decimal;
+                            else if (row[column].is_string()) type = common_agent_dataset_column_type::string;
+                            break;
+                        }
+                        worksheet["columns"].push_back({
+                            {"name", column},
+                            {"type", common_agent_dataset_column_type_name(type)},
+                            {"nullable", true}});
+                    }
+                    agent_dataset_import_request import;
+                    import.source_resource_uri = "api://" + provider_id + "/" + operation.operation_id + "/" + context.scope.turn_id;
+                    import.source_workbook_name = provider_id + "-" + operation.operation_id;
+                    import.source_representation = "openapi:json";
+                    import.source_representation_uri = import.source_resource_uri;
+                    import.import_processor_id = "openapi-json-dataset-import-v1";
+                    import.import_processor_version = "1";
+                    import.worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
+                    std::vector<common_agent_dataset_descriptor> imported;
+                    if (!import_agent_worksheet_envelope(*openapi_data_store, import, imported, materializer_error) || imported.size() != 1) {
+                        return false;
+                    }
+                    result.dataset_refs.push_back(imported.front().ref);
+                    return true;
+                }
+            }
             if (json_response && result.structured_content_json.size() <= 2048) return true;
             if (resource_store == nullptr) {
                 materializer_error = "OpenAPI result materialization requires a resource store";
