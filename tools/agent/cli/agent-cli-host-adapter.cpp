@@ -744,6 +744,15 @@ bool resolve_agent_host_tool_selection(
                     if (!import_agent_worksheet_envelope(*openapi_data_store, import, imported, materializer_error) || imported.size() != 1) {
                         return false;
                     }
+                    // The dataset import owns the tabular identity, while the
+                    // OpenAPI host owns the acquisition provenance. Copy the
+                    // latter onto the model-facing ref so it survives after
+                    // the temporary import descriptor is no longer in scope.
+                    imported.front().ref.source_provider = provider_id;
+                    imported.front().ref.source_operation = operation.operation_id;
+                    imported.front().ref.source_request_json = arguments_json;
+                    imported.front().ref.retrieved_at = source_request.created_at;
+                    imported.front().ref.content_hash = source_descriptor.sha256;
                     result.dataset_refs.push_back(imported.front().ref);
                     result.structured_content_json = json({
                         {"materialized", "dataset"},

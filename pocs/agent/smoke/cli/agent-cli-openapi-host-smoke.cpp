@@ -149,8 +149,25 @@ int main() {
         server.stop(); server_thread.join(); return 1;
     }
     if (list.dataset_refs.front().source_resource_uri != list.resource_refs.front().uri ||
+            list.dataset_refs.front().source_provider != "sales-api" ||
+            list.dataset_refs.front().source_operation != "listSales" ||
+            list.dataset_refs.front().source_request_json != "{}" ||
+            list.dataset_refs.front().retrieved_at <= 0 ||
+            list.dataset_refs.front().content_hash.empty() ||
             list.content_json.find("materialized") == std::string::npos) {
         std::cerr << "dataset provenance or compact result missing\n";
+        server.stop(); server_thread.join(); return 1;
+    }
+    agent_resource_descriptor source_descriptor;
+    auto authority = make_agent_resource_read_authority(
+        selection.tooling.resource_runtime, std::time(nullptr));
+    if (!selection.owned_resource_store ||
+            !selection.owned_resource_store->stat(
+                list.resource_refs.front().uri, authority, source_descriptor, error) ||
+            source_descriptor.scope != common_runtime_resource_scope::turn ||
+            source_descriptor.turn_id != "turn-1" ||
+            source_descriptor.session_id != "session-1") {
+        std::cerr << "source resource scope validation failed: " << error << "\n";
         server.stop(); server_thread.join(); return 1;
     }
     auto query_result = selection.tool_view->call({"query", "data.query",
