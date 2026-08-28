@@ -23,6 +23,13 @@ int main() {
     dataset.name = "sales";
     dataset.row_count = 2;
     dataset.column_count = 3;
+    dataset.source_resource_uri = "agent-resource://turn-1/sales.json";
+    dataset.source_representation = "openapi:json";
+    dataset.source_provider = "sales-api";
+    dataset.source_operation = "listSales";
+    dataset.source_request_json = "{}";
+    dataset.retrieved_at = 1724600000;
+    dataset.content_hash = "sha256-sales";
     checkpoint.dataset_refs.push_back(dataset);
     checkpoint.working_state = common_agent_working_state{};
     checkpoint.working_state->dataset_refs.push_back(dataset);
@@ -61,5 +68,8 @@ int main() {
     assert(execution.continuation_count == 1);
     assert(execution.continuation_checkpoint->dataset_refs.front().uri == "dataset://sales");
     assert(execution.continuation_checkpoint->working_state->dataset_refs.front().name == "sales");
+    assert(execution.continuation_checkpoint->dataset_refs.front().source_provider == "sales-api");
+    assert(execution.continuation_checkpoint->dataset_refs.front().source_operation == "listSales");
+    assert(execution.continuation_checkpoint->dataset_refs.front().content_hash == "sha256-sales");
     return 0;
 }
