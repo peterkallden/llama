@@ -61,6 +61,7 @@ add_library(${TARGET}
     runtime-json-contracts.cpp runtime-json-contracts.h
     learning/memory-learning.cpp learning/memory-learning.h
     adaptation/learning-observation.cpp adaptation/learning-observation.h
+    adaptation/learning-cause-classifier.cpp adaptation/learning-cause-classifier.h
     adaptation/adaptation-observer.h
     adaptation/learning-transaction.cpp adaptation/learning-transaction.h
     adaptation/training-candidate.cpp adaptation/training-candidate.h

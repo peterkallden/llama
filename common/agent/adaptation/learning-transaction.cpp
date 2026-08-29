@@ -250,6 +250,8 @@ bool common_learning_transaction_observer::observe(
     observation.idempotency_key = idempotency.str();
     observation.id = "learning://observation/" + observation.idempotency_key;
     observation.content_hash = common_learning_observation_hash(observation);
+    observation.cause = common_learning_classify_result(result, config.cause_classifier);
+    observation.recovery_of_signal_id = common_learning_recovery_reference(result);
     for (const auto & signal : observation.signals) {
         if (signal.type == common_learning_signal_type::successful_recovery) observation.verification = common_learning_verification::host_verified;
         if (signal.type == common_learning_signal_type::user_correction) observation.verification = common_learning_verification::user_confirmed;

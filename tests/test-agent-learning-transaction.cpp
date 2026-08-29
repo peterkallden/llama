@@ -20,6 +20,9 @@ static common_plan_state plan() {
 static common_agent_result failure_result() {
     common_agent_result value;
     value.error = "tool failed";
+    value.failures.push_back({"tool.invalid_arguments", common_agent_failure_class::validation,
+        "tool_execution", "data.inspect", "step-1", "evidence-1", false,
+        "tool failed", "{}"});
     value.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-1", "step-1", "data.inspect", "evidence-1", "tool failed"});
     return value;
 }
@@ -36,6 +39,8 @@ int main() {
     auto transactions = memory_store.list(error);
     assert(error.empty() && transactions.size() == 1);
     assert(transactions.front().observation.scope.project_id == "project-1");
+    assert(transactions.front().observation.cause == common_learning_cause::host_contract);
+    assert(transactions.front().observation.recovery_of_signal_id.empty());
     assert(transactions.front().observation.verification == common_learning_verification::unverified);
 
     auto second_failure = failed;
