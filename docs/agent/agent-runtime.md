@@ -10,6 +10,13 @@ detailed runtime design and behavior reference.
 
 The goal is to make `llama-agent` able to run the same agent turn from different hosts. The CLI is the first host adapter. A future resident process, service, or MCP-facing application should build the same runtime contracts directly instead of pretending to be CLI arguments.
 
+The multi-model runtime boundary is documented separately in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+This document describes the existing session, turn and backend contracts; the
+residency document describes the process-wide model pool that will sit above
+them. Model handles may be shared, but session contexts and KV state remain
+isolated.
+
 The Android work follows the same boundary. Model and inference settings that
 are needed to create a runtime session live in the host-neutral
 `agent/runtime/agent-inference-contracts.h` contract. CLI, daemon and Android
@@ -4089,6 +4096,12 @@ The generation request/result contract is narrower than top-level CLI state. Req
 
 Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
 
+This is still single-model session reuse, not multi-model residency. The current
+session owns one loaded model and one inference context. A future process-wide
+residency manager must acquire a host-selected profile before entering this
+session path, keep the profile pinned through planning, tools, reflection and
+research for the full turn, and release it only after a terminal state.
+
 The reuse logic is now split a little more explicitly inside the resident session as well. There is a small model-load key for properties that really affect model loading, and a separate inference-context key for properties that still require rebuilding the active inference session. In the current resident backends that means turn-shaped settings such as `n_predict` no longer look like model or context identity changes.
 
 The current split is still a pragmatic first slice rather than the final shape. It is good enough for resident smoke and the foreground daemon, but the longer-term split should distinguish:
@@ -4097,7 +4110,7 @@ The current split is still a pragmatic first slice rather than the final shape. 
 - context/inference-context options
 - per-turn generation options
 
-That split now exists structurally for both the CLI-backed and `server-context` resident sessions, and the daemon/admin path now treats `n_predict` as a turn-level override instead of a resident-runtime identity change. The `server-context` path is still coarser in a deeper sense: its current host object still combines model load and inference-context lifetime, so the next cleanup there is to separate those lifetimes more explicitly rather than just removing turn-shaped fields from the reuse key.
+That split now exists structurally for both the CLI-backed and `server-context` resident sessions, and the daemon/admin path now treats `n_predict` as a turn-level override instead of a resident-runtime identity change. The `server-context` path is still coarser in a deeper sense: its current host object still combines model load and inference-context lifetime, so the next cleanup there is to separate those lifetimes more explicitly rather than just removing turn-shaped fields from the reuse key. The multi-model implementation must preserve this separation when the concrete backend loader moves behind the shared residency manager.
 
 The resident `server-context` host no longer bakes `n_predict` into its own resident host config either. The decode limit is now only stamped onto per-turn server tasks, while the long-lived host keeps only load/context identity plus baseline runtime settings. That makes the reuse boundary line up better with the actual runtime behavior exercised by the resident and daemon `n_predict` reuse smokes.
 
