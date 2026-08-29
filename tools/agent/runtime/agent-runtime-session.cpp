@@ -7,6 +7,10 @@
 
 #include "chat.h"
 
+#include <algorithm>
+#include <filesystem>
+#include <utility>
+
 namespace {
 
 common_agent_model_load_key make_agent_model_load_key(
@@ -50,6 +54,8 @@ bool build_agent_inference_session(
         llama_model * model,
         const common_chat_templates * templates,
         std::shared_ptr<common_agent_server_context_host> server_context_host,
+        const std::vector<llama_adapter_lora *> & adapters,
+        const std::vector<float> & adapter_scales,
         common_agent_inference_session & session,
         std::string & error) {
     session = {};
@@ -58,6 +64,10 @@ bool build_agent_inference_session(
     session.templates = templates;
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
     if (backend == agent_inference_backend::server_context) {
+        if (!adapters.empty()) {
+            error = "server-context inference backend does not support runtime adapter overlays";
+            return false;
+        }
         if (!server_context_host) {
             error = "server_context host is not loaded";
             return false;
@@ -76,7 +86,8 @@ bool build_agent_inference_session(
     }
 #endif
 
-    session.inference = make_llama_cli_agent_inference(model, templates);
+    session.inference = make_llama_cli_agent_inference(
+        model, templates, adapters, adapter_scales);
     error.clear();
     return true;
 }
@@ -84,6 +95,11 @@ bool build_agent_inference_session(
 } // namespace
 
 void common_agent_runtime_loaded_model_state::reset() {
+    for (auto * adapter : adapters) {
+        llama_adapter_lora_free(adapter);
+    }
+    adapters.clear();
+    adapter_scales.clear();
     chat_templates.reset();
     server_context_host.reset();
     if (model != nullptr) {
@@ -93,6 +109,8 @@ void common_agent_runtime_loaded_model_state::reset() {
     loaded = false;
     backend = agent_inference_backend::cli;
     key = {};
+    profile_id.clear();
+    profile_cache_key.clear();
 }
 
 void common_agent_runtime_inference_context_state::reset() {
@@ -109,6 +127,10 @@ common_agent_runtime_session & common_agent_runtime_session::operator=(common_ag
         other.loaded_model.loaded = false;
         other.loaded_model.model = nullptr;
         other.loaded_model.server_context_host.reset();
+        other.loaded_model.adapters.clear();
+        other.loaded_model.adapter_scales.clear();
+        other.loaded_model.profile_id.clear();
+        other.loaded_model.profile_cache_key.clear();
         other.inference_context.initialized = false;
     }
     return *this;
@@ -205,6 +227,8 @@ bool initialize_agent_runtime_session(
             session.loaded_model.model,
             session.loaded_model.chat_templates.get(),
             session.loaded_model.server_context_host,
+            session.loaded_model.adapters,
+            session.loaded_model.adapter_scales,
             session.inference_context.session,
             error)) {
         session.reset();
@@ -213,6 +237,105 @@ bool initialize_agent_runtime_session(
 
     session.inference_context.initialized = true;
     session.inference_context.key = requested_context_key;
+    session.inference_context.session.profile_id = session.loaded_model.profile_id;
+    session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
     error.clear();
+    return true;
+}
+
+bool apply_agent_runtime_model_profile(
+        common_agent_runtime_session & session,
+        const common_agent_model_profile & profile,
+        const common_learning_adapter_registry & registry,
+        const std::string & adapter_root,
+        std::string & error) {
+    error.clear();
+    if (!session.loaded_model.loaded || session.loaded_model.model == nullptr) {
+        error = "cannot apply a model profile before the base model is loaded";
+        return false;
+    }
+    if (!common_agent_validate_model_profile(profile, error)) {
+        return false;
+    }
+    if (profile.adapters.empty() && !adapter_root.empty()) {
+        // An empty overlay is the explicit baseline.  Do not require an
+        // artifact directory merely to select the adapter-free profile.
+    } else if (!profile.adapters.empty() && adapter_root.empty()) {
+        error = "adapter root is required for a profile with overlays";
+        return false;
+    }
+
+    std::vector<common_learning_adapter_manifest> manifests;
+    if (!registry.resolve_active_overlays(profile, manifests, error)) {
+        return false;
+    }
+
+    if (session.loaded_model.profile_cache_key ==
+            common_agent_model_profile_cache_key(profile) &&
+            session.inference_context.initialized) {
+        return true;
+    }
+
+    std::vector<llama_adapter_lora *> loaded_adapters;
+    std::vector<float> scales;
+    const std::filesystem::path root(adapter_root);
+    for (const auto & requested : profile.adapters) {
+        const auto manifest = std::find_if(manifests.begin(), manifests.end(),
+            [&](const auto & item) { return item.id == requested.adapter_id; });
+        if (manifest == manifests.end()) {
+            error = "resolved adapter is missing from profile: " + requested.adapter_id;
+            for (auto * adapter : loaded_adapters) llama_adapter_lora_free(adapter);
+            return false;
+        }
+        const auto path = root / manifest->artifact_path;
+        if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
+            error = "adapter artifact is not a regular file: " + path.string();
+            for (auto * adapter : loaded_adapters) llama_adapter_lora_free(adapter);
+            return false;
+        }
+        auto * adapter = llama_adapter_lora_init(
+            session.loaded_model.model, path.string().c_str());
+        if (adapter == nullptr) {
+            error = "failed to load adapter artifact: " + path.string();
+            for (auto * loaded : loaded_adapters) llama_adapter_lora_free(loaded);
+            return false;
+        }
+        loaded_adapters.push_back(adapter);
+        scales.push_back(static_cast<float>(requested.scale));
+    }
+
+    session.inference_context.reset();
+    for (auto * adapter : session.loaded_model.adapters) {
+        llama_adapter_lora_free(adapter);
+    }
+    session.loaded_model.adapters = std::move(loaded_adapters);
+    session.loaded_model.adapter_scales = std::move(scales);
+    session.loaded_model.profile_id = profile.id;
+    session.loaded_model.profile_cache_key = common_agent_model_profile_cache_key(profile);
+    common_agent_inference_options options;
+    options.model = session.loaded_model.key.model;
+    options.n_gpu_layers = session.loaded_model.key.n_gpu_layers;
+    options.fit_params = session.loaded_model.key.fit_params;
+    options.mmproj = session.loaded_model.key.mmproj;
+    if (!build_agent_inference_session(
+            options,
+            session.loaded_model.backend,
+            session.loaded_model.model,
+            session.loaded_model.chat_templates.get(),
+            session.loaded_model.server_context_host,
+            session.loaded_model.adapters,
+            session.loaded_model.adapter_scales,
+            session.inference_context.session,
+            error)) {
+        session.loaded_model.reset();
+        return false;
+    }
+    session.inference_context.initialized = true;
+    session.inference_context.key = {
+        session.loaded_model.backend,
+        session.loaded_model.key,
+    };
+    session.inference_context.session.profile_id = session.loaded_model.profile_id;
+    session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
     return true;
 }

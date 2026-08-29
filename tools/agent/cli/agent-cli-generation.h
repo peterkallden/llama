@@ -17,7 +17,9 @@ bool generate_chat_turn_result(
     const common_agent_generation_options & options,
     common_agent_generation_result & result,
     common_chat_params * chat_params = nullptr,
-    const std::string & json_schema = {});
+    const std::string & json_schema = {},
+    const std::vector<llama_adapter_lora *> & adapters = {},
+    const std::vector<float> & adapter_scales = {});
 
 bool generate_chat_turn(
     llama_model * model,

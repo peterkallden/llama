@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../runtime/agent-runtime-assembly.h"
+#include "agent/adaptation/adapter-registry.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
 #include "chat.h"
@@ -8,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 class common_agent_server_context_host;
 
@@ -30,6 +32,10 @@ struct common_agent_runtime_loaded_model_state {
     bool loaded = false;
     agent_inference_backend backend = agent_inference_backend::cli;
     common_agent_model_load_key key;
+    std::string profile_id;
+    std::string profile_cache_key;
+    std::vector<llama_adapter_lora *> adapters;
+    std::vector<float> adapter_scales;
 
     void reset();
 };
@@ -63,4 +69,15 @@ bool initialize_agent_runtime_session(
     bool memory_enabled,
     const std::string & fallback_reason,
     common_agent_runtime_session & session,
+    std::string & error);
+
+// Resolve and load an approved profile overlay into the already loaded base
+// model.  The adapter root is host-owned; manifest paths remain relative and
+// are never allowed to escape that root.  Changing the profile always
+// recreates the inference context so KV/resident state cannot cross profiles.
+bool apply_agent_runtime_model_profile(
+    common_agent_runtime_session & session,
+    const common_agent_model_profile & profile,
+    const common_learning_adapter_registry & registry,
+    const std::string & adapter_root,
     std::string & error);

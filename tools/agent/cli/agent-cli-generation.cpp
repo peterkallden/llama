@@ -34,9 +34,11 @@ bool generate_chat_turn_result(
         const std::vector<common_chat_tool> & tools,
         common_chat_tool_choice tool_choice,
         const common_agent_generation_options & options,
-        common_agent_generation_result & result,
-        common_chat_params * chat_params,
-        const std::string & json_schema) {
+    common_agent_generation_result & result,
+    common_chat_params * chat_params,
+    const std::string & json_schema,
+    const std::vector<llama_adapter_lora *> & adapters,
+    const std::vector<float> & adapter_scales) {
     result = {};
 
     common_agent_generation_request request;
@@ -69,12 +71,13 @@ bool generate_chat_turn_result(
 
     if (options.generation_trace) {
         fprintf(stderr,
-            "agent generation trace: prompt_tokens=%d n_predict=%d threads=%d tools=%zu tool_choice=%d\n",
+            "agent generation trace: prompt_tokens=%d n_predict=%d threads=%d tools=%zu tool_choice=%d adapters=%zu\n",
             n_prompt,
             options.n_predict,
             options.n_threads,
             tools.size(),
-            static_cast<int>(tool_choice));
+            static_cast<int>(tool_choice),
+            adapters.size());
     }
 
     llama_context_params ctx_params = llama_context_default_params();
@@ -86,6 +89,18 @@ bool generate_chat_turn_result(
     if (ctx == nullptr) {
         result.error_message = "failed to create llama context";
         fprintf(stderr, "%s\n", result.error_message.c_str());
+        return false;
+    }
+    if (adapters.size() != adapter_scales.size()) {
+        result.error_message = "adapter and scale counts differ";
+        llama_free(ctx);
+        return false;
+    }
+    if (!adapters.empty() && llama_set_adapters_lora(
+            ctx, const_cast<llama_adapter_lora **>(adapters.data()),
+            adapters.size(), const_cast<float *>(adapter_scales.data())) < 0) {
+        result.error_message = "failed to apply model adapters";
+        llama_free(ctx);
         return false;
     }
 

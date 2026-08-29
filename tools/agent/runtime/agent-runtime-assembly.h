@@ -81,6 +81,10 @@ struct common_agent_inference_session {
     std::shared_ptr<void> keepalive;
     llama_model * model = nullptr;
     const common_chat_templates * templates = nullptr;
+    // Host-visible identity for readiness/tracing.  This is deliberately
+    // metadata only; the model never selects or mutates its own profile.
+    std::string profile_id;
+    std::string profile_cache_key;
     std::unique_ptr<common_agent_inference> inference;
 };
 
