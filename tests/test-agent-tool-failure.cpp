@@ -81,7 +81,8 @@ int main() {
     request.prompt = "fetch";
     request.max_tool_batches = 1;
     const auto result = runtime.run(request);
-    assert(result.error.empty() && result.response == "The lookup failed; no result was claimed.");
+    assert(result.response.empty());
+    assert(result.error == "final synthesis is blocked by an unrepaired failed tool step: fetch");
     assert(adaptation.called);
     const auto plan = store.get("tool-failure", error);
     assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporarily unavailable") != std::string::npos);

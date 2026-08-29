@@ -37,9 +37,9 @@ common_learning_cause common_learning_classify_result(
 }
 
 std::string common_learning_recovery_reference(const common_agent_result & result) {
-    const auto failure = std::find_if(result.learning_signals.begin(), result.learning_signals.end(),
+    const auto recovery = std::find_if(result.learning_signals.begin(), result.learning_signals.end(),
         [](const auto & signal) {
-            return signal.type == common_learning_signal_type::tool_failure && !signal.evidence_id.empty();
+            return signal.type == common_learning_signal_type::successful_recovery && !signal.evidence_id.empty();
         });
-    return failure == result.learning_signals.end() ? std::string{} : failure->evidence_id;
+    return recovery == result.learning_signals.end() ? std::string{} : recovery->evidence_id;
 }

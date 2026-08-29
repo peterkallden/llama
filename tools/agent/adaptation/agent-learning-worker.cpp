@@ -558,7 +558,9 @@ bool agent_learning_worker_run_once(
         std::string corpus_jsonl;
         if (!regular_file_within_bound(running / "corpus.jsonl", limits.max_corpus_bytes,
                 "corpus bundle", error) || !read_text(running / "corpus.jsonl", corpus_jsonl, error)) {
-            if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle is unreadable", limits, report, error)) return false;
+            const auto summary = error.empty() ? "corpus bundle is unreadable" : error;
+            error.clear();
+            if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }
         if (!regular_file_within_bound(running / "corpus-manifest.json", limits.max_manifest_bytes,
