@@ -131,10 +131,74 @@ explicit input and target. The two paths may share scope, hashing, and
 provenance helpers, but not their promotion policy.
 
 The current runtime derives `successful_recovery` late, after a response has
-been accepted. The future finalization seam must make that signal visible to
+been accepted. The runtime finalization seam makes that signal visible to
 both consumers. It should also invoke adaptation for an error result when a
 qualifying signal exists, while retaining the current rule that ordinary
 successful turns do not become training data.
+
+## End-to-end process and provider convergence
+
+Native, MCP, and OpenAPI tools enter adaptation through the same host-owned
+execution boundary. Their transport and failure details differ, but the
+learning process does not create a separate training path for each provider:
+
+```text
+model-facing compact tool contract
+              |
+              v
+     binding, normalization, policy
+              |
+       +------+------+
+       |             |
+    native          MCP/OpenAPI adapter
+       |             |
+       +------+------+
+              v
+       common tool execution
+              |
+              v
+       result + evidence IDs
+              |
+              v
+       learning signals
+       - tool_failure
+       - successful_recovery
+       - user_correction
+              |
+              v
+   optional adaptation observer
+              |
+              v
+   scoped learning transaction
+              |
+              v
+   cause classification and routing
+   memory / procedure / retain / candidate
+              |
+              v
+   curator-approved training candidate
+              |
+              v
+   deterministic SFT corpus JSONL
+              |
+              v
+   external trainer -> evaluation -> adapter registry
+```
+
+The provider result must preserve enough bounded provenance to identify the
+provider, operation/tool, plan step, scope, and evidence. An MCP transport
+failure, an OpenAPI authentication failure, a policy denial, and a malformed
+model tool call may all produce a `tool_failure`, but they must not receive the
+same cause classification. Only a verified, repeated model-behavior defect may
+proceed toward a training candidate. Binding, schema, auth, network, policy,
+and server defects are retained as operational evidence and routed for code
+or configuration repair instead.
+
+No provider creates an SFT pair directly. The observer records evidence; a
+curation step supplies the bounded `approved_prompt` and `approved_target`;
+the corpus builder then emits training rows. This keeps MCP and OpenAPI
+results reusable as evidence without allowing remote data, credentials, or a
+single accidental tool failure to become model weights.
 
 ## Current foundations
 
