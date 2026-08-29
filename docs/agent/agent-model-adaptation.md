@@ -2,12 +2,13 @@
 
 ## Status
 
-Design and implementation plan. The observation, transaction, candidate,
-corpus, trainer-job, adapter-registry, cause-classification, runtime assembly,
-artifact-import, and evaluation-report contracts now exist. A local worker can
-invoke an explicitly configured external trainer through the immutable bundle
-protocol; production training deployment, production multi-model
-loading/routing, and automatic adapter activation remain separate work.
+The observation, transaction, candidate, corpus, trainer-job, adapter-registry,
+cause-classification, runtime assembly, artifact-import, and evaluation-report
+contracts exist. The local adaptation worker is implemented as a separate
+queue-consuming process. It can run the deterministic `fake-sft` trainer or an
+explicitly configured external trainer such as the supplied QLoRA helper.
+Production training operations, production multi-model loading/routing, and
+daemon-driven automatic adapter activation remain separate work.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -30,9 +31,9 @@ The local branch currently contains the first contract slices:
 - a deterministic JSONL corpus builder requiring explicitly approved and
   redaction-attested candidates, with provenance, revocation, held-out,
   split, duplicate, byte-bound, and bounded replay handling;
-- a separate one-shot adaptation worker with an atomic file queue, a
-  deterministic `fake-sft` trainer for protocol testing, and an
-  operator-configured external-trainer seam;
+- a separate adaptation worker with one-shot and bounded watch modes, an
+  atomic file queue, a deterministic `fake-sft` trainer for protocol testing,
+  and an operator-configured external-trainer seam;
 - an append-only lifecycle journal for candidate, corpus, training-job,
   training-result, and adapter status events, with idempotency conflict checks;
 - an external training job/result contract and a validated adapter registry
@@ -66,13 +67,15 @@ existing SHA-256 stores. The corpus builder now enforces candidate-level
 redaction attestation, candidate revocation, held-out exclusion, deterministic
 splits, provenance, duplicate handling, and bounded host-selected replay.
 The redaction implementation is still an explicit caller/policy seam rather
-than a PII detector; semantic replay selection, production trainer deployment,
-and automatic inference activation remain later sweeps. The runtime now has a
-process-wide residency seam with CLI and server-context loaders, but the
-daemon/bootstrap migration to named profiles is still pending. The current
-registry is metadata-only and does not load an adapter. The artifact verifier
-and evaluation report only establish import and promotion evidence; they do
-not train, evaluate, or activate a model by themselves.
+than a PII detector; semantic replay selection and production trainer
+deployment remain later sweeps. The runtime now has a process-wide residency
+seam with CLI and server-context loaders, but the daemon/bootstrap migration
+to named profiles is still pending. The current registry is metadata-only and
+does not load an adapter. The artifact verifier and evaluation report only
+establish import and promotion evidence; they do not train, evaluate, or
+activate a model by themselves. The host-level orchestration smoke performs an
+explicit evaluator call followed by explicit registry activation to exercise
+the lifecycle; the resident daemon does not perform that flow automatically.
 
 The model-profile catalog and router are documented in
 [Agent model residency and multi-model scheduling](agent-model-residency.md).
@@ -618,6 +621,159 @@ directories. The external process inherits the worker environment, so secrets
 must not be placed in that environment unless the configured trainer is fully
 trusted; environment allow-listing is a later hardening step.
 
+#### Worker contract in detail
+
+The worker is intentionally a small file-queue consumer. It does not inspect
+the learning ledger, choose candidates, build a corpus, load an inference
+model, or activate an adapter. A host or an orchestration job must create the
+approved `common_learning_training_job` and its matching corpus bundle first.
+The worker then performs only this transition:
+
+```text
+pending bundle
+    -> atomic claim
+running + lease
+    -> fake-sft or configured external trainer
+    -> result and artifact validation
+succeeded | failed | cancelled
+```
+
+The queue key is derived from the `learning://job/...` id. A normal bundle is:
+
+```text
+<queue-root>/pending/<job-key>/
+  job.json
+  corpus.jsonl
+  corpus-manifest.json
+```
+
+After an atomic claim, the directory is under `running/<job-key>`. The worker
+adds `state.json`, and an external trainer may add `trainer.log`,
+`result.json`, and files below `artifacts/`. The complete directory is moved
+as one unit to `succeeded`, `failed`, or `cancelled`; consumers must read the
+terminal directory rather than a still-running directory.
+
+`job.json` is the versioned trainer contract. The important identity fields
+are `corpus_revision_id`, `corpus_bundle_hash`, `base_training_fingerprint`,
+`trainer_kind`, `trainer_version`, `code_revision`, `seed`, and
+`deadline_seconds`. `trainer_kind` is explicit and participates in the job
+identity. The worker never infers it from a model name, an artifact filename,
+or model output. A result must repeat the job id, corpus bundle hash, base
+fingerprint, trainer kind, and trainer version. It must also contain a
+relative artifact path, a `sha256:` artifact hash, and an explicit evaluation
+status. `not_run` is valid at the worker boundary; it is not sufficient for
+adapter admission.
+
+The default worker limits are deliberately independent:
+
+| Limit | Default |
+| --- | ---: |
+| `max_job_bytes` | 64 KiB |
+| `max_corpus_bytes` | 64 MiB |
+| `max_manifest_bytes` | 1 MiB |
+| `max_result_bytes` | 1 MiB |
+| `max_artifact_bytes` | 64 MiB |
+| `max_job_runtime_seconds` | 86,400 s |
+| `worker_id` | `local-worker` |
+
+They can be lowered or raised per worker with the corresponding command-line
+options. The effective runtime is the smaller of the job deadline and the
+worker limit. These are process and file bounds, not a complete cgroup,
+container, GPU-memory, or disk quota. Production deployment should place the
+worker in an operator-controlled service/container with those additional
+limits.
+
+State handling is host-owned and bounded:
+
+- staging plus atomic rename prevents consumers from seeing a partial bundle;
+- atomic rename from `pending` to `running` prevents two workers claiming the
+  same job;
+- `state.json` is rewritten atomically and contains worker id, update time,
+  and lease expiry;
+- a running external trainer renews its lease while it is alive;
+- a `cancel` marker is checked before, during, and after trainer execution;
+- cancellation ends in `cancelled`, while trainer errors and expired leases
+  end in `failed` with a safe summary;
+- an expired lease is not silently retried. A host/scheduler must decide when
+  and how to enqueue a new job, preserving the original job identity and
+  audit trail.
+
+For an external trainer, the configured command is an argv prefix, not a shell
+string. The worker appends only these fixed path arguments:
+
+```text
+--job <running>/job.json
+--corpus <running>/corpus.jsonl
+--corpus-manifest <running>/corpus-manifest.json
+--artifacts <running>/artifacts
+--result <running>/result.json
+```
+
+The corpus is therefore not placed on a command line. Combined child output
+is drained into a bounded `trainer.log` (currently 64 KiB), and the worker
+checks child exit status, result size, result schema, artifact location,
+artifact size, and artifact SHA-256 before publishing success. Artifact paths
+must resolve to regular files within the job-local artifact root; traversal
+and escape are rejected. The worker requires subprocess support for this
+path. `--capabilities` reports configured trainer kinds, but an advertised
+external kind does not prove that CUDA, Python packages, checkpoints, or an
+evaluation environment are available.
+
+The CLI surface is:
+
+```text
+llama-agent-adaptation-worker --queue PATH [worker limits]
+llama-agent-adaptation-worker --queue PATH --watch [--poll-seconds N] [--max-jobs N]
+llama-agent-adaptation-worker --capabilities
+```
+
+`--watch` is a polling service mode, not a second scheduler. It processes one
+claimed job at a time. Without `--watch`, the process handles at most one
+pending job and exits; this is suitable for cron, a host scheduler, or a
+systemd one-shot invocation. `--max-jobs` bounds a watch session and counts
+terminal jobs handled by that process.
+
+#### Supporting QLoRA Python trainer
+
+`scripts/agent-adaptation-qlora-trainer.py` is the reference external trainer,
+not part of the inference runtime. It accepts the worker's fixed paths plus
+operator-owned options such as rank, alpha, epochs, learning rate, maximum
+sequence length, and target modules. Its current behavior is:
+
+1. validate a schema-version 1 `qlora-sft` job and a corpus manifest;
+2. read only JSONL rows in the `train` split, using `prompt` or `input` and a
+   non-empty `target`;
+3. load a local Hugging Face checkpoint in 4-bit mode with CUDA;
+4. attach a PEFT LoRA configuration and run a bounded SFT job with the job
+   seed;
+5. save the temporary Hugging Face adapter under the job artifact directory;
+6. call `convert_lora_to_gguf.py` to create an `f16` GGUF LoRA overlay; and
+7. write the worker result atomically with `evaluation_status: "not_run"`.
+
+The script deliberately does not download a model or upload a corpus. Both
+`--model` and `--base-config` must be local Hugging Face directories. The
+serving Q4 GGUF is not a training checkpoint and cannot be passed as either
+argument. The converter needs its own Python dependencies, so the package
+installs two manifests:
+
+```text
+share/llama-agent/requirements/requirements-agent-adaptation-qlora-trainer.txt
+share/llama-agent/requirements/requirements-convert_lora_to_gguf.txt
+```
+
+The first covers the worker-side Python stack (`transformers`, `peft`,
+`accelerate`, `bitsandbytes`, `safetensors`; install a matching PyTorch build
+separately). The second covers the repository converter stack. The scripts
+are installed in the package `bin` directory. The external process inherits
+the worker environment, so the service account/environment must be trusted or
+isolated from unrelated credentials.
+
+This trainer is a real integration entrypoint, but it is not a local smoke
+trainer: a successful run requires CUDA, a compatible PyTorch/bitsandbytes
+installation, a local Hugging Face checkpoint, and the converter environment.
+Evaluation, registry admission, canary staging, and activation remain
+host-controlled steps after the worker returns.
+
 ### Local orchestration smokes
 
 The host-level orchestration smoke is `llama-agent-adaptation-e2e-smoke`. It
@@ -637,7 +793,10 @@ transaction ledger
 
 The smoke does not imply that the fake artifact is a loadable adapter or that
 the fixture evaluator is a quality evaluator. A real evaluator remains an
-external host-controlled step.
+external host-controlled step. In this smoke the host-level orchestrator
+explicitly selects the built-in `fake-sft` trainer, invokes the worker, injects
+an evaluator result, and then exercises canary/activation transitions. That is
+test composition; it is not automatic daemon behavior.
 
 The separate `llama-agent-model-adaptation-smoke` runs one real resident
 inference turn with adaptation capture enabled and reopens the configured
@@ -1081,9 +1240,10 @@ Deliverables:
   deduplication, stable ordering, train/validation/test split assignment, and
   bounded host-selected replay metadata.
 - Keep held-out evaluation cases out of both training and replay selection.
-- Keep the builder as a pure local contract in this phase; an inspection/export
-  command and semantic replay selector remain worker/ledger work. Remote export
-  remains opt-in.
+- Keep the builder as a pure local contract in this phase. Bounded
+  inspection/export is implemented against an already-built revision; semantic
+  replay selection remains a host/ledger responsibility. Remote export remains
+  opt-in.
 
 Tests and exit gate:
 
@@ -1181,11 +1341,12 @@ never sufficient for registry admission; only a separate passed evaluation
 report can open the canary gate. The worker consumes this contract for the
 built-in deterministic fake trainer and for an explicitly configured external
 trainer such as the supplied QLoRA entrypoint. Automatic queue production from
-the live adaptation ledger and automatic adapter activation remain
-unimplemented. The host must select `trainer_kind` explicitly when it creates
-a job. The local orchestration default is `fake-sft`, so the model-free smoke
-cannot accidentally request QLoRA from a worker that has no external trainer
-configured. A real QLoRA run requires `trainer_kind: "qlora-sft"` plus a
+the live adaptation ledger and daemon-driven adapter activation remain
+unimplemented. The host-level orchestrator can explicitly compose those steps
+for a controlled smoke. The host must select `trainer_kind` explicitly when it
+creates a job. The local orchestration default is `fake-sft`, so the model-free
+smoke cannot accidentally request QLoRA from a worker that has no external
+trainer configured. A real QLoRA run requires `trainer_kind: "qlora-sft"` plus a
 matching worker command registration; the worker does not infer a trainer from
 the artifact filename or from model output.
 
