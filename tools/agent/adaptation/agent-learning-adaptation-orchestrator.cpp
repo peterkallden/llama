@@ -160,9 +160,30 @@ bool agent_learning_run_adaptation(
             result.lifecycle_records, error)) return false;
 
     if (!agent_learning_worker_run_once(config.queue_root, config.worker_limits,
-            result.worker_report, error)) return false;
+            result.worker_report, error)) {
+        const auto worker_error = error;
+        error.clear();
+        std::string lifecycle_error;
+        append_lifecycle(config.lifecycle_store, result.job.id,
+            common_learning_lifecycle_kind::training_job,
+            common_learning_lifecycle_status::failed,
+            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            result.lifecycle_records, lifecycle_error);
+        error = worker_error;
+        if (!lifecycle_error.empty()) error += "; lifecycle failure: " + lifecycle_error;
+        return false;
+    }
     if (result.worker_report.state != agent_learning_worker_job_state::succeeded) {
         error = "adaptation worker did not succeed: " + result.worker_report.safe_summary;
+        std::string lifecycle_error;
+        append_lifecycle(config.lifecycle_store, result.job.id,
+            common_learning_lifecycle_kind::training_job,
+            result.worker_report.state == agent_learning_worker_job_state::cancelled
+                ? common_learning_lifecycle_status::cancelled
+                : common_learning_lifecycle_status::failed,
+            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            result.lifecycle_records, lifecycle_error);
+        if (!lifecycle_error.empty()) error += "; lifecycle failure: " + lifecycle_error;
         return false;
     }
     const auto succeeded_directory = config.queue_root / "succeeded" / queue_key(result.job.id);

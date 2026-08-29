@@ -158,6 +158,8 @@ int main(int argc, char ** argv) {
             "external worker run failed at queue level: " + error);
     require(report.state == agent_learning_worker_job_state::succeeded,
             "external trainer fixture did not complete: " + report.safe_summary);
+    require(report.safe_summary == "external trainer completed",
+            "external trainer was reported with the wrong completion summary");
     const auto external_result_path = root / "succeeded" / queue_key(external_job.id) / "result.json";
     common_learning_training_result external_result;
     require(common_learning_training_result_from_json(read_file(external_result_path), external_result, error) &&

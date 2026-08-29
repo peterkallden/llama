@@ -41,6 +41,27 @@ bool write_text(const std::filesystem::path & path, const std::string & text, st
     return true;
 }
 
+bool write_text_atomic(const std::filesystem::path & path, const std::string & text, std::string & error) {
+    const auto temporary = path.string() + ".tmp";
+    std::error_code ec;
+    std::filesystem::remove(temporary, ec);
+    if (!write_text(temporary, text, error)) return false;
+    std::filesystem::rename(temporary, path, ec);
+#if defined(_WIN32)
+    if (ec) {
+        ec.clear();
+        std::filesystem::remove(path, ec);
+        if (!ec) std::filesystem::rename(temporary, path, ec);
+    }
+#endif
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        error = "cannot atomically replace worker file: " + path.string();
+        return false;
+    }
+    return true;
+}
+
 bool read_text(const std::filesystem::path & path, std::string & text, std::string & error) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -75,7 +96,54 @@ bool write_state(
         {"updated_at_epoch_seconds", now},
         {"lease_expires_at_epoch_seconds", lease_expires_at_epoch_seconds},
     }.dump();
-    return write_text(directory / "state.json", text, error);
+    return write_text_atomic(directory / "state.json", text, error);
+}
+
+bool regular_file_within_bound(
+        const std::filesystem::path & path,
+        const size_t max_bytes,
+        const std::string & description,
+    std::string & error) {
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(path, ec);
+    if (ec || status.type() != std::filesystem::file_type::regular) {
+        error = description + " is not a regular file";
+        return false;
+    }
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        error = "cannot inspect " + description + " size";
+        return false;
+    }
+    if (size > max_bytes) {
+        error = description + " exceeds worker byte bound";
+        return false;
+    }
+    return true;
+}
+
+bool resolve_artifact_inside_root(
+        const std::filesystem::path & root_path,
+        const std::filesystem::path & relative_path,
+        std::filesystem::path & resolved,
+        std::string & error) {
+    std::error_code ec;
+    const auto root = std::filesystem::canonical(root_path, ec);
+    if (ec) {
+        error = "trainer artifact root is not available";
+        return false;
+    }
+    resolved = std::filesystem::canonical(root / relative_path, ec);
+    if (ec || !std::filesystem::is_regular_file(resolved, ec) || ec) {
+        error = "trainer artifact is not a regular file";
+        return false;
+    }
+    const auto relative = resolved.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || relative.string().find("..") == 0) {
+        error = "trainer artifact escapes its root";
+        return false;
+    }
+    return true;
 }
 
 bool create_queue_directories(const std::filesystem::path & root, std::string & error) {
@@ -193,6 +261,9 @@ bool run_external_trainer(
         error = "claimed job already contains a trainer result";
         return false;
     }
+    if (!regular_file_within_bound(running / "job.json", limits.max_job_bytes, "training job", error) ||
+            !regular_file_within_bound(running / "corpus-manifest.json", limits.max_manifest_bytes,
+                "corpus manifest", error)) return false;
     std::vector<std::string> argv = configured->second;
     const auto append_path = [&argv](const char * name, const std::filesystem::path & path) {
         argv.emplace_back(name);
@@ -274,10 +345,21 @@ bool run_external_trainer(
     }
 
     std::string result_json;
-    if (!read_text(result_path, result_json, error) ||
+    if (!regular_file_within_bound(result_path, limits.max_result_bytes, "trainer result", error) ||
+            !read_text(result_path, result_json, error) ||
             !common_learning_training_result_from_json(result_json, result, error) ||
             !common_learning_validate_training_result(job, result, error)) {
         if (error.empty()) error = "external trainer produced an invalid result";
+        return false;
+    }
+    const auto artifact_root = running / "artifacts";
+    std::filesystem::path artifact_path;
+    if (!resolve_artifact_inside_root(artifact_root, result.artifact_path, artifact_path, error) ||
+            !regular_file_within_bound(artifact_path, limits.max_artifact_bytes, "trainer artifact", error)) return false;
+    std::string artifact_bytes;
+    if (!read_text(artifact_path, artifact_bytes, error) ||
+            result.artifact_sha256 != "sha256:" + hash_sha256_hex(artifact_bytes.data(), artifact_bytes.size())) {
+        error = "trainer artifact SHA-256 does not match result";
         return false;
     }
     return true;
@@ -415,6 +497,10 @@ bool agent_learning_worker_run_once(
         error = "worker artifact byte bound must be positive";
         return false;
     }
+    if (limits.max_job_bytes == 0 || limits.max_manifest_bytes == 0 || limits.max_result_bytes == 0) {
+        error = "worker metadata byte bounds must be positive";
+        return false;
+    }
     if (limits.max_corpus_bytes == 0) {
         error = "worker corpus byte bound must be positive";
         return false;
@@ -452,7 +538,8 @@ bool agent_learning_worker_run_once(
         }
         std::string job_text;
         common_learning_training_job job;
-        if (!read_text(running / "job.json", job_text, error) ||
+        if (!regular_file_within_bound(running / "job.json", limits.max_job_bytes,
+                "training job", error) || !read_text(running / "job.json", job_text, error) ||
                 !common_learning_training_job_from_json(job_text, job, error)) {
             const auto job_id = job.id.empty() ? std::string("unknown") : job.id;
             if (!fail_claimed_job(running, queue_root, key, job_id, "invalid training job bundle", limits, report, error)) return false;
@@ -469,12 +556,16 @@ bool agent_learning_worker_run_once(
             return true;
         }
         std::string corpus_jsonl;
-        if (!read_text(running / "corpus.jsonl", corpus_jsonl, error)) {
+        if (!regular_file_within_bound(running / "corpus.jsonl", limits.max_corpus_bytes,
+                "corpus bundle", error) || !read_text(running / "corpus.jsonl", corpus_jsonl, error)) {
             if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle is unreadable", limits, report, error)) return false;
             return true;
         }
-        if (corpus_jsonl.size() > limits.max_corpus_bytes) {
-            if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle exceeds worker byte bound", limits, report, error)) return false;
+        if (!regular_file_within_bound(running / "corpus-manifest.json", limits.max_manifest_bytes,
+                "corpus manifest", error)) {
+            const auto summary = error;
+            error.clear();
+            if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }
         common_learning_training_result result;
@@ -509,7 +600,8 @@ bool agent_learning_worker_run_once(
             if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }
-        report = {agent_learning_worker_job_state::succeeded, job.id, "fake trainer completed"};
+        report = {agent_learning_worker_job_state::succeeded, job.id,
+            job.trainer_kind == "fake-sft" ? "fake trainer completed" : "external trainer completed"};
         if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, 0, error) ||
                 !move_terminal(running, queue_root / "succeeded", key, error)) return false;
         return true;

@@ -566,9 +566,10 @@ checks the job-local cancellation marker, and drains combined child output into
 a bounded `trainer.log`. The child receives no corpus text on its command
 line; only paths inside the claimed directory.
 
-The worker enforces independent positive bounds for artifact bytes, corpus
-bytes, and job runtime. The current runtime is the minimum of the job deadline
-and the worker limit; the fake trainer is intentionally immediate. Capability
+The worker enforces independent positive bounds for job metadata, corpus and
+manifest bytes, result bytes, artifact bytes, and job runtime. The current
+runtime is the minimum of the job deadline and the worker limit; the fake
+trainer is intentionally immediate. Capability
 discovery is explicit and side-effect free:
 
 ```text

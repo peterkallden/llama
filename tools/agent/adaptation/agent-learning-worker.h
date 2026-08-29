@@ -19,8 +19,11 @@ enum class agent_learning_worker_job_state {
 const char * agent_learning_worker_job_state_name(agent_learning_worker_job_state state);
 
 struct agent_learning_worker_limits {
+    size_t max_job_bytes = 64 * 1024;
     size_t max_artifact_bytes = 64 * 1024 * 1024;
     size_t max_corpus_bytes = 64 * 1024 * 1024;
+    size_t max_manifest_bytes = 1 * 1024 * 1024;
+    size_t max_result_bytes = 1 * 1024 * 1024;
     size_t max_job_runtime_seconds = 24 * 60 * 60;
     std::string worker_id = "local-worker";
     // Each command is an operator-owned argv prefix. The worker appends only

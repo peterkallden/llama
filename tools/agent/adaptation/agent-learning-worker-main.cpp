@@ -10,7 +10,7 @@
 namespace {
 
 void usage(const char * executable) {
-    std::cerr << "usage: " << executable << " --queue PATH [--max-artifact-bytes N] [--max-corpus-bytes N] [--max-runtime-seconds N] [--worker-id ID]\n"
+    std::cerr << "usage: " << executable << " --queue PATH [--max-job-bytes N] [--max-artifact-bytes N] [--max-corpus-bytes N] [--max-manifest-bytes N] [--max-result-bytes N] [--max-runtime-seconds N] [--worker-id ID]\n"
               << "       " << executable << " --queue PATH --watch [--poll-seconds N] [--max-jobs N] [worker options]\n"
               << "       " << executable << " --queue PATH --trainer-command KIND EXECUTABLE [--trainer-argument KIND VALUE ...]\n"
               << "       " << executable << " --capabilities\n";
@@ -47,8 +47,23 @@ int main(int argc, char ** argv) {
                 usage(argv[0]);
                 return 2;
             }
+        } else if (argument == "--max-job-bytes" && index + 1 < argc) {
+            if (!parse_size(argv[++index], limits.max_job_bytes) || limits.max_job_bytes == 0) {
+                usage(argv[0]);
+                return 2;
+            }
         } else if (argument == "--max-corpus-bytes" && index + 1 < argc) {
             if (!parse_size(argv[++index], limits.max_corpus_bytes)) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (argument == "--max-manifest-bytes" && index + 1 < argc) {
+            if (!parse_size(argv[++index], limits.max_manifest_bytes) || limits.max_manifest_bytes == 0) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (argument == "--max-result-bytes" && index + 1 < argc) {
+            if (!parse_size(argv[++index], limits.max_result_bytes) || limits.max_result_bytes == 0) {
                 usage(argv[0]);
                 return 2;
             }
