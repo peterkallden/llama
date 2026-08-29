@@ -3,6 +3,7 @@
 #include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <unordered_set>
 
 using json = nlohmann::ordered_json;
@@ -282,4 +283,20 @@ bool common_agent_model_catalog_resolve_profile(
     selection.adapters = selected->second.adapters;
     error.clear();
     return true;
+}
+
+std::string common_agent_model_selection_cache_key(
+        const common_agent_model_selection & selection) {
+    std::ostringstream key;
+    key << selection.profile_id << '\n'
+        << selection.base_model_id << '\n'
+        << selection.backend << '\n'
+        << selection.path << '\n'
+        << selection.mmproj << '\n'
+        << selection.context_size_tokens << '\n'
+        << selection.load_policy << '\n';
+    for (const auto & adapter : selection.adapters) {
+        key << adapter.adapter_id << ':' << adapter.scale << '\n';
+    }
+    return key.str();
 }

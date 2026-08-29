@@ -77,3 +77,8 @@ bool common_agent_model_catalog_resolve_profile(
         const std::string & profile_id,
         common_agent_model_selection & selection,
         std::string & error);
+
+// The key is safe to use for residency/KV admission before a model is loaded.
+// It includes every selection field that can change serving behavior.
+std::string common_agent_model_selection_cache_key(
+        const common_agent_model_selection & selection);

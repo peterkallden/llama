@@ -52,6 +52,7 @@ add_library(${TARGET}
     agent-prepared-generation.cpp agent-prepared-generation.h
     runtime/model-profile.cpp runtime/model-profile.h
     runtime/model-catalog.cpp runtime/model-catalog.h
+    runtime/model-profile-cache.cpp runtime/model-profile-cache.h
     credentials/agent-credential-provider.h
     learning/blueprint-selector.cpp learning/blueprint-selector.h
     tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h
