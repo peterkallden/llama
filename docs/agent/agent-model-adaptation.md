@@ -33,7 +33,7 @@ The local branch currently contains the first contract slices:
 - an append-only lifecycle journal for candidate, corpus, training-job,
   training-result, and adapter status events, with idempotency conflict checks;
 - an external training job/result contract and a validated adapter registry
-  with explicit candidate/active/retired/rejected transitions.
+  with explicit candidate/canary/active/retired/rejected transitions;
 - a host-side adapter artifact verifier that binds a manifest to a canonical
   artifact root, rejects path and symlink escape, enforces a byte bound, and
   recomputes the artifact SHA-256 before import;
@@ -439,7 +439,12 @@ to a compatible base model and describe how it was produced:
 ```
 
 An adapter is never active merely because a trainer produced a file. The
-registry admits only a fully validated manifest and promotion result.
+registry admits only a fully validated manifest. A candidate must then be
+staged as `canary` with a passed evaluation report whose adapter id, corpus
+revision, corpus hash, training fingerprint, and evaluation revision all
+match the manifest. Only a canary can be manually activated. This keeps the
+canary boundary explicit without making the registry run inference or promote
+automatically.
 
 ## Data boundaries and privacy
 

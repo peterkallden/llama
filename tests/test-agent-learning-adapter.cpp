@@ -20,6 +20,27 @@ static common_learning_adapter_manifest manifest(const std::string & id) {
     return value;
 }
 
+static common_learning_evaluation_report evaluation_for(
+        const common_learning_adapter_manifest & adapter) {
+    common_learning_evaluation_report value;
+    value.revision_id = adapter.evaluation_revision;
+    value.candidate_adapter_id = adapter.id;
+    value.baseline_profile_id = "agent-baseline";
+    value.candidate_profile_id = "agent-candidate";
+    value.corpus_revision_id = adapter.corpus_revision_id;
+    value.corpus_bundle_hash = adapter.corpus_bundle_hash;
+    value.base_training_fingerprint = adapter.training_model_fingerprint;
+    value.test_suite_revision = "agent-eval-suite-1";
+    value.intended_behavior_passed = true;
+    value.retention_passed = true;
+    value.agent_regression_passed = true;
+    value.evaluated_turns = 10;
+    value.runtime_interventions = 1;
+    value.status = "passed";
+    value.evaluated_at = "2026-08-29T00:00:00Z";
+    return value;
+}
+
 int main() {
     std::string error;
     common_learning_adapter_registry registry;
@@ -27,11 +48,15 @@ int main() {
     assert(registry.admit(first, error));
     assert(!registry.admit(first, error));
     assert(registry.active_id().empty());
+    assert(!registry.activate(first.id, error));
+    assert(error.find("canary") != std::string::npos);
+    assert(registry.stage_canary(first.id, evaluation_for(first), error));
     assert(registry.activate(first.id, error));
     assert(registry.active_id() == first.id);
 
     auto second = manifest("adapter-v2");
     assert(registry.admit(second, error));
+    assert(registry.stage_canary(second.id, evaluation_for(second), error));
     assert(registry.activate(second.id, error));
     assert(registry.active_id() == second.id);
     assert(registry.list().front().status == common_learning_adapter_status::retired);
@@ -65,5 +90,8 @@ int main() {
         "tokenizer:v1", "chat:v1", generated, error));
     assert(generated.corpus_bundle_hash == job.corpus_bundle_hash);
     assert(generated.status == common_learning_adapter_status::candidate);
+    assert(registry.admit(generated, error));
+    auto generated_evaluation = evaluation_for(generated);
+    assert(registry.stage_canary(generated.id, generated_evaluation, error));
     return 0;
 }

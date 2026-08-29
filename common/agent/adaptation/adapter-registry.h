@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/adaptation/evaluation-contract.h"
 #include "agent/adaptation/trainer-protocol.h"
 
 #include <string>
@@ -7,6 +8,7 @@
 
 enum class common_learning_adapter_status {
     candidate,
+    canary,
     active,
     retired,
     rejected,
@@ -49,6 +51,10 @@ bool common_learning_make_adapter_manifest(
 class common_learning_adapter_registry {
 public:
     bool admit(const common_learning_adapter_manifest & manifest, std::string & error);
+    bool stage_canary(
+            const std::string & id,
+            const common_learning_evaluation_report & report,
+            std::string & error);
     bool activate(const std::string & id, std::string & error);
     bool retire(const std::string & id, std::string & error);
     bool reject(const std::string & id, std::string & error);

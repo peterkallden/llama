@@ -53,6 +53,7 @@ bool common_learning_make_adapter_manifest(
 const char * common_learning_adapter_status_name(common_learning_adapter_status status) {
     switch (status) {
         case common_learning_adapter_status::candidate: return "candidate";
+        case common_learning_adapter_status::canary: return "canary";
         case common_learning_adapter_status::active: return "active";
         case common_learning_adapter_status::retired: return "retired";
         case common_learning_adapter_status::rejected: return "rejected";
@@ -94,11 +95,35 @@ bool common_learning_adapter_registry::admit(const common_learning_adapter_manif
     return true;
 }
 
+bool common_learning_adapter_registry::stage_canary(
+        const std::string & id,
+        const common_learning_evaluation_report & report,
+        std::string & error) {
+    error.clear();
+    auto selected = std::find_if(manifests.begin(), manifests.end(), [&](const auto & item) { return item.id == id; });
+    if (selected == manifests.end()) { error = "adapter is not registered"; return false; }
+    if (selected->status != common_learning_adapter_status::candidate) {
+        error = "only a candidate adapter can enter canary";
+        return false;
+    }
+    if (!common_learning_validate_evaluation_report(report, error)) return false;
+    if (report.status != "passed" || report.candidate_adapter_id != selected->id ||
+            report.corpus_revision_id != selected->corpus_revision_id ||
+            report.corpus_bundle_hash != selected->corpus_bundle_hash ||
+            report.base_training_fingerprint != selected->training_model_fingerprint ||
+            report.revision_id != selected->evaluation_revision) {
+        error = "evaluation report does not match adapter manifest";
+        return false;
+    }
+    selected->status = common_learning_adapter_status::canary;
+    return true;
+}
+
 bool common_learning_adapter_registry::activate(const std::string & id, std::string & error) {
     error.clear();
     auto selected = std::find_if(manifests.begin(), manifests.end(), [&](const auto & item) { return item.id == id; });
     if (selected == manifests.end()) { error = "adapter is not registered"; return false; }
-    if (selected->status != common_learning_adapter_status::candidate) { error = "only a candidate adapter can be activated"; return false; }
+    if (selected->status != common_learning_adapter_status::canary) { error = "only a canary adapter can be activated"; return false; }
     for (auto & item : manifests) if (item.status == common_learning_adapter_status::active) item.status = common_learning_adapter_status::retired;
     selected->status = common_learning_adapter_status::active;
     return true;
