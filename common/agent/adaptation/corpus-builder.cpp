@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <set>
 #include <sstream>
 
 using json = nlohmann::ordered_json;
@@ -36,6 +37,8 @@ bool common_learning_build_corpus(
     if (policy.builder_version.empty()) { error = "corpus builder requires version"; return false; }
     if (candidates.size() > policy.max_candidates) { error = "corpus exceeds candidate bound"; return false; }
     std::vector<const common_training_candidate *> selected;
+    std::set<std::string> candidate_ids;
+    std::set<std::string> transaction_ids;
     common_training_candidate_policy candidate_policy;
     for (const auto & candidate : candidates) {
         if (candidate.status != common_training_candidate_status::approved) {
@@ -43,6 +46,16 @@ bool common_learning_build_corpus(
             return false;
         }
         if (!common_training_candidate_qualifies(candidate, candidate_policy, error)) return false;
+        if (!candidate_ids.insert(candidate.id).second) {
+            error = "corpus contains duplicate candidate id";
+            return false;
+        }
+        for (const auto & transaction_id : candidate.transaction_ids) {
+            if (!transaction_ids.insert(transaction_id).second) {
+                error = "corpus contains overlapping candidate transactions";
+                return false;
+            }
+        }
         selected.push_back(&candidate);
     }
     std::sort(selected.begin(), selected.end(), [](const auto * left, const auto * right) { return left->id < right->id; });
@@ -54,6 +67,7 @@ bool common_learning_build_corpus(
         const auto line = json{
             {"candidate_id", candidate->id},
             {"split", split_for(candidate->id, policy.seed)},
+            {"transaction_ids", candidate->transaction_ids},
             {"input", candidate->approved_prompt},
             {"target", candidate->approved_target},
         }.dump();
@@ -68,6 +82,7 @@ bool common_learning_build_corpus(
         {"builder_version", revision.builder_version},
         {"seed", revision.seed},
         {"candidate_ids", candidate_array},
+        {"transaction_ids", std::vector<std::string>(transaction_ids.begin(), transaction_ids.end())},
         {"jsonl_hash", hash_text(revision.jsonl)},
     }.dump();
     revision.bundle_hash = hash_text(revision.manifest_json + "\n" + revision.jsonl);

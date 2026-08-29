@@ -35,5 +35,11 @@ int main() {
 
     candidates.front().status = common_training_candidate_status::observed;
     assert(!common_learning_build_corpus(candidates, {}, first, error));
+    candidates.front().status = common_training_candidate_status::approved;
+    candidates.front().transaction_ids = candidates.back().transaction_ids;
+    assert(!common_learning_build_corpus(candidates, {}, first, error));
+    candidates.front().id = candidates.back().id;
+    candidates.front().transaction_ids = {"learning://transaction/4", "learning://transaction/5", "learning://transaction/6"};
+    assert(!common_learning_build_corpus(candidates, {}, first, error));
     return 0;
 }
