@@ -64,6 +64,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-host.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-plan-orchestration.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-resident.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-model-residency.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session-host.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-turn-driver.cpp
@@ -73,6 +74,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
+        ${LLAMA_SRC}/tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-protocol.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-client.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-transport.cpp
