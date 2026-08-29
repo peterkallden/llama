@@ -12,6 +12,7 @@
 #include "../mcp/agent-mcp-http-transport.h"
 #include "common/agent/credentials/agent-credential-provider.h"
 #include "agent/dataset-contracts.h"
+#include "common/agent/contracts/agent-learning.h"
 
 #include <nlohmann/json.hpp>
 
@@ -115,6 +116,7 @@ public:
     virtual bool exposes_tool(const std::string & name) const = 0;
     virtual bool is_read_only(const std::string & name) const = 0;
     virtual bool is_policy_gated(const std::string & name) const = 0;
+    virtual common_learning_tool_metadata learning_metadata(const std::string &) const { return {}; }
     virtual bool validate(const agent_tool_call & call, std::string & error) const = 0;
 
     virtual agent_tool_result call(
@@ -228,7 +230,8 @@ public:
             std::string provider_id,
             agent_mcp_tool_client & client,
             std::string exposed_name_prefix = {},
-            plan_validator validator = {});
+            plan_validator validator = {},
+            std::string learning_provider_kind = "mcp");
 
     std::unique_ptr<agent_tool_view> resolve_tools(
         const agent_tool_context & context,
@@ -239,6 +242,7 @@ private:
     agent_mcp_tool_client & client;
     std::string exposed_name_prefix;
     plan_validator validator;
+    std::string learning_provider_kind;
 };
 
 class composite_agent_tool_provider : public agent_tool_provider {

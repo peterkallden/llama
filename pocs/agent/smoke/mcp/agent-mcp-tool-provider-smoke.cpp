@@ -114,6 +114,11 @@ int main() {
         std::fprintf(stderr, "create_issue was exposed despite writes being disabled\n");
         return 1;
     }
+    const auto mcp_metadata = read_only_view->learning_metadata("github_search_issues");
+    if (mcp_metadata.tool_family != "github" || mcp_metadata.provider_kind != "mcp") {
+        std::fprintf(stderr, "MCP learning metadata was not canonical\n");
+        return 1;
+    }
 
     const auto search_result = read_only_view->call({
         "call-1",

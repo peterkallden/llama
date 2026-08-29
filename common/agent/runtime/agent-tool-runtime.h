@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/tooling/contracts/tool-runtime-contract.h"
+#include "agent/contracts/agent-learning.h"
 #include "runtime/runtime-operation.h"
 
 #include <string>
@@ -35,6 +36,7 @@ public:
     virtual bool is_available(const std::string &) const { return true; }
     virtual bool resolve_tool_name(
             const std::string &, std::string &, std::vector<std::string> &) const { return false; }
+    virtual common_learning_tool_metadata learning_metadata(const std::string &) const { return {}; }
     virtual bool validate(const common_agent_tool_call & call, std::string & error) const = 0;
     virtual common_agent_tool_repair_context make_repair_context(
             const common_agent_tool_call & call,

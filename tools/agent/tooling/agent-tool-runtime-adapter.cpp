@@ -70,6 +70,10 @@ public:
         return tool_view.is_policy_gated(tool_name);
     }
 
+    common_learning_tool_metadata learning_metadata(const std::string & tool_name) const override {
+        return tool_view.learning_metadata(tool_name);
+    }
+
     bool describe_tool_dataflow(
             const std::string & tool_name,
             common_plan_tool_dataflow_contract & contract,

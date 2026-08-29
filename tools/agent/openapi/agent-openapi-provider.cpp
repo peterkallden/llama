@@ -107,7 +107,8 @@ agent_openapi_tool_provider::agent_openapi_tool_provider(
             }
             error.clear();
             return true;
-        })) {}
+        },
+        "openapi")) {}
 
 agent_openapi_tool_provider::~agent_openapi_tool_provider() = default;
 

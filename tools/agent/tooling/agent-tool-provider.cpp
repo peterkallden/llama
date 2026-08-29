@@ -6,6 +6,7 @@
 #include "agent/tooling/registry/tool-registry.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/routing/tool-navigation.h"
 
 #include <algorithm>
 #include <atomic>
@@ -363,6 +364,11 @@ public:
         return exposes_tool(name) && registry.is_policy_gated(name);
     }
 
+    common_learning_tool_metadata learning_metadata(const std::string & name) const override {
+        if (!exposes_tool(name)) return {};
+        return {common_agent_tool_family_name(name), "native"};
+    }
+
     bool validate(const agent_tool_call & call, std::string & error) const override {
         if (!exposes_tool(call.name)) {
             error = "tool is unavailable in this runtime view";
@@ -592,12 +598,14 @@ public:
             agent_mcp_tool_client & client,
             std::vector<common_chat_tool> chat_tools,
             std::map<std::string, mcp_agent_tool_definition> definitions,
-            mcp_agent_tool_provider::plan_validator validator)
+            mcp_agent_tool_provider::plan_validator validator,
+            std::string learning_provider_kind)
         : context(std::move(context))
         , client(client)
         , chat_tool_list(std::move(chat_tools))
         , definitions(std::move(definitions))
-        , validator(std::move(validator)) {}
+        , validator(std::move(validator))
+        , learning_provider_kind(std::move(learning_provider_kind)) {}
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
@@ -621,6 +629,20 @@ public:
         return it != definitions.end() &&
             !it->second.read_only &&
             it->second.requires_confirmation;
+    }
+
+    common_learning_tool_metadata learning_metadata(const std::string & name) const override {
+        const auto it = definitions.find(name);
+        if (it == definitions.end()) return {};
+        auto family = common_agent_tool_family_name(name);
+        // Some existing MCP integrations expose names as provider_tool rather
+        // than provider.tool. In that legacy shape the provider id is the
+        // host-known family; arbitrary name parsing would be a guess.
+        if (family == "utility" && name.find('.') == std::string::npos &&
+                !it->second.provider_id.empty()) {
+            family = it->second.provider_id;
+        }
+        return {std::move(family), learning_provider_kind};
     }
 
     bool validate(const agent_tool_call & call, std::string & error) const override {
@@ -885,6 +907,7 @@ private:
     std::vector<common_chat_tool> chat_tool_list;
     std::map<std::string, mcp_agent_tool_definition> definitions;
     mcp_agent_tool_provider::plan_validator validator;
+    std::string learning_provider_kind;
     size_t call_count = 0;
     mutable std::mutex state_mutex;
     mutable std::mutex async_mutex;
@@ -947,6 +970,11 @@ public:
     bool is_policy_gated(const std::string & name) const override {
         const auto * view = find_owner(name);
         return view != nullptr && view->is_policy_gated(name);
+    }
+
+    common_learning_tool_metadata learning_metadata(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr ? view->learning_metadata(name) : common_learning_tool_metadata{};
     }
 
     bool validate(const agent_tool_call & call, std::string & error) const override {
@@ -1137,11 +1165,13 @@ mcp_agent_tool_provider::mcp_agent_tool_provider(
         std::string provider_id,
         agent_mcp_tool_client & client,
         std::string exposed_name_prefix,
-        plan_validator validator)
+        plan_validator validator,
+        std::string learning_provider_kind)
     : provider_id(std::move(provider_id))
     , client(client)
     , exposed_name_prefix(std::move(exposed_name_prefix))
-    , validator(std::move(validator)) {}
+    , validator(std::move(validator))
+    , learning_provider_kind(std::move(learning_provider_kind)) {}
 
 std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         const agent_tool_context & context,
@@ -1188,7 +1218,8 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         client,
         std::move(chat_tools),
         std::move(resolved_definitions),
-        validator);
+        validator,
+        learning_provider_kind);
 }
 
 void composite_agent_tool_provider::add_provider(agent_tool_provider & provider) {

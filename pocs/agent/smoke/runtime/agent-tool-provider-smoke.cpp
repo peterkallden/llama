@@ -104,6 +104,11 @@ int main() {
         std::fprintf(stderr, "calculator was not exposed through minimal tool view\n");
         return 1;
     }
+    const auto minimal_metadata = minimal_view->learning_metadata("math.calculate");
+    if (minimal_metadata.tool_family != "math" || minimal_metadata.provider_kind != "native") {
+        std::fprintf(stderr, "native learning metadata was not canonical\n");
+        return 1;
+    }
 
     const auto first_result = minimal_view->call({
         "call-1",

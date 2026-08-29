@@ -22,6 +22,14 @@ struct common_agent_user_correction {
     std::string statement;
 };
 
+// Canonical host-owned metadata for a tool-learning signal. The family is the
+// model-facing routing family; provider_kind records where the execution came
+// from without making provider naming part of the model contract.
+struct common_learning_tool_metadata {
+    std::string tool_family;
+    std::string provider_kind;
+};
+
 struct common_learning_signal {
     common_learning_signal(
             common_learning_signal_type type = common_learning_signal_type::tool_failure,

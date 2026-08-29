@@ -60,6 +60,9 @@ int main() {
         std::cerr << "OpenAPI exposed tool name was not family-qualified with a dot\n";
         return 1;
     }
+    const auto openapi_metadata = view->learning_metadata("sales.listSales");
+    assert(openapi_metadata.tool_family == "sales");
+    assert(openapi_metadata.provider_kind == "openapi");
     assert(view->chat_tools()[0].description.find("workflow: sales.listSales -> choose/bind id -> sales.getSale") != std::string::npos);
     common_plan_state invalid_plan;
     invalid_plan.steps.push_back({});

@@ -25,6 +25,16 @@ static bool common_agent_reflection_context_overflow(const std::string & error) 
         error.find("context size") != std::string::npos;
 }
 
+static void add_tool_learning_metadata(
+        common_learning_signal & signal,
+        const common_agent_tool_runtime * tools,
+        const std::string & tool_name) {
+    if (!tools) return;
+    const auto metadata = tools->learning_metadata(tool_name);
+    signal.tool_family = metadata.tool_family;
+    signal.provider_kind = metadata.provider_kind;
+}
+
 static bool request_has_active_resource_chunk(const common_agent_request & request) {
     return std::any_of(request.input_resources.begin(), request.input_resources.end(),
         [](const common_agent_input_resource & input) {
@@ -1175,8 +1185,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 failed.step_id = tool_step_id;
                 failed.reason_summary = "registered tool validation failed";
                 if (!store.apply(failed, plan, error)) { result.error = error; return result; }
-                result.learning_signals.push_back({common_learning_signal_type::tool_failure, plan.id, tool_step_id,
-                    tool_call->name, failure_observation_id, "registered tool validation failed"});
+                common_learning_signal signal{common_learning_signal_type::tool_failure, plan.id, tool_step_id,
+                    tool_call->name, failure_observation_id, "registered tool validation failed"};
+                add_tool_learning_metadata(signal, tools, tool_call->name);
+                result.learning_signals.push_back(std::move(signal));
                 append_event(result, request, {common_agent_event_type::tool_rejected, validation_error, {}, plan.id});
                 append_event(result, request, common_agent_event_type::tool_repair_context_created, "schema-derived tool repair context recorded", {}, plan.id, tool_step_id, failure_observation_id, tool_call->name);
                 append_event(result, request, {common_agent_event_type::plan_updated, "tool validation failure recorded for repair", {}, plan.id});
@@ -1224,8 +1236,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 failed.step_id = tool_step_id;
                 failed.reason_summary = "registered tool failed";
                 if (!store.apply(failed, plan, error)) { result.error = error; return result; }
-                result.learning_signals.push_back({common_learning_signal_type::tool_failure, plan.id, tool_step_id,
-                    tool_call->name, failure_observation_id, "registered tool failed"});
+                common_learning_signal signal{common_learning_signal_type::tool_failure, plan.id, tool_step_id,
+                    tool_call->name, failure_observation_id, "registered tool failed"};
+                add_tool_learning_metadata(signal, tools, tool_call->name);
+                result.learning_signals.push_back(std::move(signal));
                 append_event(result, request, {common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id});
                 append_event(result, request, {common_agent_event_type::plan_updated, "tool failure recorded for repair", {}, plan.id});
                 append_observation_and_resource_events(
@@ -1808,8 +1822,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         const auto failure = std::find_if(result.learning_signals.begin(), result.learning_signals.end(), [](const auto & signal) {
             return signal.type == common_learning_signal_type::tool_failure;
         });
-        if (failure != result.learning_signals.end()) result.learning_signals.push_back({common_learning_signal_type::successful_recovery, plan.id, failure->step_id,
-            failure->tool_name, failure->evidence_id, "plan completed after a recorded tool failure"});
+        if (failure != result.learning_signals.end()) {
+            common_learning_signal signal{common_learning_signal_type::successful_recovery, plan.id, failure->step_id,
+                failure->tool_name, failure->evidence_id, "plan completed after a recorded tool failure",
+                failure->tool_family, failure->provider_kind};
+            result.learning_signals.push_back(std::move(signal));
+        }
     }
     if (memory_learner && result.error.empty() && !result.response.empty() && plan.status == common_plan_status::completed) {
         const auto learning = memory_learner->learn(request, plan, result);

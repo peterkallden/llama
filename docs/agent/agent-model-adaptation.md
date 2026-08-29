@@ -1043,9 +1043,12 @@ for one domain/family and can optionally narrow transport provenance. The
 contract test verifies that native, MCP, and OpenAPI tool-use candidates join
 the same family view, while research candidates remain in a research view.
 
-Runtime extraction of this metadata from every provider and indexed semantic
-replay selection remain later work. The current implementation deliberately
-does not infer a family from a provider-prefixed tool name.
+Runtime extraction now comes from the resolved tool view at the actual native,
+MCP, or OpenAPI execution boundary. `tool_family` remains the canonical
+model-facing family and `provider_kind` is provenance only. A provider that
+cannot resolve the tool has no metadata to attach; it must not guess from a
+provider-prefixed tool name. Indexed semantic replay selection remains a
+later extension; the current ledger query is bounded and deterministic.
 
 The principal choice is JSONL versus an indexed database. JSONL is portable
 and reproducible; an index is better for scoped queries. The recommended
