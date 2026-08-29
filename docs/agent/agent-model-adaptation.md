@@ -1175,8 +1175,10 @@ fingerprint, and trainer kind. Returned artifact paths must be relative and
 normalized, and the result requires a `sha256:` artifact hash plus an
 explicit evaluation status. `not_run` is valid for a trainer result but is
 never sufficient for registry admission; only a separate passed evaluation
-report can open the canary gate. The worker currently consumes this contract
-for the deterministic fake trainer; QLoRA and automatic scheduling remain
+report can open the canary gate. The worker consumes this contract for the
+built-in deterministic fake trainer and for an explicitly configured external
+trainer such as the supplied QLoRA entrypoint. Automatic queue production from
+the live adaptation ledger and automatic adapter activation remain
 unimplemented.
 
 The generated job identity also includes the base fingerprint, trainer kind
