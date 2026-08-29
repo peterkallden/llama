@@ -64,6 +64,27 @@ void resolve_local_refs(const nlohmann::json & document, nlohmann::json & value,
     if (value.is_array()) for (auto & item : value) resolve_local_refs(document, item, seen);
 }
 
+void resolve_parameter_ref(
+        const nlohmann::json & document,
+        nlohmann::json & parameter,
+        std::set<std::string> & seen) {
+    if (!parameter.is_object() || !parameter.contains("$ref") ||
+            !parameter["$ref"].is_string()) {
+        return;
+    }
+    const std::string ref = parameter["$ref"].get<std::string>();
+    const std::string prefix = "#/components/parameters/";
+    if (ref.rfind(prefix, 0) != 0 || !seen.insert(ref).second) return;
+    const auto components = document.value("components", nlohmann::json::object());
+    if (!components.is_object()) return;
+    const auto parameters = components.value("parameters", nlohmann::json::object());
+    if (!parameters.is_object()) return;
+    const auto it = parameters.find(ref.substr(prefix.size()));
+    if (it == parameters.end() || !it->is_object()) return;
+    parameter = *it;
+    resolve_parameter_ref(document, parameter, seen);
+}
+
 std::string operation_input_schema(
         const nlohmann::json & document,
         const nlohmann::json & operation,
@@ -76,7 +97,10 @@ std::string operation_input_schema(
     };
     nlohmann::json inferable = nlohmann::json::array();
     if (operation.contains("parameters") && operation["parameters"].is_array()) {
-        for (const auto & parameter : operation["parameters"]) {
+        for (const auto & raw_parameter : operation["parameters"]) {
+            auto parameter = raw_parameter;
+            std::set<std::string> parameter_refs;
+            resolve_parameter_ref(document, parameter, parameter_refs);
             if (!parameter.is_object() || !parameter.value("name", "").size()) continue;
             const std::string name = parameter.value("name", "");
             if (parameter.value("in", "") == "path") path_parameters.push_back(name);

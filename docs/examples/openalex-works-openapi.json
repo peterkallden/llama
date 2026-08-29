@@ -1,0 +1,107 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenAlex Works smoke contract",
+    "description": "Small host-approved contract for the public OpenAlex works API.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "https://api.openalex.org" }
+  ],
+  "paths": {
+    "/works": {
+      "get": {
+        "operationId": "listWorks",
+        "summary": "List scholarly works",
+        "description": "Search or filter OpenAlex works and return the bounded list envelope.",
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/search"
+          },
+          {
+            "$ref": "#/components/parameters/per_page"
+          },
+          {
+            "$ref": "#/components/parameters/select"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAlex list response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WorksListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/works/{id}": {
+      "get": {
+        "operationId": "getWork",
+        "summary": "Get one scholarly work",
+        "description": "Retrieve one work by OpenAlex ID or supported external identifier.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "OpenAlex work ID or supported external identifier.",
+            "schema": { "type": "string" }
+          },
+          {
+            "$ref": "#/components/parameters/select"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAlex work",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "search": {
+        "name": "search",
+        "in": "query",
+        "description": "Full-text search across OpenAlex work text fields.",
+        "schema": { "type": "string" }
+      },
+      "per_page": {
+        "name": "per_page",
+        "in": "query",
+        "description": "Number of results to return, from 1 to 100.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+      },
+      "select": {
+        "name": "select",
+        "in": "query",
+        "description": "Comma-separated list of fields to return.",
+        "schema": { "type": "string" }
+      }
+    },
+    "schemas": {
+      "WorksListResponse": {
+        "type": "object",
+        "properties": {
+          "meta": { "type": "object" },
+          "results": {
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "group_by": { "type": "array" }
+        }
+      }
+    }
+  }
+}

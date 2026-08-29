@@ -11,6 +11,12 @@ int main() {
         {"openapi", "3.0.3"},
         {"components", {
             {"schemas", {{"SaleId", {{"type", "string"}}}}},
+            {"parameters", {
+                {"search", {{"name", "search"}, {"in", "query"},
+                    {"schema", {{"type", "string"}}}}},
+                {"perPage", {{"name", "per-page"}, {"in", "query"},
+                    {"schema", {{"type", "integer"}}}}},
+            }},
             {"securitySchemes", {
                 {"bearerAuth", {{"type", "http"}, {"scheme", "bearer"}, {"bearerFormat", "JWT"}}},
             }},
@@ -19,7 +25,12 @@ int main() {
         {"paths", {
             {"/sales", {
                 {"get", {{"operationId", "listSales"}, {"summary", "List sales"},
-                    {"parameters", {{{"name", "id"}, {"in", "query"}, {"x-agent-inferable", true}, {"schema", {{"type", "string"}}}}}},
+                    {"parameters", {
+                        {{"name", "id"}, {"in", "query"}, {"x-agent-inferable", true},
+                            {"schema", {{"type", "string"}}}},
+                        {{"$ref", "#/components/parameters/search"}},
+                        {{"$ref", "#/components/parameters/perPage"}},
+                    }},
                     {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "array"}, {"items", {{"type", "object"}}}}}}}}}}}}}}},
                 {"post", {{"operationId", "createSale"}, {"summary", "Create sale"}}},
             }},
@@ -43,6 +54,12 @@ int main() {
             catalog.operations[0].operation_id != "listSales" ||
             !catalog.operations[0].read_only ||
             catalog.operations[0].input_schema_json.find("\"type\":\"string\"") == std::string::npos ||
+            std::find(catalog.operations[0].query_parameters.begin(),
+                catalog.operations[0].query_parameters.end(), "search") ==
+                catalog.operations[0].query_parameters.end() ||
+            std::find(catalog.operations[0].query_parameters.begin(),
+                catalog.operations[0].query_parameters.end(), "per-page") ==
+                catalog.operations[0].query_parameters.end() ||
             catalog.operations[0].input_schema_json.find("x-agent-autowire-fields") == std::string::npos ||
             catalog.operations[0].result_schema_json.find("\"type\":\"array\"") == std::string::npos ||
             !catalog.operations[0].auth_required ||

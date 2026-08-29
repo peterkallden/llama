@@ -879,6 +879,19 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# This target intentionally is not registered as a default CTest: it calls
+# the public OpenAlex service and is therefore opt-in for live integration.
+set(TARGET llama-agent-openapi-openalex-live-smoke)
+add_executable(${TARGET}
+    smoke/openapi/agent-openapi-openalex-live-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # This target intentionally remains opt-in and is not part of the installed
 # package.  It calls the live Eurostat service and is neither a default CTest
 # nor part of the agent test build pack.
@@ -1883,7 +1896,10 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-stdio.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-model-catalog.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-eurostat.json
-        ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json)
+        ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-openalex.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${AGENT_HOST_CONFIG_EXAMPLES}

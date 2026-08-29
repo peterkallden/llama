@@ -101,7 +101,8 @@ bool maybe_install_agent_bootstrap(
         bootstrap_result.installed_memory_ids.size(), bootstrap_result.existing_memory_ids.size(),
         bootstrap_result.installed_blueprint_ids.size(), bootstrap_result.existing_blueprint_ids.size());
 
-    if (!config.agent_blueprint.empty() && config.agent_blueprint != "auto") {
+    if (!config.agent_blueprint.empty() &&
+            config.agent_blueprint != "off" && config.agent_blueprint != "auto") {
         common_explicit_blueprint_selector selector(config.agent_blueprint);
         common_blueprint_selection_config selection_config;
         selection_config.task_plan_id = current_plan_id;

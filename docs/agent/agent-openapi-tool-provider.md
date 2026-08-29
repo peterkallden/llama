@@ -45,6 +45,71 @@ It requests `DEMO_R_D3DENS` with `geo=SE` and `time=2020` and verifies the
 JSON-stat 2.0 dataset response. The live smoke is not registered as a default
 CTest so ordinary CI remains deterministic.
 
+## OpenAlex example
+
+OpenAlex has two relevant addresses: the public API base URL is
+`https://api.openalex.org`, while the machine-readable OpenAPI 3.1 document is
+published at `https://help.openalex.org/openapi.json`. The provider bootstrap
+helper can now keep those addresses separate:
+
+```sh
+./scripts/agent-provider-bootstrap.sh \
+  --type openapi \
+  --id openalex \
+  --prefix openalex \
+  --base-url https://api.openalex.org \
+  --spec-url https://help.openalex.org/openapi.json \
+  --spec-output openalex-openapi.json \
+  --output openapi-openalex-generated.json
+```
+
+The generated fragment is also checked in as
+[`openapi-openalex-generated.json`](../examples/openapi-openalex-generated.json).
+For a small, reviewable smoke contract, use
+[`openalex-works-openapi.json`](../examples/openalex-works-openapi.json) with
+[`agent-host-config-openalex.json`](../examples/agent-host-config-openalex.json).
+It covers `openalex.listWorks` and `openalex.getWork`, including the
+component-referenced `search`, `per_page` and `select` parameters. The
+checked-in contract explicitly sets `security: []` on these public operations.
+That is intentional: OpenAlex's API guide documents anonymous access, while
+the upstream OpenAPI document declares a global apiKey requirement. A
+deployment that requires a key should use the downloaded upstream document
+and configure the provider's `api_key` auth instead.
+
+The model-free live client smoke is opt-in:
+
+```sh
+cmake --build build-agent-packaging \
+  --target llama-agent-openapi-openalex-live-smoke --parallel 3
+./build-agent-packaging/bin/llama-agent-openapi-openalex-live-smoke \
+  --spec docs/examples/openalex-works-openapi.json
+```
+
+It makes one bounded `GET /works` request with `search=machine learning`,
+`per_page=1` and `select=id,display_name`, then verifies the standard OpenAlex
+`meta`/`results` envelope. The OpenAlex list response is an object envelope,
+not a top-level array, so the current provider keeps it as a bounded JSON
+resource rather than guessing that it is a tabular dataset.
+
+The optional model-backed smoke uses the same host/provider path and forces
+the model to use `openalex.listWorks` rather than the generic web tools:
+
+```sh
+LLAMA_AGENT_BUILD_DIR=build-agent-packaging \
+LLAMA_AGENT_MODEL=/path/to/model.gguf \
+./scripts/test-agent-openalex-model-smoke.sh
+```
+
+The script accepts `LLAMA_AGENT_EMBEDDING_MODEL` when a separate embedding
+model is desired, but OpenAlex itself does not require an embedding model.
+Model-backed execution is deliberately not a default CTest because it needs a
+real model and external network access.
+
+The model smoke only succeeds when the runtime records an actual tool
+execution (`stage=tool ... tool=openalex.listWorks`). A plan mention or a
+textual answer is not enough. This makes small-model planner/argument
+contract failures visible instead of allowing a false-positive smoke result.
+
 ## Configuration
 
 Host configuration is JSON. OpenAPI entries use the existing
@@ -364,3 +429,5 @@ The configuration contract is covered by
 `llama-agent-daemon-mcp-config-ctest`. Catalog, provider and local HTTP
 behavior are covered by `llama-agent-openapi-catalog-ctest`,
 `llama-agent-openapi-provider-ctest` and `llama-agent-openapi-http-ctest`.
+The OpenAlex-specific parameter-reference regression is part of the catalog
+contract test; the two OpenAlex live smokes above remain opt-in.

@@ -336,6 +336,10 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         }
         std::string request_path = join_path(url.base_path, path);
         request_path = httplib::append_query_params(request_path, query);
+        // Public APIs and API gateways commonly use the User-Agent for
+        // diagnostics and abuse/rate-limit handling. Keep it deterministic
+        // and host-owned; callers still cannot provide arbitrary headers.
+        headers.emplace("User-Agent", "llama-agent-openapi-http/1.0");
         const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
         if (url.scheme == "http") {

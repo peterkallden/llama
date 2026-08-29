@@ -1,0 +1,11 @@
+{
+  "type": "openapi",
+  "id": "openalex",
+  "enabled": true,
+  "prefix": "openalex",
+  "auth": {
+    "type": "none"
+  },
+  "base_url": "https://api.openalex.org",
+  "spec_path": "openalex-openapi.json"
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "models/model.gguf"
+  },
+  "tools": {
+    "profile": "all-configured",
+    "families": {
+      "openalex": {
+        "description": "Search and retrieve scholarly works from the public OpenAlex API"
+      }
+    },
+    "providers": [
+      {
+        "type": "openapi",
+        "id": "openalex",
+        "enabled": true,
+        "required": true,
+        "spec_path": "openalex-works-openapi.json",
+        "base_url": "https://api.openalex.org",
+        "prefix": "openalex",
+        "policy": {
+          "access": "read_only",
+          "exposure": "auto"
+        },
+        "auth": {
+          "type": "none"
+        },
+        "limits": {
+          "connect_timeout_ms": 5000,
+          "request_timeout_ms": 30000,
+          "max_result_bytes": 1048576
+        }
+      }
+    ]
+  }
+}

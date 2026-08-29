@@ -17,12 +17,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def fetch_openapi(base_url, spec_output):
     base = base_url.rstrip("/")
     candidates = ("/openapi.json", "/swagger.json", "/api-docs")
+    return fetch_openapi_url((base + suffix for suffix in candidates), spec_output)
+
+
+def fetch_openapi_url(urls, spec_output):
     opener = urllib.request.build_opener(
         NoRedirect())
-    for suffix in candidates:
-        url = base + suffix
+    for url in urls:
         try:
-            request = urllib.request.Request(url, headers={"Accept": "application/json"})
+            request = urllib.request.Request(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "llama-agent-provider-bootstrap/1.0",
+            })
             with opener.open(request, timeout=5) as response:
                 if response.status < 200 or response.status >= 300:
                     continue
@@ -34,7 +40,7 @@ def fetch_openapi(base_url, spec_output):
                 return url
         except (OSError, ValueError, urllib.error.URLError):
             continue
-    raise SystemExit("could not discover an OpenAPI document; use --spec")
+    raise SystemExit("could not fetch an OpenAPI document; use --spec")
 
 
 def main():
@@ -44,6 +50,10 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--base-url")
     parser.add_argument("--spec")
+    parser.add_argument(
+        "--spec-url",
+        help="Explicit URL for the OpenAPI document when it is hosted separately from --base-url",
+    )
     parser.add_argument("--spec-output")
     parser.add_argument("--prefix", default="")
     parser.add_argument("--transport", choices=("stdio", "streamable_http"), default="stdio")
@@ -72,7 +82,10 @@ def main():
         spec = args.spec
         if not spec:
             spec = args.spec_output or (args.id + "-openapi.json")
-            discovered = fetch_openapi(args.base_url, spec)
+            if args.spec_url:
+                discovered = fetch_openapi_url((args.spec_url,), spec)
+            else:
+                discovered = fetch_openapi(args.base_url, spec)
             print("discovered OpenAPI document: " + discovered, file=sys.stderr)
         provider["spec_path"] = spec
     else:
