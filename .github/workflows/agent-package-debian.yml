@@ -115,8 +115,32 @@ jobs:
           dpkg-deb --info debian-artifacts/llama-agent_*.deb
           dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
             | grep -F 'usr/sbin/llama-agent-daemon'
+          for binary in \
+            usr/bin/llama-agent-adaptation-worker \
+            usr/bin/llama-agent-adaptation-admin \
+            usr/bin/agent-adaptation-qlora-trainer.py \
+            usr/share/llama-agent/converter/convert_lora_to_gguf.py; do
+            dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+              | grep -F "$binary"
+          done
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/share/llama-agent/converter/gguf-py/gguf/__init__.py'
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/share/llama-agent/converter/conversion/__init__.py'
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/share/llama-agent/converter/models/templates/'
+          for requirement in \
+            requirements-agent-adaptation-qlora-trainer.txt \
+            requirements-convert_hf_to_gguf.txt \
+            requirements-convert_legacy_llama.txt \
+            requirements-convert_lora_to_gguf.txt; do
+            dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+              | grep -F "usr/share/llama-agent/requirements/$requirement"
+          done
           dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
             | grep -F 'usr/share/doc/llama-agent/examples/'
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/lib/libllama-agent-tool-provider.so'
           dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
             | grep -F 'usr/bin/llama-agent-provider-bootstrap'
           dpkg-deb --contents debian-artifacts/llama-agent_*.deb \

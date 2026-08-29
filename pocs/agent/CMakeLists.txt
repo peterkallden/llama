@@ -1861,11 +1861,23 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
     install(PROGRAMS ../../scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
     # The external QLoRA helper invokes this converter from the installed
-    # package. Keep both scripts and their independent dependency manifest
-    # available so a package does not require a source checkout at runtime.
-    install(PROGRAMS ../../convert_lora_to_gguf.py DESTINATION bin)
+    # package. Keep the helper, converter, and dependency manifests available
+    # so a package does not require a source checkout at runtime.
+    install(PROGRAMS ../../convert_lora_to_gguf.py
+        DESTINATION share/llama-agent/converter)
+    # The converter is a source-tree Python entrypoint. Keep its local
+    # modules and model templates beside it so the installed helper does not
+    # depend on a checkout of llama.cpp at runtime.
+    install(DIRECTORY ../../gguf-py DESTINATION share/llama-agent/converter
+        PATTERN __pycache__ EXCLUDE)
+    install(DIRECTORY ../../conversion DESTINATION share/llama-agent/converter
+        PATTERN __pycache__ EXCLUDE)
+    install(DIRECTORY ../../models/templates DESTINATION share/llama-agent/converter/models
+        PATTERN __pycache__ EXCLUDE)
     install(FILES
         ../../requirements/requirements-agent-adaptation-qlora-trainer.txt
+        ../../requirements/requirements-convert_hf_to_gguf.txt
+        ../../requirements/requirements-convert_legacy_llama.txt
         ../../requirements/requirements-convert_lora_to_gguf.txt
         DESTINATION share/llama-agent/requirements)
 endif()

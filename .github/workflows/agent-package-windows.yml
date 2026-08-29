@@ -126,13 +126,25 @@ jobs:
             'bin\llama-agent-daemon.exe',
             'bin\llama-agent-mcp-stdio-server.exe',
             'bin\llama-agent-web.exe',
+            'bin\llama-agent-adaptation-worker.exe',
+            'bin\llama-agent-adaptation-admin.exe',
+            'bin\agent-adaptation-qlora-trainer.py',
+            'share\llama-agent\converter\convert_lora_to_gguf.py',
+            'share\llama-agent\converter\gguf-py\gguf\__init__.py',
+            'share\llama-agent\converter\conversion\__init__.py',
+            'share\llama-agent\converter\models\templates',
             'bin\llama-agent-core.dll',
+            'bin\llama-agent-tool-provider.dll',
             'bin\llama-agent-memory.dll',
             'bin\llama-agent-plan.dll',
             'bin\llama-agent-config-bootstrap.ps1',
             'share\llama-agent\examples\agent-config.example.json',
             'share\llama-agent\examples\llama-agent.web\README.md',
-            'share\llama-agent\examples\llama-agent.web\nginx\llama-agent-web.conf'
+            'share\llama-agent\examples\llama-agent.web\nginx\llama-agent-web.conf',
+            'share\llama-agent\requirements\requirements-agent-adaptation-qlora-trainer.txt',
+            'share\llama-agent\requirements\requirements-convert_hf_to_gguf.txt',
+            'share\llama-agent\requirements\requirements-convert_legacy_llama.txt',
+            'share\llama-agent\requirements\requirements-convert_lora_to_gguf.txt'
           )
           foreach ($path in $required) {
             if (-not (Test-Path (Join-Path 'package-root' $path))) {

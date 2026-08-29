@@ -598,7 +598,7 @@ llama-agent-adaptation-worker --queue var/agent/adaptation/jobs \
   --trainer-argument qlora-sft --base-config \
   --trainer-argument qlora-sft /models/Qwen2.5-1.5B-Instruct-hf \
   --trainer-argument qlora-sft --converter \
-  --trainer-argument qlora-sft /opt/llama/convert_lora_to_gguf.py
+  --trainer-argument qlora-sft /opt/llama/share/llama-agent/converter/convert_lora_to_gguf.py
 ```
 
 The prefix is operator configuration, never model output and never a shell
@@ -611,8 +611,9 @@ optional Python dependencies are unavailable. The worker does not inspect the
 adaptation ledger, access raw resources, start automatically from the daemon,
 or activate/import an adapter.
 
-The helper and `convert_lora_to_gguf.py` are installed beside the worker. Their
-independent requirements files are installed under
+The helper is installed beside the worker, while `convert_lora_to_gguf.py`
+and its local converter modules are installed under
+`share/llama-agent/converter`. Their independent requirements files are installed under
 `share/llama-agent/requirements/`; install a PyTorch build that matches the
 worker host's CUDA stack first, then install both manifests in an
 operator-owned Python environment. The helper deliberately has no network
@@ -754,17 +755,22 @@ The script deliberately does not download a model or upload a corpus. Both
 `--model` and `--base-config` must be local Hugging Face directories. The
 serving Q4 GGUF is not a training checkpoint and cannot be passed as either
 argument. The converter needs its own Python dependencies, so the package
-installs two manifests:
+installs the complete converter manifest chain:
 
 ```text
 share/llama-agent/requirements/requirements-agent-adaptation-qlora-trainer.txt
+share/llama-agent/requirements/requirements-convert_hf_to_gguf.txt
+share/llama-agent/requirements/requirements-convert_legacy_llama.txt
 share/llama-agent/requirements/requirements-convert_lora_to_gguf.txt
 ```
 
 The first covers the worker-side Python stack (`transformers`, `peft`,
 `accelerate`, `bitsandbytes`, `safetensors`; install a matching PyTorch build
-separately). The second covers the repository converter stack. The scripts
-are installed in the package `bin` directory. The external process inherits
+separately). The three `convert_*` manifests preserve their nested `-r`
+relationship and cover the repository converter stack. The worker script is
+installed in the package `bin` directory. The converter entrypoint and its
+local support modules (`gguf-py`, `conversion`, and model templates) are
+installed under `share/llama-agent/converter`. The external process inherits
 the worker environment, so the service account/environment must be trusted or
 isolated from unrelated credentials.
 
@@ -773,6 +779,33 @@ trainer: a successful run requires CUDA, a compatible PyTorch/bitsandbytes
 installation, a local Hugging Face checkpoint, and the converter environment.
 Evaluation, registry admission, canary staging, and activation remain
 host-controlled steps after the worker returns.
+
+#### Packaging boundary
+
+The agent package contains the complete runtime entrypoint set needed to
+create and consume adaptation jobs: `llama-agent-adaptation-worker`,
+`llama-agent-adaptation-admin`, the reference QLoRA helper, and
+`convert_lora_to_gguf.py`. It also contains the four requirements manifests under
+`share/llama-agent/requirements/`. Debian installs the executables under
+`/usr/bin` (with the daemon in `/usr/sbin`), while the tar archive and Docker
+image preserve the package tree under the selected installation prefix.
+
+The compiled OpenAPI implementation is part of the shared
+`libllama-agent-tool-provider` library; the provider bootstrap shell/Python
+helpers and OpenAPI example contracts are installed alongside the other
+provider examples. There is therefore no separate runtime library that an
+operator must copy manually for OpenAPI providers.
+
+The normal Debian, tar, and Docker packages deliberately do not vendor
+PyTorch, CUDA, Transformers, PEFT, bitsandbytes, or the other heavy training
+dependencies. Those versions depend on the host GPU driver and Python
+environment and are not needed for inference or for the file-queue worker's
+`fake-sft` path. An operator enabling `qlora-sft` should create a separate,
+trusted Python environment, install a matching PyTorch/CUDA build first, and
+then install the shipped manifests. The base Docker image only guarantees
+`python3`; it does not install packages from the network or start a trainer
+implicitly. This keeps release images reproducible and prevents a package
+install from silently changing the host's CUDA/Python stack.
 
 ### Local orchestration smokes
 

@@ -10,10 +10,14 @@ Homepage: https://github.com/peterkallden/llama
 Package: llama-agent
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser, python3, ca-certificates
+Suggests: python3-pip, python3-venv
 Description: resident llama.cpp agent runtime
  llama-agent is a resident agent runtime built on llama.cpp. It provides
  host-controlled tools and capabilities, persistent memory and planning,
  bounded reflection and research, daemon operation, and MCP integration.
  .
  The package includes the command-line client, foreground daemon, MCP stdio
- server, configuration bootstrap helper, examples, and a systemd service.
+ server, adaptation worker/admin tools, optional QLoRA helper scripts,
+ configuration bootstrap helpers, examples, and a systemd service. Heavy
+ CUDA/PyTorch/PEFT dependencies are intentionally supplied separately by the
+ operator through the installed requirements manifests.

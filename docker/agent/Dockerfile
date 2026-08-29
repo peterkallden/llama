@@ -48,11 +48,23 @@ COPY nginx/llama-agent-web.https.conf.template /opt/llama-agent/nginx/llama-agen
 RUN mkdir -p /opt/llama-agent \
     && tar -xzf /tmp/agent-package.tar.gz -C /opt/llama-agent \
     && rm /tmp/agent-package.tar.gz \
+    && test -x /opt/llama-agent/bin/llama-agent-adaptation-worker \
+    && test -x /opt/llama-agent/bin/llama-agent-adaptation-admin \
+    && test -f /opt/llama-agent/bin/agent-adaptation-qlora-trainer.py \
+    && test -f /opt/llama-agent/share/llama-agent/converter/convert_lora_to_gguf.py \
+    && test -f /opt/llama-agent/share/llama-agent/converter/gguf-py/gguf/__init__.py \
+    && test -f /opt/llama-agent/share/llama-agent/converter/conversion/__init__.py \
+    && test -d /opt/llama-agent/share/llama-agent/converter/models/templates \
+    && test -f /opt/llama-agent/share/llama-agent/requirements/requirements-agent-adaptation-qlora-trainer.txt \
+    && test -f /opt/llama-agent/share/llama-agent/requirements/requirements-convert_hf_to_gguf.txt \
+    && test -f /opt/llama-agent/share/llama-agent/requirements/requirements-convert_legacy_llama.txt \
+    && test -f /opt/llama-agent/share/llama-agent/requirements/requirements-convert_lora_to_gguf.txt \
     && test -x /opt/llama-agent/bin/llama-agent-provider-bootstrap \
     && test -f /opt/llama-agent/bin/agent-provider-bootstrap.py \
     && test -f /opt/llama-agent/share/llama-agent/examples/agent-host-config-openalex.json \
     && test -f /opt/llama-agent/share/llama-agent/examples/openalex-works-openapi.json \
     && test -f /opt/llama-agent/share/llama-agent/examples/openapi-openalex-generated.json \
+    && test -f /opt/llama-agent/lib/libllama-agent-tool-provider.so \
     && useradd --create-home --home-dir /home/llama-agent --shell /usr/sbin/nologin llama-agent \
     && mkdir -p /etc/llama-agent /models /var/lib/llama-agent/data /var/log/llama-agent \
         /var/lib/llama-agent/nginx/client_body \

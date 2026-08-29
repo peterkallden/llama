@@ -165,6 +165,17 @@ jobs:
           test -f agent-package/bin/llama-agent
           test -f agent-package/bin/llama-agent-daemon
           test -f agent-package/bin/llama-agent-mcp-stdio-server
+          test -x agent-package/bin/llama-agent-adaptation-worker
+          test -x agent-package/bin/llama-agent-adaptation-admin
+          test -f agent-package/bin/agent-adaptation-qlora-trainer.py
+          test -f agent-package/share/llama-agent/converter/convert_lora_to_gguf.py
+          test -f agent-package/share/llama-agent/converter/gguf-py/gguf/__init__.py
+          test -f agent-package/share/llama-agent/converter/conversion/__init__.py
+          test -d agent-package/share/llama-agent/converter/models/templates
+          test -f agent-package/share/llama-agent/requirements/requirements-agent-adaptation-qlora-trainer.txt
+          test -f agent-package/share/llama-agent/requirements/requirements-convert_hf_to_gguf.txt
+          test -f agent-package/share/llama-agent/requirements/requirements-convert_legacy_llama.txt
+          test -f agent-package/share/llama-agent/requirements/requirements-convert_lora_to_gguf.txt
           test -x agent-package/bin/llama-agent-config-bootstrap
           test -f agent-package/lib/libllama-agent-core.so
           test -f agent-package/lib/libllama-agent-memory.so
@@ -173,6 +184,7 @@ jobs:
           test -f agent-package/lib/libllama-agent-mcp-server.so
           test -f agent-package/lib/libllama-agent-runtime-support.so
           test -f agent-package/lib/libllama-agent-storage-cozo.so
+          test -f agent-package/lib/libllama-agent-tool-provider.so
 
       - name: Upload Linux staging package
         uses: actions/upload-artifact@v6
