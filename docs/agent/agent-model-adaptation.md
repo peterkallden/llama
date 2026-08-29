@@ -471,11 +471,27 @@ knowledge. The recommended split is:
 | Corpus/artifact store | portable revisions and model artifacts | canonical JSONL, manifests, adapters, evaluation reports |
 
 The adaptation interface should follow the existing scoped-store conventions.
-The first backend may use a local append-only representation, but the contract
-must leave room for an indexed backend so filtering by scope, status, source,
-and revision does not require scanning every corpus file. Payloads should be
-referenced by content hash where possible; the ledger should not duplicate
-large resource or tool-result bodies merely to make export convenient.
+The persistence order is deliberate:
+
+1. **in-memory** for the default, for tests, and for hosts without a durable
+   adaptation path;
+2. **Cozo** for the normal desktop/server packaging, because it is the
+   project's general indexed backend outside Android;
+3. **SQLite** for Android and as the final supported persistent fallback.
+
+The first two persistent implementations must share the same transaction-store
+contract and use an adaptation-specific relation/table. They must not write
+adaptation transactions into the ordinary memory store: memory, procedures,
+resources, and adaptation evidence have different retention and promotion
+semantics. Payloads should be referenced by content hash where possible; the
+ledger should not duplicate large resource or tool-result bodies merely to make
+export convenient.
+
+JSONL remains useful as an explicit portable export/debug representation. It is
+not a competing normal persistence backend. The backend factory must fail
+clearly when a requested backend is not compiled in; `auto` may select Cozo or
+SQLite according to the order above, but must never silently downgrade an
+explicit backend request.
 
 ### Current runtime capture configuration
 
@@ -497,9 +513,9 @@ activation. It is disabled by default:
 ```
 
 With an empty `transaction_path`, enabled capture uses an assembly-local
-in-memory store. A non-empty path selects the append-only JSONL store; if it
-cannot be opened, the assembly reports the error and does not attach the
-observer. `collection_allowed` is an explicit collection gate: false keeps
+in-memory store. The current path-based implementation still selects the
+append-only JSONL store; the next persistence sweep will replace that implicit
+choice with an explicit `backend` selection and the order above. `collection_allowed` is an explicit collection gate: false keeps
 the observer connected but prevents durable transaction collection. The
 stable-tool list is deliberately opt-in; it permits a known, validated
 model-facing contract failure to be classified as model behavior, while
