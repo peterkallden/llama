@@ -253,6 +253,11 @@ jobs:
           test -f "$package_dir/bin/llama-agent-daemon"
           test -f "$package_dir/bin/llama-agent-mcp-stdio-server"
           test -x "$package_dir/bin/llama-agent-config-bootstrap"
+          test -x "$package_dir/bin/llama-agent-provider-bootstrap"
+          test -f "$package_dir/bin/agent-provider-bootstrap.py"
+          test -f "$package_dir/share/llama-agent/examples/agent-host-config-openalex.json"
+          test -f "$package_dir/share/llama-agent/examples/openalex-works-openapi.json"
+          test -f "$package_dir/share/llama-agent/examples/openapi-openalex-generated.json"
           test -f "$package_dir/lib/libllama-agent-core.so"
           test -f "$package_dir/lib/libllama-agent-memory.so"
           test -f "$package_dir/lib/libllama-agent-plan.so"
@@ -279,6 +284,11 @@ jobs:
           # installs; runner-local private directory modes must not be shipped.
           chmod -R u+rwX,go+rX "$package_dir"
           tar -czf "$archive" -C "$package_dir" .
+          tar -tzf "$archive" | grep -F 'bin/llama-agent-provider-bootstrap'
+          tar -tzf "$archive" | grep -F 'bin/agent-provider-bootstrap.py'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/agent-host-config-openalex.json'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/openalex-works-openapi.json'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/openapi-openalex-generated.json'
           sha256sum "$archive" > "${archive}.sha256"
 
       - name: Upload backend package
@@ -431,7 +441,7 @@ jobs:
           control = Path("debian/control")
           text = control.read_text()
           if backend == "cuda":
-              generic_depends = "Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser"
+              generic_depends = "Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser, python3, ca-certificates"
               cuda_depends = generic_depends + ", cuda-cudart-13-3"
               if text.count(generic_depends) != 1:
                   raise SystemExit("expected exactly one generic Debian dependency stanza")
@@ -480,6 +490,15 @@ jobs:
           cp "$raw_package" "$package"
           dpkg-deb --contents "$package" | grep -F 'usr/sbin/llama-agent-daemon'
           dpkg-deb --contents "$package" | grep -F 'usr/share/doc/llama-agent/examples/'
+          dpkg-deb --contents "$package" | grep -F 'usr/bin/llama-agent-provider-bootstrap'
+          dpkg-deb --contents "$package" | grep -F 'usr/bin/agent-provider-bootstrap.py'
+          for example in \
+            agent-host-config-openalex.json \
+            openalex-works-openapi.json \
+            openapi-openalex-generated.json; do
+            dpkg-deb --contents "$package" \
+              | grep -F "usr/share/doc/llama-agent/examples/$example"
+          done
           sha256sum "$package" > "${package}.sha256"
           printf '%s\n' \
             "package=${PACKAGE_NAME}" \

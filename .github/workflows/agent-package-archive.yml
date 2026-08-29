@@ -165,6 +165,11 @@ jobs:
           test -f package-source/bin/llama-agent-daemon
           test -f package-source/bin/llama-agent-mcp-stdio-server
           test -x package-source/bin/llama-agent-config-bootstrap
+          test -x package-source/bin/llama-agent-provider-bootstrap
+          test -f package-source/bin/agent-provider-bootstrap.py
+          test -f package-source/share/llama-agent/examples/agent-host-config-openalex.json
+          test -f package-source/share/llama-agent/examples/openalex-works-openapi.json
+          test -f package-source/share/llama-agent/examples/openapi-openalex-generated.json
           test -f package-source/lib/libllama-agent-core.so
           test -f package-source/lib/libllama-agent-memory.so
           test -f package-source/lib/libllama-agent-plan.so
@@ -197,6 +202,11 @@ jobs:
           # runner-local private directory modes into those runtimes.
           chmod -R u+rwX,go+rX package-source
           tar -czf "$archive" -C package-source .
+          tar -tzf "$archive" | grep -F 'bin/llama-agent-provider-bootstrap'
+          tar -tzf "$archive" | grep -F 'bin/agent-provider-bootstrap.py'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/agent-host-config-openalex.json'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/openalex-works-openapi.json'
+          tar -tzf "$archive" | grep -F 'share/llama-agent/examples/openapi-openalex-generated.json'
           sha256sum "$archive" > "${archive}.sha256"
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"

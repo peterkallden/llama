@@ -31,11 +31,12 @@ RUN apt-get update \
         nginx \
         openssl \
         gettext-base \
+        python3 \
         zlib1g \
     && if [ "$INSTALL_DEV_TOOLS" = "true" ]; then \
         apt-get install --no-install-recommends --yes \
             curl git build-essential cmake ninja-build pkg-config \
-            clang clangd gdb pandoc python3 tesseract-ocr mupdf-tools ghostscript; \
+            clang clangd gdb pandoc tesseract-ocr mupdf-tools ghostscript; \
     fi \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +48,11 @@ COPY nginx/llama-agent-web.https.conf.template /opt/llama-agent/nginx/llama-agen
 RUN mkdir -p /opt/llama-agent \
     && tar -xzf /tmp/agent-package.tar.gz -C /opt/llama-agent \
     && rm /tmp/agent-package.tar.gz \
+    && test -x /opt/llama-agent/bin/llama-agent-provider-bootstrap \
+    && test -f /opt/llama-agent/bin/agent-provider-bootstrap.py \
+    && test -f /opt/llama-agent/share/llama-agent/examples/agent-host-config-openalex.json \
+    && test -f /opt/llama-agent/share/llama-agent/examples/openalex-works-openapi.json \
+    && test -f /opt/llama-agent/share/llama-agent/examples/openapi-openalex-generated.json \
     && useradd --create-home --home-dir /home/llama-agent --shell /usr/sbin/nologin llama-agent \
     && mkdir -p /etc/llama-agent /models /var/lib/llama-agent/data /var/log/llama-agent \
         /var/lib/llama-agent/nginx/client_body \

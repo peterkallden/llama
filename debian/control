@@ -9,7 +9,7 @@ Homepage: https://github.com/peterkallden/llama
 
 Package: llama-agent
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser
+Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser, python3, ca-certificates
 Description: resident llama.cpp agent runtime
  llama-agent is a resident agent runtime built on llama.cpp. It provides
  host-controlled tools and capabilities, persistent memory and planning,

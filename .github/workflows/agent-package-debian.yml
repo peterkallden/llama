@@ -58,6 +58,7 @@ jobs:
             clang \
             clangd \
             cmake \
+            ca-certificates \
             curl \
             debhelper-compat \
             dpkg-dev \
@@ -65,6 +66,7 @@ jobs:
             libssl-dev \
             ninja-build \
             pkg-config \
+            python3 \
             zlib1g-dev
 
       - name: Provision Cozo C API
@@ -115,6 +117,20 @@ jobs:
             | grep -F 'usr/sbin/llama-agent-daemon'
           dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
             | grep -F 'usr/share/doc/llama-agent/examples/'
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/bin/llama-agent-provider-bootstrap'
+          dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+            | grep -F 'usr/bin/agent-provider-bootstrap.py'
+          for example in \
+            agent-host-config-openalex.json \
+            openalex-works-openapi.json \
+            openapi-openalex-generated.json; do
+            dpkg-deb --contents debian-artifacts/llama-agent_*.deb \
+              | grep -F "usr/share/doc/llama-agent/examples/$example"
+          done
+          package_depends="$(dpkg-deb --field debian-artifacts/llama-agent_*.deb Depends)"
+          grep -Eq '(^|, )python3(,|$)' <<< "$package_depends"
+          grep -Eq '(^|, )ca-certificates(,|$)' <<< "$package_depends"
 
       - name: Publish Debian development package
         uses: actions/upload-artifact@v6
