@@ -544,6 +544,15 @@ most one bundle per invocation:
 llama-agent-adaptation-worker --queue var/agent/adaptation/jobs
 ```
 
+For a local service rather than a scheduler/cron invocation, use the explicit
+watch mode. It still processes one claimed job at a time; `--max-jobs` is
+useful for a bounded maintenance run:
+
+```text
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs --watch --poll-seconds 10
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs --watch --max-jobs 5
+```
+
 The queue has `pending`, `running`, `succeeded`, `failed`, and `cancelled`
 directories. A complete bundle is written to a staging directory and exposed
 by one atomic rename. Claiming is also an atomic rename, so two workers cannot
