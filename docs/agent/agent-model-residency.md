@@ -21,12 +21,7 @@ The host-neutral preparation is present:
   provides priority-aware, cancellable admission;
 - session lanes already serialize turns belonging to one conversation.
 
-The missing production seam is the process-wide residency manager. The current
-runtime session still owns one loaded model and one inference context in
-`tools/agent/runtime/agent-runtime-session.*`. The profile router and cache are
-therefore contracts and admission logic, not a multi-model loader yet.
-
-The first runtime seam is now implemented in
+The process-wide residency manager is now implemented in
 `tools/agent/runtime/agent-model-residency.*`: it consumes the catalog
 selection contract, reserves and pins profiles, performs idle LRU eviction,
 and calls a backend-neutral loader outside its mutex. The concrete
@@ -34,9 +29,17 @@ and calls a backend-neutral loader outside its mutex. The concrete
 `cli` and the existing `common_agent_server_context_host` for
 `server-context`. A runtime session can attach one of these resident resources
 while retaining ownership of its own inference context and KV state. The
-remaining integration work is to route all production daemon/bootstrap paths
-through a configured catalog rather than the legacy single-model default and
-to add a real two-GGUF model-backed smoke.
+daemon/bootstrap path now constructs the manager from the `models` catalog and
+passes the configured profile into each daemon turn. Legacy `model.path`
+remains the explicit single-model path when no catalog profiles are configured;
+it is not consulted after a catalog profile has been selected. Model loading
+parameters such as GPU layers and thread count are applied by the concrete
+loader adapters at manager construction time, so changing them requires a
+daemon restart.
+
+The two-model loader smoke is also available as the unregistered target
+`llama-agent-two-model-smoke`. It is intentionally not part of default CTest,
+because it loads real model files only when an operator supplies two paths.
 
 ## Ownership model
 
@@ -65,7 +68,7 @@ plans, tools or adaptation policy.
 
 ## Two scheduler levels
 
-The existing inference gate and the future residency manager solve different
+The existing inference gate and the residency manager solve different
 problems:
 
 ```text
@@ -143,9 +146,12 @@ host from request mode, policy and authenticated/session context.
 
 `max_loaded_generation_models` is the initial bound. The manager must also be
 designed so a later implementation can enforce byte and GPU-memory limits.
-The first policy is:
+The current policy is:
 
-- `resident` profiles are preferred to stay loaded, subject to the hard limit;
+- both `resident` and `lazy` profiles are loaded on demand at the first turn;
+- `resident` is an explicit host policy label reserved for keeping a profile
+  warm across turns, while the initial manager applies the same hard cache
+  bound to both labels;
 - `lazy` profiles may be loaded on demand;
 - active, loading, or cleanup-pending profiles are not evictable;
 - if every resident profile is pinned, the turn waits or fails with an
@@ -158,12 +164,16 @@ role. They may share the eventual physical memory budget, but they must not be
 selected as generation models or accidentally evicted as if they were ordinary
 agent profiles.
 
-## Configuration direction
+## Configuration and bootstrap
 
 The catalog is the single source of truth for multi-model serving. The existing
-single-model `model.path` configuration is useful as a compatibility input, but
-the host should normalize it into one default profile before constructing the
-runtime. It must not maintain two independent model-selection paths.
+single-model `model.path` configuration remains a separate, explicit fallback
+for hosts that do not configure `models.profiles`. Once a catalog has profiles,
+the daemon constructs the residency manager and requests are host-bound to the
+configured profile (or the catalog default); the legacy path is not used for
+those requests. A catalog change, profile change, model path change, or loader
+setting change is restart-required because resident resources and session
+contexts cannot be swapped behind an active daemon.
 
 Conceptually:
 
@@ -206,6 +216,28 @@ Conceptually:
   }
 }
 ```
+
+### Optional two-GGUF smoke
+
+Build the target with the normal agent build, then run it only when two
+compatible GGUF files are available:
+
+```bash
+./bin/llama-agent-two-model-smoke \
+  --model-1 /models/model-a.gguf \
+  --model-2 /models/model-b.gguf \
+  --backend server-context \
+  --threads 3 \
+  --n-gpu-layers 0
+```
+
+The equivalent environment variables are `LLAMA_AGENT_MODEL_1` and
+`LLAMA_AGENT_MODEL_2`; explicit arguments take precedence. The test loads the
+two files through the selected concrete loader and verifies two distinct
+resident resources. It does not make Qwen, Phi, Nomic, CUDA, or a particular
+model family a contract requirement. Missing paths return CTest-style skip
+code 77, and the test is not registered as an automatic CTest so ordinary
+agent suites never load operator-owned model files.
 
 The model profile is a host input, not a model-facing tool or prompt field.
 Chat, deliberate, research and adaptation evaluation may request a named

@@ -5,6 +5,7 @@
 #include "agent-daemon-events.h"
 #include "../resource/agent-resource-store.h"
 #include "../runtime/agent-runtime-session-manager.h"
+#include "../runtime/agent-model-residency.h"
 #include "../tooling/agent-tool-provider.h"
 
 #include "memory/memory-store.h"
@@ -77,6 +78,7 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<common_plan_store> plan_store;
     std::unique_ptr<common_agent_data_store> data_store;
     std::unique_ptr<agent_resource_store> resource_store;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
     common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
     std::unique_ptr<common_agent_runtime_session_manager> host;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;

@@ -1841,6 +1841,8 @@ void apply_agent_host_config_to_daemon_options(
     options.model = config.model_path;
     options.mmproj = config.mmproj_path;
     options.embedding_model = config.embedding_model;
+    options.model_profile = config.model_profile;
+    options.model_catalog = config.model_catalog;
     options.default_mode = config.default_mode;
     options.thinking_mode = config.thinking_mode;
     options.max_reflection_rounds = config.max_reflection_rounds;

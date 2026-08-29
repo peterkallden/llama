@@ -1,4 +1,5 @@
 #include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -230,6 +231,14 @@ int main() {
     if (!catalog_serialized.contains("models") ||
             catalog_serialized["models"]["profiles"]["agent-default"]["base"] != "small") {
         std::fprintf(stderr, "model catalog configuration was not serialized\n");
+        return 1;
+    }
+    daemon_options catalog_options;
+    apply_agent_host_config_to_daemon_options(catalog_config, catalog_options);
+    if (catalog_options.model_profile != catalog_config.model_profile ||
+            catalog_options.model_catalog.bases.size() != 2 ||
+            catalog_options.model_catalog.profiles.size() != 1) {
+        std::fprintf(stderr, "model catalog was not copied into daemon options\n");
         return 1;
     }
 

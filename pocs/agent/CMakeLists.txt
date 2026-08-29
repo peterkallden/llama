@@ -912,6 +912,21 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-engine)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional model-backed loader smoke. It intentionally is not registered with
+# CTest: operators must provide two explicit GGUF paths before it may load
+# model files.
+set(TARGET llama-agent-two-model-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-two-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-engine)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional model-backed smoke. It exercises one real resident inference turn
 # with adaptation capture enabled; the full offline promotion lifecycle is
 # covered by llama-agent-adaptation-e2e-smoke above.
@@ -1919,6 +1934,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-model-adaptation-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
+    llama-agent-two-model-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
     llama-agent-continuation-smoke

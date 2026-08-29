@@ -319,6 +319,11 @@ int main(int argc, char ** argv) {
             }
         };
         require_restart(candidate.model != options.model, "model.path");
+        require_restart(candidate.model_profile != options.model_profile, "model.profile");
+        require_restart(
+            common_agent_model_catalog_to_json(candidate.model_catalog) !=
+                common_agent_model_catalog_to_json(options.model_catalog),
+            "models");
         require_restart(candidate.embedding_model != options.embedding_model, "model.embedding_model");
         require_restart(candidate.backend != options.backend, "stores.memory.backend");
         require_restart(candidate.memory_db != options.memory_db, "stores.memory.path");

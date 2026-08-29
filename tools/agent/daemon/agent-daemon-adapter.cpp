@@ -140,6 +140,8 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
             const char * value = need_value(argv[i]); if (!value) return false; options.mmproj = value;
         } else if (std::strcmp(argv[i], "--embedding-model") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.embedding_model = value;
+        } else if (std::strcmp(argv[i], "--model-profile") == 0) {
+            const char * value = need_value(argv[i]); if (!value) return false; options.model_profile = value;
         } else if (std::strcmp(argv[i], "--backend") == 0) {
             const char * value = need_value(argv[i]); if (!value) return false; options.backend = value;
         } else if (std::strcmp(argv[i], "--memory-db") == 0) {
@@ -388,7 +390,7 @@ bool parse_agent_daemon_args(int argc, char ** argv, daemon_options & options) {
 
 void print_agent_daemon_usage(const char * argv0) {
     std::fprintf(stderr,
-        "usage: %s [--config PATH] --model MODEL [--default-mode chat|agent] [--thinking-mode auto|reflective|deliberate|research]\n"
+        "usage: %s [--config PATH] --model MODEL [--model-profile ID] [--default-mode chat|agent] [--thinking-mode auto|reflective|deliberate|research]\n"
         "         [--max-reflection-rounds N] [--max-plan-revisions N] [--max-research-iterations N]\n"
         "         [--embedding-model MODEL] [--backend auto|in-memory|cozo] [--memory-db PATH]\n"
         "         [--plan-backend auto|in-memory|cozo] [--plan-db PATH] [--memory-learn off|post-turn] [--memory-learn-min-confidence F] [--memory-learn-min-reuse F]\n"

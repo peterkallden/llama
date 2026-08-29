@@ -3,6 +3,7 @@
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
 #include "../runtime/agent-inference-capacity-gate.h"
+#include "../runtime/agent-model-loaders.h"
 #include "agent/agent-scope.h"
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "memory/memory-in-memory.h"
@@ -25,6 +26,39 @@
 #include <filesystem>
 
 namespace {
+
+bool open_daemon_model_residency(
+        const daemon_options & options,
+        std::shared_ptr<common_agent_runtime_model_residency> & residency,
+        std::string & error) {
+    residency.reset();
+    if (options.model_catalog.profiles.empty()) {
+        error.clear();
+        return true;
+    }
+    if (!common_agent_validate_model_catalog(options.model_catalog, error)) {
+        error = "models: " + error;
+        return false;
+    }
+    const common_agent_runtime_model_loader_config loader_config{
+        options.n_gpu_layers,
+        options.n_threads,
+        true,
+    };
+    std::unordered_map<std::string,
+        std::shared_ptr<common_agent_runtime_model_loader>> loaders;
+    loaders.emplace("cli", std::make_shared<common_agent_runtime_cli_model_loader>(loader_config));
+#ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
+    loaders.emplace(
+        "server-context",
+        std::make_shared<common_agent_runtime_server_context_model_loader>(loader_config));
+#endif
+    residency = std::make_shared<common_agent_runtime_model_residency>(
+        options.model_catalog,
+        std::move(loaders));
+    error.clear();
+    return true;
+}
 
 std::optional<common_memory_policy_pack> make_daemon_policy_pack(
         const daemon_options & options) {
@@ -518,6 +552,9 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
         return false;
     }
+    if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
+        return false;
+    }
     if (!parse_mode(options.default_mode, runtime.default_mode)) {
         error = "unsupported default mode: " + options.default_mode;
         return false;
@@ -547,6 +584,8 @@ bool initialize_agent_daemon_environment(
             std::move(session_manager_build_config.tooling_resolver),
             {},
             runtime.inference_gate,
+            {},
+            runtime.model_residency,
         }));
 
     common_memory_store * memory_store = runtime.memory_store.get();

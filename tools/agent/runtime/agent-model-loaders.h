@@ -22,22 +22,42 @@ struct common_agent_runtime_loaded_model final
     std::shared_ptr<common_agent_server_context_host> server_context_host;
 };
 
+struct common_agent_runtime_model_loader_config {
+    int n_gpu_layers = 0;
+    int n_threads = 2;
+    bool fit_params = true;
+};
+
 class common_agent_runtime_cli_model_loader final
     : public common_agent_runtime_model_loader {
 public:
+    explicit common_agent_runtime_cli_model_loader(
+            common_agent_runtime_model_loader_config config = {})
+        : config_(config) {}
+
     bool load(
             const common_agent_model_selection & selection,
             std::shared_ptr<common_agent_runtime_resident_model> & model,
             std::string & error) override;
+
+private:
+    common_agent_runtime_model_loader_config config_;
 };
 
 class common_agent_runtime_server_context_model_loader final
     : public common_agent_runtime_model_loader {
 public:
+    explicit common_agent_runtime_server_context_model_loader(
+            common_agent_runtime_model_loader_config config = {})
+        : config_(config) {}
+
     bool load(
             const common_agent_model_selection & selection,
             std::shared_ptr<common_agent_runtime_resident_model> & model,
             std::string & error) override;
+
+private:
+    common_agent_runtime_model_loader_config config_;
 };
 
 std::shared_ptr<common_agent_runtime_loaded_model>

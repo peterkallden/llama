@@ -260,6 +260,7 @@ bool parse_agent_daemon_turn_request(
     request.namespace_id = parsed.value("namespace_id", "default-namespace");
     request.project_id = parsed.value("project_id", "");
     request.turn_id = parsed.value("turn_id", "");
+    request.model_profile_id = options.model_profile;
     if (parsed.contains("resource_refs")) {
         if (!parsed["resource_refs"].is_array()) {
             error = "resource_refs must be an array";
@@ -802,6 +803,7 @@ bool parse_agent_daemon_command(
 }
 
 json make_agent_daemon_ready_response(const daemon_options & options) {
+    const bool catalog_model_configured = !options.model_catalog.profiles.empty();
     json response = {
         {"ok", true},
         {"event", "ready"},
@@ -818,7 +820,11 @@ json make_agent_daemon_ready_response(const daemon_options & options) {
         })},
         {"readiness", {
             {"health", "unknown"},
-            {"model", options.model.empty() ? "not_configured" : "configured"},
+            {"model", (options.model.empty() && !catalog_model_configured) ? "not_configured" : "configured"},
+            {"model_profile", options.model_profile.empty()
+                ? (catalog_model_configured ? options.model_catalog.default_profile : "")
+                : options.model_profile},
+            {"model_profiles", options.model_catalog.profiles.size()},
             {"inference", "available"},
             {"stores", {
                 {"memory", "configured"},

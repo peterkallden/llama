@@ -795,13 +795,11 @@ The host configuration now accepts the following catalog shape:
 ```
 
 This is a supported host-configuration shape for catalog parsing, profile
-resolution and the residency-loader seam, but it is not yet the effective
-multi-model serving configuration for every daemon/bootstrap path.
-`model.profile` overrides the catalog default; the host resolver returns the
-selected base path, `mmproj`, context, load policy, and adapter references.
-Bootstrap/model loading still has to consume that selection in all production
-paths. Until that migration is complete, the existing `model.path` remains the
-effective inference input for legacy hosts. It intentionally separates
+resolution and multi-model serving. `model.profile` overrides the catalog
+default; daemon bootstrap constructs the process-wide residency manager from
+the catalog and the session host acquires the selected profile for the complete
+turn. If no catalog profiles are configured, the existing `model.path` remains
+the explicit legacy inference input. It intentionally separates
 base-model identity, adapter identity,
 runnable profile, and host-owned routing. The adapter registry owns artifact
 paths and validation; production profile configuration should reference
@@ -1264,22 +1262,21 @@ future work. Neither is required for the model catalog router seam below.
 ### Sweep 7 — model catalog and controlled routing
 
 Status: the catalog contract, host JSON binding, validation, path resolution,
-explicit profile selection, and a bounded host-neutral profile router are
-implemented. The router admits a turn against a profile identity and reports
-whether the cache is reused or which idle entry must be released. It does not
-load model files itself. The actual multi-model residency and scheduler work
-remains and is specified in
-[Agent model residency and multi-model scheduling](agent-model-residency.md).
+explicit profile selection, bounded residency manager, concrete CLI and
+server-context loaders, profile-aware session binding, and inference-capacity
+admission are implemented. The manager loads model files outside its global
+mutex, pins the selected profile through the complete turn, and releases the
+profile after the turn. The model-free residency smoke covers admission and
+eviction; the optional two-GGUF smoke covers loading two real files.
 
 Remaining deliverables:
 
-- Migrate the current single-model configuration once the loader consumes the
-  catalog; do not retain two long-lived configuration semantics.
-- Connect the router to bounded resident/lazy loading, profile-aware scheduler
-  admission, and explicit host-controlled escalation between a small model,
-  baseline, and research model. The caller must release the reported evicted
-  entry before loading its replacement. CLI and `server-context` require
-  separate backend loaders behind the same residency contract.
+- Keep the single-model configuration only as an explicit legacy fallback; do
+  not add new profile selection logic to `model.path`.
+- Extend the existing host-controlled routing policy when explicit escalation
+  between a small model, baseline, and research model is needed. CLI and
+  `server-context` remain separate backend loaders behind the same residency
+  contract.
 - Keep the embedding model separate from generation profiles.
 
 Tests and exit gate:

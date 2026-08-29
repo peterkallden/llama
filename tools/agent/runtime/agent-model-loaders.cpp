@@ -59,6 +59,7 @@ bool common_agent_runtime_cli_model_loader::load(
     auto loaded = std::make_shared<common_agent_runtime_loaded_model>();
     loaded->selection = selection;
     llama_model_params params = llama_model_default_params();
+    params.n_gpu_layers = config_.n_gpu_layers;
     loaded->model = llama_model_load_from_file(selection.path.c_str(), params);
     if (loaded->model == nullptr) {
         error = "failed to load CLI model: " + selection.path;
@@ -92,6 +93,9 @@ bool common_agent_runtime_server_context_model_loader::load(
     common_agent_inference_options options;
     options.model = selection.path;
     options.mmproj = selection.mmproj;
+    options.n_gpu_layers = config_.n_gpu_layers;
+    options.fit_params = config_.fit_params;
+    options.n_threads = config_.n_threads;
     options.context_size_tokens = selection.context_size_tokens;
     auto host = std::make_shared<common_agent_server_context_host>();
     if (!host->start(make_agent_server_context_host_config(options), error)) {

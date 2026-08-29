@@ -33,6 +33,8 @@ struct daemon_options {
     std::string model;
     std::string mmproj;
     std::string embedding_model;
+    std::string model_profile;
+    common_agent_model_catalog model_catalog;
     std::string backend = "auto";
     std::string memory_db;
     std::string plan_backend = "auto";

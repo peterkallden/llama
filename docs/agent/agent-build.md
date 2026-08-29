@@ -427,9 +427,10 @@ loader, profile pinning, residency limits and scheduler integration, see
 ### Multi-model verification boundary
 
 The current model-backed scripts exercise one configured generation model and
-an optional separate embedding model. They do not yet prove process-wide
-multi-model residency. That future verification must remain separate from the
-ordinary Qwen/Nomic smoke and cover, at minimum:
+an optional separate embedding model. Process-wide multi-model residency is
+covered by the model-free residency contract smoke, while loading two real
+GGUF files is kept operator-supplied. The optional two-model verification must
+remain separate from the ordinary Qwen/Nomic smoke and cover, at minimum:
 
 - two named generation profiles with distinct model identities;
 - profile reuse and profile isolation across two session lanes;
@@ -439,10 +440,29 @@ ordinary Qwen/Nomic smoke and cover, at minimum:
   errors;
 - continuation/checkpoint rejection when the profile identity has changed.
 
-The first real two-model smoke should use small compatible GGUF files supplied
-through environment variables or explicit script arguments. It must not make
-Qwen a contract requirement, and it must not silently use the old
-`model.path` fallback when a named profile was requested.
+The target is `llama-agent-two-model-smoke` and accepts two explicit paths:
+
+```bash
+./bin/llama-agent-two-model-smoke \
+  --model-1 /models/model-a.gguf \
+  --model-2 /models/model-b.gguf \
+  --backend server-context
+```
+
+`LLAMA_AGENT_MODEL_1` and `LLAMA_AGENT_MODEL_2` are supported for scripted
+runs. The target is built but not registered in default CTest because it
+loads real operator-provided files. It must not make Qwen a contract
+requirement, and a daemon must not silently use the old `model.path` fallback
+when a named catalog profile was requested.
+
+The repository wrapper is:
+
+```bash
+./scripts/test-agent-two-model-smoke.sh \
+  --build-dir /tmp/llama-agent-config-lifecycle-cozo \
+  --model-1 /models/model-a.gguf \
+  --model-2 /models/model-b.gguf
+```
 
 ## Troubleshooting
 

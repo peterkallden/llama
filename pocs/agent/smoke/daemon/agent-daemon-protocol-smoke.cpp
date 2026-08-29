@@ -32,6 +32,7 @@ int main() {
     options.mcp_connect_timeout_ms = 444;
     options.mcp_request_timeout_ms = 555;
     options.mcp_shutdown_timeout_ms = 666;
+    options.model_profile = "agent-default";
 
     std::string error;
     common_agent_daemon_command status_command;
@@ -274,6 +275,7 @@ int main() {
             turn_command.turn->request.turn.plan_scope != common_plan_scope::project ||
             turn_command.turn->request.turn.input_resources.size() != 1 ||
             turn_command.turn->request.turn.input_resources[0].resource.uri != "agent-resource://resource/r-1" ||
+            turn_command.turn->request.turn.model_profile_id != "agent-default" ||
             turn_command.turn->request.turn.n_predict != 42 ||
             turn_command.turn->request.turn.execution_control.timeout_policy.turn_timeout_ms != 12000 ||
             turn_command.turn->request.turn.execution_control.timeout_policy.inference_step_timeout_ms != 777 ||
