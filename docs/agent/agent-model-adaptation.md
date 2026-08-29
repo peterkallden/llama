@@ -781,6 +781,13 @@ Training must bind to a compatible training checkpoint, not silently train the
 deployment Q4 GGUF in place. The conversion manifest must connect the training
 checkpoint to the serving base.
 
+The current trainer contract now binds a job and result to the corpus bundle
+hash and trainer version in addition to the corpus revision, base training
+fingerprint, and trainer kind. Returned artifact paths must be relative and
+normalized, and the result still requires a `sha256:` artifact hash plus a
+passed evaluation. This is validation only; no worker or automatic import is
+implemented yet.
+
 ### Sweep 5 — adapter registry and single-profile inference
 
 Deliverables:

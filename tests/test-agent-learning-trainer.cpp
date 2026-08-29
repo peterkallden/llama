@@ -6,7 +6,9 @@ int main() {
     common_learning_training_job job;
     job.id = "learning://job/1";
     job.corpus_revision_id = "learning://corpus/1";
+    job.corpus_bundle_hash = "identity:fnv1a64:0123456789abcdef";
     job.base_training_fingerprint = "base:qwen-small:training-v1";
+    job.trainer_version = "fake-trainer-1";
     job.code_revision = "trainer-revision-1";
     std::string error;
     assert(common_learning_validate_training_job(job, error));
@@ -16,8 +18,10 @@ int main() {
     result.adapter_id = "agent-adaptation-v1";
     result.artifact_path = "adapters/agent-adaptation-v1.gguf";
     result.artifact_sha256 = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    result.corpus_bundle_hash = job.corpus_bundle_hash;
     result.base_training_fingerprint = job.base_training_fingerprint;
     result.trainer_kind = job.trainer_kind;
+    result.trainer_version = job.trainer_version;
     result.evaluation_revision = "adapter-eval-1";
     result.evaluation_status = "passed";
     assert(common_learning_validate_training_result(job, result, error));
@@ -25,6 +29,7 @@ int main() {
     result.base_training_fingerprint = "base:other";
     assert(!common_learning_validate_training_result(job, result, error));
     result.base_training_fingerprint = job.base_training_fingerprint;
+    result.corpus_bundle_hash = job.corpus_bundle_hash;
     result.evaluation_status = "failed";
     assert(!common_learning_validate_training_result(job, result, error));
     return 0;
