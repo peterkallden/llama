@@ -19,6 +19,7 @@ const char * common_training_candidate_status_name(common_training_candidate_sta
         case common_training_candidate_status::eligible: return "eligible";
         case common_training_candidate_status::approved: return "approved";
         case common_training_candidate_status::rejected: return "rejected";
+        case common_training_candidate_status::revoked: return "revoked";
     }
     return "rejected";
 }

@@ -26,8 +26,9 @@ The local branch currently contains the first contract slices:
   including failed turns, without affecting the user-facing result;
 - append-only in-memory and JSONL transaction stores with duplicate suppression;
 - destination qualification and a bounded training-candidate contract;
-- a deterministic JSONL corpus builder requiring explicitly approved
-  candidates;
+- a deterministic JSONL corpus builder requiring explicitly approved and
+  redaction-attested candidates, with provenance, revocation, held-out,
+  split, duplicate, byte-bound, and bounded replay handling;
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
 - conservative host-side cause classification and recovery linking;
@@ -38,10 +39,14 @@ The local branch currently contains the first contract slices:
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
 reproducibility. Resource and artifact integrity must continue to use the
-existing SHA-256 stores. Scope-aware bootstrap configuration, redaction and
-revocation propagation, semantic replay, an actual trainer worker, adapter
-artifact import, model-profile loading, and inference activation remain later
-sweeps. The current registry is metadata-only and does not load an adapter.
+existing SHA-256 stores. The corpus builder now enforces candidate-level
+redaction attestation, candidate revocation, held-out exclusion, deterministic
+splits, provenance, duplicate handling, and bounded host-selected replay.
+The redaction implementation is still an explicit caller/policy seam rather
+than a PII detector; semantic replay selection, an actual trainer worker,
+adapter artifact import, model-profile loading, and inference activation remain
+later sweeps. The current registry is metadata-only and does not load an
+adapter.
 
 ## Review conclusion and recommended adjustments
 
@@ -384,9 +389,20 @@ manifest. The dataset builder is deterministic: the same candidate ids,
 redaction policy, ordering seed, and builder version must produce the same
 bundle hash.
 
-The manifest records candidate ids, splits, replay selection, base-model
-requirements, hashes, and the evaluation set excluded from training. A held-out
-evaluation case must never also be selected as replay material.
+The manifest records candidate ids, source transaction ids, split counts,
+redaction policy, replay selection, held-out ids, and hashes. Each JSONL row
+also carries its source transaction ids and redaction attestation. A held-out
+candidate is excluded before row generation and cannot also be selected as
+replay material. Identical duplicate candidate records are collapsed; a
+conflicting record with the same id, or overlapping source transactions across
+different candidates, stops the build rather than silently changing
+provenance.
+
+The builder accepts replay ids selected by a host or ledger query and enforces
+`max_replay_candidates`. It does not claim to calculate semantic similarity;
+that selector belongs to a later indexed-ledger/worker layer. This keeps the
+corpus artifact reproducible and prevents an implicit background query from
+changing a revision.
 
 ### Adapter revision
 
@@ -775,23 +791,32 @@ The key tradeoff is automation versus safety. Automatic eligibility keeps the
 ledger useful, while explicit corpus approval prevents a single ambiguous
 correction from changing future model behavior.
 
-### Sweep 3 — deterministic corpus builder
+### Sweep 3 — deterministic corpus builder (completed for the current phase)
 
 Deliverables:
 
 - Build versioned JSONL bundles and manifests from approved candidates.
-- Implement redaction, revocation propagation, deduplication, stable ordering,
-  train/validation/test split assignment, and bounded semantic replay selection.
+- Enforce candidate-level redaction attestation, candidate revocation,
+  deduplication, stable ordering, train/validation/test split assignment, and
+  bounded host-selected replay metadata.
 - Keep held-out evaluation cases out of both training and replay selection.
-- Add a local inspection/export command; remote export remains opt-in.
+- Keep the builder as a pure local contract in this phase; an inspection/export
+  command and semantic replay selector remain worker/ledger work. Remote export
+  remains opt-in.
 
 Tests and exit gate:
 
 - the same candidate ids, policy, builder version, and seed produce a byte-for-
   byte identical bundle and manifest;
-- tests verify no secret/path leakage, no revoked candidate, no split overlap,
-  stable deduplication, row/byte bounds, and correct provenance;
+- tests verify admission redaction status, no revoked or held-out candidate,
+  no split overlap, stable deduplication, replay and row/byte bounds, and
+  correct provenance;
 - a fixture can reconstruct the exact corpus revision from its manifest.
+
+The current redaction check verifies an explicit policy/method/status
+attestation and never treats a caller assertion as a secret scanner. A later
+redactor may replace `caller_asserted` with `policy_checked` without changing
+the corpus boundary.
 
 The principal choice is JSONL versus an indexed database. JSONL is portable
 and reproducible; an index is better for scoped queries. The recommended

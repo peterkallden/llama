@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent/adaptation/learning-case.h"
 #include "agent/adaptation/learning-observation.h"
 
 #include <cstddef>
@@ -19,6 +20,7 @@ enum class common_training_candidate_status {
     eligible,
     approved,
     rejected,
+    revoked,
 };
 
 const char * common_learning_destination_name(common_learning_destination destination);
@@ -36,6 +38,11 @@ struct common_training_candidate {
     size_t verified_recoveries = 0;
     size_t contradictions = 0;
     float confidence = 0.0f;
+    // Corpus admission requires an explicit redaction attestation.  The
+    // current caller_asserted value is a deliberate seam, not a PII detector.
+    std::string redaction_policy_id;
+    std::string redaction_method;
+    common_learning_redaction_status redaction_status = common_learning_redaction_status::not_evaluated;
     common_training_candidate_status status = common_training_candidate_status::observed;
 };
 
