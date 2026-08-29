@@ -898,6 +898,21 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional model-backed smoke. It exercises one real resident inference turn
+# with adaptation capture enabled; the full offline promotion lifecycle is
+# covered by llama-agent-adaptation-e2e-smoke above.
+set(TARGET llama-agent-model-adaptation-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-learning-model-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-tool-provider-smoke)
 add_executable(${TARGET}
     smoke/runtime/agent-tool-provider-smoke.cpp
@@ -1886,6 +1901,7 @@ set(AGENT_RUNTIME_TARGETS
 set(AGENT_TEST_BUILD_TARGETS
     llama-agent-cli-document-table-smoke
     llama-agent-adaptation-e2e-smoke
+    llama-agent-model-adaptation-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -1949,6 +1965,7 @@ endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-adaptation-e2e-smoke
+    llama-agent-model-adaptation-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -2035,6 +2052,12 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-adaptation-e2e-ctest
         COMMAND $<TARGET_FILE:llama-agent-adaptation-e2e-smoke>)
     set_property(TEST llama-agent-adaptation-e2e-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-model-adaptation-ctest
+        COMMAND $<TARGET_FILE:llama-agent-model-adaptation-smoke>)
+    set_property(TEST llama-agent-model-adaptation-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-model-adaptation-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 180)
 
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)

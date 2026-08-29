@@ -810,10 +810,15 @@ thresholds, signatures, or human approval before a canary or active transition.
 
 The adaptation contract tests currently pass as a focused group: observation,
 runtime observer, transaction store, candidate qualification, corpus builder,
-trainer protocol, and adapter registry. The local Qwen 1.5B plus nomic
-embedding baseline smoke also passes on CPU with three threads.
+trainer protocol, and adapter registry. The model-backed adaptation smoke is
+model-agnostic: it accepts any compatible GGUF generation model through
+`--model` or `LLAMA_AGENT_MODEL`. Qwen, Phi, and similar small models are
+useful local choices, but are not part of the smoke's contract. The smoke runs
+one real resident turn with adaptation capture enabled and verifies that the
+ledger can be reopened; it does not train or activate an adapter during
+inference.
 
-The larger data and document Qwen smokes remain useful regression probes but
+The larger data and document model smokes remain useful regression probes but
 are not adaptation failures. They currently expose an existing compact-model
 binding seam: Qwen sometimes emits an extra `mode` field for `data.query`, or
 emits a direct `document.tables(...)` call instead of the required family
@@ -1015,7 +1020,9 @@ Tests and exit gate:
 - CTests cover manifest compatibility, load/rollback, cache isolation,
   incompatible adapter rejection, session pinning, and readiness failure;
 - an inference stub proves baseline and adapter profiles are distinguishable;
-- a real Qwen smoke is added only after the contract tests pass.
+- a real model-backed smoke is available after the contract tests pass; the
+  model path is supplied at runtime so the target is not tied to one model
+  family.
 
 The registry, profile contract, and active-overlay resolver now cover the
 metadata and compatibility boundary. The serving session still needs to
