@@ -372,6 +372,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-training-candidate.cpp
         test-agent-learning-corpus.cpp
         test-agent-learning-trainer.cpp
+        test-agent-learning-worker.cpp
         test-agent-learning-adapter.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
@@ -431,6 +432,13 @@ if (LLAMA_AGENT_RUNTIME)
                 AGENT_BOOTSTRAP_SCRIPT_PATH)
             target_compile_definitions(${TEST_NAME} PRIVATE
                 LLAMA_AGENT_BOOTSTRAP_SCRIPT_PATH="${AGENT_BOOTSTRAP_SCRIPT_PATH}")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-learning-worker")
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-worker.cpp)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core vendor::hash)
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()

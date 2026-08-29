@@ -29,6 +29,8 @@ The local branch currently contains the first contract slices:
 - a deterministic JSONL corpus builder requiring explicitly approved and
   redaction-attested candidates, with provenance, revocation, held-out,
   split, duplicate, byte-bound, and bounded replay handling;
+- a separate one-shot adaptation worker with an atomic file queue and a
+  deterministic `fake-sft` trainer for protocol testing;
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
 - conservative host-side cause classification and recovery linking;
@@ -465,6 +467,28 @@ session lanes.
 
 This is the preferred initial topology for private development use.
 
+The first worker slice is implemented as `llama-agent-adaptation-worker`. It
+processes at most one bundle per invocation:
+
+```text
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs
+```
+
+The queue has `pending`, `running`, `succeeded`, `failed`, and `cancelled`
+directories. A complete bundle is written to a staging directory and exposed
+by one atomic rename. Claiming is also an atomic rename, so two workers cannot
+claim the same directory. The worker writes a bounded `state.json`, a
+`result.json`, and a job-local artifact directory. A `cancel` marker in a
+claimed job cancels it before trainer start; a future long-running trainer must
+also check cancellation during execution.
+
+Only `trainer_kind: "fake-sft"` is enabled in this slice. It creates a
+deterministic test artifact and computes its SHA-256, but the artifact is not a
+loadable model adapter. The worker does not inspect the adaptation ledger,
+access raw resources, start automatically from the daemon, or activate/import
+an adapter. PEFT/QLoRA is a later trainer profile behind the same job/result
+contract.
+
 ### Remote worker
 
 The daemon exports a portable bundle; the remote worker returns an adapter
@@ -850,8 +874,9 @@ The current trainer contract now binds a job and result to the corpus bundle
 hash and trainer version in addition to the corpus revision, base training
 fingerprint, and trainer kind. Returned artifact paths must be relative and
 normalized, and the result still requires a `sha256:` artifact hash plus a
-passed evaluation. This is validation only; no worker or automatic import is
-implemented yet.
+passed evaluation. The worker currently consumes this contract for the
+deterministic fake trainer; QLoRA, automatic scheduling, artifact import, and
+automatic activation remain unimplemented.
 
 The generated job identity also includes the base fingerprint, trainer kind
 and version, code revision, and seed. The same corpus can therefore produce

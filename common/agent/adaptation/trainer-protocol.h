@@ -49,3 +49,23 @@ bool common_learning_validate_training_result(
         const common_learning_training_job & job,
         const common_learning_training_result & result,
         std::string & error);
+
+bool common_learning_training_job_to_json(
+        const common_learning_training_job & job,
+        std::string & output,
+        std::string & error);
+
+bool common_learning_training_job_from_json(
+        const std::string & input,
+        common_learning_training_job & job,
+        std::string & error);
+
+bool common_learning_training_result_to_json(
+        const common_learning_training_result & result,
+        std::string & output,
+        std::string & error);
+
+bool common_learning_training_result_from_json(
+        const std::string & input,
+        common_learning_training_result & result,
+        std::string & error);

@@ -1734,6 +1734,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# The adaptation worker is deliberately a separate process.  It consumes
+# immutable job bundles and never shares an inference context or session lane
+# with the resident agent.
+set(TARGET llama-agent-adaptation-worker)
+add_executable(${TARGET}
+    ../../tools/agent/adaptation/agent-learning-worker-main.cpp
+    ../../tools/agent/adaptation/agent-learning-worker.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-core vendor::hash)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-web)
 add_executable(${TARGET}
     ../../tools/agent/web/agent-web-main.cpp
@@ -1747,7 +1763,7 @@ target_link_libraries(${TARGET} PRIVATE llama-agent-protocol cpp-httplib Threads
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
-    install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-web RUNTIME)
+    install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-web RUNTIME)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
