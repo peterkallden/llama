@@ -1229,10 +1229,15 @@ explicitly configurable and requires a unique minimum score. These boundaries
 keep a learned blueprint inspectable and prevent stale or oversized blueprint
 text from becoming an implicit execution authority.
 
-The remaining blueprint follow-up is provenance/tool-catalog revision binding
-when a persisted blueprint is resumed, plus a dedicated CLI-level regression
-fixture for model-facing truncation and binding refusal. Neither is required
-for the model catalog router seam below.
+Blueprint provenance is now explicit: an imported or bootstrapped blueprint
+may carry `source_revision`; bootstrap defaults it to `package_name@version`,
+and an instantiated task retains the same value. Resume/selection can require
+an `expected_source_revision`, causing a stale blueprint to be declined before
+the model is asked to select it. This identifies the blueprint package, not a
+snapshot of the active tool catalog; those are deliberately separate
+identities. A canonical tool-catalog revision binding and a dedicated CLI-level
+regression fixture for model-facing truncation and binding refusal remain
+future work. Neither is required for the model catalog router seam below.
 
 ### Sweep 7 — model catalog and controlled routing
 

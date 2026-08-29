@@ -69,6 +69,7 @@ int main() {
     assert(error.empty() && bootstrap_procedures.size() == first.installed_memory_ids.size());
     const auto blueprint = plans.get(first.installed_blueprint_ids.front(), error);
     assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
+    assert(blueprint->source_revision == "default@v1");
     assert(blueprint->purpose == "Safely modify a repository while preserving intended behavior.");
     assert(blueprint->constraints.size() == 2 && blueprint->assumptions.size() == 1);
     assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);
@@ -77,6 +78,7 @@ int main() {
     assert(common_plan_instantiate_blueprint(*blueprint, "instance-a", config.session_id, instance, error, common_plan_scope::project, 43));
     assert(instance.kind == common_plan_kind::task);
     assert(instance.derived_from_plan_id && *instance.derived_from_plan_id == blueprint->id);
+    assert(instance.source_revision == blueprint->source_revision);
 
     common_plan_state cyclic = *blueprint;
     cyclic.id = "cyclic-blueprint";
@@ -104,6 +106,13 @@ int main() {
     assert(common_agent_package_parse_json(package_json, parsed_package, error));
     assert(parsed_package.procedures.size() == default_package.procedures.size());
     assert(parsed_package.blueprints.size() == default_package.blueprints.size());
+    auto versioned_package = default_package;
+    versioned_package.blueprints.front().source_revision = "repository-work@v3";
+    assert(common_agent_package_to_json(versioned_package, package_json, error));
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.blueprints.front().source_revision == "repository-work@v3");
+    versioned_package.blueprints.front().source_revision.assign(129, 'x');
+    assert(!common_agent_package_to_json(versioned_package, package_json, error));
     assert(common_agent_package_parse_json(R"({"schema_version":1,"name":"forward-compatible","version":"v1","procedures":[],"blueprints":[],"future_section":{"ignored":true}})", parsed_package, error));
 
     fixed_selector selector;
@@ -134,6 +143,16 @@ int main() {
     assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
     assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,
         config.namespace_id, config.session_id, config.project_id, {}));
+
+    selection_config.expected_source_revision = "default@v0";
+    selection_config.task_plan_id = "stale-source-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        { {"repository-change", first.installed_blueprint_ids.front(), "repository work"} },
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined &&
+        selection_result.eligible_count == 0 && selection_result.rejections.size() == 1 &&
+        selection_result.rejections.front().reason.find("stale") != std::string::npos);
+    selection_config.expected_source_revision.clear();
 
     common_plan_state invalid_assumption = *blueprint;
     invalid_assumption.id = "invalid-assumption-blueprint";

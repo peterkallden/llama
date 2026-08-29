@@ -62,7 +62,7 @@ json serialize_plan(const common_plan_state & plan) {
     for (const auto & value : plan.assumptions) assumptions.push_back({{"id", value.id}, {"statement", value.statement}, {"confidence", value.confidence}, {"valid", value.valid}, {"evidence_ids", value.evidence_ids}});
     json observations = json::array();
     for (const auto & value : plan.observations) observations.push_back({{"id", value.id}, {"source", value.source}, {"summary", value.summary}, {"confidence", value.confidence}, {"evidence_ids", value.evidence_ids}, {"created_at", value.created_at}});
-    return {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
+    return {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
 }
 
 bool deserialize_plan(const std::string & text, common_plan_state & plan) {
@@ -74,6 +74,7 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.session_id = value.value("session_id", std::string{});
     plan.project_id = value.value("project_id", std::string{});
     plan.turn_id = value.value("turn_id", std::string{});
+    plan.source_revision = value.value("source_revision", std::string{});
     plan.kind = parse_kind(value.value("kind", std::string("task")));
     plan.scope = parse_scope(value.value("scope", std::string("turn")));
     plan.status = parse_status(value.value("status", std::string("proposed")));

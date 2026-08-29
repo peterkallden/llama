@@ -30,6 +30,10 @@ bool common_plan_validate_blueprint(
         error = "blueprint requires an id and namespace";
         return false;
     }
+    if (blueprint.source_revision.size() > 128) {
+        error = "blueprint source revision exceeds bounds";
+        return false;
+    }
     if (blueprint.steps.empty() || blueprint.steps.size() > config.maximum_steps) {
         error = "blueprint step count is outside bounds";
         return false;
@@ -121,6 +125,7 @@ bool common_plan_instantiate_blueprint(
     common_plan_state out;
     out.id = instance_id;
     out.session_id = session_id;
+    out.source_revision = blueprint.source_revision;
     out.kind = common_plan_kind::task;
     out.derived_from_plan_id = blueprint.id;
     out.scope = scope;

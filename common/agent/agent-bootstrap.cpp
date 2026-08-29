@@ -158,7 +158,8 @@ bool common_agent_install_bootstrap_package(
 
     if (config.install_blueprints) {
         for (const auto & definition : package.blueprints) {
-            if (definition.id.empty() || definition.goal.empty() || definition.success_criteria.empty() || definition.steps.empty()) {
+            if (definition.id.empty() || definition.goal.empty() || definition.success_criteria.empty() ||
+                    definition.steps.empty() || definition.source_revision.size() > 128) {
                 error = "bootstrap blueprint has missing id, goal, success criteria, or steps";
                 return false;
             }
@@ -167,6 +168,8 @@ bool common_agent_install_bootstrap_package(
             blueprint.namespace_id = config.namespace_id;
             blueprint.session_id = config.session_id;
             blueprint.project_id = config.project_id;
+            blueprint.source_revision = definition.source_revision.empty()
+                ? package.name + "@" + package.version : definition.source_revision;
             blueprint.kind = common_plan_kind::blueprint;
             blueprint.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
             blueprint.purpose = definition.purpose.empty() ? definition.goal : definition.purpose;

@@ -39,6 +39,9 @@ struct common_agent_bootstrap_procedure {
 // the persisted id, scope, session identity, timestamps, and blueprint kind.
 struct common_agent_bootstrap_blueprint {
     std::string id;
+    // Optional immutable source revision. The installer defaults this to the
+    // enclosing package name and version.
+    std::string source_revision;
     // Short, untrusted-model-safe description used only to choose among
     // already installed candidates.
     std::string selection_description;

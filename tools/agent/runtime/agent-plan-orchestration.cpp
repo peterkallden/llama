@@ -81,6 +81,7 @@ bool maybe_install_agent_bootstrap(
             common_blueprint_candidate candidate;
             candidate.logical_id = blueprint.id;
             candidate.persisted_id = prefix + blueprint.id;
+            candidate.source_revision = blueprint.source_revision;
             candidate.description = blueprint.selection_description.empty() ? blueprint.goal : blueprint.selection_description;
             candidate.purpose = blueprint.purpose;
             candidate.goal = blueprint.goal;

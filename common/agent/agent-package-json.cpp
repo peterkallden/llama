@@ -56,7 +56,7 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
         if (!valid_id(procedure.id) || procedure.content.empty() || procedure.content.size() > 8192 || procedure.summary.size() > 1024 || procedure.importance < 0 || procedure.importance > 1 || procedure.confidence < 0 || procedure.confidence > 1 || !procedures.insert(procedure.id).second) { error = "invalid or duplicate procedure definition"; return false; }
     }
     for (const auto & blueprint : package.blueprints) {
-        if (!valid_id(blueprint.id) || blueprint.goal.empty() || blueprint.goal.size() > 4096 || blueprint.success_criteria.empty() || blueprint.success_criteria.size() > 4096 || blueprint.steps.empty() || blueprint.steps.size() > 64 || !blueprints.insert(blueprint.id).second) { error = "invalid or duplicate blueprint definition"; return false; }
+        if (!valid_id(blueprint.id) || blueprint.source_revision.size() > 128 || blueprint.goal.empty() || blueprint.goal.size() > 4096 || blueprint.success_criteria.empty() || blueprint.success_criteria.size() > 4096 || blueprint.steps.empty() || blueprint.steps.size() > 64 || !blueprints.insert(blueprint.id).second) { error = "invalid or duplicate blueprint definition"; return false; }
         std::set<std::string> steps;
         for (const auto & step : blueprint.steps) {
             if (!valid_id(step.id) || step.title.empty() || step.objective.empty() || step.tool_call || step.selected_tool || !steps.insert(step.id).second) { error = "invalid blueprint step or tool binding"; return false; }
@@ -104,7 +104,7 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
             for (const auto & item : root["blueprints"]) {
                 if (!item.is_object() || !item.contains("steps") || !item["steps"].is_array()) { error = "package blueprint requires steps"; return false; }
                 common_agent_bootstrap_blueprint blueprint;
-                blueprint.id = item.value("id", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
+                blueprint.id = item.value("id", std::string{}); blueprint.source_revision = item.value("source_revision", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
                 blueprint.purpose = item.value("purpose", std::string{});
                 blueprint.goal = item.value("goal", std::string{}); blueprint.success_criteria = item.value("success_criteria", std::string{});
                 if (item.contains("required_capabilities") && !strings(item["required_capabilities"], blueprint.required_capabilities)) { error = "blueprint required_capabilities must be strings"; return false; }
@@ -131,6 +131,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
     for (const auto & procedure : package.procedures) root["procedures"].push_back({{"id", procedure.id}, {"summary", procedure.summary}, {"content", procedure.content}, {"importance", procedure.importance}, {"confidence", procedure.confidence}});
     for (const auto & blueprint : package.blueprints) {
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
+        if (!blueprint.source_revision.empty()) value["source_revision"] = blueprint.source_revision;
         if (!blueprint.selection_description.empty()) value["selection_description"] = blueprint.selection_description;
         if (!blueprint.purpose.empty()) value["purpose"] = blueprint.purpose;
         if (!blueprint.required_capabilities.empty()) value["required_capabilities"] = blueprint.required_capabilities;

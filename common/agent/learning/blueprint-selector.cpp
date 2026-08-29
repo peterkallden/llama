@@ -85,6 +85,7 @@ bool validate_candidate_catalog(
                 !logical_ids.insert(candidate.logical_id).second ||
                 !persisted_ids.insert(candidate.persisted_id).second ||
                 !valid_text(candidate.logical_id) || !valid_text(candidate.persisted_id) ||
+                !valid_text(candidate.source_revision) ||
                 !valid_text(candidate.description) || !valid_text(candidate.purpose) ||
                 !valid_text(candidate.goal) || !valid_text(candidate.success_criteria) ||
                 candidate.required_capabilities.size() > 32 || candidate.constraints.size() > 32 ||
@@ -189,6 +190,8 @@ bool common_agent_select_and_instantiate_blueprint(
         if (!blueprint) rejection = "persisted blueprint is unavailable";
         else if (blueprint->kind != common_plan_kind::blueprint) rejection = "persisted plan is not a blueprint";
         else if (has_known_false_assumption) rejection = "blueprint has a known-false assumption";
+        else if (!candidate.source_revision.empty() && candidate.source_revision != blueprint->source_revision) rejection = "candidate source revision does not match persisted blueprint";
+        else if (!config.expected_source_revision.empty() && blueprint->source_revision != config.expected_source_revision) rejection = "blueprint source revision is stale for the current host";
         else if (missing_required_capability) rejection = "required host capability is unavailable";
         else if (blocked_hard_constraint) rejection = "hard constraint conflicts with host policy";
         else {

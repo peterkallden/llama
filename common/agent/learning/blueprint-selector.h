@@ -24,6 +24,7 @@ struct common_blueprint_candidate {
     std::vector<common_plan_assumption> assumptions;
     std::vector<std::string> contributions;
     std::vector<std::string> required_capabilities;
+    std::string source_revision;
 };
 
 enum class common_blueprint_selection_decision { none, instantiate, failed };
@@ -74,6 +75,9 @@ struct common_blueprint_selection_config {
     size_t maximum_candidate_text_bytes = 4096;
     size_t minimum_keyword_fallback_score = 2;
     bool allow_keyword_fallback = true;
+    // Optional host snapshot identity. A non-matching blueprint is stale and
+    // cannot be selected or resumed.
+    std::string expected_source_revision;
     // Populated only after the host has resolved the active tool profile.
     // Unknown capabilities remain unknown during earlier bootstrap setup.
     std::vector<std::string> available_capabilities;

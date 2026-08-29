@@ -145,6 +145,10 @@ struct common_plan_state {
     // Runtime-owned identity boundary.  These mirror memory identity so a
     // persisted plan can be selected or resumed only in its original scope.
     std::string namespace_id = "local", project_id, turn_id;
+    // Immutable source identity for imported or learned blueprints. A task
+    // instantiated from a blueprint retains it for audit and stale-source
+    // detection. Empty is valid for legacy plans.
+    std::string source_revision;
     common_plan_kind kind = common_plan_kind::task;
     std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;
