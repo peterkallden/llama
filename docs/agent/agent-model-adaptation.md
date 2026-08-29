@@ -5,7 +5,7 @@
 Design and implementation plan. The observation, transaction, candidate,
 corpus, trainer-job, adapter-registry, cause-classification, runtime assembly,
 artifact-import, and evaluation-report contracts now exist. There is still no
-external trainer integration, model catalog, or automatic adapter activation.
+    external trainer integration, model loading/routing, or automatic adapter activation.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -44,6 +44,9 @@ The local branch currently contains the first contract slices:
 - a host-neutral model-profile contract for a base-model identity and bounded
   adapter overlays, including a cache key that isolates model, tokenizer,
   template, context, and adapter state;
+- a versioned model catalog contract bound to host configuration, with named
+  generation/embedding bases, explicit profiles, profile selection, relative
+  model paths, load policy, and bounded resident-model limits;
 - a host-level adaptation orchestrator and two smokes: a model-free end-to-end
   lifecycle smoke using an explicit evaluator seam, and a model-agnostic
   resident-inference smoke that verifies adaptation-ledger capture can be
@@ -677,29 +680,30 @@ model, zero or more approved adapters, and runtime limits. It is the unit a
 session uses, rather than a free model path or adapter path supplied by a
 caller.
 
-Conceptual future configuration:
+The host configuration now accepts the following catalog shape:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 1,
+  "model": {"profile": "agent-default"},
   "models": {
     "bases": {
       "qwen-small": {
         "kind": "generation",
         "backend": "server-context",
-        "path": "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        "path": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
         "load": "resident"
       },
       "qwen-research": {
         "kind": "generation",
         "backend": "server-context",
-        "path": "models/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "path": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
         "load": "lazy"
       },
       "nomic": {
         "kind": "embedding",
         "backend": "server-context",
-        "path": "models/nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "path": "nomic-embed-text-v1.5.Q4_K_M.gguf",
         "load": "resident"
       }
     },
@@ -722,28 +726,29 @@ Conceptual future configuration:
         "context_size": 8192,
         "load": "lazy"
       }
+    },
+    "routing": {
+      "default_profile": "agent-default",
+      "embedding_model": "nomic"
+    },
+    "limits": {
+      "max_loaded_generation_models": 2,
+      "model_eviction": "lru"
     }
-  },
-  "routing": {
-    "default_profile": "agent-default",
-    "embedding_model": "nomic",
-    "thinking_modes": {"research": "research"}
-  },
-  "limits": {
-    "max_loaded_generation_models": 2,
-    "inference_max_active": 1,
-    "model_eviction": "lru"
   }
 }
 ```
 
-This is a proposed version-2 schema, not a supported multi-model configuration
-today. The host-neutral profile contract now validates the identity and
-overlay portion of this shape, but bootstrap/model loading still has to bind
-the profile to the actual model catalog. It intentionally separates base-model
-identity, adapter identity, runnable profile, and host-owned routing. The
-adapter registry owns artifact paths and validation; production profile
-configuration should reference adapter ids, not arbitrary paths.
+This is a supported host-configuration shape for catalog parsing and profile
+resolution, but it is not yet a supported multi-model serving configuration.
+`model.profile` overrides the catalog default; the host resolver returns the
+selected base path, `mmproj`, context, load policy, and adapter references.
+Bootstrap/model loading still has to consume that selection. Until that next
+sweep is complete, the existing `model.path` remains the effective inference
+input. It intentionally separates base-model identity, adapter identity,
+runnable profile, and host-owned routing. The adapter registry owns artifact
+paths and validation; production profile configuration should reference
+adapter ids, not arbitrary paths.
 
 The profile contract allows at most eight unique overlays, each with a bounded
 positive scale, and supports `resident` or `lazy` loading. Its cache key
@@ -1104,11 +1109,14 @@ later work.
 
 ### Sweep 7 — model catalog and controlled routing
 
-Deliverables:
+Status: the catalog contract, host JSON binding, validation, path resolution,
+and explicit profile selection are implemented. The actual multi-model loader
+and scheduler work remains.
 
-- Introduce named bases and profiles only when the single-profile path is
-  proven. Migrate the current single-model configuration once; do not retain
-  two long-lived configuration semantics.
+Remaining deliverables:
+
+- Migrate the current single-model configuration once the loader consumes the
+  catalog; do not retain two long-lived configuration semantics.
 - Add bounded resident/lazy loading, profile-aware scheduler admission, and
   explicit host-controlled escalation between a small model, baseline, and
   research model.

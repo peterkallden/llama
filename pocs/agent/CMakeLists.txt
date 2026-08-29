@@ -1852,6 +1852,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-jsonl-unix.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-remote-http.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-stdio.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-model-catalog.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-eurostat.json
         ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json)
     install(FILES

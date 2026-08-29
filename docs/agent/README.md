@@ -205,6 +205,7 @@ Copyable configurations and protocol fixtures are available in
 - [`openapi-tool-provider.json`](../examples/openapi-tool-provider.json)
 - [`openapi-sales-contract.json`](../examples/openapi-sales-contract.json)
 - [`agent-host-config-stdio.json`](../examples/agent-host-config-stdio.json)
+- [`agent-host-config-model-catalog.json`](../examples/agent-host-config-model-catalog.json)
 - [`agent-host-config-jsonl-tcp.json`](../examples/agent-host-config-jsonl-tcp.json)
 - [`agent-host-config-jsonl-unix.json`](../examples/agent-host-config-jsonl-unix.json)
 - [`agent-daemon-requests.jsonl`](../examples/agent-daemon-requests.jsonl)
