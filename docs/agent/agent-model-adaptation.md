@@ -5,7 +5,8 @@
 Design and implementation plan. The observation, transaction, candidate,
 corpus, trainer-job, adapter-registry, cause-classification, runtime assembly,
 artifact-import, and evaluation-report contracts now exist. There is still no
-    external trainer integration, model loading/routing, or automatic adapter activation.
+external trainer integration, production multi-model loading/routing, or
+automatic adapter activation.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -64,10 +65,17 @@ redaction attestation, candidate revocation, held-out exclusion, deterministic
 splits, provenance, duplicate handling, and bounded host-selected replay.
 The redaction implementation is still an explicit caller/policy seam rather
 than a PII detector; semantic replay selection, an actual trainer worker,
-model-profile loading, and inference activation remain later sweeps. The
-current registry is metadata-only and does not load an adapter. The artifact
-verifier and evaluation report only establish import and promotion evidence;
-they do not train, evaluate, or activate a model by themselves.
+model-profile loading, production residency, and inference activation remain
+later sweeps. The current registry is metadata-only and does not load an
+adapter. The artifact verifier and evaluation report only establish import and
+promotion evidence; they do not train, evaluate, or activate a model by
+themselves.
+
+The model-profile catalog and router are documented in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+That document is the source of truth for the remaining loader and scheduler
+work; this document only describes how adaptation artifacts become eligible
+profiles.
 
 ## Review conclusion and recommended adjustments
 
@@ -269,10 +277,12 @@ applies confidence and expected-reuse thresholds, detects duplicates and
 conflicts, and can promote a verified procedure to a blueprint. This is the
 right conceptual precedent, but it is not a model-training system.
 
-The current configuration has one generation model (`model.path`) and an
-optional separate embedding model (`model.embedding_model`). The current
-resident model-load key includes the generation-model and multimodal-projector
-identity, but not an adapter set or a named model profile.
+The deployed compatibility path still has one generation model (`model.path`)
+and an optional separate embedding model (`model.embedding_model`). The
+host-neutral catalog and profile contracts now describe the target migration,
+but the current resident loader has not yet consumed them process-wide. The
+remaining gap is implementation of shared model residency and profile-aware
+scheduling, not another adaptation or training contract.
 
 ## Why a separate adaptation lifecycle is needed
 
@@ -793,6 +803,14 @@ runnable profile, and host-owned routing. The adapter registry owns artifact
 paths and validation; production profile configuration should reference
 adapter ids, not arbitrary paths.
 
+The complete target boundary is recorded in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+In particular, the adaptation path must not own model loading: it supplies a
+validated adapter/profile identity, while the runtime host pins a selected
+profile for the complete turn and the process-wide residency manager owns
+loaded handles. Baseline and candidate evaluation must use explicitly named
+profiles; the model may not select the candidate adapter itself.
+
 The profile contract allows at most eight unique overlays, each with a bounded
 positive scale, and supports `resident` or `lazy` loading. Its cache key
 includes the ordered overlay list, so changing an adapter or scale cannot
@@ -1245,8 +1263,9 @@ Status: the catalog contract, host JSON binding, validation, path resolution,
 explicit profile selection, and a bounded host-neutral profile router are
 implemented. The router admits a turn against a profile identity and reports
 whether the cache is reused or which idle entry must be released. It does not
-load model files itself. The actual multi-model loader and scheduler work
-remains.
+load model files itself. The actual multi-model residency and scheduler work
+remains and is specified in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
 
 Remaining deliverables:
 
@@ -1255,7 +1274,8 @@ Remaining deliverables:
 - Connect the router to bounded resident/lazy loading, profile-aware scheduler
   admission, and explicit host-controlled escalation between a small model,
   baseline, and research model. The caller must release the reported evicted
-  entry before loading its replacement.
+  entry before loading its replacement. CLI and `server-context` require
+  separate backend loaders behind the same residency contract.
 - Keep the embedding model separate from generation profiles.
 
 Tests and exit gate:
