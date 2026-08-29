@@ -257,6 +257,14 @@ bool initialize_agent_runtime_session_from_resident_model(
     const std::shared_ptr<common_agent_runtime_resident_model> & resident_model,
     common_agent_runtime_session & session,
     std::string & error) {
+#ifdef LLAMA_AGENT_ANDROID_CLI_ONLY
+    (void) options;
+    (void) backend;
+    (void) resident_model;
+    session.reset();
+    error = "resident model loading is unavailable in the Android CLI-only runtime";
+    return false;
+#else
     error.clear();
     const auto loaded = common_agent_runtime_loaded_model_cast(resident_model);
     if (!loaded) {
@@ -323,6 +331,7 @@ bool initialize_agent_runtime_session_from_resident_model(
     session.inference_context.session.profile_id = session.loaded_model.profile_id;
     session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
     return true;
+#endif
 }
 
 bool apply_agent_runtime_model_profile(

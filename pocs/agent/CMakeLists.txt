@@ -2381,8 +2381,31 @@ llama_agent_add_smoke_group(
 
 set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-contract
+    test-agent-prepared-generation
+    test-agent-model-profile
+    test-agent-model-catalog
+    test-agent-model-profile-cache
     test-agent-continuation
     test-agent-research-contract
+    test-agent-runtime-json
+    test-agent-loop
+    test-agent-tool-failure
+    test-agent-tool-rounds
+    test-memory-learning
+    test-agent-learning-observation
+    test-agent-learning-domain-policy
+    test-agent-learning-cause
+    test-agent-learning-case
+    test-agent-learning-transaction
+    test-agent-training-candidate
+    test-agent-learning-corpus
+    test-agent-learning-trainer
+    test-agent-learning-worker
+    test-agent-learning-lifecycle
+    test-agent-learning-adapter
+    test-agent-learning-adapter-import
+    test-agent-learning-evaluation
+    test-agent-learning-transaction-backends
     test-agent-clangd-protocol
     test-agent-native-crash
     test-agent-native-crash-smoke

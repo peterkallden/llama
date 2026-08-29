@@ -60,7 +60,8 @@ int main() {
     common_agent_runtime_model_resident_handle reused;
     assert(residency.acquire("small", reused, error));
     assert(reused.model == first.model && cli->loads == 1);
-    assert(!residency.acquire("research", first, error));
+    common_agent_runtime_model_resident_handle blocked;
+    assert(!residency.acquire("research", blocked, error));
     assert(error.find("pinned") != std::string::npos);
 
     assert(residency.release(reused, error));
