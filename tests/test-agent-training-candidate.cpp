@@ -27,6 +27,8 @@ int main() {
     candidate.verified_recoveries = 2;
     candidate.confidence = 0.9f;
     std::string error;
+    assert(!common_training_candidate_qualifies(candidate, {}, error));
+    candidate.status = common_training_candidate_status::approved;
     assert(common_training_candidate_qualifies(candidate, {}, error));
 
     candidate.contradictions = 1;

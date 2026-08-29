@@ -56,6 +56,9 @@ bool common_training_candidate_qualifies(
     if (candidate.verified_recoveries < policy.min_verified_recoveries) { error = "training candidate has insufficient verified recoveries"; return false; }
     if (candidate.contradictions != 0) { error = "training candidate has unresolved contradictions"; return false; }
     if (!valid_score(candidate.confidence) || candidate.confidence < policy.min_confidence) { error = "training candidate confidence is below threshold"; return false; }
-    if (candidate.status == common_training_candidate_status::rejected) { error = "training candidate is rejected"; return false; }
+    if (candidate.status != common_training_candidate_status::approved) {
+        error = "training candidate requires explicit approval";
+        return false;
+    }
     return true;
 }
