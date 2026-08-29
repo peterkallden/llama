@@ -204,6 +204,18 @@ the corpus builder then emits training rows. This keeps MCP and OpenAPI
 results reusable as evidence without allowing remote data, credentials, or a
 single accidental tool failure to become model weights.
 
+### Learning cases and redaction boundary
+
+The intermediate `common_learning_case` is the explicit bridge between an
+observation and a training candidate. It carries only bounded, curator-facing
+fields: source observation, complete scope, evidence ids, a tool/schema
+fingerprint, redacted input, rejected action, and preferred action. The runtime
+does not construct it by copying raw tool output, reflection text, credentials,
+or complete conversation history. A case must be marked `redacted` or
+`approved` before export; `draft` and `revoked` cases are rejected. The case
+content hash and source observation remain available for audit, while the
+corpus builder consumes only the approved prompt/target projection.
+
 ## Current foundations
 
 The runtime already records several useful signals as bounded plan
