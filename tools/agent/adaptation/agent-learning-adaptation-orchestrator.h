@@ -22,6 +22,7 @@ struct agent_learning_adaptation_orchestrator_config {
     std::string tokenizer_fingerprint = "tokenizer:v1";
     std::string chat_template_fingerprint = "chat:v1";
     std::string code_revision = "local-adaptation-smoke";
+    std::string trainer_kind = "fake-sft";
     std::string trainer_version = "fake-trainer-1";
     size_t max_artifact_bytes = 64 * 1024 * 1024;
     size_t max_lifecycle_payload_bytes = 4 * 1024 * 1024;

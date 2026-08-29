@@ -57,22 +57,24 @@ bool common_learning_make_training_job(
         const common_learning_corpus_revision & corpus,
         const std::string & base_training_fingerprint,
         const std::string & code_revision,
+        const std::string & trainer_kind,
         const std::string & trainer_version,
         common_learning_training_job & job,
         std::string & error) {
     error.clear();
     if (corpus.id.empty() || corpus.bundle_hash.empty() || base_training_fingerprint.empty() ||
-            code_revision.empty() || trainer_version.empty()) {
+            code_revision.empty() || trainer_kind.empty() || trainer_version.empty()) {
         error = "training job requires a complete corpus and trainer identity";
         return false;
     }
     job = {};
     const auto identity = corpus.bundle_hash + "\n" + base_training_fingerprint + "\n" +
-        "qlora-sft\n" + trainer_version + "\n" + code_revision + "\n" + std::to_string(corpus.seed);
+        trainer_kind + "\n" + trainer_version + "\n" + code_revision + "\n" + std::to_string(corpus.seed);
     job.id = "learning://job/" + identity_hash(identity);
     job.corpus_revision_id = corpus.id;
     job.corpus_bundle_hash = corpus.bundle_hash;
     job.base_training_fingerprint = base_training_fingerprint;
+    job.trainer_kind = trainer_kind;
     job.code_revision = code_revision;
     job.trainer_version = trainer_version;
     job.seed = corpus.seed;

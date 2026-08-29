@@ -144,7 +144,8 @@ bool agent_learning_run_adaptation(
 
     if (!common_learning_make_training_job(result.corpus,
             "train:" + config.serving_model_fingerprint,
-            config.code_revision, config.trainer_version, result.job, error)) return false;
+            config.code_revision, config.trainer_kind, config.trainer_version,
+            result.job, error)) return false;
     std::string job_json;
     if (!common_learning_training_job_to_json(result.job, job_json, error)) return false;
     if (!append_lifecycle(config.lifecycle_store, result.job.id,

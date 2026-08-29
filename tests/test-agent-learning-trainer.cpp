@@ -10,12 +10,18 @@ int main() {
     common_learning_training_job job;
     std::string error;
     assert(common_learning_make_training_job(corpus, "base:qwen-small:training-v1",
-        "trainer-revision-1", "fake-trainer-1", job, error));
+        "trainer-revision-1", "fake-sft", "fake-trainer-1", job, error));
     assert(job.seed == 99);
     common_learning_training_job other_job;
     assert(common_learning_make_training_job(corpus, "base:qwen-large:training-v1",
-        "trainer-revision-1", "fake-trainer-1", other_job, error));
+        "trainer-revision-1", "fake-sft", "fake-trainer-1", other_job, error));
     assert(other_job.id != job.id);
+
+    common_learning_training_job external_job;
+    assert(common_learning_make_training_job(corpus, "base:qwen-small:training-v1",
+        "trainer-revision-1", "qlora-sft", "fake-trainer-1", external_job, error));
+    assert(external_job.trainer_kind == "qlora-sft");
+    assert(external_job.id != job.id);
 
     common_learning_training_result result;
     result.job_id = job.id;

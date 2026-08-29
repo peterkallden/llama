@@ -1860,7 +1860,14 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
     install(PROGRAMS ../../scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
-    install(FILES ../../requirements/requirements-agent-adaptation-qlora-trainer.txt DESTINATION share/llama-agent/requirements)
+    # The external QLoRA helper invokes this converter from the installed
+    # package. Keep both scripts and their independent dependency manifest
+    # available so a package does not require a source checkout at runtime.
+    install(PROGRAMS ../../convert_lora_to_gguf.py DESTINATION bin)
+    install(FILES
+        ../../requirements/requirements-agent-adaptation-qlora-trainer.txt
+        ../../requirements/requirements-convert_lora_to_gguf.txt
+        DESTINATION share/llama-agent/requirements)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)

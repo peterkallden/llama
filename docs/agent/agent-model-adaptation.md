@@ -608,12 +608,15 @@ optional Python dependencies are unavailable. The worker does not inspect the
 adaptation ledger, access raw resources, start automatically from the daemon,
 or activate/import an adapter.
 
-The helper is installed beside the worker. Its optional requirements file is
-installed under `share/llama-agent/requirements/`; install a PyTorch build that
-matches the worker host's CUDA stack first, then install the listed packages in
-an operator-owned Python environment. The helper deliberately has no network
+The helper and `convert_lora_to_gguf.py` are installed beside the worker. Their
+independent requirements files are installed under
+`share/llama-agent/requirements/`; install a PyTorch build that matches the
+worker host's CUDA stack first, then install both manifests in an
+operator-owned Python environment. The helper deliberately has no network
 download path: both `--model` and `--base-config` must be local checkpoint
-directories.
+directories. The external process inherits the worker environment, so secrets
+must not be placed in that environment unless the configured trainer is fully
+trusted; environment allow-listing is a later hardening step.
 
 ### Local orchestration smokes
 
@@ -1179,7 +1182,12 @@ report can open the canary gate. The worker consumes this contract for the
 built-in deterministic fake trainer and for an explicitly configured external
 trainer such as the supplied QLoRA entrypoint. Automatic queue production from
 the live adaptation ledger and automatic adapter activation remain
-unimplemented.
+unimplemented. The host must select `trainer_kind` explicitly when it creates
+a job. The local orchestration default is `fake-sft`, so the model-free smoke
+cannot accidentally request QLoRA from a worker that has no external trainer
+configured. A real QLoRA run requires `trainer_kind: "qlora-sft"` plus a
+matching worker command registration; the worker does not infer a trainer from
+the artifact filename or from model output.
 
 The generated job identity also includes the base fingerprint, trainer kind
 and version, code revision, and seed. The same corpus can therefore produce

@@ -37,6 +37,7 @@ bool common_learning_make_training_job(
         const common_learning_corpus_revision & corpus,
         const std::string & base_training_fingerprint,
         const std::string & code_revision,
+        const std::string & trainer_kind,
         const std::string & trainer_version,
         common_learning_training_job & job,
         std::string & error);

@@ -95,6 +95,7 @@ int main() {
     assert(agent_learning_run_adaptation(
             make_candidate(transaction.id), config, result, error));
     assert(error.empty());
+    assert(result.job.trainer_kind == "fake-sft");
     assert(result.worker_report.state == agent_learning_worker_job_state::succeeded);
     assert(result.training_result.evaluation_status == "not_run");
     assert(result.evaluation.status == "passed");

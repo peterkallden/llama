@@ -594,7 +594,7 @@ bool agent_learning_worker_run_once(
         std::string result_json;
         if (!common_learning_validate_training_result(job, result, error) ||
                 !common_learning_training_result_to_json(result, result_json, error) ||
-                !write_text(running / "result.json", result_json, error)) {
+                !write_text_atomic(running / "result.json", result_json, error)) {
             const std::string summary = error.empty() ? "worker produced an invalid training result" : error;
             error.clear();
             if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
