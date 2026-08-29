@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/adaptation-observer.h"
 #include "agent/adaptation/learning-cause-classifier.h"
+#include "agent/adaptation/learning-domain-policy.h"
 #include "agent/adaptation/learning-observation.h"
 
 #include <filesystem>
@@ -73,6 +74,7 @@ struct common_learning_transaction_observer_config {
     bool collection_allowed = false;
     size_t max_evidence = 16;
     common_learning_cause_classifier_config cause_classifier;
+    common_learning_domain_policy domain_policy;
 };
 
 class common_learning_transaction_observer final : public common_agent_adaptation_observer {

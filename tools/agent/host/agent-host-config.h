@@ -10,6 +10,7 @@
 #include "agent-host-openapi-provider-config.h"
 #include "resource/resource-contract.h"
 #include "agent/adaptation/learning-cause-classifier.h"
+#include "agent/adaptation/learning-domain-policy.h"
 #include "agent/runtime/model-catalog.h"
 
 #include <cstdint>
@@ -62,6 +63,7 @@ struct agent_host_config {
     std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
     std::set<std::string> adaptation_stable_model_facing_tools;
+    common_learning_domain_policy adaptation_domains;
 
     std::string memory_backend = "auto";
     std::string memory_db;

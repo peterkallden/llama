@@ -195,13 +195,27 @@ int main() {
             {"routing", {{"default_profile", "agent-default"}, {"embedding_model", "nomic"}}},
             {"limits", {{"max_loaded_generation_models", 2}, {"model_eviction", "lru"}}},
         }},
+        {"runtime", {
+            {"adaptation", {
+                {"domains", {
+                    {"planning", false},
+                    {"tool_use", false},
+                    {"research", true},
+                    {"procedure_learning", false},
+                    {"families", {{"diagnostics", true}}},
+                }},
+            }},
+        }},
     };
     if (!parse_agent_host_config_json(catalog_json, catalog_config, error) ||
             !validate_agent_host_config(catalog_config, error) ||
             catalog_config.model_path != "legacy.gguf" ||
             catalog_config.model_catalog.bases.size() != 2 ||
             catalog_config.model_catalog.profiles.size() != 1 ||
-            catalog_config.model_catalog.embedding_model_id != "nomic") {
+            catalog_config.model_catalog.embedding_model_id != "nomic" ||
+            !catalog_config.adaptation_domains.configured ||
+            catalog_config.adaptation_domains.tool_use ||
+            !catalog_config.adaptation_domains.tool_use_families.at("diagnostics")) {
         std::fprintf(stderr, "model catalog configuration was not parsed: %s\n", error.c_str());
         return 1;
     }

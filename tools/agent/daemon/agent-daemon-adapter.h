@@ -4,6 +4,7 @@
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/data-store.h"
 #include "agent/adaptation/learning-cause-classifier.h"
+#include "agent/adaptation/learning-domain-policy.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
@@ -81,6 +82,7 @@ struct daemon_options {
     std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
     std::set<std::string> adaptation_stable_model_facing_tools;
+    common_learning_domain_policy adaptation_domains;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t worker_count = 1;

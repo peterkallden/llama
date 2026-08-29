@@ -512,6 +512,31 @@ bool parse_agent_host_config_json(
                     if (item.is_string()) config.adaptation_stable_model_facing_tools.insert(item.get<std::string>());
                 }
             }
+            if (adaptation.contains("domains")) {
+                if (!adaptation["domains"].is_object()) {
+                    error = "runtime.adaptation.domains must be an object";
+                    return false;
+                }
+                const auto & domains = adaptation["domains"];
+                config.adaptation_domains.configured = true;
+                read_optional(domains, "planning", config.adaptation_domains.planning);
+                read_optional(domains, "tool_use", config.adaptation_domains.tool_use);
+                read_optional(domains, "research", config.adaptation_domains.research);
+                read_optional(domains, "procedure_learning", config.adaptation_domains.procedure_learning);
+                if (domains.contains("families")) {
+                    if (!domains["families"].is_object()) {
+                        error = "runtime.adaptation.domains.families must be an object";
+                        return false;
+                    }
+                    for (auto it = domains["families"].begin(); it != domains["families"].end(); ++it) {
+                        if (!it.value().is_boolean() || it.key().empty()) {
+                            error = "runtime.adaptation.domains.families entries must be boolean values";
+                            return false;
+                        }
+                        config.adaptation_domains.tool_use_families[it.key()] = it.value().get<bool>();
+                    }
+                }
+            }
         }
     }
 
@@ -1180,6 +1205,13 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
+                {"domains", {
+                    {"planning", config.adaptation_domains.planning},
+                    {"tool_use", config.adaptation_domains.tool_use},
+                    {"research", config.adaptation_domains.research},
+                    {"procedure_learning", config.adaptation_domains.procedure_learning},
+                    {"families", config.adaptation_domains.tool_use_families},
+                }},
             }},
         }},
         {"stores", {
@@ -1852,6 +1884,7 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_transaction_backend = config.adaptation_transaction_backend;
     options.adaptation_transaction_path = config.adaptation_transaction_path;
     options.adaptation_stable_model_facing_tools = config.adaptation_stable_model_facing_tools;
+    options.adaptation_domains = config.adaptation_domains;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

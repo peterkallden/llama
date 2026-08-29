@@ -173,6 +173,7 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
     config.adaptation_config.max_evidence = options.adaptation_max_evidence;
     config.adaptation_config.cause_classifier.stable_model_facing_tools =
         options.adaptation_stable_model_facing_tools;
+    config.adaptation_config.domain_policy = options.adaptation_domains;
     return config;
 }
 

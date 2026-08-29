@@ -253,6 +253,8 @@ bool common_learning_transaction_observer::observe(
         std::string & error) {
     error.clear();
     if (result.learning_signals.empty()) return true;
+    if (!common_learning_domain_policy_allows(
+            config.domain_policy, request, plan, result)) return true;
     common_learning_observation observation;
     observation.scope = common_agent_scope_from_request(request);
     observation.source_turn_id = request.turn_id;

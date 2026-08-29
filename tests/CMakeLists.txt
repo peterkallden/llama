@@ -368,7 +368,8 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-tool-failure.cpp
         test-agent-tool-rounds.cpp
         test-memory-learning.cpp
-    test-agent-learning-observation.cpp
+        test-agent-learning-observation.cpp
+        test-agent-learning-domain-policy.cpp
     test-agent-learning-cause.cpp
         test-agent-learning-case.cpp
         test-agent-learning-transaction.cpp

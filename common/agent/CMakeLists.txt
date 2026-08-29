@@ -66,6 +66,7 @@ add_library(${TARGET}
     adaptation/learning-observation.cpp adaptation/learning-observation.h
     adaptation/learning-case.cpp adaptation/learning-case.h
     adaptation/learning-cause-classifier.cpp adaptation/learning-cause-classifier.h
+    adaptation/learning-domain-policy.cpp adaptation/learning-domain-policy.h
     adaptation/adaptation-observer.h
     adaptation/learning-transaction.cpp adaptation/learning-transaction.h
     adaptation/training-candidate.cpp adaptation/training-candidate.h
