@@ -14,6 +14,16 @@ const char * common_learning_case_status_name(common_learning_case_status status
     return "draft";
 }
 
+const char * common_learning_redaction_status_name(common_learning_redaction_status status) {
+    switch (status) {
+        case common_learning_redaction_status::not_evaluated: return "not_evaluated";
+        case common_learning_redaction_status::caller_asserted: return "caller_asserted";
+        case common_learning_redaction_status::policy_checked: return "policy_checked";
+        case common_learning_redaction_status::rejected: return "rejected";
+    }
+    return "not_evaluated";
+}
+
 bool common_learning_case_validate(const common_learning_case & value, size_t max_evidence,
         size_t max_text_size, std::string & error) {
     error.clear();
@@ -34,6 +44,12 @@ bool common_learning_case_validate(const common_learning_case & value, size_t ma
             value.preferred_action.size() > max_text_size) {
         error = "learning case exceeds text bound"; return false;
     }
+    if (value.redaction_policy_id.empty() || value.redaction_method.empty() ||
+            (value.redaction_status != common_learning_redaction_status::caller_asserted &&
+             value.redaction_status != common_learning_redaction_status::policy_checked)) {
+        error = "learning case lacks an accepted redaction result";
+        return false;
+    }
     if (value.status == common_learning_case_status::draft || value.status == common_learning_case_status::revoked) {
         error = "learning case is not exportable"; return false;
     }
@@ -49,6 +65,8 @@ std::string common_learning_case_to_json(const common_learning_case & value) {
         {"evidence_ids", value.evidence_ids}, {"schema_fingerprint", value.schema_fingerprint},
         {"input", value.input}, {"rejected_action", value.rejected_action},
         {"preferred_action", value.preferred_action},
+        {"redaction", {{"policy_id", value.redaction_policy_id}, {"method", value.redaction_method},
+                        {"status", common_learning_redaction_status_name(value.redaction_status)}}},
         {"status", common_learning_case_status_name(value.status)}, {"content_hash", value.content_hash}
     }.dump();
 }

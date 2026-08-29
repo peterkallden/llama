@@ -14,6 +14,9 @@ int main() {
     value.input = "Inspect the attached table.";
     value.rejected_action = "invalid binding";
     value.preferred_action = "valid binding";
+    value.redaction_policy_id = "stub:caller-asserted-v1";
+    value.redaction_method = "caller_asserted";
+    value.redaction_status = common_learning_redaction_status::caller_asserted;
     value.content_hash = "identity:fnv1a64:0123456789abcdef";
     std::string error;
     assert(!common_learning_case_validate(value, 4, 128, error));

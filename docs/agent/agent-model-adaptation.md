@@ -216,6 +216,13 @@ or complete conversation history. A case must be marked `redacted` or
 content hash and source observation remain available for audit, while the
 corpus builder consumes only the approved prompt/target projection.
 
+The case also carries a separate redaction result: `redaction_policy_id`,
+`redaction_method`, and `redaction_status`. The current implementation is a
+stub seam, not a detector: `caller_asserted` records an explicit host
+assertion and does not prove that secrets or personal data are absent. A real
+redactor can later replace the seam and use `policy_checked`; it must preserve
+the same bounded output and revocation contract.
+
 ## Current foundations
 
 The runtime already records several useful signals as bounded plan
