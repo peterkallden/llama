@@ -15,7 +15,12 @@ int main() {
     common_learning_cause_classifier_config stable;
     stable.stable_model_facing_tools.insert("data.query");
     assert(common_learning_classify_result(validation, stable) == common_learning_cause::model_behavior);
-    assert(common_learning_recovery_reference(validation) == "evidence-1");
+    assert(common_learning_recovery_reference(validation).empty());
+
+    common_agent_result recovery = validation;
+    recovery.learning_signals.push_back({common_learning_signal_type::successful_recovery,
+        "plan-1", "step_1", "data.query", "evidence-1", "recovered"});
+    assert(common_learning_recovery_reference(recovery) == "evidence-1");
 
     common_agent_result network;
     network.failures.push_back({

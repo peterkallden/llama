@@ -68,7 +68,7 @@ int main() {
     common_agent_result ordinary;
     ordinary.response = "hello";
     assert(observer.observe(req, pl, ordinary, error));
-    assert(memory_store.list(error).size() == 1);
+    assert(memory_store.list(error).size() == 2);
 
     common_learning_in_memory_transaction_store denied_store;
     common_learning_transaction_observer denied(denied_store, {false, 4});
