@@ -105,8 +105,55 @@ bool test_rejects_invalid_catalogs() {
     return true;
 }
 
+bool test_profile_router() {
+    common_agent_model_catalog catalog;
+    std::string error;
+    if (!common_agent_model_catalog_from_json(R"json({
+      "schema_version": 1,
+      "directory": "/models",
+      "bases": {
+        "small": {"kind": "generation", "backend": "cli", "path": "qwen.gguf"},
+        "research": {"kind": "generation", "backend": "cli", "path": "research.gguf"}
+      },
+      "profiles": {
+        "agent-default": {"base": "small", "context_size": 4096},
+        "research": {"base": "research", "context_size": 8192}
+      },
+      "routing": {"default_profile": "agent-default"},
+      "limits": {"max_loaded_generation_models": 2, "model_eviction": "lru"}
+    })json", catalog, error)) return false;
+
+    common_agent_model_router router(catalog);
+    common_agent_model_route baseline;
+    if (!router.begin_turn({}, baseline, error) || baseline.cache_reused ||
+            baseline.selection.path != "/models/qwen.gguf") return false;
+    common_agent_model_route same;
+    if (!router.begin_turn("agent-default", same, error) || !same.cache_reused ||
+            same.cache_key != baseline.cache_key) return false;
+    common_agent_model_route research;
+    if (!router.begin_turn("research", research, error) || research.cache_reused ||
+            research.selection.path != "/models/research.gguf" ||
+            router.cache().size() != 2) return false;
+    if (!router.end_turn(same, error) || !router.end_turn(baseline, error) ||
+            !router.end_turn(research, error)) return false;
+    if (router.cache().list().size() != 2 || !error.empty()) return false;
+
+    common_agent_model_catalog limited_catalog = catalog;
+    limited_catalog.max_loaded_generation_models = 1;
+    common_agent_model_router limited_router(limited_catalog);
+    common_agent_model_route limited_baseline;
+    if (!limited_router.begin_turn("agent-default", limited_baseline, error)) return false;
+    if (!limited_router.end_turn(limited_baseline, error)) return false;
+    common_agent_model_route limited_research;
+    if (!limited_router.begin_turn("research", limited_research, error) ||
+            limited_research.evicted_cache_key != limited_baseline.cache_key ||
+            limited_router.cache().list().size() != 1) return false;
+    return limited_router.end_turn(limited_research, error) && error.empty();
+}
+
 } // namespace
 
 int main() {
-    return test_parse_and_resolve() && test_rejects_invalid_catalogs() ? 0 : 1;
+    return test_parse_and_resolve() && test_rejects_invalid_catalogs() &&
+        test_profile_router() ? 0 : 1;
 }

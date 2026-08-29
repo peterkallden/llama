@@ -1,5 +1,6 @@
 #include "agent/runtime/model-catalog.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -299,4 +300,42 @@ std::string common_agent_model_selection_cache_key(
         key << adapter.adapter_id << ':' << adapter.scale << '\n';
     }
     return key.str();
+}
+
+common_agent_model_router::common_agent_model_router(
+        const common_agent_model_catalog & value)
+    : catalog(value), profile_cache(value.max_loaded_generation_models) {}
+
+bool common_agent_model_router::begin_turn(
+        const std::string & profile_id,
+        common_agent_model_route & route,
+        std::string & error) {
+    route = {};
+    if (!common_agent_model_catalog_resolve_profile(catalog, profile_id, route.selection, error)) {
+        return false;
+    }
+    route.cache_key = common_agent_model_selection_cache_key(route.selection);
+    route.cache_reused = std::any_of(profile_cache.list().begin(), profile_cache.list().end(),
+        [&](const auto & entry) { return entry.key == route.cache_key; });
+    if (!profile_cache.begin_turn(
+            route.cache_key,
+            route.selection.profile_id,
+            route.selection.load_policy,
+            route.evicted_cache_key,
+            error)) {
+        route = {};
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool common_agent_model_router::end_turn(
+        const common_agent_model_route & route,
+        std::string & error) {
+    if (route.cache_key.empty()) {
+        error = "model route has no cache key";
+        return false;
+    }
+    return profile_cache.end_turn(route.cache_key, error);
 }

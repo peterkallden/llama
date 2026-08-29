@@ -1237,16 +1237,20 @@ for the model catalog router seam below.
 ### Sweep 7 — model catalog and controlled routing
 
 Status: the catalog contract, host JSON binding, validation, path resolution,
-and explicit profile selection are implemented. The actual multi-model loader
-and scheduler work remains.
+explicit profile selection, and a bounded host-neutral profile router are
+implemented. The router admits a turn against a profile identity and reports
+whether the cache is reused or which idle entry must be released. It does not
+load model files itself. The actual multi-model loader and scheduler work
+remains.
 
 Remaining deliverables:
 
 - Migrate the current single-model configuration once the loader consumes the
   catalog; do not retain two long-lived configuration semantics.
-- Add bounded resident/lazy loading, profile-aware scheduler admission, and
-  explicit host-controlled escalation between a small model, baseline, and
-  research model.
+- Connect the router to bounded resident/lazy loading, profile-aware scheduler
+  admission, and explicit host-controlled escalation between a small model,
+  baseline, and research model. The caller must release the reported evicted
+  entry before loading its replacement.
 - Keep the embedding model separate from generation profiles.
 
 Tests and exit gate:

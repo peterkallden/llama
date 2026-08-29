@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/runtime/model-profile.h"
+#include "agent/runtime/model-profile-cache.h"
 
 #include <cstddef>
 #include <map>
@@ -82,3 +83,29 @@ bool common_agent_model_catalog_resolve_profile(
 // It includes every selection field that can change serving behavior.
 std::string common_agent_model_selection_cache_key(
         const common_agent_model_selection & selection);
+
+struct common_agent_model_route {
+    common_agent_model_selection selection;
+    std::string cache_key;
+    std::string evicted_cache_key;
+    bool cache_reused = false;
+};
+
+// Host-neutral profile router. It admits turns against the bounded profile
+// cache but never loads model files; the caller owns the actual loader and
+// must release evicted_cache_key before loading the returned selection.
+class common_agent_model_router {
+public:
+    explicit common_agent_model_router(const common_agent_model_catalog & catalog);
+
+    bool begin_turn(
+            const std::string & profile_id,
+            common_agent_model_route & route,
+            std::string & error);
+    bool end_turn(const common_agent_model_route & route, std::string & error);
+    const common_agent_model_profile_cache & cache() const { return profile_cache; }
+
+private:
+    common_agent_model_catalog catalog;
+    common_agent_model_profile_cache profile_cache;
+};
