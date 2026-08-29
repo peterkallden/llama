@@ -85,6 +85,8 @@ int main() {
             "worker result was not valid JSON: " + error);
     require(common_learning_validate_training_result(first_job, result, error),
             "worker result did not satisfy the trainer contract: " + error);
+    require(result.evaluation_status == "not_run",
+            "fake trainer incorrectly claimed that evaluation passed");
     const auto artifact = succeeded_directory / "artifacts" / result.artifact_path;
     require(std::filesystem::exists(artifact), "worker artifact is missing");
     const auto artifact_bytes = read_file(artifact);

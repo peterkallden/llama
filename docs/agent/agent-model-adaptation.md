@@ -970,10 +970,12 @@ checkpoint to the serving base.
 The current trainer contract now binds a job and result to the corpus bundle
 hash and trainer version in addition to the corpus revision, base training
 fingerprint, and trainer kind. Returned artifact paths must be relative and
-normalized, and the result still requires a `sha256:` artifact hash plus a
-passed evaluation. The worker currently consumes this contract for the
-deterministic fake trainer; QLoRA, automatic scheduling, artifact import, and
-automatic activation remain unimplemented.
+normalized, and the result requires a `sha256:` artifact hash plus an
+explicit evaluation status. `not_run` is valid for a trainer result but is
+never sufficient for registry admission; only a separate passed evaluation
+report can open the canary gate. The worker currently consumes this contract
+for the deterministic fake trainer; QLoRA and automatic scheduling remain
+unimplemented.
 
 The generated job identity also includes the base fingerprint, trainer kind
 and version, code revision, and seed. The same corpus can therefore produce

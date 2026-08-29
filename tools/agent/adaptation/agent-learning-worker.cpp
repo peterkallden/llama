@@ -159,7 +159,10 @@ bool run_fake_trainer(
     result.trainer_kind = job.trainer_kind;
     result.trainer_version = job.trainer_version;
     result.evaluation_revision = "fake-evaluation:" + job.id;
-    result.evaluation_status = "passed";
+    // The deterministic trainer creates an artifact but performs no model
+    // evaluation. A separate evaluator must produce a passed report before
+    // the artifact can enter the registry canary state.
+    result.evaluation_status = "not_run";
     return true;
 }
 

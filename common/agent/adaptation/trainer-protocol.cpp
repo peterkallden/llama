@@ -111,8 +111,11 @@ bool common_learning_validate_training_result(
             result.trainer_kind != job.trainer_kind || result.trainer_version != job.trainer_version) {
         error = "training result does not match training inputs"; return false;
     }
-    if (!nonempty_bounded(result.evaluation_revision) || result.evaluation_status != "passed") {
-        error = "training result lacks a passed evaluation"; return false;
+    if (!nonempty_bounded(result.evaluation_revision) ||
+            (result.evaluation_status != "not_run" &&
+             result.evaluation_status != "passed" &&
+             result.evaluation_status != "failed")) {
+        error = "training result has invalid evaluation status"; return false;
     }
     return true;
 }

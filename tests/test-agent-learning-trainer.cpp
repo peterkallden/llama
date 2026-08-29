@@ -35,6 +35,8 @@ int main() {
     result.base_training_fingerprint = job.base_training_fingerprint;
     result.corpus_bundle_hash = job.corpus_bundle_hash;
     result.evaluation_status = "failed";
+    assert(common_learning_validate_training_result(job, result, error));
+    result.evaluation_status = "unknown";
     assert(!common_learning_validate_training_result(job, result, error));
     return 0;
 }
