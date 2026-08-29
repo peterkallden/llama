@@ -179,6 +179,39 @@ int main() {
         return 1;
     }
 
+    agent_host_config catalog_config;
+    const nlohmann::ordered_json catalog_json = {
+        {"model", {{"path", "legacy.gguf"}}},
+        {"models", {
+            {"schema_version", 1},
+            {"directory", "/models"},
+            {"bases", {
+                {"small", {{"kind", "generation"}, {"path", "small.gguf"}, {"load", "resident"}}},
+                {"nomic", {{"kind", "embedding"}, {"path", "nomic.gguf"}}},
+            }},
+            {"profiles", {
+                {"agent-default", {{"base", "small"}, {"context_size", 4096}}},
+            }},
+            {"routing", {{"default_profile", "agent-default"}, {"embedding_model", "nomic"}}},
+            {"limits", {{"max_loaded_generation_models", 2}, {"model_eviction", "lru"}}},
+        }},
+    };
+    if (!parse_agent_host_config_json(catalog_json, catalog_config, error) ||
+            !validate_agent_host_config(catalog_config, error) ||
+            catalog_config.model_path != "legacy.gguf" ||
+            catalog_config.model_catalog.bases.size() != 2 ||
+            catalog_config.model_catalog.profiles.size() != 1 ||
+            catalog_config.model_catalog.embedding_model_id != "nomic") {
+        std::fprintf(stderr, "model catalog configuration was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto catalog_serialized = agent_host_config_to_json(catalog_config);
+    if (!catalog_serialized.contains("models") ||
+            catalog_serialized["models"]["profiles"]["agent-default"]["base"] != "small") {
+        std::fprintf(stderr, "model catalog configuration was not serialized\n");
+        return 1;
+    }
+
     agent_host_config invalid_processor_config;
     const nlohmann::ordered_json invalid_policy_config = {
         {"resources", {

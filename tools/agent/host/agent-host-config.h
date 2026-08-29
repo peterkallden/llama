@@ -10,6 +10,7 @@
 #include "agent-host-openapi-provider-config.h"
 #include "resource/resource-contract.h"
 #include "agent/adaptation/learning-cause-classifier.h"
+#include "agent/runtime/model-catalog.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,9 @@ struct agent_host_config {
     std::string model_path;
     std::string mmproj_path;
     std::string embedding_model;
+    // Optional catalog-based model configuration. The legacy model fields
+    // remain the effective runtime input until profile routing is enabled.
+    common_agent_model_catalog model_catalog;
 
     int runtime_context_size = 3072;
     int n_predict = 64;

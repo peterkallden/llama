@@ -438,6 +438,15 @@ bool parse_agent_host_config_json(
         read_optional(model, "mmproj", config.mmproj_path);
         read_optional(model, "embedding_model", config.embedding_model);
     }
+    if (parsed.contains("models")) {
+        if (!parsed["models"].is_object()) {
+            error = "models must be an object";
+            return false;
+        }
+        if (!common_agent_model_catalog_from_json(parsed["models"].dump(), config.model_catalog, error)) {
+            return false;
+        }
+    }
 
     if (parsed.contains("runtime") && parsed["runtime"].is_object()) {
         const auto & runtime = parsed["runtime"];
@@ -1108,7 +1117,7 @@ nlohmann::ordered_json agent_host_config_to_json(
     }
     json sandbox_classes = json::object();
     for (const auto & entry : config.sandbox.classes) sandbox_classes[entry.first] = sandbox_class_to_json(entry.second);
-    return {
+    json result = {
         {"schema_version", config.schema_version},
         {"model", {
             {"backend", config.model_backend},
@@ -1337,11 +1346,20 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"max_continuations", config.max_continuations},
         }},
     };
+    if (!config.model_catalog.directory.empty() || !config.model_catalog.bases.empty() ||
+            !config.model_catalog.profiles.empty()) {
+        result["models"] = json::parse(common_agent_model_catalog_to_json(config.model_catalog));
+    }
+    return result;
 }
 
 bool validate_agent_host_config(
         const agent_host_config & config,
         std::string & error) {
+    if (!common_agent_validate_model_catalog(config.model_catalog, error)) {
+        error = "models: " + error;
+        return false;
+    }
     for (const auto & [family_id, description] : config.tool_family_descriptions) {
         if (family_id.empty() || description.empty() || description.size() > 240 ||
                 family_id.find_first_of(" \t\r\n") != std::string::npos ||
