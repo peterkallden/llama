@@ -4,9 +4,10 @@
 
 Design and implementation plan. The observation, transaction, candidate,
 corpus, trainer-job, adapter-registry, cause-classification, runtime assembly,
-artifact-import, and evaluation-report contracts now exist. There is still no
-external trainer integration, production multi-model loading/routing, or
-automatic adapter activation.
+artifact-import, and evaluation-report contracts now exist. A local worker can
+invoke an explicitly configured external trainer through the immutable bundle
+protocol; production training deployment, production multi-model
+loading/routing, and automatic adapter activation remain separate work.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -29,8 +30,9 @@ The local branch currently contains the first contract slices:
 - a deterministic JSONL corpus builder requiring explicitly approved and
   redaction-attested candidates, with provenance, revocation, held-out,
   split, duplicate, byte-bound, and bounded replay handling;
-- a separate one-shot adaptation worker with an atomic file queue and a
-  deterministic `fake-sft` trainer for protocol testing;
+- a separate one-shot adaptation worker with an atomic file queue, a
+  deterministic `fake-sft` trainer for protocol testing, and an
+  operator-configured external-trainer seam;
 - an append-only lifecycle journal for candidate, corpus, training-job,
   training-result, and adapter status events, with idempotency conflict checks;
 - an external training job/result contract and a validated adapter registry
@@ -64,7 +66,7 @@ existing SHA-256 stores. The corpus builder now enforces candidate-level
 redaction attestation, candidate revocation, held-out exclusion, deterministic
 splits, provenance, duplicate handling, and bounded host-selected replay.
 The redaction implementation is still an explicit caller/policy seam rather
-than a PII detector; semantic replay selection, an actual external trainer,
+than a PII detector; semantic replay selection, production trainer deployment,
 and automatic inference activation remain later sweeps. The runtime now has a
 process-wide residency seam with CLI and server-context loaders, but the
 daemon/bootstrap migration to named profiles is still pending. The current
@@ -535,8 +537,8 @@ session lanes.
 
 This is the preferred initial topology for private development use.
 
-The first worker slice is implemented as `llama-agent-adaptation-worker`. It
-processes at most one bundle per invocation:
+The worker is implemented as `llama-agent-adaptation-worker`. It processes at
+most one bundle per invocation:
 
 ```text
 llama-agent-adaptation-worker --queue var/agent/adaptation/jobs
@@ -549,9 +551,11 @@ claim the same directory. The worker writes a bounded `state.json`, a
 `result.json`, and a job-local artifact directory. A running state records the
 worker id, update time, and lease expiry. A later invocation moves an expired
 running lease to `failed` with a retryable summary, so a crashed one-shot
-worker does not leave the queue permanently blocked. A long-running trainer
-must refresh its lease and check cancellation during execution before this
-worker is extended beyond the current one-shot fake trainer.
+worker does not leave the queue permanently blocked. A long-running external
+trainer is supervised by the worker: it renews state, enforces the deadline,
+checks the job-local cancellation marker, and drains combined child output into
+a bounded `trainer.log`. The child receives no corpus text on its command
+line; only paths inside the claimed directory.
 
 The worker enforces independent positive bounds for artifact bytes, corpus
 bytes, and job runtime. The current runtime is the minimum of the job deadline
@@ -562,16 +566,44 @@ discovery is explicit and side-effect free:
 llama-agent-adaptation-worker --capabilities
 ```
 
-The current response advertises `cuda: false`, `fake-sft` as the only trainer,
-and `max_parallel_jobs: 1`. This is a truthful worker capability contract,
-not a promise that QLoRA is available.
+By default the response advertises `cuda: false`, `fake-sft` as the only
+trainer, and `max_parallel_jobs: 1`. An operator-configured trainer kind is
+also listed, but that says only that the worker can start it; it does not claim
+that CUDA, PEFT, a checkpoint, or an evaluation environment is available.
 
-Only `trainer_kind: "fake-sft"` is enabled in this slice. It creates a
+`trainer_kind: "fake-sft"` remains built in. It creates a
 deterministic test artifact and computes its SHA-256, but the artifact is not a
-loadable model adapter. The worker does not inspect the adaptation ledger,
-access raw resources, start automatically from the daemon, or activate/import
-an adapter. PEFT/QLoRA is a later trainer profile behind the same job/result
-contract.
+loadable model adapter. A production trainer is enabled only through an
+operator-owned argv prefix, for example:
+
+```bash
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs \
+  --trainer-command qlora-sft python3 \
+  --trainer-argument qlora-sft llama-agent-adaptation-qlora-trainer.py \
+  --trainer-argument qlora-sft --model \
+  --trainer-argument qlora-sft /models/Qwen2.5-1.5B-Instruct-hf \
+  --trainer-argument qlora-sft --base-config \
+  --trainer-argument qlora-sft /models/Qwen2.5-1.5B-Instruct-hf \
+  --trainer-argument qlora-sft --converter \
+  --trainer-argument qlora-sft /opt/llama/convert_lora_to_gguf.py
+```
+
+The prefix is operator configuration, never model output and never a shell
+string. The worker appends `--job`, `--corpus`, `--corpus-manifest`,
+`--artifacts`, and `--result` itself. The supplied
+`agent-adaptation-qlora-trainer.py` uses a local Hugging Face checkpoint, PEFT,
+and bitsandbytes to produce a LoRA GGUF overlay. It intentionally refuses a Q4
+serving GGUF as a training checkpoint and fails clearly when CUDA or the
+optional Python dependencies are unavailable. The worker does not inspect the
+adaptation ledger, access raw resources, start automatically from the daemon,
+or activate/import an adapter.
+
+The helper is installed beside the worker. Its optional requirements file is
+installed under `share/llama-agent/requirements/`; install a PyTorch build that
+matches the worker host's CUDA stack first, then install the listed packages in
+an operator-owned Python environment. The helper deliberately has no network
+download path: both `--model` and `--base-config` must be local checkpoint
+directories.
 
 ### Local orchestration smokes
 

@@ -165,8 +165,9 @@ remote MCP providers, status/readiness, and Docker usage.
 - **Memory, plans, and resources** — persistent Cozo-backed stores and a
   resource boundary for turn inputs, generated artifacts, and resource
   references.
-- **Model adaptation (planned)** — a host-supervised path from qualified turn
-  evidence to reproducible training corpora and evaluated LoRA adapters. See
+- **Model adaptation (in progress)** — a host-supervised path from qualified
+  turn evidence to reproducible training corpora, an external QLoRA worker,
+  and evaluated LoRA adapters. See
   [Agent model adaptation](agent-model-adaptation.md).
 - **Model residency and multi-model scheduling (in progress)** — named
   generation profiles, shared resident model handles, per-session contexts,

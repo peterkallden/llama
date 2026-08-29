@@ -73,6 +73,12 @@ FILE * common_subproc::stderr_file() {
     return is_created ? subprocess_stderr(&proc) : nullptr;
 }
 
+unsigned common_subproc::read_stdout(char * buffer, unsigned size) {
+    return is_created && buffer != nullptr && size != 0
+        ? subprocess_read_stdout(&proc, buffer, size)
+        : 0;
+}
+
 void common_subproc::close_stdin() {
     if (is_created && proc.stdin_file) {
         fclose(proc.stdin_file);
@@ -128,6 +134,10 @@ FILE * common_subproc::stdout_file() {
 
 FILE * common_subproc::stderr_file() {
     return nullptr;
+}
+
+unsigned common_subproc::read_stdout(char *, unsigned) {
+    return 0;
 }
 
 void common_subproc::close_stdin() {

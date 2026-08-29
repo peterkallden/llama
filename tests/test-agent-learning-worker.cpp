@@ -59,7 +59,48 @@ static std::string queue_key(const std::string & job_id) {
     return "job-" + hash_sha256_hex(job_id.data(), job_id.size()).substr(0, 32);
 }
 
-int main() {
+static int run_external_fixture(int argc, char ** argv) {
+    std::filesystem::path job_path;
+    std::filesystem::path artifacts;
+    std::filesystem::path result_path;
+    for (int index = 2; index + 1 < argc; index += 2) {
+        const std::string argument = argv[index];
+        if (argument == "--job") job_path = argv[index + 1];
+        else if (argument == "--artifacts") artifacts = argv[index + 1];
+        else if (argument == "--result") result_path = argv[index + 1];
+    }
+    if (job_path.empty() || artifacts.empty() || result_path.empty()) return 2;
+    std::string error;
+    common_learning_training_job input;
+    if (!common_learning_training_job_from_json(read_file(job_path), input, error)) return 3;
+    const auto artifact_relative = std::filesystem::path("adapters") / "external-fixture.gguf";
+    const auto artifact = artifacts / artifact_relative;
+    std::error_code ec;
+    std::filesystem::create_directories(artifact.parent_path(), ec);
+    if (ec) return 4;
+    write_file(artifact, "external fixture adapter\n");
+    const auto bytes = read_file(artifact);
+    common_learning_training_result output;
+    output.job_id = input.id;
+    output.adapter_id = "external-fixture";
+    output.artifact_path = artifact_relative.generic_string();
+    output.artifact_sha256 = "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+    output.corpus_bundle_hash = input.corpus_bundle_hash;
+    output.base_training_fingerprint = input.base_training_fingerprint;
+    output.trainer_kind = input.trainer_kind;
+    output.trainer_version = input.trainer_version;
+    output.evaluation_revision = "external-fixture:not-run";
+    output.evaluation_status = "not_run";
+    std::string output_json;
+    if (!common_learning_training_result_to_json(output, output_json, error)) return 5;
+    write_file(result_path, output_json);
+    return 0;
+}
+
+int main(int argc, char ** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--external-fixture") {
+        return run_external_fixture(argc, argv);
+    }
     const auto root = std::filesystem::temp_directory_path() / "llama-agent-learning-worker-test";
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
@@ -101,6 +142,29 @@ int main() {
     require(!capabilities.at("cuda").get<bool>(), "fake worker unexpectedly advertises CUDA");
     require(capabilities.at("trainer_kinds").at(0) == "fake-sft", "worker capability contract is incorrect");
     require(capabilities.at("max_parallel_jobs") == 1, "worker parallelism contract is incorrect");
+    agent_learning_worker_limits configured_limits;
+    configured_limits.external_trainer_commands["qlora-sft"] = {"operator-owned-qlora-entrypoint"};
+    const auto configured_capabilities = plain_json::parse(agent_learning_worker_capabilities_json(configured_limits));
+    require(configured_capabilities.at("trainer_kinds").at(1) == "qlora-sft",
+            "configured external trainer is absent from worker capabilities");
+
+    const auto external_job = job("external-1", "qlora-sft");
+    require(agent_learning_enqueue_job(root, external_job, first_corpus, error),
+            "external trainer job was not enqueued");
+    agent_learning_worker_limits external_limits;
+    external_limits.external_trainer_commands["qlora-sft"] = {
+        std::filesystem::absolute(argv[0]).string(), "--external-fixture"};
+    require(agent_learning_worker_run_once(root, external_limits, report, error),
+            "external worker run failed at queue level: " + error);
+    require(report.state == agent_learning_worker_job_state::succeeded,
+            "external trainer fixture did not complete: " + report.safe_summary);
+    const auto external_result_path = root / "succeeded" / queue_key(external_job.id) / "result.json";
+    common_learning_training_result external_result;
+    require(common_learning_training_result_from_json(read_file(external_result_path), external_result, error) &&
+            common_learning_validate_training_result(external_job, external_result, error),
+            "external trainer result did not satisfy the trainer contract: " + error);
+    require(std::filesystem::exists(root / "succeeded" / queue_key(external_job.id) / "trainer.log"),
+            "external worker did not persist bounded trainer output");
 
     require(agent_learning_worker_run_once(root, {}, report, error), "empty worker run failed");
     require(report.state == agent_learning_worker_job_state::idle, "empty worker queue was not idle");

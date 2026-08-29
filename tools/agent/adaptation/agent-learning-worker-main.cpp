@@ -9,6 +9,7 @@ namespace {
 
 void usage(const char * executable) {
     std::cerr << "usage: " << executable << " --queue PATH [--max-artifact-bytes N] [--max-corpus-bytes N] [--max-runtime-seconds N] [--worker-id ID]\n"
+              << "       " << executable << " --queue PATH --trainer-command KIND EXECUTABLE [--trainer-argument KIND VALUE ...]\n"
               << "       " << executable << " --capabilities\n";
 }
 
@@ -50,6 +51,23 @@ int main(int argc, char ** argv) {
             }
         } else if (argument == "--worker-id" && index + 1 < argc) {
             limits.worker_id = argv[++index];
+        } else if (argument == "--trainer-command" && index + 2 < argc) {
+            const std::string kind = argv[++index];
+            const std::string executable = argv[++index];
+            if (kind.empty() || executable.empty() || limits.external_trainer_commands.count(kind) != 0) {
+                usage(argv[0]);
+                return 2;
+            }
+            limits.external_trainer_commands[kind] = {executable};
+        } else if (argument == "--trainer-argument" && index + 2 < argc) {
+            const std::string kind = argv[++index];
+            const std::string value = argv[++index];
+            const auto trainer = limits.external_trainer_commands.find(kind);
+            if (trainer == limits.external_trainer_commands.end() || value.empty()) {
+                usage(argv[0]);
+                return 2;
+            }
+            trainer->second.push_back(value);
         } else {
             usage(argv[0]);
             return 2;
@@ -60,7 +78,7 @@ int main(int argc, char ** argv) {
             usage(argv[0]);
             return 2;
         }
-        std::cout << agent_learning_worker_capabilities_json() << '\n';
+        std::cout << agent_learning_worker_capabilities_json(limits) << '\n';
         return 0;
     }
     if (queue_root.empty()) {

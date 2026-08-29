@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,10 @@ struct agent_learning_worker_limits {
     size_t max_corpus_bytes = 64 * 1024 * 1024;
     size_t max_job_runtime_seconds = 24 * 60 * 60;
     std::string worker_id = "local-worker";
+    // Each command is an operator-owned argv prefix. The worker appends only
+    // fixed file arguments for the claimed immutable bundle; it never expands
+    // model- or corpus-provided text into a shell command.
+    std::map<std::string, std::vector<std::string>> external_trainer_commands;
 };
 
 struct agent_learning_worker_capabilities {
@@ -31,6 +36,7 @@ struct agent_learning_worker_capabilities {
 };
 
 std::string agent_learning_worker_capabilities_json();
+std::string agent_learning_worker_capabilities_json(const agent_learning_worker_limits & limits);
 
 struct agent_learning_worker_report {
     agent_learning_worker_job_state state = agent_learning_worker_job_state::idle;

@@ -1,6 +1,7 @@
 #include "agent-learning-worker.h"
 
 #include "hash/hash.h"
+#include "subproc.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <thread>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -126,6 +128,8 @@ bool cancellation_requested(const std::filesystem::path & directory) {
     return std::filesystem::exists(directory / "cancel", ec) && !ec;
 }
 
+uint64_t now_epoch_seconds();
+
 bool run_fake_trainer(
         const std::filesystem::path & running,
         const common_learning_training_job & job,
@@ -163,6 +167,119 @@ bool run_fake_trainer(
     // evaluation. A separate evaluator must produce a passed report before
     // the artifact can enter the registry canary state.
     result.evaluation_status = "not_run";
+    return true;
+}
+
+bool run_external_trainer(
+        const std::filesystem::path & running,
+        const common_learning_training_job & job,
+        const agent_learning_worker_limits & limits,
+        const uint64_t deadline_epoch_seconds,
+        common_learning_training_result & result,
+        std::string & error) {
+    const auto configured = limits.external_trainer_commands.find(job.trainer_kind);
+    if (configured == limits.external_trainer_commands.end() || configured->second.empty()) {
+        error = "worker has no enabled trainer for kind: " + job.trainer_kind;
+        return false;
+    }
+    if (!common_subproc::is_supported()) {
+        error = "worker was built without subprocess support; external trainers are unavailable";
+        return false;
+    }
+
+    const auto result_path = running / "result.json";
+    std::error_code ec;
+    if (std::filesystem::exists(result_path, ec) && !ec) {
+        error = "claimed job already contains a trainer result";
+        return false;
+    }
+    std::vector<std::string> argv = configured->second;
+    const auto append_path = [&argv](const char * name, const std::filesystem::path & path) {
+        argv.emplace_back(name);
+        argv.push_back(path.string());
+    };
+    append_path("--job", running / "job.json");
+    append_path("--corpus", running / "corpus.jsonl");
+    append_path("--corpus-manifest", running / "corpus-manifest.json");
+    append_path("--artifacts", running / "artifacts");
+    append_path("--result", result_path);
+
+    common_subproc process;
+    const int options = subprocess_option_no_window |
+        subprocess_option_combined_stdout_stderr |
+        subprocess_option_enable_async |
+        subprocess_option_inherit_environment |
+        subprocess_option_search_user_path;
+    if (!process.create(argv, options, {}, running.string().c_str())) {
+        error = "could not start external trainer for kind: " + job.trainer_kind;
+        return false;
+    }
+
+    // The trainer protocol is file-based.  This avoids passing sensitive corpus
+    // material over a command line and keeps result validation entirely host
+    // owned.  A periodic state update doubles as a renewable crash lease.
+    const auto trainer_log = running / "trainer.log";
+    std::ofstream trainer_log_output(trainer_log, std::ios::binary | std::ios::trunc);
+    if (!trainer_log_output) {
+        process.terminate();
+        process.join();
+        error = "cannot open bounded external trainer log";
+        return false;
+    }
+    static constexpr size_t max_trainer_log_bytes = 64 * 1024;
+    size_t trainer_log_bytes = 0;
+    const auto drain_output = [&process, &trainer_log_output, &trainer_log_bytes]() {
+        char buffer[4096];
+        while (const auto count = process.read_stdout(buffer, sizeof(buffer))) {
+            if (trainer_log_bytes >= max_trainer_log_bytes) continue;
+            const auto writable = std::min<size_t>(count, max_trainer_log_bytes - trainer_log_bytes);
+            trainer_log_output.write(buffer, static_cast<std::streamsize>(writable));
+            trainer_log_bytes += writable;
+        }
+    };
+    uint64_t last_state_update = 0;
+    while (process.alive()) {
+        drain_output();
+        const auto now = now_epoch_seconds();
+        if (cancellation_requested(running)) {
+            process.terminate();
+            process.join();
+            error = "cancel requested while external trainer was running";
+            return false;
+        }
+        if (now >= deadline_epoch_seconds) {
+            process.terminate();
+            process.join();
+            error = "external trainer exceeded worker runtime bound";
+            return false;
+        }
+        if (now != last_state_update) {
+            std::string state_error;
+            if (!write_state(running, agent_learning_worker_job_state::running, job.id,
+                    "external trainer running", limits.worker_id, deadline_epoch_seconds, state_error)) {
+                process.terminate();
+                process.join();
+                error = state_error;
+                return false;
+            }
+            last_state_update = now;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    drain_output();
+    trainer_log_output.close();
+    if (process.join() != 0) {
+        error = "external trainer exited unsuccessfully";
+        return false;
+    }
+
+    std::string result_json;
+    if (!read_text(result_path, result_json, error) ||
+            !common_learning_training_result_from_json(result_json, result, error) ||
+            !common_learning_validate_training_result(job, result, error)) {
+        if (error.empty()) error = "external trainer produced an invalid result";
+        return false;
+    }
     return true;
 }
 
@@ -210,8 +327,11 @@ bool recover_stale_running_jobs(
 
 } // namespace
 
-std::string agent_learning_worker_capabilities_json() {
-    const agent_learning_worker_capabilities capabilities;
+std::string agent_learning_worker_capabilities_json(const agent_learning_worker_limits & limits) {
+    agent_learning_worker_capabilities capabilities;
+    for (const auto & item : limits.external_trainer_commands) {
+        if (!item.first.empty() && !item.second.empty()) capabilities.trainer_kinds.push_back(item.first);
+    }
     json trainer_kinds = json::array();
     for (const auto & trainer_kind : capabilities.trainer_kinds) {
         trainer_kinds.push_back(trainer_kind);
@@ -221,6 +341,10 @@ std::string agent_learning_worker_capabilities_json() {
         {"trainer_kinds", std::move(trainer_kinds)},
         {"max_parallel_jobs", capabilities.max_parallel_jobs},
     }.dump();
+}
+
+std::string agent_learning_worker_capabilities_json() {
+    return agent_learning_worker_capabilities_json({});
 }
 
 const char * agent_learning_worker_job_state_name(agent_learning_worker_job_state state) {
@@ -354,9 +478,19 @@ bool agent_learning_worker_run_once(
             return true;
         }
         common_learning_training_result result;
-        if (!run_fake_trainer(running, job, corpus_jsonl, limits, result, error)) {
+        const bool trainer_ok = job.trainer_kind == "fake-sft"
+            ? run_fake_trainer(running, job, corpus_jsonl, limits, result, error)
+            : run_external_trainer(running, job, limits, lease_expires_at, result, error);
+        if (!trainer_ok) {
             const std::string summary = error;
             error.clear();
+            if (cancellation_requested(running)) {
+                report = {agent_learning_worker_job_state::cancelled, job.id,
+                    summary.empty() ? "cancel requested while trainer was running" : summary};
+                if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, 0, error) ||
+                        !move_terminal(running, queue_root / "cancelled", key, error)) return false;
+                return true;
+            }
             if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }

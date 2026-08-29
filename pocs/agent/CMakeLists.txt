@@ -1859,6 +1859,8 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
+    install(PROGRAMS ../../scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
+    install(FILES ../../requirements/requirements-agent-adaptation-qlora-trainer.txt DESTINATION share/llama-agent/requirements)
 endif()
 
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
