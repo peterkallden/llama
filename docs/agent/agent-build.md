@@ -420,7 +420,29 @@ model output and local CPU/memory capacity.
 
 For daemon configuration and request examples, see
 [Agent daemon usage](agent-daemon-usage.md). For the full runtime behavior and
-protocol contracts, see [Agent runtime](agent-runtime.md).
+protocol contracts, see [Agent runtime](agent-runtime.md). For the multi-model
+loader, profile pinning, residency limits and scheduler integration, see
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+
+### Multi-model verification boundary
+
+The current model-backed scripts exercise one configured generation model and
+an optional separate embedding model. They do not yet prove process-wide
+multi-model residency. That future verification must remain separate from the
+ordinary Qwen/Nomic smoke and cover, at minimum:
+
+- two named generation profiles with distinct model identities;
+- profile reuse and profile isolation across two session lanes;
+- eviction of an idle profile and refusal to evict a pinned profile;
+- cancellation/deadline while waiting for residency or inference capacity;
+- CLI and `server-context` loader selection with explicit unsupported-profile
+  errors;
+- continuation/checkpoint rejection when the profile identity has changed.
+
+The first real two-model smoke should use small compatible GGUF files supplied
+through environment variables or explicit script arguments. It must not make
+Qwen a contract requirement, and it must not silently use the old
+`model.path` fallback when a named profile was requested.
 
 ## Troubleshooting
 

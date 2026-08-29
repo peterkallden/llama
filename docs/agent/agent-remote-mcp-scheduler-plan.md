@@ -224,6 +224,11 @@ deadline. Write-capable tools require the existing confirmation/policy path.
 
 ## Global session/inference scheduler
 
+The model-residency part of this boundary is specified in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+The scheduler plan owns queueing and inference admission; it must not become a
+second owner of model handles or session conversation state.
+
 The daemon dispatcher now has a shared, configurable worker pool. The
 foreground JSONL host, inbound MCP HTTP host and future service hosts construct
 the same dispatcher; host lifetime and transport must not decide worker
@@ -245,7 +250,9 @@ The first scheduler version provides admission control, priority-aware fair
 queueing, capacity limits, deadlines, cancellation, pending status and
 inference admission events. It runs without batching and may run one job at a
 time initially. This keeps scheduler correctness testable before backend slot
-or batching support is introduced.
+or batching support is introduced. Multi-model residency adds a separate
+profile acquire/pin/release step around the complete turn; it does not add a
+second turn queue.
 
 Inference jobs should be backend-neutral and carry at least:
 
@@ -331,7 +338,7 @@ ownership or the daemon command protocol.
 5. HTTPS/reverse-proxy deployment contract and remote-safe policy smoke.
 6. Global inference admission scheduler without batching. Implemented in the agent runtime with host-owned capacity admission.
 7. Scheduler fairness, timeout, cancellation and capacity smokes. Implemented with priority-aware FIFO admission, aging, cancellation and deadline cleanup.
-8. Inference backend adapter with per-job sequence/KV state.
+8. Process-wide model residency manager and backend loaders with per-session sequence/KV state; this is the next model-serving phase.
 9. Microbatch prototype and benchmark coverage.
 10. Service host, metrics, audit and production lifecycle.
 
