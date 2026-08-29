@@ -98,27 +98,12 @@ std::vector<common_learning_lifecycle_record> common_agent_sqlite_learning_lifec
         record.event_id = text_column(statement, 0);
         record.idempotency_key = text_column(statement, 1);
         record.subject_id = text_column(statement, 2);
-        const auto kind = text_column(statement, 3);
-        if (kind == "candidate") record.kind = common_learning_lifecycle_kind::candidate;
-        else if (kind == "corpus_revision") record.kind = common_learning_lifecycle_kind::corpus_revision;
-        else if (kind == "training_job") record.kind = common_learning_lifecycle_kind::training_job;
-        else if (kind == "training_result") record.kind = common_learning_lifecycle_kind::training_result;
-        else if (kind == "adapter") record.kind = common_learning_lifecycle_kind::adapter;
-        else { error = "SQLite lifecycle row contains unknown kind"; return {}; }
-        const auto status = text_column(statement, 4);
-        if (status == "observed") record.status = common_learning_lifecycle_status::observed;
-        else if (status == "eligible") record.status = common_learning_lifecycle_status::eligible;
-        else if (status == "approved") record.status = common_learning_lifecycle_status::approved;
-        else if (status == "rejected") record.status = common_learning_lifecycle_status::rejected;
-        else if (status == "revoked") record.status = common_learning_lifecycle_status::revoked;
-        else if (status == "queued") record.status = common_learning_lifecycle_status::queued;
-        else if (status == "running") record.status = common_learning_lifecycle_status::running;
-        else if (status == "succeeded") record.status = common_learning_lifecycle_status::succeeded;
-        else if (status == "failed") record.status = common_learning_lifecycle_status::failed;
-        else if (status == "cancelled") record.status = common_learning_lifecycle_status::cancelled;
-        else if (status == "active") record.status = common_learning_lifecycle_status::active;
-        else if (status == "retired") record.status = common_learning_lifecycle_status::retired;
-        else { error = "SQLite lifecycle row contains unknown status"; return {}; }
+        if (!parse_common_learning_lifecycle_kind(text_column(statement, 3), record.kind, error) ||
+                !parse_common_learning_lifecycle_status(text_column(statement, 4), record.status, error)) {
+            if (error.find("kind") != std::string::npos) error = "SQLite lifecycle row contains unknown kind";
+            else error = "SQLite lifecycle row contains unknown status";
+            return {};
+        }
         record.namespace_id = text_column(statement, 5);
         record.project_id = text_column(statement, 6);
         record.session_id = text_column(statement, 7);

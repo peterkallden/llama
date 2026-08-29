@@ -54,10 +54,45 @@ const char * common_learning_lifecycle_status_name(common_learning_lifecycle_sta
         case common_learning_lifecycle_status::succeeded: return "succeeded";
         case common_learning_lifecycle_status::failed: return "failed";
         case common_learning_lifecycle_status::cancelled: return "cancelled";
+        case common_learning_lifecycle_status::canary: return "canary";
         case common_learning_lifecycle_status::active: return "active";
         case common_learning_lifecycle_status::retired: return "retired";
     }
     return "failed";
+}
+
+bool parse_common_learning_lifecycle_kind(
+        const std::string & value,
+        common_learning_lifecycle_kind & kind,
+        std::string & error) {
+    if (value == "candidate") kind = common_learning_lifecycle_kind::candidate;
+    else if (value == "corpus_revision") kind = common_learning_lifecycle_kind::corpus_revision;
+    else if (value == "training_job") kind = common_learning_lifecycle_kind::training_job;
+    else if (value == "training_result") kind = common_learning_lifecycle_kind::training_result;
+    else if (value == "adapter") kind = common_learning_lifecycle_kind::adapter;
+    else { error = "unknown lifecycle record kind"; return false; }
+    return true;
+}
+
+bool parse_common_learning_lifecycle_status(
+        const std::string & value,
+        common_learning_lifecycle_status & status,
+        std::string & error) {
+    if (value == "observed") status = common_learning_lifecycle_status::observed;
+    else if (value == "eligible") status = common_learning_lifecycle_status::eligible;
+    else if (value == "approved") status = common_learning_lifecycle_status::approved;
+    else if (value == "rejected") status = common_learning_lifecycle_status::rejected;
+    else if (value == "revoked") status = common_learning_lifecycle_status::revoked;
+    else if (value == "queued") status = common_learning_lifecycle_status::queued;
+    else if (value == "running") status = common_learning_lifecycle_status::running;
+    else if (value == "succeeded") status = common_learning_lifecycle_status::succeeded;
+    else if (value == "failed") status = common_learning_lifecycle_status::failed;
+    else if (value == "cancelled") status = common_learning_lifecycle_status::cancelled;
+    else if (value == "canary") status = common_learning_lifecycle_status::canary;
+    else if (value == "active") status = common_learning_lifecycle_status::active;
+    else if (value == "retired") status = common_learning_lifecycle_status::retired;
+    else { error = "unknown lifecycle record status"; return false; }
+    return true;
 }
 
 bool common_learning_lifecycle_validate(
@@ -124,27 +159,8 @@ bool common_learning_lifecycle_from_json(
         record.schema_version = value.value("schema_version", 0);
         record.event_id = value.value("event_id", "");
         record.subject_id = value.value("subject_id", "");
-        const auto kind = value.value("kind", "");
-        if (kind == "candidate") record.kind = common_learning_lifecycle_kind::candidate;
-        else if (kind == "corpus_revision") record.kind = common_learning_lifecycle_kind::corpus_revision;
-        else if (kind == "training_job") record.kind = common_learning_lifecycle_kind::training_job;
-        else if (kind == "training_result") record.kind = common_learning_lifecycle_kind::training_result;
-        else if (kind == "adapter") record.kind = common_learning_lifecycle_kind::adapter;
-        else { error = "unknown lifecycle record kind"; return false; }
-        const auto status = value.value("status", "");
-        if (status == "observed") record.status = common_learning_lifecycle_status::observed;
-        else if (status == "eligible") record.status = common_learning_lifecycle_status::eligible;
-        else if (status == "approved") record.status = common_learning_lifecycle_status::approved;
-        else if (status == "rejected") record.status = common_learning_lifecycle_status::rejected;
-        else if (status == "revoked") record.status = common_learning_lifecycle_status::revoked;
-        else if (status == "queued") record.status = common_learning_lifecycle_status::queued;
-        else if (status == "running") record.status = common_learning_lifecycle_status::running;
-        else if (status == "succeeded") record.status = common_learning_lifecycle_status::succeeded;
-        else if (status == "failed") record.status = common_learning_lifecycle_status::failed;
-        else if (status == "cancelled") record.status = common_learning_lifecycle_status::cancelled;
-        else if (status == "active") record.status = common_learning_lifecycle_status::active;
-        else if (status == "retired") record.status = common_learning_lifecycle_status::retired;
-        else { error = "unknown lifecycle record status"; return false; }
+        if (!parse_common_learning_lifecycle_kind(value.value("kind", ""), record.kind, error) ||
+                !parse_common_learning_lifecycle_status(value.value("status", ""), record.status, error)) return false;
         record.idempotency_key = value.value("idempotency_key", "");
         record.source_id = value.value("source_id", "");
         record.namespace_id = scope.value("namespace_id", "local");

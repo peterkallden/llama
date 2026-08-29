@@ -20,6 +20,7 @@ static common_learning_lifecycle_record record(
     value.created_at = "2026-08-29T00:00:00Z";
     value.payload_json = "{\"approved_prompt\":\"compact\",\"status\":\"" + status + "\"}";
     if (status == "approved") value.status = common_learning_lifecycle_status::approved;
+    else if (status == "canary") value.status = common_learning_lifecycle_status::canary;
     return value;
 }
 
@@ -36,6 +37,11 @@ static void assert_round_trip(common_learning_lifecycle_store & store) {
     assert(store.append(approved, error));
     values = store.list(error);
     assert(error.empty() && values.size() == 2);
+
+    const auto canary = record("event-3", "canary", "idempotency-3");
+    assert(store.append(canary, error));
+    values = store.list(error);
+    assert(error.empty() && values.size() == 3);
 
     auto conflict = observed;
     conflict.payload_json = "{\"different\":true}";
@@ -65,8 +71,8 @@ int main() {
         common_learning_jsonl_lifecycle_store reopened;
         assert(reopened.open(path, error));
         const auto values = reopened.list(error);
-        assert(error.empty() && values.size() == 2);
-        assert(values.back().status == common_learning_lifecycle_status::approved);
+        assert(error.empty() && values.size() == 3);
+        assert(values.back().status == common_learning_lifecycle_status::canary);
     }
     std::filesystem::remove(path, ignored);
     return 0;

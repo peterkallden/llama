@@ -27,12 +27,21 @@ enum class common_learning_lifecycle_status {
     succeeded,
     failed,
     cancelled,
+    canary,
     active,
     retired,
 };
 
 const char * common_learning_lifecycle_kind_name(common_learning_lifecycle_kind kind);
 const char * common_learning_lifecycle_status_name(common_learning_lifecycle_status status);
+bool parse_common_learning_lifecycle_kind(
+        const std::string & value,
+        common_learning_lifecycle_kind & kind,
+        std::string & error);
+bool parse_common_learning_lifecycle_status(
+        const std::string & value,
+        common_learning_lifecycle_status & status,
+        std::string & error);
 
 struct common_learning_lifecycle_record {
     int schema_version = 1;
