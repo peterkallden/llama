@@ -944,7 +944,7 @@ and reproducible; an index is better for scoped queries. The recommended
 boundary is an indexed adaptation ledger plus canonical JSONL artifact bundles,
 rather than two independent sources of truth.
 
-### Sweep 4 — external trainer protocol
+### Sweep 4 — external trainer protocol (contract slice completed)
 
 Deliverables:
 
@@ -986,7 +986,8 @@ can be projected into a candidate adapter manifest without manually copying
 corpus, trainer, base, or artifact identity. Registry admission repeats the
 artifact-path and evaluation checks, so callers cannot bypass them by
 constructing a manifest directly. Activation remains a separate explicit
-operation and never happens as a side effect of import.
+operation and never happens as a side effect of import. The current fake
+trainer correctly reports `not_run`; it cannot manufacture a passed evaluation.
 
 The host artifact-import helper adds the filesystem boundary that the metadata
 registry intentionally does not own. It canonicalizes an operator-selected
@@ -995,12 +996,12 @@ and recomputes the manifest's SHA-256. Successful verification returns only a
 safe resolved path; the caller must still admit the adapter as `candidate` and
 must perform evaluation before any explicit activation.
 
-### Sweep 5 — adapter registry and single-profile inference
+### Sweep 5 — adapter registry and single-profile inference (contract slice in place)
 
 Deliverables:
 
-- Add adapter registry validation and lifecycle states: candidate, active,
-  retired, rejected.
+- Add adapter registry validation and lifecycle states: candidate, canary,
+  active, retired, rejected.
 - Extend model-load identity, status/readiness, and traces with profile and
   adapter revision.
 - Support one explicitly configured active adapter and an adapter-free baseline
@@ -1016,10 +1017,14 @@ Tests and exit gate:
 - an inference stub proves baseline and adapter profiles are distinguishable;
 - a real Qwen smoke is added only after the contract tests pass.
 
-The first deployment should use an overlay, not merge weights into a new base:
-unloading the adapter provides a simple rollback and A/B comparison.
+The registry, profile contract, and active-overlay resolver now cover the
+metadata and compatibility boundary. The serving session still needs to
+translate a resolved profile into the actual llama.cpp adapter load/apply path
+and expose profile identity in readiness/traces. The first deployment should
+use an overlay, not merge weights into a new base: unloading the adapter
+provides a simple rollback and A/B comparison.
 
-### Sweep 6 — evaluation, replay, and canary promotion
+### Sweep 6 — evaluation, replay, and canary promotion (report/gate slice in place)
 
 Deliverables:
 
@@ -1038,6 +1043,11 @@ Tests and exit gate:
   regression gates;
 - evaluation metadata binds to corpus, base, adapter, and test revisions;
 - rollback returns to baseline without changing the base model.
+
+The report schema, three-gate invariant, canary staging, and manual activation
+boundary are now implemented. A real evaluator still has to populate the
+report from held-out/replay/agent suites, and a canary runtime comparison is
+still an operational step rather than an automatic registry action.
 
 Only after this gate should DPO be considered, and only for genuinely
 same-context chosen/rejected pairs. Broader continual-learning strategies are
