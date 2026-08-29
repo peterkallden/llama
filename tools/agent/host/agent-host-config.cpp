@@ -437,6 +437,7 @@ bool parse_agent_host_config_json(
         read_optional(model, "path", config.model_path);
         read_optional(model, "mmproj", config.mmproj_path);
         read_optional(model, "embedding_model", config.embedding_model);
+        read_optional(model, "profile", config.model_profile);
     }
     if (parsed.contains("models")) {
         if (!parsed["models"].is_object()) {
@@ -1124,6 +1125,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"path", config.model_path},
             {"mmproj", config.mmproj_path},
             {"embedding_model", config.embedding_model},
+            {"profile", config.model_profile},
         }},
         {"runtime", {
             {"context_size", config.runtime_context_size},
@@ -1787,6 +1789,18 @@ bool validate_agent_host_config(
     }
     error.clear();
     return true;
+}
+
+bool resolve_agent_host_model_selection(
+        const agent_host_config & config,
+        common_agent_model_selection & selection,
+        std::string & error) {
+    if (config.model_catalog.profiles.empty()) {
+        error = "host config does not contain a catalog generation profile";
+        return false;
+    }
+    return common_agent_model_catalog_resolve_profile(
+        config.model_catalog, config.model_profile, selection, error);
 }
 
 void apply_agent_host_config_to_daemon_options(

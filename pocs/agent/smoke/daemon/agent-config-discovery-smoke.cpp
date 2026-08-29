@@ -205,6 +205,13 @@ int main() {
         std::fprintf(stderr, "model catalog configuration was not parsed: %s\n", error.c_str());
         return 1;
     }
+    common_agent_model_selection selected_model;
+    if (!resolve_agent_host_model_selection(catalog_config, selected_model, error) ||
+            selected_model.path != "/models/small.gguf" ||
+            selected_model.context_size_tokens != 4096) {
+        std::fprintf(stderr, "model catalog profile was not resolved: %s\n", error.c_str());
+        return 1;
+    }
     const auto catalog_serialized = agent_host_config_to_json(catalog_config);
     if (!catalog_serialized.contains("models") ||
             catalog_serialized["models"]["profiles"]["agent-default"]["base"] != "small") {

@@ -31,6 +31,8 @@ struct agent_host_config {
     std::string model_path;
     std::string mmproj_path;
     std::string embedding_model;
+    // Optional catalog profile override. Empty means models.routing.default_profile.
+    std::string model_profile;
     // Optional catalog-based model configuration. The legacy model fields
     // remain the effective runtime input until profile routing is enabled.
     common_agent_model_catalog model_catalog;
@@ -152,8 +154,15 @@ nlohmann::ordered_json agent_host_config_to_json(
     const agent_host_config & config);
 
 bool validate_agent_host_config(
-    const agent_host_config & config,
-    std::string & error);
+        const agent_host_config & config,
+        std::string & error);
+
+// Resolve the configured generation profile without loading it. Legacy
+// model.path configurations return false with a descriptive unavailable error.
+bool resolve_agent_host_model_selection(
+        const agent_host_config & config,
+        common_agent_model_selection & selection,
+        std::string & error);
 
 void apply_agent_host_config_to_daemon_options(
     const agent_host_config & config,
