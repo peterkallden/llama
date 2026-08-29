@@ -3,15 +3,15 @@
 #include <cassert>
 
 int main() {
+    common_learning_corpus_revision corpus;
+    corpus.id = "learning://corpus/1";
+    corpus.bundle_hash = "identity:fnv1a64:0123456789abcdef";
+    corpus.seed = 99;
     common_learning_training_job job;
-    job.id = "learning://job/1";
-    job.corpus_revision_id = "learning://corpus/1";
-    job.corpus_bundle_hash = "identity:fnv1a64:0123456789abcdef";
-    job.base_training_fingerprint = "base:qwen-small:training-v1";
-    job.trainer_version = "fake-trainer-1";
-    job.code_revision = "trainer-revision-1";
     std::string error;
-    assert(common_learning_validate_training_job(job, error));
+    assert(common_learning_make_training_job(corpus, "base:qwen-small:training-v1",
+        "trainer-revision-1", "fake-trainer-1", job, error));
+    assert(job.seed == 99);
 
     common_learning_training_result result;
     result.job_id = job.id;

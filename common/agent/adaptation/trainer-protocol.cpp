@@ -19,6 +19,30 @@ static bool safe_artifact_path(const std::string & value) {
         value.find("..") == std::string::npos;
 }
 
+bool common_learning_make_training_job(
+        const common_learning_corpus_revision & corpus,
+        const std::string & base_training_fingerprint,
+        const std::string & code_revision,
+        const std::string & trainer_version,
+        common_learning_training_job & job,
+        std::string & error) {
+    error.clear();
+    if (corpus.id.empty() || corpus.bundle_hash.empty() || base_training_fingerprint.empty() ||
+            code_revision.empty() || trainer_version.empty()) {
+        error = "training job requires a complete corpus and trainer identity";
+        return false;
+    }
+    job = {};
+    job.id = "learning://job/" + corpus.bundle_hash;
+    job.corpus_revision_id = corpus.id;
+    job.corpus_bundle_hash = corpus.bundle_hash;
+    job.base_training_fingerprint = base_training_fingerprint;
+    job.code_revision = code_revision;
+    job.trainer_version = trainer_version;
+    job.seed = corpus.seed;
+    return common_learning_validate_training_job(job, error);
+}
+
 bool common_learning_validate_training_job(const common_learning_training_job & job, std::string & error) {
     error.clear();
     if (job.schema_version != 1) { error = "unsupported training job schema"; return false; }

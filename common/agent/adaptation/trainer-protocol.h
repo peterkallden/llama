@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/adaptation/corpus-builder.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -30,6 +32,14 @@ struct common_learning_training_result {
     std::string evaluation_revision;
     std::string evaluation_status;
 };
+
+bool common_learning_make_training_job(
+        const common_learning_corpus_revision & corpus,
+        const std::string & base_training_fingerprint,
+        const std::string & code_revision,
+        const std::string & trainer_version,
+        common_learning_training_job & job,
+        std::string & error);
 
 bool common_learning_validate_training_job(
         const common_learning_training_job & job,
