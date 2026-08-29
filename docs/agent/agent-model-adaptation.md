@@ -1160,11 +1160,22 @@ Tests and exit gate:
   family.
 
 The registry, profile contract, and active-overlay resolver now cover the
-metadata and compatibility boundary. The serving session still needs to
-translate a resolved profile into the actual llama.cpp adapter load/apply path
-and expose profile identity in readiness/traces. The first deployment should
-use an overlay, not merge weights into a new base: unloading the adapter
-provides a simple rollback and A/B comparison.
+metadata and compatibility boundary. The CLI serving path now resolves the
+approved manifest artifacts below a host-selected adapter root, loads the LoRA
+objects with llama.cpp, and applies their scales to each generation context.
+The session carries the profile/cache identity into the inference session so a
+profile change recreates the context and cannot reuse KV state. Server-context
+currently rejects non-empty overlays explicitly; it must grow an equivalent
+backend adapter hook before profiles with adapters are enabled there. The first
+deployment should use an overlay, not merge weights into a new base: unloading
+the adapter provides a simple rollback and A/B comparison.
+
+The runtime binding deliberately does not let a model choose an adapter. The
+host selects a validated profile, the registry permits only `active` manifests,
+and the artifact path is resolved under the configured root. An empty adapter
+list is the explicit adapter-free baseline. Profile identity is metadata for
+readiness/traces and cache isolation; it is not added to the model-facing
+prompt.
 
 ### Sweep 6 — evaluation, replay, and canary promotion (report/gate slice in place)
 
@@ -1187,9 +1198,15 @@ Tests and exit gate:
 - rollback returns to baseline without changing the base model.
 
 The report schema, three-gate invariant, canary staging, and manual activation
-boundary are now implemented. A real evaluator still has to populate the
-report from held-out/replay/agent suites, and a canary runtime comparison is
-still an operational step rather than an automatic registry action.
+boundary are now implemented. `common_learning_evaluate_candidate` is the
+host-owned evaluator seam: it runs the same immutable fixture against baseline
+and candidate, checks comparable turn counts, records both intervention
+counts, and produces the report consumed by `stage_canary`. The fixture binds
+corpus revision/bundle, base training fingerprint, and test-suite revision;
+the host should additionally freeze tool/resource/profile-limit snapshots in
+that suite revision. A real evaluator still has to connect held-out,
+replay/retention, and agent suites to the runner. Canary activation remains a
+manual runtime operation rather than an automatic registry action.
 
 Only after this gate should DPO be considered, and only for genuinely
 same-context chosen/rejected pairs. Broader continual-learning strategies are
