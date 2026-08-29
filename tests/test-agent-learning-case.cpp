@@ -18,6 +18,9 @@ int main() {
     value.redaction_method = "caller_asserted";
     value.redaction_status = common_learning_redaction_status::caller_asserted;
     value.content_hash = "identity:fnv1a64:0123456789abcdef";
+    value.learning_domain = "tool_use";
+    value.tool_family = "diagnostics";
+    value.provider_kind = "mcp";
     std::string error;
     assert(!common_learning_case_validate(value, 4, 128, error));
     value.status = common_learning_case_status::redacted;

@@ -36,5 +36,54 @@ int main() {
     candidate.contradictions = 0;
     candidate.cause = common_learning_cause::host_contract;
     assert(!common_training_candidate_qualifies(candidate, {}, error));
+
+    common_learning_transaction transaction;
+    transaction.id = "learning://transaction/approved-1";
+    transaction.created_at = "2026-08-29T00:00:00Z";
+    transaction.observation.id = transaction.id;
+    transaction.observation.scope.namespace_id = "local";
+    transaction.observation.scope.session_id = "session-1";
+    transaction.observation.scope.turn_id = "turn-1";
+    transaction.observation.source_turn_id = "turn-1";
+    transaction.observation.source_plan_id = "plan-1";
+    transaction.observation.signals = {common_learning_signal{
+        common_learning_signal_type::tool_failure, "plan-1", "step-1", "diagnostics.compile", "evidence-1",
+        "invalid binding", "diagnostics", "openapi"}};
+    transaction.observation.evidence_ids = {"evidence-1"};
+    transaction.observation.cause = common_learning_cause::model_behavior;
+    transaction.observation.verification = common_learning_verification::host_verified;
+    transaction.observation.idempotency_key = "idempotency-1";
+    transaction.observation.content_hash = "identity:fnv1a64:abc";
+    transaction.observation.collection_allowed = true;
+
+    common_learning_case learning_case;
+    learning_case.id = "case-approved-1";
+    learning_case.observation_id = transaction.id;
+    learning_case.scope = transaction.observation.scope;
+    learning_case.evidence_ids = {"evidence-1"};
+    learning_case.schema_fingerprint = "tool-schema:diagnostics.compile:v1";
+    learning_case.input = "Compile the project.";
+    learning_case.rejected_action = "emit an invalid tool binding";
+    learning_case.preferred_action = "emit a valid diagnostics binding";
+    learning_case.redaction_policy_id = "stub:caller-asserted-v1";
+    learning_case.redaction_method = "caller_asserted";
+    learning_case.redaction_status = common_learning_redaction_status::caller_asserted;
+    learning_case.status = common_learning_case_status::approved;
+    learning_case.content_hash = "identity:fnv1a64:case";
+    learning_case.learning_domain = "tool_use";
+    learning_case.tool_family = "diagnostics";
+    learning_case.provider_kind = "openapi";
+    common_training_candidate promoted;
+    assert(common_training_candidate_from_approved_case(
+        learning_case, transaction,
+        {"stable diagnostics binding behavior", 3, 2, 0, 0.95f}, promoted, error));
+    assert(promoted.status == common_training_candidate_status::approved);
+    assert(promoted.tool_family == "diagnostics" && promoted.provider_kind == "openapi");
+    assert(common_training_candidate_qualifies(promoted, {}, error));
+
+    learning_case.status = common_learning_case_status::redacted;
+    assert(!common_training_candidate_from_approved_case(
+        learning_case, transaction,
+        {"not explicitly approved", 3, 2, 0, 0.95f}, promoted, error));
     return 0;
 }

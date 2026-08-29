@@ -67,6 +67,8 @@ std::string common_learning_case_to_json(const common_learning_case & value) {
         {"preferred_action", value.preferred_action},
         {"redaction", {{"policy_id", value.redaction_policy_id}, {"method", value.redaction_method},
                         {"status", common_learning_redaction_status_name(value.redaction_status)}}},
-        {"status", common_learning_case_status_name(value.status)}, {"content_hash", value.content_hash}
+        {"status", common_learning_case_status_name(value.status)}, {"content_hash", value.content_hash},
+        {"learning_domain", value.learning_domain}, {"tool_family", value.tool_family},
+        {"provider_kind", value.provider_kind}
     }.dump();
 }

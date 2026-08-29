@@ -29,6 +29,11 @@ struct common_learning_case {
     common_learning_redaction_status redaction_status = common_learning_redaction_status::not_evaluated;
     common_learning_case_status status = common_learning_case_status::draft;
     std::string content_hash;
+    // Copied explicitly by the curator from host-owned observation metadata;
+    // these are not inferred from the tool name during promotion.
+    std::string learning_domain;
+    std::string tool_family;
+    std::string provider_kind;
 };
 
 bool common_learning_case_validate(const common_learning_case & value, size_t max_evidence,
