@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 enum class agent_learning_worker_job_state {
     idle,
@@ -18,7 +19,18 @@ const char * agent_learning_worker_job_state_name(agent_learning_worker_job_stat
 
 struct agent_learning_worker_limits {
     size_t max_artifact_bytes = 64 * 1024 * 1024;
+    size_t max_corpus_bytes = 64 * 1024 * 1024;
+    size_t max_job_runtime_seconds = 24 * 60 * 60;
+    std::string worker_id = "local-worker";
 };
+
+struct agent_learning_worker_capabilities {
+    bool cuda = false;
+    std::vector<std::string> trainer_kinds = {"fake-sft"};
+    size_t max_parallel_jobs = 1;
+};
+
+std::string agent_learning_worker_capabilities_json();
 
 struct agent_learning_worker_report {
     agent_learning_worker_job_state state = agent_learning_worker_job_state::idle;

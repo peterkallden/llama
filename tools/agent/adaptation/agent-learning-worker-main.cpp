@@ -8,7 +8,8 @@
 namespace {
 
 void usage(const char * executable) {
-    std::cerr << "usage: " << executable << " --queue PATH [--max-artifact-bytes N]\n";
+    std::cerr << "usage: " << executable << " --queue PATH [--max-artifact-bytes N] [--max-corpus-bytes N] [--max-runtime-seconds N] [--worker-id ID]\n"
+              << "       " << executable << " --capabilities\n";
 }
 
 bool parse_size(const char * text, size_t & value) {
@@ -25,19 +26,42 @@ bool parse_size(const char * text, size_t & value) {
 int main(int argc, char ** argv) {
     std::filesystem::path queue_root;
     agent_learning_worker_limits limits;
+    bool show_capabilities = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
-        if (argument == "--queue" && index + 1 < argc) {
+        if (argument == "--capabilities") {
+            show_capabilities = true;
+        } else if (argument == "--queue" && index + 1 < argc) {
             queue_root = argv[++index];
         } else if (argument == "--max-artifact-bytes" && index + 1 < argc) {
             if (!parse_size(argv[++index], limits.max_artifact_bytes)) {
                 usage(argv[0]);
                 return 2;
             }
+        } else if (argument == "--max-corpus-bytes" && index + 1 < argc) {
+            if (!parse_size(argv[++index], limits.max_corpus_bytes)) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (argument == "--max-runtime-seconds" && index + 1 < argc) {
+            if (!parse_size(argv[++index], limits.max_job_runtime_seconds)) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (argument == "--worker-id" && index + 1 < argc) {
+            limits.worker_id = argv[++index];
         } else {
             usage(argv[0]);
             return 2;
         }
+    }
+    if (show_capabilities) {
+        if (!queue_root.empty()) {
+            usage(argv[0]);
+            return 2;
+        }
+        std::cout << agent_learning_worker_capabilities_json() << '\n';
+        return 0;
     }
     if (queue_root.empty()) {
         usage(argv[0]);

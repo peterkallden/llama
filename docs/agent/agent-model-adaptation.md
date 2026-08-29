@@ -478,9 +478,25 @@ The queue has `pending`, `running`, `succeeded`, `failed`, and `cancelled`
 directories. A complete bundle is written to a staging directory and exposed
 by one atomic rename. Claiming is also an atomic rename, so two workers cannot
 claim the same directory. The worker writes a bounded `state.json`, a
-`result.json`, and a job-local artifact directory. A `cancel` marker in a
-claimed job cancels it before trainer start; a future long-running trainer must
-also check cancellation during execution.
+`result.json`, and a job-local artifact directory. A running state records the
+worker id, update time, and lease expiry. A later invocation moves an expired
+running lease to `failed` with a retryable summary, so a crashed one-shot
+worker does not leave the queue permanently blocked. A long-running trainer
+must refresh its lease and check cancellation during execution before this
+worker is extended beyond the current one-shot fake trainer.
+
+The worker enforces independent positive bounds for artifact bytes, corpus
+bytes, and job runtime. The current runtime is the minimum of the job deadline
+and the worker limit; the fake trainer is intentionally immediate. Capability
+discovery is explicit and side-effect free:
+
+```text
+llama-agent-adaptation-worker --capabilities
+```
+
+The current response advertises `cuda: false`, `fake-sft` as the only trainer,
+and `max_parallel_jobs: 1`. This is a truthful worker capability contract,
+not a promise that QLoRA is available.
 
 Only `trainer_kind: "fake-sft"` is enabled in this slice. It creates a
 deterministic test artifact and computes its SHA-256, but the artifact is not a

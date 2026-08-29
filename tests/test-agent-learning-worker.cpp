@@ -48,6 +48,13 @@ static std::string read_file(const std::filesystem::path & path) {
     return text.str();
 }
 
+static void write_file(const std::filesystem::path & path, const std::string & value) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    require(static_cast<bool>(output), "could not create worker test file");
+    output << value;
+    require(static_cast<bool>(output), "could not write worker test file");
+}
+
 static std::string queue_key(const std::string & job_id) {
     return "job-" + hash_sha256_hex(job_id.data(), job_id.size()).substr(0, 32);
 }
@@ -85,6 +92,13 @@ int main() {
             "worker artifact hash was not reproducible");
     const auto state = json::parse(read_file(succeeded_directory / "state.json"));
     require(state.at("state") == "succeeded", "terminal worker state is incorrect");
+    require(state.at("worker_id") == "local-worker", "worker identity was not persisted");
+    require(state.at("lease_expires_at_epoch_seconds") == 0, "terminal worker lease was not cleared");
+
+    const auto capabilities = json::parse(agent_learning_worker_capabilities_json());
+    require(!capabilities.at("cuda").get<bool>(), "fake worker unexpectedly advertises CUDA");
+    require(capabilities.at("trainer_kinds").at(0) == "fake-sft", "worker capability contract is incorrect");
+    require(capabilities.at("max_parallel_jobs") == 1, "worker parallelism contract is incorrect");
 
     require(agent_learning_worker_run_once(root, {}, report, error), "empty worker run failed");
     require(report.state == agent_learning_worker_job_state::idle, "empty worker queue was not idle");
@@ -104,6 +118,38 @@ int main() {
     require(report.state == agent_learning_worker_job_state::failed, "unsupported trainer was not rejected");
     require(std::filesystem::exists(root / "failed" / queue_key(unsupported_job.id) / "state.json"),
             "failed job was not finalized");
+
+    const auto bounded_job = job("bounded-1", "fake-sft");
+    require(agent_learning_enqueue_job(root, bounded_job, first_corpus, error),
+            "bounded job was not enqueued");
+    agent_learning_worker_limits bounded_limits;
+    bounded_limits.max_corpus_bytes = 1;
+    require(agent_learning_worker_run_once(root, bounded_limits, report, error),
+            "bounded worker run failed at queue level");
+    require(report.state == agent_learning_worker_job_state::failed, "corpus byte bound was ignored");
+    require(json::parse(read_file(root / "failed" / queue_key(bounded_job.id) / "state.json")).at("safe_summary") ==
+                "corpus bundle exceeds worker byte bound", "bounded job failure was not explained");
+
+    const auto stale_key = "job-stale-running";
+    const auto stale_directory = root / "running" / stale_key;
+    std::filesystem::create_directories(stale_directory);
+    common_learning_training_job stale_job = job("stale-1", "fake-sft");
+    std::string stale_job_json;
+    require(common_learning_training_job_to_json(stale_job, stale_job_json, error),
+            "stale job could not be serialized");
+    write_file(stale_directory / "job.json", stale_job_json);
+    write_file(stale_directory / "state.json", json{
+        {"state", "running"},
+        {"job_id", stale_job.id},
+        {"safe_summary", "job claimed"},
+        {"worker_id", "dead-worker"},
+        {"updated_at_epoch_seconds", 1},
+        {"lease_expires_at_epoch_seconds", 1},
+    }.dump());
+    require(agent_learning_worker_run_once(root, {}, report, error), "stale worker run failed");
+    const auto stale_state = json::parse(read_file(root / "failed" / stale_key / "state.json"));
+    require(stale_state.at("safe_summary") == "worker lease expired; job may be retried",
+            "stale running job was not recovered");
 
     std::filesystem::remove_all(root, ec);
     return 0;

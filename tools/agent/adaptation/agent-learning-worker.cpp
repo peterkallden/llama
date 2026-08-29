@@ -3,10 +3,13 @@
 #include "hash/hash.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 using json = nlohmann::ordered_json;
@@ -57,11 +60,18 @@ bool write_state(
         const agent_learning_worker_job_state state,
         const std::string & job_id,
         const std::string & summary,
+        const std::string & worker_id,
+        const uint64_t lease_expires_at_epoch_seconds,
         std::string & error) {
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
     const auto text = json{
         {"state", agent_learning_worker_job_state_name(state)},
         {"job_id", job_id},
         {"safe_summary", summary},
+        {"worker_id", worker_id},
+        {"updated_at_epoch_seconds", now},
+        {"lease_expires_at_epoch_seconds", lease_expires_at_epoch_seconds},
     }.dump();
     return write_text(directory / "state.json", text, error);
 }
@@ -103,10 +113,11 @@ bool fail_claimed_job(
         const std::string & key,
         const std::string & job_id,
         const std::string & summary,
+        const agent_learning_worker_limits & limits,
         agent_learning_worker_report & report,
         std::string & error) {
     report = {agent_learning_worker_job_state::failed, job_id, summary};
-    if (!write_state(running, report.state, job_id, summary, error)) return false;
+    if (!write_state(running, report.state, job_id, summary, limits.worker_id, 0, error)) return false;
     return move_terminal(running, queue_root / "failed", key, error);
 }
 
@@ -152,7 +163,62 @@ bool run_fake_trainer(
     return true;
 }
 
+uint64_t now_epoch_seconds() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+bool recover_stale_running_jobs(
+        const std::filesystem::path & queue_root,
+        const agent_learning_worker_limits & limits,
+        std::string & error) {
+    std::error_code ec;
+    for (const auto & entry : std::filesystem::directory_iterator(queue_root / "running", ec)) {
+        if (ec) break;
+        const bool is_directory = entry.is_directory(ec);
+        if (ec) break;
+        if (!is_directory) continue;
+
+        const auto state_path = entry.path() / "state.json";
+        std::string state_text;
+        if (!read_text(state_path, state_text, error)) return false;
+        json state;
+        try {
+            state = json::parse(state_text);
+        } catch (const std::exception &) {
+            error = "cannot parse running worker state: " + state_path.string();
+            return false;
+        }
+        if (state.value("state", std::string{}) != "running") continue;
+        const auto lease = state.value("lease_expires_at_epoch_seconds", uint64_t{0});
+        if (lease == 0 || lease > now_epoch_seconds()) continue;
+
+        const auto job_id = state.value("job_id", std::string{"unknown"});
+        if (!write_state(entry.path(), agent_learning_worker_job_state::failed, job_id,
+                "worker lease expired; job may be retried", limits.worker_id, 0, error)) return false;
+        if (!move_terminal(entry.path(), queue_root / "failed", entry.path().filename().string(), error)) return false;
+    }
+    if (ec) {
+        error = "cannot inspect running worker jobs: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
 } // namespace
+
+std::string agent_learning_worker_capabilities_json() {
+    const agent_learning_worker_capabilities capabilities;
+    json trainer_kinds = json::array();
+    for (const auto & trainer_kind : capabilities.trainer_kinds) {
+        trainer_kinds.push_back(trainer_kind);
+    }
+    return json{
+        {"cuda", capabilities.cuda},
+        {"trainer_kinds", std::move(trainer_kinds)},
+        {"max_parallel_jobs", capabilities.max_parallel_jobs},
+    }.dump();
+}
 
 const char * agent_learning_worker_job_state_name(agent_learning_worker_job_state state) {
     switch (state) {
@@ -222,7 +288,20 @@ bool agent_learning_worker_run_once(
         error = "worker artifact byte bound must be positive";
         return false;
     }
+    if (limits.max_corpus_bytes == 0) {
+        error = "worker corpus byte bound must be positive";
+        return false;
+    }
+    if (limits.max_job_runtime_seconds == 0) {
+        error = "worker runtime bound must be positive";
+        return false;
+    }
+    if (limits.worker_id.empty()) {
+        error = "worker id must not be empty";
+        return false;
+    }
     if (!create_queue_directories(queue_root, error)) return false;
+    if (!recover_stale_running_jobs(queue_root, limits, error)) return false;
     std::vector<std::filesystem::path> pending;
     std::error_code ec;
     for (const auto & entry : std::filesystem::directory_iterator(queue_root / "pending", ec)) {
@@ -249,32 +328,38 @@ bool agent_learning_worker_run_once(
         if (!read_text(running / "job.json", job_text, error) ||
                 !common_learning_training_job_from_json(job_text, job, error)) {
             const auto job_id = job.id.empty() ? std::string("unknown") : job.id;
-            if (!fail_claimed_job(running, queue_root, key, job_id, "invalid training job bundle", report, error)) return false;
+            if (!fail_claimed_job(running, queue_root, key, job_id, "invalid training job bundle", limits, report, error)) return false;
             return true;
         }
         report = {agent_learning_worker_job_state::running, job.id, "job claimed"};
-        if (!write_state(running, report.state, job.id, report.safe_summary, error)) return false;
+        const auto job_runtime_seconds = std::min(job.deadline_seconds, limits.max_job_runtime_seconds);
+        const auto lease_expires_at = now_epoch_seconds() + job_runtime_seconds;
+        if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, lease_expires_at, error)) return false;
         if (cancellation_requested(running)) {
             report = {agent_learning_worker_job_state::cancelled, job.id, "cancel requested before trainer start"};
-            if (!write_state(running, report.state, job.id, report.safe_summary, error) ||
+            if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, 0, error) ||
                     !move_terminal(running, queue_root / "cancelled", key, error)) return false;
             return true;
         }
         std::string corpus_jsonl;
         if (!read_text(running / "corpus.jsonl", corpus_jsonl, error)) {
-            if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle is unreadable", report, error)) return false;
+            if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle is unreadable", limits, report, error)) return false;
+            return true;
+        }
+        if (corpus_jsonl.size() > limits.max_corpus_bytes) {
+            if (!fail_claimed_job(running, queue_root, key, job.id, "corpus bundle exceeds worker byte bound", limits, report, error)) return false;
             return true;
         }
         common_learning_training_result result;
         if (!run_fake_trainer(running, job, corpus_jsonl, limits, result, error)) {
             const std::string summary = error;
             error.clear();
-            if (!fail_claimed_job(running, queue_root, key, job.id, summary, report, error)) return false;
+            if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }
         if (cancellation_requested(running)) {
             report = {agent_learning_worker_job_state::cancelled, job.id, "cancel requested after trainer completion"};
-            if (!write_state(running, report.state, job.id, report.safe_summary, error) ||
+            if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, 0, error) ||
                     !move_terminal(running, queue_root / "cancelled", key, error)) return false;
             return true;
         }
@@ -284,11 +369,11 @@ bool agent_learning_worker_run_once(
                 !write_text(running / "result.json", result_json, error)) {
             const std::string summary = error.empty() ? "worker produced an invalid training result" : error;
             error.clear();
-            if (!fail_claimed_job(running, queue_root, key, job.id, summary, report, error)) return false;
+            if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
             return true;
         }
         report = {agent_learning_worker_job_state::succeeded, job.id, "fake trainer completed"};
-        if (!write_state(running, report.state, job.id, report.safe_summary, error) ||
+        if (!write_state(running, report.state, job.id, report.safe_summary, limits.worker_id, 0, error) ||
                 !move_terminal(running, queue_root / "succeeded", key, error)) return false;
         return true;
     }
