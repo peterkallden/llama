@@ -375,6 +375,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-learning-worker.cpp
         test-agent-learning-lifecycle.cpp
         test-agent-learning-adapter.cpp
+        test-agent-learning-adapter-import.cpp
         test-memory-policy.cpp
         test-plan-context.cpp
         test-plan-json.cpp
@@ -440,6 +441,13 @@ if (LLAMA_AGENT_RUNTIME)
             target_include_directories(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core vendor::hash)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-learning-adapter-import")
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-adapter-import.cpp)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+            target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()

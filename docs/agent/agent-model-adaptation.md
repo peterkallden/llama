@@ -924,6 +924,13 @@ artifact-path and evaluation checks, so callers cannot bypass them by
 constructing a manifest directly. Activation remains a separate explicit
 operation and never happens as a side effect of import.
 
+The host artifact-import helper adds the filesystem boundary that the metadata
+registry intentionally does not own. It canonicalizes an operator-selected
+artifact root, rejects traversal and symlink escapes, enforces a byte bound,
+and recomputes the manifest's SHA-256. Successful verification returns only a
+safe resolved path; the caller must still admit the adapter as `candidate` and
+must perform evaluation before any explicit activation.
+
 ### Sweep 5 — adapter registry and single-profile inference
 
 Deliverables:
