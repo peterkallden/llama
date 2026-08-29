@@ -63,6 +63,13 @@ helper can now keep those addresses separate:
   --output openapi-openalex-generated.json
 ```
 
+In an installed POSIX agent package the same helper is available as
+`llama-agent-provider-bootstrap`. It is a configuration-authoring utility,
+not part of the daemon's request path: it uses only the Python standard
+library and needs Python 3 plus the system certificate store only when it
+downloads an HTTPS specification. The native OpenAPI provider does not invoke
+Python after the provider configuration has been written.
+
 The generated fragment is also checked in as
 [`openapi-openalex-generated.json`](../examples/openapi-openalex-generated.json).
 For a small, reviewable smoke contract, use

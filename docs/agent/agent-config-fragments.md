@@ -103,8 +103,10 @@ discovery with `allowed_tools`, but cannot define a remote MCP tool by itself.
 ## Provider-helper
 
 För en enskild provider kan `scripts/agent-provider-bootstrap.sh` skapa ett
-fragment utan att secrets hamnar i JSON. OpenAPI kräver en base URL och kan få
-en lokal spec med `--spec`:
+fragment utan att secrets hamnar i JSON. I ett installerat POSIX-paket heter
+samma kommando `llama-agent-provider-bootstrap`; det använder bara Python 3:s
+standardbibliotek och körs vid konfigurationsarbete, aldrig i daemonens
+request-path. OpenAPI kräver en base URL och kan få en lokal spec med `--spec`:
 
 ```sh
 scripts/agent-provider-bootstrap.sh \
