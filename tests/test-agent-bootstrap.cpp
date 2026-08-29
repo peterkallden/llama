@@ -78,6 +78,20 @@ int main() {
     assert(instance.kind == common_plan_kind::task);
     assert(instance.derived_from_plan_id && *instance.derived_from_plan_id == blueprint->id);
 
+    common_plan_state cyclic = *blueprint;
+    cyclic.id = "cyclic-blueprint";
+    cyclic.steps[0].depends_on = {cyclic.steps[1].id};
+    cyclic.steps[1].depends_on = {cyclic.steps[0].id};
+    assert(!common_plan_validate_blueprint(cyclic, {}, error));
+    assert(error.find("cycle") != std::string::npos);
+    assert(!common_plan_instantiate_blueprint(cyclic, "cyclic-instance", config.session_id, instance, error));
+
+    common_plan_state invalid_blueprint = *blueprint;
+    invalid_blueprint.id = "invalid-blueprint";
+    invalid_blueprint.assumptions.front().valid = false;
+    assert(!common_plan_instantiate_blueprint(invalid_blueprint, "invalid-instance", config.session_id, instance, error));
+    assert(error.find("assumption") != std::string::npos);
+
     common_agent_bootstrap_result second;
     assert(common_agent_install_default_bootstrap(memory, plans, config, embed, second, error));
     assert(second.installed_memory_ids.empty() && second.installed_blueprint_ids.empty());
@@ -162,6 +176,15 @@ int main() {
         {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
 
+    common_plan_state wrong_scope = *selected_instance;
+    wrong_scope.id = "wrong-scope-instance";
+    wrong_scope.project_id = "other-project";
+    assert(plans.create(wrong_scope, error));
+    selection_config.task_plan_id = wrong_scope.id;
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+
     declining_selector declining;
     selection_config.task_plan_id = "fallback-instance";
     selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
@@ -172,6 +195,14 @@ int main() {
     assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
     assert(selection_result.logical_id && *selection_result.logical_id == "agent-regression");
     assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
+
+    selection_config.allow_keyword_fallback = false;
+    selection_config.task_plan_id = "fallback-disabled-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
+    selection_config.allow_keyword_fallback = true;
 
     common_plan_state build_blueprint = *blueprint;
     build_blueprint.id = "build-repair-blueprint";

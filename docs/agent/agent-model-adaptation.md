@@ -1212,6 +1212,28 @@ Only after this gate should DPO be considered, and only for genuinely
 same-context chosen/rejected pairs. Broader continual-learning strategies are
 later work.
 
+### Blueprint hardening before Sweep 7
+
+The blueprint path now has one host-owned structural validation boundary for
+bootstrapped, learned, and imported blueprints. It rejects missing identity,
+duplicate or unknown step/dependency IDs, cycles, excessive sizes, duplicate
+constraint/assumption IDs, and assumptions that are not currently valid. A
+blueprint instance receives the caller's scope but does not silently rewrite
+assumptions to valid. Resume selection also checks the full applicable scope,
+including session, project, and turn identity.
+
+The model-facing selector view is bounded by the host, and blueprint binding
+only considers pending or active reasoning steps. It cannot bind completed,
+blocked, failed, skipped, tool, or final-response steps. Keyword fallback is
+explicitly configurable and requires a unique minimum score. These boundaries
+keep a learned blueprint inspectable and prevent stale or oversized blueprint
+text from becoming an implicit execution authority.
+
+The remaining blueprint follow-up is provenance/tool-catalog revision binding
+when a persisted blueprint is resumed, plus a dedicated CLI-level regression
+fixture for model-facing truncation and binding refusal. Neither is required
+for the model catalog router seam below.
+
 ### Sweep 7 — model catalog and controlled routing
 
 Status: the catalog contract, host JSON binding, validation, path resolution,

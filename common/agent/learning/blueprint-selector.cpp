@@ -34,7 +34,8 @@ std::set<std::string> keyword_set(const std::string & text) {
 
 const common_blueprint_candidate * keyword_fallback(
         const common_agent_request & request,
-        const std::vector<common_blueprint_candidate> & candidates) {
+        const std::vector<common_blueprint_candidate> & candidates,
+        size_t minimum_score) {
     std::string request_text = request.prompt;
     if (request.policy_pack) {
         request_text += " " + request.policy_pack->purpose + " " + request.policy_pack->goal +
@@ -63,7 +64,57 @@ const common_blueprint_candidate * keyword_fallback(
         if (score > best_score) { best = &candidate; best_score = score; tied = false; }
         else if (score != 0 && score == best_score) tied = true;
     }
-    return best_score != 0 && !tied ? best : nullptr;
+    return best_score >= minimum_score && !tied ? best : nullptr;
+}
+
+bool validate_candidate_catalog(
+        const std::vector<common_blueprint_candidate> & candidates,
+        const common_blueprint_selection_config & config,
+        std::string & error) {
+    if (config.maximum_candidates == 0 || config.maximum_candidate_text_bytes == 0) {
+        error = "blueprint selection bounds are invalid";
+        return false;
+    }
+    std::set<std::string> logical_ids;
+    std::set<std::string> persisted_ids;
+    const auto valid_text = [&](const std::string & value) {
+        return value.size() <= config.maximum_candidate_text_bytes;
+    };
+    for (const auto & candidate : candidates) {
+        if (candidate.logical_id.empty() || candidate.persisted_id.empty() ||
+                !logical_ids.insert(candidate.logical_id).second ||
+                !persisted_ids.insert(candidate.persisted_id).second ||
+                !valid_text(candidate.logical_id) || !valid_text(candidate.persisted_id) ||
+                !valid_text(candidate.description) || !valid_text(candidate.purpose) ||
+                !valid_text(candidate.goal) || !valid_text(candidate.success_criteria) ||
+                candidate.required_capabilities.size() > 32 || candidate.constraints.size() > 32 ||
+                candidate.assumptions.size() > 32 || candidate.contributions.size() > 32) {
+            error = "blueprint candidate catalog contains duplicate or oversized entries";
+            return false;
+        }
+        for (const auto & value : candidate.required_capabilities) if (!valid_text(value)) {
+            error = "blueprint candidate capability exceeds bounds";
+            return false;
+        }
+        for (const auto & constraint : candidate.constraints) if (
+                constraint.id.empty() || !valid_text(constraint.id) ||
+                !valid_text(constraint.description)) {
+            error = "blueprint candidate constraint exceeds bounds";
+            return false;
+        }
+        for (const auto & assumption : candidate.assumptions) if (
+                assumption.id.empty() || !valid_text(assumption.id) ||
+                !valid_text(assumption.statement)) {
+            error = "blueprint candidate assumption exceeds bounds";
+            return false;
+        }
+        for (const auto & contribution : candidate.contributions) if (!valid_text(contribution)) {
+            error = "blueprint candidate contribution exceeds bounds";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
 
 } // namespace
@@ -96,7 +147,9 @@ bool common_agent_select_and_instantiate_blueprint(
     const auto existing = plan_store.get(config.task_plan_id, error);
     if (!error.empty()) return false;
     if (existing) {
-        if (existing->kind != common_plan_kind::task || existing->scope != config.scope || existing->session_id != config.session_id) {
+        if (existing->kind != common_plan_kind::task ||
+                !common_plan_scope_matches(*existing, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id)) {
             result.outcome = common_blueprint_selection_outcome::failed_safely;
             result.reason = "existing plan is not a compatible task plan";
             return true;
@@ -106,6 +159,7 @@ bool common_agent_select_and_instantiate_blueprint(
         return true;
     }
 
+    if (!validate_candidate_catalog(candidates, config, error)) return false;
     if (candidates.empty() || candidates.size() > config.maximum_candidates) {
         result.outcome = common_blueprint_selection_outcome::failed_safely;
         result.reason = candidates.empty() ? "no installed blueprint candidates" : "too many blueprint candidates";
@@ -137,7 +191,14 @@ bool common_agent_select_and_instantiate_blueprint(
         else if (has_known_false_assumption) rejection = "blueprint has a known-false assumption";
         else if (missing_required_capability) rejection = "required host capability is unavailable";
         else if (blocked_hard_constraint) rejection = "hard constraint conflicts with host policy";
-        else if (!common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
+        else {
+            std::string validation_error;
+            if (!common_plan_validate_blueprint(*blueprint, {}, validation_error)) {
+                rejection = "blueprint failed structural validation: " + validation_error;
+            }
+        }
+        if (rejection.empty() &&
+                !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
                     request.session_id, request.project_id, request.turn_id)) rejection = "blueprint is outside the current scope";
         if (!rejection.empty()) {
             result.rejections.push_back({candidate.logical_id, std::move(rejection)});
@@ -172,7 +233,9 @@ bool common_agent_select_and_instantiate_blueprint(
         }
         candidate = &*found;
     } else {
-        candidate = keyword_fallback(request, eligible);
+        candidate = config.allow_keyword_fallback
+            ? keyword_fallback(request, eligible, config.minimum_keyword_fallback_score)
+            : nullptr;
         if (candidate) {
             result.confidence = 0.0f;
             result.reason = "native keyword fallback after model declined or reported low confidence";

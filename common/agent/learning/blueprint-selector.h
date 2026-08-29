@@ -71,6 +71,9 @@ struct common_blueprint_selection_config {
     int64_t now = 0;
     float minimum_confidence = 0.75f;
     size_t maximum_candidates = 16;
+    size_t maximum_candidate_text_bytes = 4096;
+    size_t minimum_keyword_fallback_score = 2;
+    bool allow_keyword_fallback = true;
     // Populated only after the host has resolved the active tool profile.
     // Unknown capabilities remain unknown during earlier bootstrap setup.
     std::vector<std::string> available_capabilities;
