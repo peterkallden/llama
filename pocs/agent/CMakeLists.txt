@@ -1962,6 +1962,8 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-cli
     llama-agent-mcp-stdio-server
     llama-agent-daemon
+    llama-agent-adaptation-worker
+    llama-agent-adaptation-admin
     llama-agent-web
 )
 
