@@ -800,6 +800,13 @@ normalized, and the result still requires a `sha256:` artifact hash plus a
 passed evaluation. This is validation only; no worker or automatic import is
 implemented yet.
 
+The trainer-to-registry seam is also host-owned: a validated training result
+can be projected into a candidate adapter manifest without manually copying
+corpus, trainer, base, or artifact identity. Registry admission repeats the
+artifact-path and evaluation checks, so callers cannot bypass them by
+constructing a manifest directly. Activation remains a separate explicit
+operation and never happens as a side effect of import.
+
 ### Sweep 5 — adapter registry and single-profile inference
 
 Deliverables:

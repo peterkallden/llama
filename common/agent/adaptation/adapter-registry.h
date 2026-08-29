@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/adaptation/trainer-protocol.h"
+
 #include <string>
 #include <vector>
 
@@ -22,6 +24,8 @@ struct common_learning_adapter_manifest {
     std::string tokenizer_fingerprint;
     std::string chat_template_fingerprint;
     std::string corpus_revision_id;
+    std::string corpus_bundle_hash;
+    std::string trainer_version;
     std::string artifact_path;
     std::string artifact_sha256;
     std::string evaluation_revision;
@@ -30,6 +34,16 @@ struct common_learning_adapter_manifest {
 
 bool common_learning_validate_adapter_manifest(
         const common_learning_adapter_manifest & manifest,
+        std::string & error);
+
+bool common_learning_make_adapter_manifest(
+        const common_learning_training_job & job,
+        const common_learning_training_result & result,
+        const std::string & base_architecture,
+        const std::string & serving_model_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & chat_template_fingerprint,
+        common_learning_adapter_manifest & manifest,
         std::string & error);
 
 class common_learning_adapter_registry {
