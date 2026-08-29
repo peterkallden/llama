@@ -174,6 +174,68 @@ bool common_learning_transaction_from_json(const std::string & text, common_lear
     }
 }
 
+bool common_learning_transaction_matches(
+        const common_learning_transaction & transaction,
+        const common_learning_transaction_query & query) {
+    const auto & scope = transaction.observation.scope;
+    if (!query.scope.namespace_id.empty() && scope.namespace_id != query.scope.namespace_id) return false;
+    if (!query.scope.session_id.empty() && scope.session_id != query.scope.session_id) return false;
+    if (!query.scope.project_id.empty() && scope.project_id != query.scope.project_id) return false;
+    if (!query.scope.turn_id.empty() && scope.turn_id != query.scope.turn_id) return false;
+    if (query.filter_cause && transaction.observation.cause != query.cause) return false;
+    if (!query.tool_family.empty() || !query.provider_kind.empty()) {
+        const bool signal_match = std::any_of(
+            transaction.observation.signals.begin(), transaction.observation.signals.end(),
+            [&](const auto & signal) {
+                return (query.tool_family.empty() || signal.tool_family == query.tool_family) &&
+                    (query.provider_kind.empty() || signal.provider_kind == query.provider_kind);
+            });
+        if (!signal_match) return false;
+    }
+    return true;
+}
+
+common_learning_transaction_query_result common_learning_query_transactions(
+        const common_learning_transaction_store & store,
+        const common_learning_transaction_query & query,
+        std::string & error) {
+    error.clear();
+    common_learning_transaction_query_result result;
+    if (query.max_results == 0 || query.max_scan == 0) {
+        error = "learning transaction query bounds must be positive";
+        return result;
+    }
+    auto transactions = store.list(error);
+    if (!error.empty()) return result;
+    std::sort(transactions.begin(), transactions.end(), [](const auto & left, const auto & right) {
+        return left.id < right.id;
+    });
+    const size_t scan_limit = std::min(query.max_scan, transactions.size());
+    result.scanned = scan_limit;
+    result.truncated = transactions.size() > scan_limit;
+    for (size_t index = 0; index < scan_limit; ++index) {
+        if (!common_learning_transaction_matches(transactions[index], query)) continue;
+        if (result.transactions.size() >= query.max_results) {
+            result.truncated = true;
+            break;
+        }
+        result.transactions.push_back(std::move(transactions[index]));
+    }
+    return result;
+}
+
+std::vector<std::string> common_learning_select_replay_transaction_ids(
+        const common_learning_transaction_store & store,
+        const common_learning_transaction_query & query,
+        std::string & error) {
+    const auto selected = common_learning_query_transactions(store, query, error);
+    std::vector<std::string> ids;
+    if (!error.empty()) return ids;
+    ids.reserve(selected.transactions.size());
+    for (const auto & transaction : selected.transactions) ids.push_back(transaction.id);
+    return ids;
+}
+
 bool common_learning_in_memory_transaction_store::append(const common_learning_transaction & transaction, std::string & error) {
     error.clear();
     bool exists = false;

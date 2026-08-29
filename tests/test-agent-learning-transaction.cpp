@@ -47,6 +47,19 @@ int main() {
     assert(transactions.front().observation.recovery_of_signal_id.empty());
     assert(transactions.front().observation.verification == common_learning_verification::unverified);
 
+    common_learning_transaction_query query;
+    query.scope.session_id = "session-1";
+    query.tool_family = "diagnostics";
+    query.provider_kind = "openapi";
+    query.max_results = 4;
+    query.max_scan = 4;
+    const auto queried = common_learning_query_transactions(memory_store, query, error);
+    assert(error.empty() && queried.transactions.size() == 1 && !queried.truncated);
+    const auto replay_ids = common_learning_select_replay_transaction_ids(memory_store, query, error);
+    assert(error.empty() && replay_ids.size() == 1 && replay_ids[0] == transactions.front().id);
+    query.provider_kind = "mcp";
+    assert(common_learning_query_transactions(memory_store, query, error).transactions.empty());
+
     auto second_failure = failed;
     second_failure.learning_signals.front().evidence_id = "evidence-2";
     assert(observer.observe(req, pl, second_failure, error));

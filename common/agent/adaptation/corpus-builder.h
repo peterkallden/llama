@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -51,8 +53,30 @@ struct common_learning_corpus_revision {
     std::string bundle_hash;
 };
 
+struct common_learning_corpus_inspection {
+    size_t row_count = 0;
+    size_t byte_count = 0;
+    bool truncated = false;
+    std::map<std::string, size_t> domains;
+    std::map<std::string, size_t> families;
+    std::map<std::string, size_t> providers;
+    std::vector<std::string> candidate_ids;
+};
+
 bool common_learning_build_corpus(
         const std::vector<common_training_candidate> & candidates,
         const common_learning_corpus_policy & policy,
         common_learning_corpus_revision & revision,
+        std::string & error);
+
+bool common_learning_inspect_corpus(
+        const common_learning_corpus_revision & revision,
+        size_t max_rows,
+        common_learning_corpus_inspection & inspection,
+        std::string & error);
+
+bool common_learning_export_corpus_jsonl(
+        const common_learning_corpus_revision & revision,
+        const std::filesystem::path & path,
+        size_t max_bytes,
         std::string & error);

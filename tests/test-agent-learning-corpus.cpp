@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <fstream>
 
 static void require(bool condition, const char * message) {
     if (!condition) {
@@ -103,6 +104,21 @@ int main() {
     require(research_revision.candidate_ids.size() == 1 &&
             research_revision.jsonl.find("research") != std::string::npos,
             "research view selected the wrong candidates");
+    common_learning_corpus_inspection inspection;
+    require(common_learning_inspect_corpus(shared_revision, 2, inspection, error),
+            "corpus inspection failed");
+    require(inspection.row_count == 3 && inspection.truncated &&
+            inspection.families["diagnostics"] == 2 && inspection.providers["native"] == 1,
+            "corpus inspection summary is incorrect");
+    const auto export_path = std::filesystem::temp_directory_path() / "llama-agent-learning-corpus.jsonl";
+    std::error_code ignored;
+    std::filesystem::remove(export_path, ignored);
+    require(common_learning_export_corpus_jsonl(shared_revision, export_path, 64 * 1024, error),
+            "corpus export failed");
+    std::ifstream exported(export_path, std::ios::binary);
+    require(std::string((std::istreambuf_iterator<char>(exported)), std::istreambuf_iterator<char>()) == shared_revision.jsonl,
+            "corpus export changed JSONL");
+    std::filesystem::remove(export_path, ignored);
 
     candidates.front().status = common_training_candidate_status::observed;
     require(!common_learning_build_corpus(candidates, {}, first, error), "unapproved candidate was admitted");

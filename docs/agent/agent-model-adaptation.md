@@ -1055,6 +1055,35 @@ and reproducible; an index is better for scoped queries. The recommended
 boundary is an indexed adaptation ledger plus canonical JSONL artifact bundles,
 rather than two independent sources of truth.
 
+### Sweep 3c — explicit case promotion (completed)
+
+`common_training_candidate_from_approved_case` is the host-owned seam from a
+curator-approved case and a matching verified transaction to an approved
+training candidate. It checks the case status, source identity, evidence
+membership, observation classification, redaction attestation, and bounded
+aggregation counts. A single runtime observation cannot promote itself, and
+the runtime never copies raw tool output into a training pair.
+
+The resulting candidate preserves the case's canonical learning domain,
+family, and provider provenance. It can still fail the normal corpus
+qualification thresholds; approval is authorization to consider the candidate,
+not proof that it belongs in a training run.
+
+### Sweep 3d — bounded ledger replay and corpus inspection (completed)
+
+The ledger exposes a bounded query contract over scope, canonical family,
+provider provenance, and cause. The same selection can produce deterministic
+transaction ids for replay input. The current common helper uses a bounded
+ordered scan for all backends; indexed Cozo/SQLite implementations can replace
+that internal scan without changing callers. `max_scan` and `max_results` are
+part of the contract, and truncation is explicit in the query result.
+
+Corpus revisions also have explicit host APIs for bounded inspection and
+JSONL export. Inspection reports row count, byte count, domain/family/provider
+counts, candidate ids, and truncation. Export writes only the already-built
+revision and enforces a caller-supplied byte bound; it does not rebuild or
+silently broaden a corpus.
+
 ### Sweep 4 — external trainer protocol (contract slice completed)
 
 Deliverables:

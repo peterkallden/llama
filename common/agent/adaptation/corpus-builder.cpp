@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
 #include <map>
 #include <set>
@@ -210,5 +211,50 @@ bool common_learning_build_corpus(
     }.dump();
     revision.bundle_hash = hash_text(revision.manifest_json + "\n" + revision.jsonl);
     revision.id = "learning://corpus/" + revision.bundle_hash;
+    return true;
+}
+
+bool common_learning_inspect_corpus(
+        const common_learning_corpus_revision & revision,
+        size_t max_rows,
+        common_learning_corpus_inspection & inspection,
+        std::string & error) {
+    error.clear();
+    inspection = {};
+    if (max_rows == 0) { error = "corpus inspection requires a positive row bound"; return false; }
+    inspection.byte_count = revision.jsonl.size();
+    std::istringstream input(revision.jsonl);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) continue;
+        ++inspection.row_count;
+        if (inspection.candidate_ids.size() >= max_rows) {
+            inspection.truncated = true;
+            continue;
+        }
+        const auto value = json::parse(line, nullptr, false);
+        if (!value.is_object()) { error = "corpus contains invalid JSONL row"; return false; }
+        const auto candidate_id = value.value("candidate_id", "");
+        if (candidate_id.empty()) { error = "corpus row lacks candidate id"; return false; }
+        inspection.candidate_ids.push_back(candidate_id);
+        ++inspection.domains[value.value("learning_domain", "")];
+        ++inspection.families[value.value("tool_family", "")];
+        ++inspection.providers[value.value("provider_kind", "")];
+    }
+    return true;
+}
+
+bool common_learning_export_corpus_jsonl(
+        const common_learning_corpus_revision & revision,
+        const std::filesystem::path & path,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (path.empty() || max_bytes == 0) { error = "corpus export requires path and positive byte bound"; return false; }
+    if (revision.jsonl.size() > max_bytes) { error = "corpus export exceeds byte bound"; return false; }
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) { error = "could not open corpus export path"; return false; }
+    output.write(revision.jsonl.data(), static_cast<std::streamsize>(revision.jsonl.size()));
+    if (!output) { error = "could not write corpus export"; return false; }
     return true;
 }
