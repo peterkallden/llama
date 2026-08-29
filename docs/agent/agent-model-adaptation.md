@@ -2,9 +2,11 @@
 
 ## Status
 
-Design and implementation plan. Corpus contracts exist, but no external
-trainer integration, adapter registry, model catalog, or automatic adapter
-activation exists yet.
+Design and implementation plan. The observation, transaction, candidate,
+corpus, trainer-job, adapter-registry, cause-classification, and runtime
+assembly contracts now exist. There is still no external trainer integration,
+artifact loader, model catalog, evaluation gate, or automatic adapter
+activation.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -28,6 +30,8 @@ The local branch currently contains the first contract slices:
   candidates;
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
+- conservative host-side cause classification and recovery linking;
+- opt-in assembly wiring for in-memory or JSONL adaptation capture.
 
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
@@ -453,6 +457,36 @@ must leave room for an indexed backend so filtering by scope, status, source,
 and revision does not require scanning every corpus file. Payloads should be
 referenced by content hash where possible; the ledger should not duplicate
 large resource or tool-result bodies merely to make export convenient.
+
+### Current runtime capture configuration
+
+The current daemon/bootstrap path exposes only capture, not training or
+activation. It is disabled by default:
+
+```json
+{
+  "runtime": {
+    "adaptation": {
+      "capture": false,
+      "collection_allowed": false,
+      "max_evidence": 16,
+      "transaction_path": "var/agent/learning.jsonl",
+      "stable_model_facing_tools": ["data.inspect"]
+    }
+  }
+}
+```
+
+With an empty `transaction_path`, enabled capture uses an assembly-local
+in-memory store. A non-empty path selects the append-only JSONL store; if it
+cannot be opened, the assembly reports the error and does not attach the
+observer. `collection_allowed` is an explicit collection gate: false keeps
+the observer connected but prevents durable transaction collection. The
+stable-tool list is deliberately opt-in; it permits a known, validated
+model-facing contract failure to be classified as model behavior, while
+binding, policy, transport, and provider failures remain host-contract
+evidence. This configuration does not create SFT pairs or change the active
+model.
 
 Every write needs an idempotency key, atomic completion semantics, and a
 content hash. A crash may leave a pending write, but it must not create two

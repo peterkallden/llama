@@ -488,6 +488,20 @@ bool parse_agent_host_config_json(
         read_optional(runtime, "memory_learn_min_reuse", config.memory_learn_min_reuse);
         read_optional(runtime, "plan_show_summary", config.plan_show_summary);
         read_optional(runtime, "agent_trace", config.agent_trace);
+        if (runtime.contains("adaptation") && runtime["adaptation"].is_object()) {
+            const auto & adaptation = runtime["adaptation"];
+            read_optional(adaptation, "capture", config.adaptation_capture);
+            read_optional(adaptation, "collection_allowed", config.adaptation_collection_allowed);
+            read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
+            read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
+            if (adaptation.contains("stable_model_facing_tools") &&
+                    adaptation["stable_model_facing_tools"].is_array()) {
+                config.adaptation_stable_model_facing_tools.clear();
+                for (const auto & item : adaptation["stable_model_facing_tools"]) {
+                    if (item.is_string()) config.adaptation_stable_model_facing_tools.insert(item.get<std::string>());
+                }
+            }
+        }
     }
 
     if (parsed.contains("stores") && parsed["stores"].is_object()) {
@@ -1147,6 +1161,13 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"memory_learn_min_reuse", config.memory_learn_min_reuse},
             {"plan_show_summary", config.plan_show_summary},
             {"agent_trace", config.agent_trace},
+            {"adaptation", {
+                {"capture", config.adaptation_capture},
+                {"collection_allowed", config.adaptation_collection_allowed},
+                {"max_evidence", config.adaptation_max_evidence},
+                {"transaction_path", config.adaptation_transaction_path},
+                {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
+            }},
         }},
         {"stores", {
             {"memory", {
@@ -1791,6 +1812,11 @@ void apply_agent_host_config_to_daemon_options(
     options.memory_learn_min_reuse = config.memory_learn_min_reuse;
     options.plan_show_summary = config.plan_show_summary;
     options.agent_trace = config.agent_trace;
+    options.adaptation_capture = config.adaptation_capture;
+    options.adaptation_collection_allowed = config.adaptation_collection_allowed;
+    options.adaptation_max_evidence = config.adaptation_max_evidence;
+    options.adaptation_transaction_path = config.adaptation_transaction_path;
+    options.adaptation_stable_model_facing_tools = config.adaptation_stable_model_facing_tools;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

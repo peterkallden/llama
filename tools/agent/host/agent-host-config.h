@@ -9,6 +9,7 @@
 #include "agent-diagnostics-config.h"
 #include "agent-host-openapi-provider-config.h"
 #include "resource/resource-contract.h"
+#include "agent/adaptation/learning-cause-classifier.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -49,6 +50,11 @@ struct agent_host_config {
     float memory_learn_min_reuse = 0.65f;
     bool plan_show_summary = false;
     bool agent_trace = false;
+    bool adaptation_capture = false;
+    bool adaptation_collection_allowed = false;
+    size_t adaptation_max_evidence = 16;
+    std::string adaptation_transaction_path;
+    std::set<std::string> adaptation_stable_model_facing_tools;
 
     std::string memory_backend = "auto";
     std::string memory_db;

@@ -3,6 +3,7 @@
 #include "tools/agent/cli/agent-cli-options.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/data-store.h"
+#include "agent/adaptation/learning-cause-classifier.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
@@ -73,6 +74,11 @@ struct daemon_options {
     float memory_learn_min_reuse = 0.65f;
     bool plan_show_summary = false;
     bool agent_trace = false;
+    bool adaptation_capture = false;
+    bool adaptation_collection_allowed = false;
+    size_t adaptation_max_evidence = 16;
+    std::string adaptation_transaction_path;
+    std::set<std::string> adaptation_stable_model_facing_tools;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t worker_count = 1;
