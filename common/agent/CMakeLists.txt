@@ -50,6 +50,7 @@ add_library(${TARGET}
     agent-bootstrap.cpp agent-bootstrap.h
     agent-package-json.cpp agent-package-json.h
     agent-prepared-generation.cpp agent-prepared-generation.h
+    runtime/model-profile.cpp runtime/model-profile.h
     credentials/agent-credential-provider.h
     learning/blueprint-selector.cpp learning/blueprint-selector.h
     tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h

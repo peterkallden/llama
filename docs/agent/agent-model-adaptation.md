@@ -41,6 +41,9 @@ The local branch currently contains the first contract slices:
   fingerprint, baseline/candidate profiles, test-suite revision, three
   promotion gates, and runtime-intervention counts. It is a report binding,
   not an evaluator or an automatic promotion mechanism;
+- a host-neutral model-profile contract for a base-model identity and bounded
+  adapter overlays, including a cache key that isolates model, tokenizer,
+  template, context, and adapter state;
 - conservative host-side cause classification and recovery linking;
 - opt-in assembly wiring with an adaptation-store factory. The factory supports
   in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
@@ -692,11 +695,19 @@ Conceptual future configuration:
 }
 ```
 
-This is a proposed version-2 schema, not a supported configuration today. It
-intentionally separates base-model identity, adapter identity, runnable
-profile, and host-owned routing. The adapter registry owns artifact paths and
-validation; production profile configuration should reference adapter ids, not
-arbitrary paths.
+This is a proposed version-2 schema, not a supported multi-model configuration
+today. The host-neutral profile contract now validates the identity and
+overlay portion of this shape, but bootstrap/model loading still has to bind
+the profile to the actual model catalog. It intentionally separates base-model
+identity, adapter identity, runnable profile, and host-owned routing. The
+adapter registry owns artifact paths and validation; production profile
+configuration should reference adapter ids, not arbitrary paths.
+
+The profile contract allows at most eight unique overlays, each with a bounded
+positive scale, and supports `resident` or `lazy` loading. Its cache key
+includes the ordered overlay list, so changing an adapter or scale cannot
+reuse a resident context created for another profile. It does not itself
+resolve adapter paths, load a model, switch profiles, or authorize a candidate.
 
 A session is pinned to a profile for the duration of a turn. The host may
 perform a bounded, visible escalation to another profile, but a model cannot
