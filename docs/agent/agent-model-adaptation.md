@@ -488,6 +488,9 @@ binding, policy, transport, and provider failures remain host-contract
 evidence. This configuration does not create SFT pairs or change the active
 model.
 
+The same complete host-configuration example is available at
+[`examples/agent-host-config-adaptation.json`](../../examples/agent-host-config-adaptation.json).
+
 Every write needs an idempotency key, atomic completion semantics, and a
 content hash. A crash may leave a pending write, but it must not create two
 different meanings for the same source event. Revocation must invalidate

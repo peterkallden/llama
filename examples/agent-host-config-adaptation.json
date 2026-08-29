@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "reflective",
+    "adaptation": {
+      "capture": true,
+      "collection_allowed": true,
+      "max_evidence": 16,
+      "transaction_path": "var/agent/learning.jsonl",
+      "stable_model_facing_tools": [
+        "data.inspect"
+      ]
+    }
+  },
+  "model": {
+    "path": "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    "embedding_model": "models/nomic-embed-text-v1.5.Q4_K_M.gguf"
+  }
+}
