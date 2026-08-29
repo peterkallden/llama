@@ -70,6 +70,7 @@ add_library(${TARGET}
     adaptation/trainer-protocol.cpp adaptation/trainer-protocol.h
     adaptation/adapter-registry.cpp adaptation/adapter-registry.h
     adaptation/lifecycle-store.cpp adaptation/lifecycle-store.h
+    adaptation/evaluation-contract.cpp adaptation/evaluation-contract.h
     thinking/reflection-json.cpp thinking/reflection-json.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h

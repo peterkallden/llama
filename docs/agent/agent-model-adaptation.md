@@ -3,10 +3,9 @@
 ## Status
 
 Design and implementation plan. The observation, transaction, candidate,
-corpus, trainer-job, adapter-registry, cause-classification, and runtime
-assembly contracts now exist. There is still no external trainer integration,
-artifact loader, model catalog, evaluation gate, or automatic adapter
-activation.
+corpus, trainer-job, adapter-registry, cause-classification, runtime assembly,
+artifact-import, and evaluation-report contracts now exist. There is still no
+external trainer integration, model catalog, or automatic adapter activation.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -35,6 +34,13 @@ The local branch currently contains the first contract slices:
   training-result, and adapter status events, with idempotency conflict checks;
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
+- a host-side adapter artifact verifier that binds a manifest to a canonical
+  artifact root, rejects path and symlink escape, enforces a byte bound, and
+  recomputes the artifact SHA-256 before import;
+- an evaluation report contract that binds a candidate to its corpus, base
+  fingerprint, baseline/candidate profiles, test-suite revision, three
+  promotion gates, and runtime-intervention counts. It is a report binding,
+  not an evaluator or an automatic promotion mechanism;
 - conservative host-side cause classification and recovery linking;
 - opt-in assembly wiring with an adaptation-store factory. The factory supports
   in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
@@ -48,9 +54,10 @@ redaction attestation, candidate revocation, held-out exclusion, deterministic
 splits, provenance, duplicate handling, and bounded host-selected replay.
 The redaction implementation is still an explicit caller/policy seam rather
 than a PII detector; semantic replay selection, an actual trainer worker,
-adapter artifact import, model-profile loading, and inference activation remain
-later sweeps. The current registry is metadata-only and does not load an
-adapter.
+model-profile loading, and inference activation remain later sweeps. The
+current registry is metadata-only and does not load an adapter. The artifact
+verifier and evaluation report only establish import and promotion evidence;
+they do not train, evaluate, or activate a model by themselves.
 
 ## Review conclusion and recommended adjustments
 
@@ -743,6 +750,39 @@ candidate adapter
 ```
 
 Automatic promotion to active is out of scope for the first implementation.
+
+The evaluation report is the durable hand-off between an external evaluator
+and the host. It does not claim that the host ran the tests; it records which
+corpus revision, base fingerprint, profiles, and test-suite revision produced
+the result. The three gates are deliberately separate:
+
+```json
+{
+  "revision_id": "evaluation:7",
+  "candidate_adapter_id": "adapter:agent-correction-v1",
+  "baseline_profile_id": "agent-baseline",
+  "candidate_profile_id": "agent-candidate",
+  "corpus_revision_id": "corpus:12",
+  "corpus_bundle_hash": "sha256:...",
+  "base_training_fingerprint": "qwen-small:...",
+  "test_suite_revision": "agent-eval:3",
+  "gates": {
+    "intended_behavior": true,
+    "retention": true,
+    "agent_regression": true
+  },
+  "evaluated_turns": 120,
+  "runtime_interventions": 14,
+  "status": "passed",
+  "evaluated_at": "2026-08-29T00:00:00Z"
+}
+```
+
+The report is valid only when the status agrees with all three gates, the
+baseline and candidate profiles differ, and runtime interventions do not
+exceed evaluated turns. The derived intervention rate is a diagnostic metric,
+not a promotion threshold. A later host-owned policy may require additional
+thresholds, signatures, or human approval before a canary or active transition.
 
 ## Verification snapshot
 
