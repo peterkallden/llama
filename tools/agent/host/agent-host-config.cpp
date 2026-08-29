@@ -493,6 +493,7 @@ bool parse_agent_host_config_json(
             read_optional(adaptation, "capture", config.adaptation_capture);
             read_optional(adaptation, "collection_allowed", config.adaptation_collection_allowed);
             read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
+            read_optional(adaptation, "backend", config.adaptation_transaction_backend);
             read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
             if (adaptation.contains("stable_model_facing_tools") &&
                     adaptation["stable_model_facing_tools"].is_array()) {
@@ -1165,6 +1166,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"capture", config.adaptation_capture},
                 {"collection_allowed", config.adaptation_collection_allowed},
                 {"max_evidence", config.adaptation_max_evidence},
+                {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
                 {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
             }},
@@ -1815,6 +1817,7 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_capture = config.adaptation_capture;
     options.adaptation_collection_allowed = config.adaptation_collection_allowed;
     options.adaptation_max_evidence = config.adaptation_max_evidence;
+    options.adaptation_transaction_backend = config.adaptation_transaction_backend;
     options.adaptation_transaction_path = config.adaptation_transaction_path;
     options.adaptation_stable_model_facing_tools = config.adaptation_stable_model_facing_tools;
     options.max_tool_rounds = config.max_tool_rounds;

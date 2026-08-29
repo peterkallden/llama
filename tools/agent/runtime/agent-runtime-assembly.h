@@ -6,6 +6,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/learning-transaction.h"
+#include "../adaptation/agent-learning-transaction-store.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
 #include "chat.h"
@@ -50,6 +51,7 @@ struct common_agent_runtime_config {
     // assembly-local store, which is useful for embedding hosts and tests.
     bool enable_adaptation_capture = false;
     common_learning_transaction_observer_config adaptation_config;
+    std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
 };
 
@@ -63,6 +65,7 @@ struct common_agent_runtime_build_config {
     common_agent_context_token_estimator context_token_estimator;
     bool enable_adaptation_capture = false;
     common_learning_transaction_observer_config adaptation_config;
+    std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
 };
 

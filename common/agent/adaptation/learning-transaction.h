@@ -15,6 +15,20 @@ struct common_learning_transaction {
     std::string created_at;
 };
 
+enum class common_learning_transaction_backend {
+    automatic,
+    in_memory,
+    cozo,
+    sqlite,
+    jsonl,
+};
+
+const char * common_learning_transaction_backend_name(
+        common_learning_transaction_backend backend);
+bool parse_common_learning_transaction_backend(
+        const std::string & value,
+        common_learning_transaction_backend & backend);
+
 bool common_learning_transaction_validate(
         const common_learning_transaction & transaction,
         size_t max_evidence,

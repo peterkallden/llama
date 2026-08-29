@@ -78,6 +78,7 @@ struct daemon_options {
     bool adaptation_capture = false;
     bool adaptation_collection_allowed = false;
     size_t adaptation_max_evidence = 16;
+    std::string adaptation_transaction_backend = "auto";
     std::string adaptation_transaction_path;
     std::set<std::string> adaptation_stable_model_facing_tools;
     size_t max_tool_rounds = 0;

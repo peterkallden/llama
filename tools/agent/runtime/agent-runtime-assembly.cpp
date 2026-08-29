@@ -21,6 +21,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.embed_memory = std::move(build_config.embed_memory);
     config.enable_adaptation_capture = build_config.enable_adaptation_capture;
     config.adaptation_config = std::move(build_config.adaptation_config);
+    config.adaptation_transaction_backend = std::move(build_config.adaptation_transaction_backend);
     config.adaptation_transaction_path = std::move(build_config.adaptation_transaction_path);
     return config;
 }
@@ -64,18 +65,12 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
     }
 
     if (runtime_config.enable_adaptation_capture) {
-        if (!runtime_config.adaptation_transaction_path.empty()) {
-            auto persistent_store = std::make_unique<common_learning_jsonl_transaction_store>();
-            std::string store_error;
-            if (persistent_store->open(runtime_config.adaptation_transaction_path, store_error)) {
-                assembly.adaptation_store = std::move(persistent_store);
-            } else {
-                assembly.adaptation_error = std::move(store_error);
-            }
-        }
-        if (!assembly.adaptation_store && runtime_config.adaptation_transaction_path.empty()) {
-            assembly.adaptation_store = std::make_unique<common_learning_in_memory_transaction_store>();
-        }
+        std::string store_error;
+        assembly.adaptation_store = make_agent_learning_transaction_store(
+            runtime_config.adaptation_transaction_backend,
+            runtime_config.adaptation_transaction_path,
+            store_error);
+        if (!assembly.adaptation_store) assembly.adaptation_error = std::move(store_error);
         if (assembly.adaptation_store) {
             assembly.adaptation_observer = std::make_unique<common_learning_transaction_observer>(
                 *assembly.adaptation_store, runtime_config.adaptation_config);

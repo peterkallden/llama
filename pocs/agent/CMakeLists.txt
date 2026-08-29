@@ -284,6 +284,48 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+# Adaptation persistence keeps the semantic transaction contract in
+# common/agent/adaptation while hosting the optional Cozo/SQLite adapters next
+# to the other host-side stores. This prevents the common contract library
+# from acquiring backend-specific dependencies.
+add_library(llama-agent-adaptation-storage
+    ../../tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
+)
+if (LLAMA_MEMORY_COZO)
+    target_sources(llama-agent-adaptation-storage PRIVATE
+        ../../tools/agent/adaptation/agent-learning-transaction-store-cozo.cpp
+        ../../tools/agent/adaptation/agent-learning-transaction-store-cozo.h
+    )
+endif()
+if (LLAMA_AGENT_STORAGE_SQLITE)
+    target_sources(llama-agent-adaptation-storage PRIVATE
+        ../../tools/agent/adaptation/agent-learning-transaction-store-sqlite.cpp
+        ../../tools/agent/adaptation/agent-learning-transaction-store-sqlite.h
+    )
+endif()
+target_include_directories(llama-agent-adaptation-storage PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation
+)
+target_compile_features(llama-agent-adaptation-storage PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-adaptation-storage PUBLIC llama-agent-core)
+if (LLAMA_MEMORY_COZO)
+    target_compile_definitions(llama-agent-adaptation-storage PRIVATE LLAMA_AGENT_ADAPTATION_USE_COZO)
+    target_include_directories(llama-agent-adaptation-storage PRIVATE ${COZO_INCLUDE_DIR})
+    target_link_libraries(llama-agent-adaptation-storage PUBLIC llama-agent-storage-cozo)
+    llama_link_cozo(llama-agent-adaptation-storage)
+endif()
+if (LLAMA_AGENT_STORAGE_SQLITE)
+    target_compile_definitions(llama-agent-adaptation-storage PRIVATE LLAMA_AGENT_ADAPTATION_USE_SQLITE)
+    target_link_libraries(llama-agent-adaptation-storage PUBLIC llama-agent-storage-sqlite)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-adaptation-storage PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-diagnostics
     ../../tools/agent/diagnostics/agent-clangd-protocol.cpp
     ../../tools/agent/diagnostics/agent-clangd-session.cpp
@@ -518,6 +560,7 @@ target_compile_features(llama-agent-runtime-host PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-runtime-host
     PUBLIC
         llama-agent-runtime-engine
+        llama-agent-adaptation-storage
         llama-agent-memory
         llama-agent-plan
         llama-common

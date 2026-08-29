@@ -435,6 +435,21 @@ if (LLAMA_AGENT_RUNTIME)
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
 
+    llama_build_and_test(test-agent-learning-transaction-backends.cpp)
+    target_link_libraries(test-agent-learning-transaction-backends PRIVATE
+        llama-agent-core llama-agent-adaptation-storage)
+    target_include_directories(test-agent-learning-transaction-backends PRIVATE
+        ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+    if (LLAMA_MEMORY_COZO)
+        target_compile_definitions(test-agent-learning-transaction-backends PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_COZO)
+    endif()
+    if (LLAMA_AGENT_STORAGE_SQLITE)
+        target_compile_definitions(test-agent-learning-transaction-backends PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_SQLITE)
+    endif()
+    set_property(TEST test-agent-learning-transaction-backends PROPERTY LABELS agent)
+
     # This contract intentionally has no llama/CLI dependency.  Keeping it as
     # a header-only CTest makes the host-neutral boundary compile-testable on
     # Android and desktop without relinking the full agent runtime.

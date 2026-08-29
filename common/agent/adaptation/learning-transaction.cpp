@@ -11,6 +11,30 @@
 
 using json = nlohmann::ordered_json;
 
+const char * common_learning_transaction_backend_name(
+        common_learning_transaction_backend backend) {
+    switch (backend) {
+        case common_learning_transaction_backend::automatic: return "auto";
+        case common_learning_transaction_backend::in_memory: return "in-memory";
+        case common_learning_transaction_backend::cozo: return "cozo";
+        case common_learning_transaction_backend::sqlite: return "sqlite";
+        case common_learning_transaction_backend::jsonl: return "jsonl";
+    }
+    return "auto";
+}
+
+bool parse_common_learning_transaction_backend(
+        const std::string & value,
+        common_learning_transaction_backend & backend) {
+    if (value == "auto") backend = common_learning_transaction_backend::automatic;
+    else if (value == "in-memory" || value == "memory") backend = common_learning_transaction_backend::in_memory;
+    else if (value == "cozo") backend = common_learning_transaction_backend::cozo;
+    else if (value == "sqlite") backend = common_learning_transaction_backend::sqlite;
+    else if (value == "jsonl") backend = common_learning_transaction_backend::jsonl;
+    else return false;
+    return true;
+}
+
 static std::string now_iso8601() {
     const auto now = std::chrono::system_clock::now();
     const auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(now);

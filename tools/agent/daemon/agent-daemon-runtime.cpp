@@ -167,6 +167,7 @@ common_agent_runtime_config make_daemon_runtime_config(const daemon_options & op
     config.memory_learning_config.min_confidence = options.memory_learn_min_confidence;
     config.memory_learning_config.min_expected_reuse = options.memory_learn_min_reuse;
     config.enable_adaptation_capture = options.adaptation_capture;
+    config.adaptation_transaction_backend = options.adaptation_transaction_backend;
     config.adaptation_transaction_path = options.adaptation_transaction_path;
     config.adaptation_config.collection_allowed = options.adaptation_collection_allowed;
     config.adaptation_config.max_evidence = options.adaptation_max_evidence;

@@ -7,6 +7,7 @@
       "capture": true,
       "collection_allowed": true,
       "max_evidence": 16,
+      "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
       "stable_model_facing_tools": [
         "data.inspect"

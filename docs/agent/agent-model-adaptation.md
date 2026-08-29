@@ -31,7 +31,9 @@ The local branch currently contains the first contract slices:
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
 - conservative host-side cause classification and recovery linking;
-- opt-in assembly wiring for in-memory or JSONL adaptation capture.
+- opt-in assembly wiring with an adaptation-store factory. The factory supports
+  in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
+  priority order.
 
 The observation identity hash and corpus bundle hash are currently stable
 non-cryptographic identity hashes used for local deduplication and test
@@ -505,6 +507,7 @@ activation. It is disabled by default:
       "capture": false,
       "collection_allowed": false,
       "max_evidence": 16,
+      "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
       "stable_model_facing_tools": ["data.inspect"]
     }
@@ -513,9 +516,11 @@ activation. It is disabled by default:
 ```
 
 With an empty `transaction_path`, enabled capture uses an assembly-local
-in-memory store. The current path-based implementation still selects the
-append-only JSONL store; the next persistence sweep will replace that implicit
-choice with an explicit `backend` selection and the order above. `collection_allowed` is an explicit collection gate: false keeps
+in-memory store. With a persistent path, `backend: "auto"` selects Cozo when
+that backend is compiled in, then SQLite. `backend: "jsonl"` is explicit and
+keeps the portable append-only representation available for export/debug.
+Explicit requests for a backend that is not compiled in fail clearly; they do
+not silently downgrade. `collection_allowed` is an explicit collection gate: false keeps
 the observer connected but prevents durable transaction collection. The
 stable-tool list is deliberately opt-in; it permits a known, validated
 model-facing contract failure to be classified as model behavior, while
