@@ -36,6 +36,19 @@ struct common_agent_model_catalog {
     std::string model_eviction = "lru";
 };
 
+// Host-facing result of selecting one named generation profile. This resolves
+// catalog-relative paths but does not load a model or apply adapter weights.
+struct common_agent_model_selection {
+    std::string profile_id;
+    std::string base_model_id;
+    std::string backend;
+    std::string path;
+    std::string mmproj;
+    size_t context_size_tokens = 0;
+    std::string load_policy;
+    std::vector<common_agent_adapter_overlay> adapters;
+};
+
 bool common_agent_validate_model_catalog(
         const common_agent_model_catalog & catalog,
         std::string & error);
@@ -57,4 +70,10 @@ bool common_agent_model_catalog_make_profile(
         const std::string & tokenizer_fingerprint,
         const std::string & chat_template_fingerprint,
         common_agent_model_profile & profile,
+        std::string & error);
+
+bool common_agent_model_catalog_resolve_profile(
+        const common_agent_model_catalog & catalog,
+        const std::string & profile_id,
+        common_agent_model_selection & selection,
         std::string & error);

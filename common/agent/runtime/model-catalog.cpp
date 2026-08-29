@@ -20,8 +20,11 @@ bool optional_bounded(const std::string & value, size_t max = 512) {
 bool valid_relative_model_path(const std::string & value) {
     if (value.empty()) return false;
     const std::filesystem::path path(value);
-    return !path.is_absolute() && path.lexically_normal() == path &&
-        value.find("..") == std::string::npos;
+    if (path.is_absolute() || path.lexically_normal() != path) return false;
+    for (const auto & component : path) {
+        if (component == "..") return false;
+    }
+    return true;
 }
 
 bool parse_base(const std::string & id, const json & value,
@@ -245,5 +248,38 @@ bool common_agent_model_catalog_make_profile(
         ? base->second.load_policy : selected->second.load_policy;
     profile.adapters = selected->second.adapters;
     if (!common_agent_validate_model_profile(profile, error)) return false;
+    return true;
+}
+
+bool common_agent_model_catalog_resolve_profile(
+        const common_agent_model_catalog & catalog,
+        const std::string & profile_id,
+        common_agent_model_selection & selection,
+        std::string & error) {
+    if (!common_agent_validate_model_catalog(catalog, error)) return false;
+    const auto selected_id = profile_id.empty() ? catalog.default_profile : profile_id;
+    const auto selected = catalog.profiles.find(selected_id);
+    if (selected == catalog.profiles.end()) {
+        error = "model profile is unavailable: " + selected_id;
+        return false;
+    }
+    const auto base = catalog.bases.find(selected->second.base_model_id);
+    if (base == catalog.bases.end() || base->second.kind != "generation") {
+        error = "model profile generation base is unavailable: " + selected->second.base_model_id;
+        return false;
+    }
+    selection = {};
+    selection.profile_id = selected_id;
+    selection.base_model_id = base->first;
+    selection.backend = base->second.backend;
+    selection.path = (std::filesystem::path(catalog.directory) / base->second.path).lexically_normal().string();
+    if (!base->second.mmproj.empty()) {
+        selection.mmproj = (std::filesystem::path(catalog.directory) / base->second.mmproj).lexically_normal().string();
+    }
+    selection.context_size_tokens = selected->second.context_size_tokens;
+    selection.load_policy = selected->second.load_policy.empty()
+        ? base->second.load_policy : selected->second.load_policy;
+    selection.adapters = selected->second.adapters;
+    error.clear();
     return true;
 }

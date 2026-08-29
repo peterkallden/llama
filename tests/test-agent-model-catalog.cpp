@@ -57,9 +57,16 @@ bool test_parse_and_resolve() {
     if (!common_agent_model_catalog_make_profile(
         catalog, {}, "sha256:base", "sha256:tokenizer", "sha256:template",
         profile, error)) return false;
-    return profile.id == "agent-default" && profile.base_model_id == "small" &&
+    if (!(profile.id == "agent-default" && profile.base_model_id == "small" &&
         profile.context_size_tokens == 4096 && profile.adapters.size() == 1 &&
-        profile.load_policy == "resident";
+        profile.load_policy == "resident")) return false;
+
+    common_agent_model_selection selection;
+    if (!common_agent_model_catalog_resolve_profile(catalog, {}, selection, error)) return false;
+    return selection.profile_id == "agent-default" &&
+        selection.base_model_id == "small" && selection.path == "/models/qwen.gguf" &&
+        selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
+        selection.adapters.size() == 1;
 }
 
 bool test_rejects_invalid_catalogs() {
