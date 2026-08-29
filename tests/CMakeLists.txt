@@ -359,6 +359,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-contract.cpp
         test-agent-prepared-generation.cpp
         test-agent-model-profile.cpp
+        test-agent-model-catalog.cpp
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
