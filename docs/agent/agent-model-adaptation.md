@@ -31,6 +31,8 @@ The local branch currently contains the first contract slices:
   split, duplicate, byte-bound, and bounded replay handling;
 - a separate one-shot adaptation worker with an atomic file queue and a
   deterministic `fake-sft` trainer for protocol testing;
+- an append-only lifecycle journal for candidate, corpus, training-job,
+  training-result, and adapter status events, with idempotency conflict checks;
 - an external training job/result contract and a validated adapter registry
   with explicit candidate/active/retired/rejected transitions.
 - conservative host-side cause classification and recovery linking;
@@ -544,6 +546,15 @@ resources, and adaptation evidence have different retention and promotion
 semantics. Payloads should be referenced by content hash where possible; the
 ledger should not duplicate large resource or tool-result bodies merely to make
 export convenient.
+
+The offline lifecycle uses a separate append-only envelope for state changes.
+`candidate`, `corpus_revision`, `training_job`, `training_result`, and `adapter`
+are subjects; approval, queue, evaluation, and activation changes are new
+events for the same subject. The envelope carries scope, source identity,
+content hash, and canonical typed JSON payload. The first implementation has
+in-memory and explicit JSONL stores. Cozo and SQLite must implement this same
+interface in the next persistence sweep; they must not invent backend-specific
+status semantics.
 
 JSONL remains useful as an explicit portable export/debug representation. It is
 not a competing normal persistence backend. The backend factory must fail
