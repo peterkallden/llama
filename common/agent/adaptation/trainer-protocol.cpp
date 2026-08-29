@@ -2,6 +2,19 @@
 
 #include <cctype>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
+
+static std::string identity_hash(const std::string & text) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char byte : text) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream out;
+    out << "identity:fnv1a64:" << std::hex << std::setw(16) << std::setfill('0') << hash;
+    return out.str();
+}
 
 static bool nonempty_bounded(const std::string & value, size_t max = 512) {
     return !value.empty() && value.size() <= max;
@@ -33,7 +46,9 @@ bool common_learning_make_training_job(
         return false;
     }
     job = {};
-    job.id = "learning://job/" + corpus.bundle_hash;
+    const auto identity = corpus.bundle_hash + "\n" + base_training_fingerprint + "\n" +
+        "qlora-sft\n" + trainer_version + "\n" + code_revision + "\n" + std::to_string(corpus.seed);
+    job.id = "learning://job/" + identity_hash(identity);
     job.corpus_revision_id = corpus.id;
     job.corpus_bundle_hash = corpus.bundle_hash;
     job.base_training_fingerprint = base_training_fingerprint;

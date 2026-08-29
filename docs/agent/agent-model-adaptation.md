@@ -807,6 +807,10 @@ normalized, and the result still requires a `sha256:` artifact hash plus a
 passed evaluation. This is validation only; no worker or automatic import is
 implemented yet.
 
+The generated job identity also includes the base fingerprint, trainer kind
+and version, code revision, and seed. The same corpus can therefore produce
+distinct, auditable training jobs without idempotency collisions.
+
 The trainer-to-registry seam is also host-owned: a validated training result
 can be projected into a candidate adapter manifest without manually copying
 corpus, trainer, base, or artifact identity. Registry admission repeats the

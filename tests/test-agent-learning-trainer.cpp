@@ -12,6 +12,10 @@ int main() {
     assert(common_learning_make_training_job(corpus, "base:qwen-small:training-v1",
         "trainer-revision-1", "fake-trainer-1", job, error));
     assert(job.seed == 99);
+    common_learning_training_job other_job;
+    assert(common_learning_make_training_job(corpus, "base:qwen-large:training-v1",
+        "trainer-revision-1", "fake-trainer-1", other_job, error));
+    assert(other_job.id != job.id);
 
     common_learning_training_result result;
     result.job_id = job.id;
