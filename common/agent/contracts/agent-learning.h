@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 
 enum class common_learning_signal_type {
     tool_failure, successful_recovery, reflection_hint, user_correction,
@@ -22,6 +23,20 @@ struct common_agent_user_correction {
 };
 
 struct common_learning_signal {
+    common_learning_signal(
+            common_learning_signal_type type = common_learning_signal_type::tool_failure,
+            std::string plan_id = {},
+            std::string step_id = {},
+            std::string tool_name = {},
+            std::string evidence_id = {},
+            std::string summary = {},
+            std::string tool_family = {},
+            std::string provider_kind = {})
+        : type(type), plan_id(std::move(plan_id)), step_id(std::move(step_id)),
+          tool_name(std::move(tool_name)), evidence_id(std::move(evidence_id)),
+          summary(std::move(summary)), tool_family(std::move(tool_family)),
+          provider_kind(std::move(provider_kind)) {}
+
     common_learning_signal_type type = common_learning_signal_type::tool_failure;
     std::string plan_id;
     std::string step_id;
