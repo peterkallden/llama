@@ -44,6 +44,12 @@ struct common_training_candidate {
     std::string redaction_method;
     common_learning_redaction_status redaction_status = common_learning_redaction_status::not_evaluated;
     common_training_candidate_status status = common_training_candidate_status::observed;
+    // Shared-corpus metadata. Provider transport is provenance, not a
+    // separate learning path. tool_family is the canonical model-facing
+    // family and must not be inferred from an MCP/OpenAPI transport prefix.
+    std::string learning_domain;
+    std::string tool_family;
+    std::string provider_kind;
 };
 
 struct common_training_candidate_policy {

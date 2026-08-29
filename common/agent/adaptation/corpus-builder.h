@@ -4,8 +4,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
+
+struct common_learning_corpus_view {
+    // Empty fields mean "all". A view is a deterministic projection of the
+    // shared corpus; it does not create a second corpus or alter qualification.
+    std::string learning_domain;
+    std::string tool_family;
+    std::set<std::string> provider_kinds;
+};
+
+bool common_learning_corpus_view_matches(
+        const common_training_candidate & candidate,
+        const common_learning_corpus_view & view);
 
 struct common_learning_corpus_policy {
     std::string builder_version = "1";
@@ -21,6 +34,7 @@ struct common_learning_corpus_policy {
     // Selected by a host/ledger query.  The builder only bounds and records
     // this selection; it does not invent semantic similarity by itself.
     std::vector<std::string> replay_candidate_ids;
+    common_learning_corpus_view view;
 };
 
 struct common_learning_corpus_revision {

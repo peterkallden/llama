@@ -425,6 +425,35 @@ that selector belongs to a later indexed-ledger/worker layer. This keeps the
 corpus artifact reproducible and prevents an implicit background query from
 changing a revision.
 
+### Shared corpus and deterministic views
+
+The corpus is shared across learning domains. Planning, tool use, research,
+and procedure learning are not separate stores or separate trainer inputs;
+they are candidate metadata and deterministic views over the same approved
+candidate set. A view may select a `learning_domain` and, for tool-use cases,
+the canonical `tool_family`. It may optionally restrict `provider_kind` when
+an evaluation specifically needs native, MCP, or OpenAPI provenance.
+
+For example, a tool-use view for `diagnostics` includes equivalent candidates
+from all three transports when they describe the same model-facing family:
+
+```json
+{
+  "view": {
+    "learning_domain": "tool_use",
+    "tool_family": "diagnostics"
+  }
+}
+```
+
+`provider_kind` is recorded on each JSONL row as provenance, not as a second
+learning taxonomy. The host must provide the canonical family; it must not
+derive `diagnostics` from a transport name such as `mcp_diagnostics`. Empty
+view fields mean all values. Filtering happens before corpus qualification,
+while approval, redaction, bounds, replay, and provenance rules remain
+unchanged. This makes a view a reproducible projection rather than a hidden
+second corpus.
+
 ### Adapter revision
 
 An adapter revision is an artifact plus a manifest. The manifest must bind it
@@ -990,6 +1019,19 @@ The current redaction check verifies an explicit policy/method/status
 attestation and never treats a caller assertion as a secret scanner. A later
 redactor may replace `caller_asserted` with `policy_checked` without changing
 the corpus boundary.
+
+### Sweep 3b — shared corpus views (completed)
+
+The corpus builder now carries optional `learning_domain`, canonical
+`tool_family`, and `provider_kind` metadata on training candidates. A
+`common_learning_corpus_view` can deterministically project the shared corpus
+for one domain/family and can optionally narrow transport provenance. The
+contract test verifies that native, MCP, and OpenAPI tool-use candidates join
+the same family view, while research candidates remain in a research view.
+
+Runtime extraction of this metadata from every provider and indexed semantic
+replay selection remain later work. The current implementation deliberately
+does not infer a family from a provider-prefixed tool name.
 
 The principal choice is JSONL versus an indexed database. JSONL is portable
 and reproducible; an index is better for scoped queries. The recommended

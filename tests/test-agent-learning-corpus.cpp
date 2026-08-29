@@ -33,6 +33,19 @@ static common_training_candidate candidate(const std::string & id, const std::st
     return value;
 }
 
+static common_training_candidate scoped_candidate(
+        const std::string & id,
+        const std::string & prompt,
+        const std::string & domain,
+        const std::string & family,
+        const std::string & provider) {
+    auto value = candidate(id, prompt);
+    value.learning_domain = domain;
+    value.tool_family = family;
+    value.provider_kind = provider;
+    return value;
+}
+
 int main() {
     std::vector<common_training_candidate> candidates = {
         candidate("learning://candidate/b", "second"),
@@ -58,6 +71,34 @@ int main() {
     common_learning_corpus_revision reordered_revision;
     require(common_learning_build_corpus(reordered, {}, reordered_revision, error), "reordered corpus build failed");
     require(reordered_revision.bundle_hash == first.bundle_hash, "transaction order changed corpus identity");
+
+    std::vector<common_training_candidate> shared = {
+        scoped_candidate("learning://candidate/native", "native tool", "tool_use", "diagnostics", "native"),
+        scoped_candidate("learning://candidate/mcp", "mcp tool", "tool_use", "diagnostics", "mcp"),
+        scoped_candidate("learning://candidate/openapi", "openapi tool", "tool_use", "diagnostics", "openapi"),
+        scoped_candidate("learning://candidate/research", "research", "research", "web", "mcp"),
+    };
+    common_learning_corpus_policy shared_policy;
+    shared_policy.view.learning_domain = "tool_use";
+    shared_policy.view.tool_family = "diagnostics";
+    common_learning_corpus_revision shared_revision;
+    require(common_learning_build_corpus(shared, shared_policy, shared_revision, error),
+            "shared tool-use view build failed");
+    require(shared_revision.candidate_ids.size() == 3, "shared tool-use view did not converge transports");
+    require(shared_revision.jsonl.find("\"provider_kind\":\"native\"") != std::string::npos,
+            "native provenance is missing from shared corpus row");
+    require(shared_revision.jsonl.find("\"provider_kind\":\"mcp\"") != std::string::npos,
+            "MCP provenance is missing from shared corpus row");
+    require(shared_revision.jsonl.find("\"provider_kind\":\"openapi\"") != std::string::npos,
+            "OpenAPI provenance is missing from shared corpus row");
+    common_learning_corpus_policy research_policy;
+    research_policy.view.learning_domain = "research";
+    common_learning_corpus_revision research_revision;
+    require(common_learning_build_corpus(shared, research_policy, research_revision, error),
+            "research view build failed");
+    require(research_revision.candidate_ids.size() == 1 &&
+            research_revision.jsonl.find("research") != std::string::npos,
+            "research view selected the wrong candidates");
 
     candidates.front().status = common_training_candidate_status::observed;
     require(!common_learning_build_corpus(candidates, {}, first, error), "unapproved candidate was admitted");

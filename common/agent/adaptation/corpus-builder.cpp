@@ -50,12 +50,24 @@ static std::string candidate_fingerprint(const common_training_candidate & candi
           << candidate.redaction_policy_id << '\n'
           << candidate.redaction_method << '\n'
           << static_cast<int>(candidate.redaction_status) << '\n'
-          << static_cast<int>(candidate.status);
+          << static_cast<int>(candidate.status) << '\n'
+          << candidate.learning_domain << '\n'
+          << candidate.tool_family << '\n'
+          << candidate.provider_kind;
     return value.str();
 }
 
 static bool contains(const std::set<std::string> & values, const std::string & value) {
     return values.find(value) != values.end();
+}
+
+bool common_learning_corpus_view_matches(
+        const common_training_candidate & candidate,
+        const common_learning_corpus_view & view) {
+    if (!view.learning_domain.empty() && candidate.learning_domain != view.learning_domain) return false;
+    if (!view.tool_family.empty() && candidate.tool_family != view.tool_family) return false;
+    if (!view.provider_kinds.empty() && !contains(view.provider_kinds, candidate.provider_kind)) return false;
+    return true;
 }
 
 bool common_learning_build_corpus(
@@ -98,6 +110,7 @@ bool common_learning_build_corpus(
     common_training_candidate_policy candidate_policy;
     std::map<std::string, std::string> fingerprints;
     for (const auto & candidate : candidates) {
+        if (!common_learning_corpus_view_matches(candidate, policy.view)) continue;
         if (contains(revoked, candidate.id) || candidate.status == common_training_candidate_status::revoked) {
             error = "corpus contains a revoked candidate";
             return false;
@@ -161,6 +174,9 @@ bool common_learning_build_corpus(
             {"redaction", {{"policy_id", candidate->redaction_policy_id},
                             {"method", candidate->redaction_method},
                             {"status", common_learning_redaction_status_name(candidate->redaction_status)}}},
+            {"learning_domain", candidate->learning_domain},
+            {"tool_family", candidate->tool_family},
+            {"provider_kind", candidate->provider_kind},
             {"input", candidate->approved_prompt},
             {"target", candidate->approved_target},
         }.dump();
