@@ -5,6 +5,7 @@
 #include "agent/agent-context-budgets.h"
 #include "agent/agent-runtime.h"
 #include "agent/learning/memory-learning.h"
+#include "agent/adaptation/learning-transaction.h"
 #include "agent/runtime/agent-inference-contracts.h"
 
 #include "chat.h"
@@ -45,6 +46,11 @@ struct common_agent_runtime_config {
     // disables automatic continuation for compatibility.
     size_t max_continuations = 2;
     common_agent_context_token_estimator context_token_estimator;
+    // Adaptation capture is opt-in. An empty transaction path uses an
+    // assembly-local store, which is useful for embedding hosts and tests.
+    bool enable_adaptation_capture = false;
+    common_learning_transaction_observer_config adaptation_config;
+    std::string adaptation_transaction_path;
 };
 
 struct common_agent_runtime_build_config {
@@ -55,6 +61,9 @@ struct common_agent_runtime_build_config {
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
     size_t max_continuations = 2;
     common_agent_context_token_estimator context_token_estimator;
+    bool enable_adaptation_capture = false;
+    common_learning_transaction_observer_config adaptation_config;
+    std::string adaptation_transaction_path;
 };
 
 common_agent_inference_options make_agent_inference_options(
@@ -78,6 +87,9 @@ struct common_agent_runtime_assembly {
     std::unique_ptr<common_reflection_engine> reflector;
     std::unique_ptr<common_memory_candidate_extractor> candidate_extractor;
     std::unique_ptr<common_memory_post_turn_learner> memory_learner;
+    std::unique_ptr<common_learning_transaction_store> adaptation_store;
+    std::unique_ptr<common_learning_transaction_observer> adaptation_observer;
+    std::string adaptation_error;
     std::unique_ptr<common_agent_tool_runtime> tool_runtime;
     std::unique_ptr<common_agent_runtime> runtime;
 };

@@ -19,6 +19,9 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.enable_memory_learning = build_config.enable_memory_learning;
     config.memory_learning_config = std::move(build_config.memory_learning_config);
     config.embed_memory = std::move(build_config.embed_memory);
+    config.enable_adaptation_capture = build_config.enable_adaptation_capture;
+    config.adaptation_config = std::move(build_config.adaptation_config);
+    config.adaptation_transaction_path = std::move(build_config.adaptation_transaction_path);
     return config;
 }
 
@@ -60,6 +63,25 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         assembly.tool_runtime = make_provider_agent_tool_runtime(*tool_view);
     }
 
+    if (runtime_config.enable_adaptation_capture) {
+        if (!runtime_config.adaptation_transaction_path.empty()) {
+            auto persistent_store = std::make_unique<common_learning_jsonl_transaction_store>();
+            std::string store_error;
+            if (persistent_store->open(runtime_config.adaptation_transaction_path, store_error)) {
+                assembly.adaptation_store = std::move(persistent_store);
+            } else {
+                assembly.adaptation_error = std::move(store_error);
+            }
+        }
+        if (!assembly.adaptation_store && runtime_config.adaptation_transaction_path.empty()) {
+            assembly.adaptation_store = std::make_unique<common_learning_in_memory_transaction_store>();
+        }
+        if (assembly.adaptation_store) {
+            assembly.adaptation_observer = std::make_unique<common_learning_transaction_observer>(
+                *assembly.adaptation_store, runtime_config.adaptation_config);
+        }
+    }
+
     assembly.runtime = std::make_unique<common_agent_runtime>(
         plan_store,
         *assembly.planner,
@@ -72,5 +94,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         runtime_config.generation_config.context_size_tokens,
         static_cast<size_t>(std::max(0, runtime_config.generation_config.n_predict)),
         runtime_config.context_token_estimator);
+    if (assembly.adaptation_observer) {
+        assembly.runtime->set_adaptation_observer(assembly.adaptation_observer.get());
+    }
     return assembly;
 }
