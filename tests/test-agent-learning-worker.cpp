@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 
-using json = nlohmann::json;
+using plain_json = nlohmann::json;
 
 static void require(bool condition, const std::string & message) {
     if (!condition) {
@@ -92,12 +92,12 @@ int main() {
     const auto artifact_bytes = read_file(artifact);
     require(result.artifact_sha256 == "sha256:" + hash_sha256_hex(artifact_bytes.data(), artifact_bytes.size()),
             "worker artifact hash was not reproducible");
-    const auto state = json::parse(read_file(succeeded_directory / "state.json"));
+    const auto state = plain_json::parse(read_file(succeeded_directory / "state.json"));
     require(state.at("state") == "succeeded", "terminal worker state is incorrect");
     require(state.at("worker_id") == "local-worker", "worker identity was not persisted");
     require(state.at("lease_expires_at_epoch_seconds") == 0, "terminal worker lease was not cleared");
 
-    const auto capabilities = json::parse(agent_learning_worker_capabilities_json());
+    const auto capabilities = plain_json::parse(agent_learning_worker_capabilities_json());
     require(!capabilities.at("cuda").get<bool>(), "fake worker unexpectedly advertises CUDA");
     require(capabilities.at("trainer_kinds").at(0) == "fake-sft", "worker capability contract is incorrect");
     require(capabilities.at("max_parallel_jobs") == 1, "worker parallelism contract is incorrect");
@@ -129,7 +129,7 @@ int main() {
     require(agent_learning_worker_run_once(root, bounded_limits, report, error),
             "bounded worker run failed at queue level");
     require(report.state == agent_learning_worker_job_state::failed, "corpus byte bound was ignored");
-    require(json::parse(read_file(root / "failed" / queue_key(bounded_job.id) / "state.json")).at("safe_summary") ==
+    require(plain_json::parse(read_file(root / "failed" / queue_key(bounded_job.id) / "state.json")).at("safe_summary") ==
                 "corpus bundle exceeds worker byte bound", "bounded job failure was not explained");
 
     const auto stale_key = "job-stale-running";
@@ -140,7 +140,7 @@ int main() {
     require(common_learning_training_job_to_json(stale_job, stale_job_json, error),
             "stale job could not be serialized");
     write_file(stale_directory / "job.json", stale_job_json);
-    write_file(stale_directory / "state.json", json{
+    write_file(stale_directory / "state.json", plain_json{
         {"state", "running"},
         {"job_id", stale_job.id},
         {"safe_summary", "job claimed"},
@@ -149,7 +149,7 @@ int main() {
         {"lease_expires_at_epoch_seconds", 1},
     }.dump());
     require(agent_learning_worker_run_once(root, {}, report, error), "stale worker run failed");
-    const auto stale_state = json::parse(read_file(root / "failed" / stale_key / "state.json"));
+    const auto stale_state = plain_json::parse(read_file(root / "failed" / stale_key / "state.json"));
     require(stale_state.at("safe_summary") == "worker lease expired; job may be retried",
             "stale running job was not recovered");
 
