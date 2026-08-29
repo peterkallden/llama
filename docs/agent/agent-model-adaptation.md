@@ -551,9 +551,10 @@ The offline lifecycle uses a separate append-only envelope for state changes.
 `candidate`, `corpus_revision`, `training_job`, `training_result`, and `adapter`
 are subjects; approval, queue, evaluation, and activation changes are new
 events for the same subject. The envelope carries scope, source identity,
-content hash, and canonical typed JSON payload. The first implementation has
-in-memory and explicit JSONL stores. Cozo and SQLite must implement this same
-interface in the next persistence sweep; they must not invent backend-specific
+content hash, and canonical typed JSON payload. The implementation has
+in-memory and explicit JSONL stores, plus the same factory contract for the
+optional Cozo and SQLite host adapters. Each backend uses its own
+`agent_learning_lifecycle` relation/table and must not invent backend-specific
 status semantics.
 
 JSONL remains useful as an explicit portable export/debug representation. It is

@@ -290,17 +290,22 @@ endif()
 # from acquiring backend-specific dependencies.
 add_library(llama-agent-adaptation-storage
     ../../tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
+    ../../tools/agent/adaptation/agent-learning-lifecycle-store-factory.cpp
 )
 if (LLAMA_MEMORY_COZO)
     target_sources(llama-agent-adaptation-storage PRIVATE
         ../../tools/agent/adaptation/agent-learning-transaction-store-cozo.cpp
         ../../tools/agent/adaptation/agent-learning-transaction-store-cozo.h
+        ../../tools/agent/adaptation/agent-learning-lifecycle-store-cozo.cpp
+        ../../tools/agent/adaptation/agent-learning-lifecycle-store-cozo.h
     )
 endif()
 if (LLAMA_AGENT_STORAGE_SQLITE)
     target_sources(llama-agent-adaptation-storage PRIVATE
         ../../tools/agent/adaptation/agent-learning-transaction-store-sqlite.cpp
         ../../tools/agent/adaptation/agent-learning-transaction-store-sqlite.h
+        ../../tools/agent/adaptation/agent-learning-lifecycle-store-sqlite.cpp
+        ../../tools/agent/adaptation/agent-learning-lifecycle-store-sqlite.h
     )
 endif()
 target_include_directories(llama-agent-adaptation-storage PUBLIC
