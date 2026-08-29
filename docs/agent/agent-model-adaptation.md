@@ -64,12 +64,13 @@ existing SHA-256 stores. The corpus builder now enforces candidate-level
 redaction attestation, candidate revocation, held-out exclusion, deterministic
 splits, provenance, duplicate handling, and bounded host-selected replay.
 The redaction implementation is still an explicit caller/policy seam rather
-than a PII detector; semantic replay selection, an actual trainer worker,
-model-profile loading, production residency, and inference activation remain
-later sweeps. The current registry is metadata-only and does not load an
-adapter. The artifact verifier and evaluation report only establish import and
-promotion evidence; they do not train, evaluate, or activate a model by
-themselves.
+than a PII detector; semantic replay selection, an actual external trainer,
+and automatic inference activation remain later sweeps. The runtime now has a
+process-wide residency seam with CLI and server-context loaders, but the
+daemon/bootstrap migration to named profiles is still pending. The current
+registry is metadata-only and does not load an adapter. The artifact verifier
+and evaluation report only establish import and promotion evidence; they do
+not train, evaluate, or activate a model by themselves.
 
 The model-profile catalog and router are documented in
 [Agent model residency and multi-model scheduling](agent-model-residency.md).
@@ -279,10 +280,11 @@ right conceptual precedent, but it is not a model-training system.
 
 The deployed compatibility path still has one generation model (`model.path`)
 and an optional separate embedding model (`model.embedding_model`). The
-host-neutral catalog and profile contracts now describe the target migration,
-but the current resident loader has not yet consumed them process-wide. The
-remaining gap is implementation of shared model residency and profile-aware
-scheduling, not another adaptation or training contract.
+host-neutral catalog, profile contracts, residency manager and backend loaders
+now describe and implement the target seam, but daemon/bootstrap still needs
+to make that catalog the effective serving configuration. The remaining gap is
+production wiring and profile-aware scheduling behavior, not another
+adaptation or training contract.
 
 ## Why a separate adaptation lifecycle is needed
 
@@ -792,13 +794,15 @@ The host configuration now accepts the following catalog shape:
 }
 ```
 
-This is a supported host-configuration shape for catalog parsing and profile
-resolution, but it is not yet a supported multi-model serving configuration.
+This is a supported host-configuration shape for catalog parsing, profile
+resolution and the residency-loader seam, but it is not yet the effective
+multi-model serving configuration for every daemon/bootstrap path.
 `model.profile` overrides the catalog default; the host resolver returns the
 selected base path, `mmproj`, context, load policy, and adapter references.
-Bootstrap/model loading still has to consume that selection. Until that next
-sweep is complete, the existing `model.path` remains the effective inference
-input. It intentionally separates base-model identity, adapter identity,
+Bootstrap/model loading still has to consume that selection in all production
+paths. Until that migration is complete, the existing `model.path` remains the
+effective inference input for legacy hosts. It intentionally separates
+base-model identity, adapter identity,
 runnable profile, and host-owned routing. The adapter registry owns artifact
 paths and validation; production profile configuration should reference
 adapter ids, not arbitrary paths.

@@ -87,6 +87,8 @@ set(AGENT_RUNTIME_ENGINE_SOURCES
     ../../tools/agent/runtime/agent-runtime-event-projector.cpp
     ../../tools/agent/runtime/agent-inference-capacity-gate.cpp
     ../../tools/agent/runtime/agent-runtime-session.cpp
+    ../../tools/agent/runtime/agent-model-residency.cpp
+    ../../tools/agent/runtime/agent-model-loaders.cpp
     ../../tools/agent/runtime/agent-server-context-host.cpp
     ../../tools/agent/runtime/agent-server-generation.cpp
     ../../tools/agent/runtime/agent-server-inference.cpp
@@ -896,6 +898,18 @@ target_include_directories(${TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/server
 )
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
+set(TARGET llama-agent-model-residency-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-model-residency-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-engine)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # Optional model-backed smoke. It exercises one real resident inference turn
@@ -1904,6 +1918,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-resident-smoke
+    llama-agent-model-residency-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
     llama-agent-continuation-smoke
@@ -1968,6 +1983,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-resident-smoke
+    llama-agent-model-residency-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
     llama-agent-continuation-smoke
@@ -2049,6 +2065,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-tool-provider-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-provider-smoke>)
     set_property(TEST llama-agent-tool-provider-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-model-residency-ctest
+        COMMAND $<TARGET_FILE:llama-agent-model-residency-smoke>)
+    set_property(TEST llama-agent-model-residency-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-adaptation-e2e-ctest
         COMMAND $<TARGET_FILE:llama-agent-adaptation-e2e-smoke>)

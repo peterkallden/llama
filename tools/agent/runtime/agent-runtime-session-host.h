@@ -6,6 +6,7 @@
 #include "agent/contracts/agent-events.h"
 #include "agent/contracts/agent-failures.h"
 #include "agent/contracts/agent-result.h"
+#include "agent-model-residency.h"
 
 #include <functional>
 #include <memory>
@@ -20,13 +21,15 @@ struct common_agent_runtime_session_host_runtime_key {
     std::string project_id;
     common_memory_scope memory_scope = common_memory_scope::session;
     common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string model_profile_id;
 
     bool operator==(const common_agent_runtime_session_host_runtime_key & other) const {
         return session_id == other.session_id &&
                namespace_id == other.namespace_id &&
                project_id == other.project_id &&
                memory_scope == other.memory_scope &&
-               plan_scope == other.plan_scope;
+               plan_scope == other.plan_scope &&
+               model_profile_id == other.model_profile_id;
     }
 };
 
@@ -50,6 +53,7 @@ struct common_agent_runtime_session_host_turn_request {
     // Daemon request identity is kept separate from the model turn identity,
     // but travels with the host-owned turn for checkpoint validation.
     std::string request_id;
+    std::string model_profile_id;
 };
 
 struct common_agent_runtime_session_host_turn_result {
@@ -100,6 +104,7 @@ struct common_agent_runtime_session_host_config {
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
 };
 
 struct common_agent_runtime_session_host_build_config {
@@ -118,6 +123,7 @@ struct common_agent_runtime_session_host_build_config {
         const common_agent_runtime_session_host_turn_request & request,
         common_agent_runtime_tooling & tooling,
         std::string & error)> tooling_resolver;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
 };
 
 common_agent_runtime_session_host_config make_agent_runtime_session_host_config(

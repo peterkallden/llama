@@ -111,6 +111,7 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
         std::move(config.installed_blueprint_candidates),
         std::move(config.tooling),
         std::move(config.tooling_resolver),
+        std::move(config.model_residency),
     };
 }
 
@@ -128,6 +129,7 @@ common_agent_runtime_session_host_runtime_key common_agent_runtime_session_host:
         request.project_id,
         request.memory_scope,
         request.plan_scope,
+        request.model_profile_id,
     };
 }
 
@@ -284,7 +286,9 @@ bool common_agent_runtime_session_host::ensure_runtime(
             make_base_turn_request(request),
             {},
             config.installed_blueprint_candidates,
-            config.tooling));
+            config.tooling,
+            config.model_residency,
+            request.model_profile_id));
     active_runtime_key = std::move(requested_key);
     error.clear();
     return true;

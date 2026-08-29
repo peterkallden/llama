@@ -12,6 +12,7 @@
 #include <vector>
 
 class common_agent_server_context_host;
+struct common_agent_runtime_resident_model;
 
 struct common_agent_model_load_key {
     std::string model;
@@ -36,6 +37,9 @@ struct common_agent_runtime_loaded_model_state {
     std::string profile_cache_key;
     std::vector<llama_adapter_lora *> adapters;
     std::vector<float> adapter_scales;
+    const common_chat_templates * chat_templates_view = nullptr;
+    bool externally_owned = false;
+    std::shared_ptr<void> residency_owner;
 
     void reset();
 };
@@ -68,6 +72,16 @@ bool initialize_agent_runtime_session(
     agent_inference_backend backend,
     bool memory_enabled,
     const std::string & fallback_reason,
+    common_agent_runtime_session & session,
+    std::string & error);
+
+// Attach a model loaded by the process-wide residency manager.  The model
+// resource remains owned by the manager; this session only owns its context
+// and keeps the resource alive through residency_owner.
+bool initialize_agent_runtime_session_from_resident_model(
+    const common_agent_inference_options & options,
+    agent_inference_backend backend,
+    const std::shared_ptr<common_agent_runtime_resident_model> & resident_model,
     common_agent_runtime_session & session,
     std::string & error);
 

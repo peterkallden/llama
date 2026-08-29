@@ -13,9 +13,13 @@ The goal is to make `llama-agent` able to run the same agent turn from different
 The multi-model runtime boundary is documented separately in
 [Agent model residency and multi-model scheduling](agent-model-residency.md).
 This document describes the existing session, turn and backend contracts; the
-residency document describes the process-wide model pool that will sit above
-them. Model handles may be shared, but session contexts and KV state remain
+residency document describes the process-wide model pool that sits above
+them. Model resources may be shared, but session contexts and KV state remain
 isolated.
+The first residency manager and CLI/`server-context` loader adapters now exist
+behind that boundary. A host-selected profile can be attached to a session
+without sharing its inference context or KV state. Legacy daemon/bootstrap
+paths still use `model.path` until catalog migration is enabled explicitly.
 
 The Android work follows the same boundary. Model and inference settings that
 are needed to create a runtime session live in the host-neutral
@@ -4096,10 +4100,10 @@ The generation request/result contract is narrower than top-level CLI state. Req
 
 Today the runtime session can also be reused when the host keeps the same backend and inference options. The current CLI adapter still chooses to reset after each completed turn, but a resident host no longer needs a different core contract to keep the model session alive across turns.
 
-This is still single-model session reuse, not multi-model residency. The current
-session owns one loaded model and one inference context. A future process-wide
-residency manager must acquire a host-selected profile before entering this
-session path, keep the profile pinned through planning, tools, reflection and
+This session still owns one inference context, while the new process-wide
+residency manager can own and share the loaded model resource. A host-selected
+profile is acquired before entering this session path and remains pinned while
+the resident runtime is alive, including planning, tools, reflection and
 research for the full turn, and release it only after a terminal state.
 
 The reuse logic is now split a little more explicitly inside the resident session as well. There is a small model-load key for properties that really affect model loading, and a separate inference-context key for properties that still require rebuilding the active inference session. In the current resident backends that means turn-shaped settings such as `n_predict` no longer look like model or context identity changes.

@@ -3,6 +3,7 @@
 #include "../cli/agent-cli-inference.h"
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
 #include "../runtime/agent-server-context-host.h"
+#include "agent-model-loaders.h"
 #endif
 
 #include "chat.h"
@@ -102,15 +103,18 @@ void common_agent_runtime_loaded_model_state::reset() {
     adapter_scales.clear();
     chat_templates.reset();
     server_context_host.reset();
-    if (model != nullptr) {
+    if (model != nullptr && !externally_owned) {
         llama_model_free(model);
-        model = nullptr;
     }
+    model = nullptr;
     loaded = false;
     backend = agent_inference_backend::cli;
     key = {};
     profile_id.clear();
     profile_cache_key.clear();
+    chat_templates_view = nullptr;
+    externally_owned = false;
+    residency_owner.reset();
 }
 
 void common_agent_runtime_inference_context_state::reset() {
@@ -131,6 +135,9 @@ common_agent_runtime_session & common_agent_runtime_session::operator=(common_ag
         other.loaded_model.adapter_scales.clear();
         other.loaded_model.profile_id.clear();
         other.loaded_model.profile_cache_key.clear();
+        other.loaded_model.chat_templates_view = nullptr;
+        other.loaded_model.externally_owned = false;
+        other.loaded_model.residency_owner.reset();
         other.inference_context.initialized = false;
     }
     return *this;
@@ -198,6 +205,7 @@ bool initialize_agent_runtime_session(
                 return false;
             }
             session.loaded_model.chat_templates = common_chat_templates_init(session.loaded_model.model, "");
+            session.loaded_model.chat_templates_view = session.loaded_model.chat_templates.get();
             session.loaded_model.loaded = true;
             session.loaded_model.backend = backend;
             session.loaded_model.key = requested_model_key;
@@ -225,7 +233,7 @@ bool initialize_agent_runtime_session(
             options,
             backend,
             session.loaded_model.model,
-            session.loaded_model.chat_templates.get(),
+            session.loaded_model.chat_templates_view,
             session.loaded_model.server_context_host,
             session.loaded_model.adapters,
             session.loaded_model.adapter_scales,
@@ -240,6 +248,80 @@ bool initialize_agent_runtime_session(
     session.inference_context.session.profile_id = session.loaded_model.profile_id;
     session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
     error.clear();
+    return true;
+}
+
+bool initialize_agent_runtime_session_from_resident_model(
+    const common_agent_inference_options & options,
+    agent_inference_backend backend,
+    const std::shared_ptr<common_agent_runtime_resident_model> & resident_model,
+    common_agent_runtime_session & session,
+    std::string & error) {
+    error.clear();
+    const auto loaded = common_agent_runtime_loaded_model_cast(resident_model);
+    if (!loaded) {
+        error = "residency loader returned an unknown model resource";
+        return false;
+    }
+    const std::string expected_backend = backend == agent_inference_backend::cli
+        ? "cli" : "server-context";
+    if (loaded->selection.backend != expected_backend) {
+        error = "resident model backend does not match the requested inference backend";
+        return false;
+    }
+    if (!loaded->selection.adapters.empty()) {
+        error = "resident model adapter overlays are not supported by the runtime loaders yet";
+        return false;
+    }
+    if (backend == agent_inference_backend::cli && loaded->model == nullptr) {
+        error = "resident CLI model resource has no llama model";
+        return false;
+    }
+    if (backend == agent_inference_backend::server_context &&
+            !loaded->server_context_host) {
+        error = "resident server-context model resource has no server context host";
+        return false;
+    }
+
+    const auto requested_context_key = make_agent_inference_context_key(options, backend);
+    if (session.inference_context.initialized &&
+            session.inference_context.session.inference &&
+            common_agent_inference_context_key_match(
+                session.inference_context.key, requested_context_key)) {
+        error.clear();
+        return true;
+    }
+
+    session.reset();
+    session.loaded_model.model = loaded->model;
+    session.loaded_model.chat_templates_view = loaded->chat_templates.get();
+    session.loaded_model.server_context_host = loaded->server_context_host;
+    session.loaded_model.loaded = true;
+    session.loaded_model.backend = backend;
+    session.loaded_model.key = make_agent_model_load_key(options);
+    session.loaded_model.profile_id = loaded->selection.profile_id;
+    session.loaded_model.profile_cache_key =
+        common_agent_model_selection_cache_key(loaded->selection);
+    session.loaded_model.externally_owned = true;
+    session.loaded_model.residency_owner = resident_model;
+
+    if (!build_agent_inference_session(
+            options,
+            backend,
+            session.loaded_model.model,
+            session.loaded_model.chat_templates_view,
+            session.loaded_model.server_context_host,
+            session.loaded_model.adapters,
+            session.loaded_model.adapter_scales,
+            session.inference_context.session,
+            error)) {
+        session.reset();
+        return false;
+    }
+    session.inference_context.initialized = true;
+    session.inference_context.key = requested_context_key;
+    session.inference_context.session.profile_id = session.loaded_model.profile_id;
+    session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
     return true;
 }
 
@@ -321,7 +403,7 @@ bool apply_agent_runtime_model_profile(
             options,
             session.loaded_model.backend,
             session.loaded_model.model,
-            session.loaded_model.chat_templates.get(),
+            session.loaded_model.chat_templates_view,
             session.loaded_model.server_context_host,
             session.loaded_model.adapters,
             session.loaded_model.adapter_scales,

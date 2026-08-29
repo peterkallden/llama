@@ -26,6 +26,7 @@ public:
             std::string & evicted_key,
             std::string & error);
     bool end_turn(const std::string & key, std::string & error);
+    bool abort_turn(const std::string & key, std::string & error);
 
     size_t capacity() const { return max_entries; }
     size_t size() const { return entries.size(); }

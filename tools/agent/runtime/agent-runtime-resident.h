@@ -3,6 +3,7 @@
 #include "../runtime/agent-runtime-host-contracts.h"
 #include "../runtime/agent-runtime-tooling.h"
 #include "../runtime/agent-runtime-turn.h"
+#include "agent-model-residency.h"
 
 #include <string>
 #include <vector>
@@ -39,6 +40,8 @@ struct common_agent_runtime_resident_runtime_config {
     std::string current_plan_id;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::string model_profile_id;
 };
 
 common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime_config(
@@ -47,7 +50,9 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
     common_agent_runtime_turn_request base_turn_request,
     std::string current_plan_id = {},
     std::vector<common_blueprint_candidate> installed_blueprint_candidates = {},
-    common_agent_runtime_tooling tooling = {});
+    common_agent_runtime_tooling tooling = {},
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency = nullptr,
+    std::string model_profile_id = {});
 
 class common_agent_runtime_resident_runtime {
 public:
@@ -88,5 +93,8 @@ private:
     std::string resident_current_plan_id;
     std::vector<common_blueprint_candidate> installed_blueprint_candidates;
     common_agent_runtime_tooling tooling;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::string model_profile_id;
+    common_agent_runtime_model_resident_handle resident_model_handle;
     common_agent_runtime_resident_host host;
 };

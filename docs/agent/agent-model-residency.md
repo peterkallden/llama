@@ -26,6 +26,18 @@ runtime session still owns one loaded model and one inference context in
 `tools/agent/runtime/agent-runtime-session.*`. The profile router and cache are
 therefore contracts and admission logic, not a multi-model loader yet.
 
+The first runtime seam is now implemented in
+`tools/agent/runtime/agent-model-residency.*`: it consumes the catalog
+selection contract, reserves and pins profiles, performs idle LRU eviction,
+and calls a backend-neutral loader outside its mutex. The concrete
+`agent-model-loaders.*` adapters use the existing llama.cpp file loader for
+`cli` and the existing `common_agent_server_context_host` for
+`server-context`. A runtime session can attach one of these resident resources
+while retaining ownership of its own inference context and KV state. The
+remaining integration work is to route all production daemon/bootstrap paths
+through a configured catalog rather than the legacy single-model default and
+to add a real two-GGUF model-backed smoke.
+
 ## Ownership model
 
 The intended lifetime split is:
@@ -234,4 +246,3 @@ eviction. Batching and backend-specific GPU scheduling remain later work.
 - automatically activating adaptation artifacts;
 - treating model count as a complete CUDA/VRAM budget;
 - adding a second scheduler inside a backend adapter.
-

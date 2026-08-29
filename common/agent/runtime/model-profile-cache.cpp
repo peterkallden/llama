@@ -76,3 +76,21 @@ bool common_agent_model_profile_cache::end_turn(
     error = "model profile cache key is not loaded";
     return false;
 }
+
+bool common_agent_model_profile_cache::abort_turn(
+        const std::string & key,
+        std::string & error) {
+    const auto it = std::find_if(entries.begin(), entries.end(),
+        [&](const auto & entry) { return entry.key == key; });
+    if (it == entries.end()) {
+        error = "model profile cache key is not loaded";
+        return false;
+    }
+    if (it->active_turns != 1) {
+        error = "model profile cache reservation has unexpected active turns";
+        return false;
+    }
+    entries.erase(it);
+    error.clear();
+    return true;
+}
