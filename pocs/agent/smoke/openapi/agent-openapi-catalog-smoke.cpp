@@ -10,12 +10,44 @@ int main() {
     const nlohmann::json document = {
         {"openapi", "3.0.3"},
         {"components", {
-            {"schemas", {{"SaleId", {{"type", "string"}}}}},
+            {"schemas", {
+                {"SaleId", {{"type", "string"}}},
+                {"SaleInput", {
+                    {"type", "object"},
+                    {"properties", {{"quantity", {{"type", "integer"}}}}},
+                    {"required", {"quantity"}},
+                }},
+                {"SaleResponse", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"id", {{"$ref", "#/components/schemas/SaleId"}}},
+                        {"status", {{"type", "string"}}},
+                    }},
+                }},
+            }},
             {"parameters", {
                 {"search", {{"name", "search"}, {"in", "query"},
                     {"schema", {{"type", "string"}}}}},
                 {"perPage", {{"name", "per-page"}, {"in", "query"},
                     {"schema", {{"type", "integer"}}}}},
+                {"saleId", {{"name", "id"}, {"in", "path"}, {"required", true},
+                    {"schema", {{"type", "string"}}}}},
+            }},
+            {"requestBodies", {
+                {"CreateSale", {
+                    {"required", true},
+                    {"content", {{"application/json", {
+                        {"schema", {{"$ref", "#/components/schemas/SaleInput"}}},
+                    }}}},
+                }},
+            }},
+            {"responses", {
+                {"SaleCreated", {
+                    {"description", "Created sale"},
+                    {"content", {{"application/json", {
+                        {"schema", {{"$ref", "#/components/schemas/SaleResponse"}}},
+                    }}}},
+                }},
             }},
             {"securitySchemes", {
                 {"bearerAuth", {{"type", "http"}, {"scheme", "bearer"}, {"bearerFormat", "JWT"}}},
@@ -32,11 +64,15 @@ int main() {
                         {{"$ref", "#/components/parameters/perPage"}},
                     }},
                     {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "array"}, {"items", {{"type", "object"}}}}}}}}}}}}}}},
-                {"post", {{"operationId", "createSale"}, {"summary", "Create sale"}}},
+                {"post", {
+                    {"operationId", "createSale"}, {"summary", "Create sale"},
+                    {"requestBody", {{"$ref", "#/components/requestBodies/CreateSale"}}},
+                    {"responses", {{"201", {{"$ref", "#/components/responses/SaleCreated"}}}}},
+                }},
             }},
             {"/sales/{id}", {
+                {"parameters", {{{"$ref", "#/components/parameters/saleId"}}}},
                 {"get", {{"operationId", "getSale"}, {"summary", "Get sale"},
-                    {"parameters", {{{"name", "id"}, {"in", "path"}, {"required", true}, {"schema", {{"type", "string"}}}}}},
                     {"responses", {{"200", {{"content", {{"application/json", {{"schema", {{"type", "object"}}}}}}}}}}}}},
                 {"delete", {{"operationId", "deleteSale"}}},
             }},
@@ -94,6 +130,10 @@ int main() {
     const auto create_sale = std::find_if(catalog.operations.begin(), catalog.operations.end(),
         [](const agent_openapi_operation & operation) { return operation.operation_id == "createSale"; });
     assert(create_sale != catalog.operations.end() && create_sale->requires_confirmation);
+    assert(create_sale->input_schema_json.find("\"quantity\"") != std::string::npos);
+    assert(create_sale->input_schema_json.find("\"body\"") != std::string::npos);
+    assert(create_sale->input_schema_json.find("\"required\":[\"body\"]") != std::string::npos);
+    assert(create_sale->result_schema_json.find("\"status\"") != std::string::npos);
 
     config.exposure = "include";
     config.operations.clear();
@@ -108,6 +148,11 @@ int main() {
     assert(catalog.relations[0].collection_operation_id == "listSales");
     assert(catalog.relations[0].item_operation_id == "getSale");
     assert(catalog.relations[0].item_parameter == "id");
+    const auto get_sale = std::find_if(catalog.operations.begin(), catalog.operations.end(),
+        [](const agent_openapi_operation & operation) { return operation.operation_id == "getSale"; });
+    assert(get_sale != catalog.operations.end());
+    assert(std::find(get_sale->path_parameters.begin(), get_sale->path_parameters.end(), "id") !=
+        get_sale->path_parameters.end());
 
     agent_openapi_result_projection projection;
     assert(classify_agent_openapi_result_json(
@@ -137,6 +182,13 @@ int main() {
     assert(!make_agent_openapi_item_references(
         catalog, "listSales", R"([{"id":"s1"},{"id":"s2"}])",
         small_limits, references, error));
+
+    auto external_ref_document = document;
+    external_ref_document["paths"]["/sales"]["get"]["responses"]["200"] = {
+        {"$ref", "https://example.test/openapi.json#/components/responses/Sales"}
+    };
+    assert(!build_agent_openapi_catalog(external_ref_document, config, catalog, error));
+    assert(error.find("external") != std::string::npos);
 
     std::cout << "agent-openapi-catalog-smoke: ok\n";
     return 0;

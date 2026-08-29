@@ -88,8 +88,10 @@ struct agent_openapi_catalog {
     std::vector<agent_openapi_security_scheme> security_schemes;
 };
 
-// Parse an OpenAPI 3 document and apply the host-owned exposure policy. This
-// function deliberately does not resolve references or perform HTTP calls.
+// Parse an OpenAPI 3 document and apply the host-owned exposure policy. Local
+// component references for parameters, schemas, request bodies, responses and
+// headers are resolved within bounded depth; external refs never cause HTTP
+// calls.
 bool build_agent_openapi_catalog(
     const nlohmann::json & document,
     const agent_host_openapi_provider_config & config,

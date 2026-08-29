@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <set>
 
 namespace {
@@ -44,116 +45,229 @@ bool policy_allows(
     return access == "read" || access == "write" || access == "destructive";
 }
 
-void resolve_local_refs(const nlohmann::json & document, nlohmann::json & value, std::set<std::string> & seen) {
+std::string decode_json_pointer_token(std::string token) {
+    size_t cursor = 0;
+    while ((cursor = token.find('~', cursor)) != std::string::npos) {
+        if (token.compare(cursor, 2, "~1") == 0) {
+            token.replace(cursor, 2, "/");
+        } else if (token.compare(cursor, 2, "~0") == 0) {
+            token.replace(cursor, 2, "~");
+        } else {
+            ++cursor;
+        }
+    }
+    return token;
+}
+
+const nlohmann::json * local_component_target(
+        const nlohmann::json & document,
+        const std::string & ref,
+        std::string & error) {
+    const std::string prefix = "#/components/";
+    if (ref.rfind(prefix, 0) != 0) {
+        error = "OpenAPI external or non-component refs are not supported: " + ref;
+        return nullptr;
+    }
+    const std::string pointer = ref.substr(prefix.size());
+    const size_t separator = pointer.find('/');
+    const std::string section = decode_json_pointer_token(
+        separator == std::string::npos ? pointer : pointer.substr(0, separator));
+    static const std::set<std::string> supported_sections = {
+        "headers", "parameters", "requestBodies", "responses", "schemas"
+    };
+    if (!supported_sections.count(section)) {
+        error = "OpenAPI component ref section is not supported: " + section;
+        return nullptr;
+    }
+    const auto components_it = document.find("components");
+    if (components_it == document.end() || !components_it->is_object()) {
+        error = "OpenAPI ref requires a components object: " + ref;
+        return nullptr;
+    }
+    const auto section_it = components_it->find(section);
+    if (section_it == components_it->end()) {
+        error = "OpenAPI ref section is missing: " + ref;
+        return nullptr;
+    }
+    const nlohmann::json * current = &*section_it;
+    size_t cursor = separator == std::string::npos ? pointer.size() : separator + 1;
+    while (cursor <= pointer.size()) {
+        const size_t next = pointer.find('/', cursor);
+        const std::string token = decode_json_pointer_token(
+            pointer.substr(cursor, next == std::string::npos ? std::string::npos : next - cursor));
+        if (token.empty() || !current->is_object()) {
+            error = "OpenAPI ref target is invalid: " + ref;
+            return nullptr;
+        }
+        const auto item_it = current->find(token);
+        if (item_it == current->end()) {
+            error = "OpenAPI ref target was not found: " + ref;
+            return nullptr;
+        }
+        current = &*item_it;
+        if (next == std::string::npos) break;
+        cursor = next + 1;
+    }
+    return current;
+}
+
+bool resolve_local_refs(
+        const nlohmann::json & document,
+        nlohmann::json & value,
+        std::set<std::string> & active_refs,
+        std::string & error,
+        size_t depth = 0) {
+    constexpr size_t max_ref_depth = 32;
+    if (depth > max_ref_depth) {
+        error = "OpenAPI component ref nesting exceeds the supported depth";
+        return false;
+    }
     if (value.is_object() && value.contains("$ref") && value["$ref"].is_string()) {
         const std::string ref = value["$ref"].get<std::string>();
-        const std::string prefix = "#/components/schemas/";
-        if (ref.rfind(prefix, 0) == 0 && seen.insert(ref).second) {
-            const auto it = document.find("components");
-            if (it != document.end() && it->is_object() && (*it).contains("schemas") && (*it)["schemas"].is_object()) {
-                const auto schema_it = (*it)["schemas"].find(ref.substr(prefix.size()));
-                if (schema_it != (*it)["schemas"].end()) {
-                    value = *schema_it;
-                    resolve_local_refs(document, value, seen);
+        if (active_refs.count(ref)) return true;
+        const auto * target = local_component_target(document, ref, error);
+        if (target == nullptr) return false;
+        active_refs.insert(ref);
+        nlohmann::json resolved = *target;
+        if (!resolve_local_refs(document, resolved, active_refs, error, depth + 1)) {
+            active_refs.erase(ref);
+            return false;
+        }
+        if (value.is_object() && resolved.is_object()) {
+            for (const auto & item : value.items()) {
+                if (item.key() == "$ref") continue;
+                auto sibling = item.value();
+                if (!resolve_local_refs(document, sibling, active_refs, error, depth + 1)) {
+                    active_refs.erase(ref);
+                    return false;
                 }
+                resolved[item.key()] = std::move(sibling);
             }
         }
-        return;
+        active_refs.erase(ref);
+        value = std::move(resolved);
+        return true;
     }
-    if (value.is_object()) for (auto & item : value.items()) resolve_local_refs(document, item.value(), seen);
-    if (value.is_array()) for (auto & item : value) resolve_local_refs(document, item, seen);
+    if (value.is_object()) {
+        for (auto & item : value.items()) {
+            if (!resolve_local_refs(document, item.value(), active_refs, error, depth + 1)) return false;
+        }
+    } else if (value.is_array()) {
+        for (auto & item : value) {
+            if (!resolve_local_refs(document, item, active_refs, error, depth + 1)) return false;
+        }
+    }
+    return true;
 }
 
-void resolve_parameter_ref(
+bool operation_input_schema(
         const nlohmann::json & document,
-        nlohmann::json & parameter,
-        std::set<std::string> & seen) {
-    if (!parameter.is_object() || !parameter.contains("$ref") ||
-            !parameter["$ref"].is_string()) {
-        return;
-    }
-    const std::string ref = parameter["$ref"].get<std::string>();
-    const std::string prefix = "#/components/parameters/";
-    if (ref.rfind(prefix, 0) != 0 || !seen.insert(ref).second) return;
-    const auto components = document.value("components", nlohmann::json::object());
-    if (!components.is_object()) return;
-    const auto parameters = components.value("parameters", nlohmann::json::object());
-    if (!parameters.is_object()) return;
-    const auto it = parameters.find(ref.substr(prefix.size()));
-    if (it == parameters.end() || !it->is_object()) return;
-    parameter = *it;
-    resolve_parameter_ref(document, parameter, seen);
-}
-
-std::string operation_input_schema(
-        const nlohmann::json & document,
+        const nlohmann::json & path_item,
         const nlohmann::json & operation,
         std::vector<std::string> & path_parameters,
-        std::vector<std::string> & query_parameters) {
+        std::vector<std::string> & query_parameters,
+        std::string & error,
+        std::string & output) {
     nlohmann::json schema = {
         {"type", "object"},
         {"properties", nlohmann::json::object()},
         {"required", nlohmann::json::array()},
     };
     nlohmann::json inferable = nlohmann::json::array();
-    if (operation.contains("parameters") && operation["parameters"].is_array()) {
-        for (const auto & raw_parameter : operation["parameters"]) {
+    std::vector<std::string> parameter_order;
+    std::map<std::string, nlohmann::json> parameter_schemas;
+    std::map<std::string, bool> parameter_required;
+    std::map<std::string, bool> parameter_inferable;
+    auto collect_parameters = [&](const nlohmann::json & parameters) {
+        if (!parameters.is_array()) return true;
+        for (const auto & raw_parameter : parameters) {
             auto parameter = raw_parameter;
-            std::set<std::string> parameter_refs;
-            resolve_parameter_ref(document, parameter, parameter_refs);
+            std::set<std::string> active_refs;
+            if (!resolve_local_refs(document, parameter, active_refs, error)) return false;
             if (!parameter.is_object() || !parameter.value("name", "").size()) continue;
             const std::string name = parameter.value("name", "");
-            if (parameter.value("in", "") == "path") path_parameters.push_back(name);
-            if (parameter.value("in", "") == "query") query_parameters.push_back(name);
-            schema["properties"][name] = parameter.value("schema", nlohmann::json({{"type", "string"}}));
-            std::set<std::string> seen;
-            resolve_local_refs(document, schema["properties"][name], seen);
-            if (parameter.value("x-agent-inferable", false)) {
-                schema["properties"][name]["x-agent-inferable"] = true;
-                inferable.push_back(name);
-            }
-            if (parameter.value("required", false)) schema["required"].push_back(name);
+            const std::string location = parameter.value("in", "");
+            if (location == "path" && std::find(path_parameters.begin(), path_parameters.end(), name) == path_parameters.end()) path_parameters.push_back(name);
+            if (location == "query" && std::find(query_parameters.begin(), query_parameters.end(), name) == query_parameters.end()) query_parameters.push_back(name);
+            if (parameter_schemas.find(name) == parameter_schemas.end()) parameter_order.push_back(name);
+            auto parameter_schema = parameter.value("schema", nlohmann::json({{"type", "string"}}));
+            std::set<std::string> schema_refs;
+            if (!resolve_local_refs(document, parameter_schema, schema_refs, error)) return false;
+            parameter_schemas[name] = std::move(parameter_schema);
+            parameter_required[name] = parameter.value("required", false);
+            parameter_inferable[name] = parameter.value("x-agent-inferable", false);
         }
+        return true;
+    };
+    if (!collect_parameters(path_item.value("parameters", nlohmann::json::array())) ||
+            !collect_parameters(operation.value("parameters", nlohmann::json::array()))) return false;
+    for (const auto & name : parameter_order) {
+        schema["properties"][name] = parameter_schemas[name];
+        if (parameter_inferable[name]) {
+            schema["properties"][name]["x-agent-inferable"] = true;
+            inferable.push_back(name);
+        }
+        if (parameter_required[name]) schema["required"].push_back(name);
     }
     if (operation.contains("requestBody") && operation["requestBody"].is_object()) {
-        const auto & content = operation["requestBody"].value("content", nlohmann::json::object());
+        auto request_body = operation["requestBody"];
+        std::set<std::string> active_refs;
+        if (!resolve_local_refs(document, request_body, active_refs, error)) return false;
+        const auto & content = request_body.value("content", nlohmann::json::object());
         if (content.is_object() && content.contains("application/json")) {
             const auto & media = content["application/json"];
             if (media.is_object() && media.contains("schema")) {
                 schema["properties"]["body"] = media["schema"];
-                std::set<std::string> seen;
-                resolve_local_refs(document, schema["properties"]["body"], seen);
+                std::set<std::string> schema_refs;
+                if (!resolve_local_refs(document, schema["properties"]["body"], schema_refs, error)) return false;
             }
-            if (operation["requestBody"].value("required", false)) schema["required"].push_back("body");
+            if (request_body.value("required", false)) schema["required"].push_back("body");
         }
     }
     if (!inferable.empty()) schema["x-agent-autowire-fields"] = std::move(inferable);
     if (schema["required"].empty()) schema.erase("required");
-    return schema.dump();
+    output = schema.dump();
+    return true;
 }
 
-std::string operation_result_schema(
+bool operation_result_schema(
         const nlohmann::json & document,
-        const nlohmann::json & operation) {
+        const nlohmann::json & operation,
+        std::string & error,
+        std::string & output) {
     if (!operation.contains("responses") || !operation["responses"].is_object()) {
-        return R"({"type":"object"})";
+        output = R"({"type":"object"})";
+        return true;
     }
-    const nlohmann::json * response = nullptr;
+    nlohmann::json response;
+    bool have_response = false;
     for (const auto code : {"200", "201", "202", "default"}) {
         const auto it = operation["responses"].find(code);
         if (it != operation["responses"].end() && it->is_object()) {
-            response = &*it;
+            std::set<std::string> active_refs;
+            response = *it;
+            if (!resolve_local_refs(document, response, active_refs, error)) return false;
+            have_response = true;
             break;
         }
     }
-    if (response == nullptr) return R"({"type":"object"})";
-    const auto content = response->value("content", nlohmann::json::object());
+    if (!have_response) {
+        output = R"({"type":"object"})";
+        return true;
+    }
+    const auto content = response.value("content", nlohmann::json::object());
     if (!content.is_object() || !content.contains("application/json") ||
-            !content["application/json"].is_object()) return R"({"type":"object"})";
+            !content["application/json"].is_object()) {
+        output = R"({"type":"object"})";
+        return true;
+    }
     auto schema = content["application/json"].value("schema", nlohmann::json({{"type", "object"}}));
-    std::set<std::string> seen;
-    resolve_local_refs(document, schema, seen);
-    return schema.dump();
+    std::set<std::string> active_refs;
+    if (!resolve_local_refs(document, schema, active_refs, error)) {
+        return false;
+    }
+    output = schema.dump();
+    return true;
 }
 
 std::string collection_path_for(const std::string & path, std::string & item_parameter) {
@@ -334,6 +448,7 @@ bool build_agent_openapi_catalog(
         for (auto operation_it = path_it.value().begin(); operation_it != path_it.value().end(); ++operation_it) {
             const std::string method = operation_it.key();
             if (!is_http_method(method) || !operation_it.value().is_object()) continue;
+            const auto & path_item = path_it.value();
             const auto & value = operation_it.value();
             agent_openapi_operation operation;
             operation.method = method;
@@ -358,8 +473,11 @@ bool build_agent_openapi_catalog(
                     operation.security_definitions.push_back(*scheme_it);
                 }
             }
-            operation.input_schema_json = operation_input_schema(document, value, operation.path_parameters, operation.query_parameters);
-            operation.result_schema_json = operation_result_schema(document, value);
+            if (!operation_input_schema(document, path_item, value, operation.path_parameters,
+                    operation.query_parameters, error, operation.input_schema_json) ||
+                    !operation_result_schema(document, value, error, operation.result_schema_json)) {
+                return false;
+            }
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;

@@ -243,7 +243,33 @@ host diagnostic explaining why.
 
 The provider creates a stable tool name from the provider identity and
 OpenAPI `operationId`, for example `sales.searchSales`. The current schema
-projection supports OpenAPI parameters and an `application/json` request body.
+projection supports OpenAPI parameters, an `application/json` request body and
+the local component references commonly used by generated specifications.
+The host resolves bounded local references for `parameters`, `schemas`,
+`requestBodies`, `responses` and `headers`, including nested schema references.
+Path-level parameters are inherited by operations. External references and
+unsupported component sections are rejected; the host never downloads another
+document while building a catalog.
+
+For example, both of these forms are supported:
+
+```json
+"requestBody": { "$ref": "#/components/requestBodies/CreateVehicle" }
+```
+
+and:
+
+```json
+"responses": {
+  "200": { "$ref": "#/components/responses/VehicleResponse" }
+}
+```
+
+The model still receives one bounded JSON argument object. A resolved request
+body is exposed under its `body` property, and a resolved response schema is
+used to describe the result; the raw HTTP response is not changed. Recursive
+references remain bounded and are not expanded indefinitely.
+
 The model supplies one flat JSON object whose keys are the OpenAPI parameter
 and body names, for example:
 
