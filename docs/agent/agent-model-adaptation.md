@@ -44,6 +44,10 @@ The local branch currently contains the first contract slices:
 - a host-neutral model-profile contract for a base-model identity and bounded
   adapter overlays, including a cache key that isolates model, tokenizer,
   template, context, and adapter state;
+- a host-level adaptation orchestrator and two smokes: a model-free end-to-end
+  lifecycle smoke using an explicit evaluator seam, and a model-agnostic
+  resident-inference smoke that verifies adaptation-ledger capture can be
+  reopened after a real model turn;
 - conservative host-side cause classification and recovery linking;
 - opt-in assembly wiring with an adaptation-store factory. The factory supports
   in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
@@ -521,6 +525,44 @@ loadable model adapter. The worker does not inspect the adaptation ledger,
 access raw resources, start automatically from the daemon, or activate/import
 an adapter. PEFT/QLoRA is a later trainer profile behind the same job/result
 contract.
+
+### Local orchestration smokes
+
+The host-level orchestration smoke is `llama-agent-adaptation-e2e-smoke`. It
+is model-free and uses an explicit fixture evaluator only to prove composition
+of the host contracts:
+
+```text
+transaction ledger
+  -> approved candidate
+  -> deterministic corpus revision
+  -> queued fake-sft job
+  -> one-shot worker result (evaluation = not_run)
+  -> injected passed evaluation report
+  -> artifact hash verification
+  -> candidate -> canary -> active overlay resolution
+```
+
+The smoke does not imply that the fake artifact is a loadable adapter or that
+the fixture evaluator is a quality evaluator. A real evaluator remains an
+external host-controlled step.
+
+The separate `llama-agent-model-adaptation-smoke` runs one real resident
+inference turn with adaptation capture enabled and reopens the configured
+ledger afterward. It is deliberately model-agnostic:
+
+```bash
+llama-agent-model-adaptation-smoke \
+  --model models/your-generation-model.gguf \
+  --threads 3 --n-predict 32
+```
+
+The same model can be supplied through `LLAMA_AGENT_MODEL`; `--model` takes
+precedence. Any compatible generation model may be used, including small
+Qwen, Phi, Mistral, or other GGUF variants. If no model is available, the
+CTest entry returns skip code 77 rather than passing falsely. The model smoke
+is an inference/ledger integration check, not a training or adapter-promotion
+run.
 
 ### Remote worker
 
