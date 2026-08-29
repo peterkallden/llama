@@ -557,6 +557,13 @@ optional Cozo and SQLite host adapters. Each backend uses its own
 `agent_learning_lifecycle` relation/table and must not invent backend-specific
 status semantics.
 
+The host-side journal can be inspected or fed an already curated envelope with
+the separate `llama-agent-adaptation-admin` utility. It supports `--list` and
+`--append FILE` over the same `--backend`/`--path` selection as the adaptation
+storage factory. This is deliberately an operator interface: it does not
+expose lifecycle mutation or approval as model-facing tools, and it does not
+activate an adapter as a side effect of appending a record.
+
 JSONL remains useful as an explicit portable export/debug representation. It is
 not a competing normal persistence backend. The backend factory must fail
 clearly when a requested backend is not compiled in; `auto` may select Cozo or
