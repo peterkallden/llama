@@ -28,4 +28,9 @@ struct common_learning_signal {
     std::string tool_name;
     std::string evidence_id;
     std::string summary;
+    // Host-owned canonical metadata. These fields keep learning transport
+    // neutral: provider_kind is provenance, while tool_family is the
+    // model-facing family used for policy and corpus views.
+    std::string tool_family;
+    std::string provider_kind;
 };

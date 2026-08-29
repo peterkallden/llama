@@ -85,6 +85,10 @@ int main() {
     require(common_learning_build_corpus(shared, shared_policy, shared_revision, error),
             "shared tool-use view build failed");
     require(shared_revision.candidate_ids.size() == 3, "shared tool-use view did not converge transports");
+    const auto shared_manifest = nlohmann::json::parse(shared_revision.manifest_json);
+    require(shared_manifest["view"]["learning_domain"] == "tool_use" &&
+            shared_manifest["view"]["tool_family"] == "diagnostics",
+            "corpus view was not recorded in the manifest");
     require(shared_revision.jsonl.find("\"provider_kind\":\"native\"") != std::string::npos,
             "native provenance is missing from shared corpus row");
     require(shared_revision.jsonl.find("\"provider_kind\":\"mcp\"") != std::string::npos,

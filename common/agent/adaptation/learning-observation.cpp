@@ -77,7 +77,8 @@ std::string common_learning_observation_canonical(const common_learning_observat
         out << common_learning_signal_type_name(signal.type) << '\x1f'
             << signal.plan_id << '\x1f' << signal.step_id << '\x1f'
             << signal.tool_name << '\x1f' << signal.evidence_id << '\x1f'
-            << signal.summary << '\n';
+            << signal.summary << '\x1f' << signal.tool_family << '\x1f'
+            << signal.provider_kind << '\n';
     }
     for (const auto & evidence_id : observation.evidence_ids) out << evidence_id << '\n';
     return out.str();

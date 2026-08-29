@@ -24,6 +24,8 @@ static common_agent_result failure_result() {
         "tool_execution", "data.inspect", "step-1", "evidence-1", false,
         "tool failed", "{}"});
     value.learning_signals.push_back({common_learning_signal_type::tool_failure, "plan-1", "step-1", "data.inspect", "evidence-1", "tool failed"});
+    value.learning_signals.front().tool_family = "diagnostics";
+    value.learning_signals.front().provider_kind = "openapi";
     return value;
 }
 
@@ -40,6 +42,8 @@ int main() {
     assert(error.empty() && transactions.size() == 1);
     assert(transactions.front().observation.scope.project_id == "project-1");
     assert(transactions.front().observation.cause == common_learning_cause::host_contract);
+    assert(transactions.front().observation.signals.front().tool_family == "diagnostics");
+    assert(transactions.front().observation.signals.front().provider_kind == "openapi");
     assert(transactions.front().observation.recovery_of_signal_id.empty());
     assert(transactions.front().observation.verification == common_learning_verification::unverified);
 

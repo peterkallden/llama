@@ -153,6 +153,9 @@ than asking the model to certify itself:
 - relation between a failure and a later recovery;
 - host classification of the suspected cause: model behavior, host contract,
   policy, missing evidence, or project knowledge;
+- canonical tool family and provider kind (`native`, `mcp`, or `openapi`) when
+  a tool signal is involved; the provider kind is provenance and the family is
+  the model-facing taxonomy;
 - verification status and idempotency key;
 - bounded source references and content hashes.
 

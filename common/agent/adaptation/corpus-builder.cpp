@@ -61,6 +61,14 @@ static bool contains(const std::set<std::string> & values, const std::string & v
     return values.find(value) != values.end();
 }
 
+static json view_json(const common_learning_corpus_view & view) {
+    return {
+        {"learning_domain", view.learning_domain},
+        {"tool_family", view.tool_family},
+        {"provider_kinds", std::vector<std::string>(view.provider_kinds.begin(), view.provider_kinds.end())},
+    };
+}
+
 bool common_learning_corpus_view_matches(
         const common_training_candidate & candidate,
         const common_learning_corpus_view & view) {
@@ -160,6 +168,7 @@ bool common_learning_build_corpus(
     revision.seed = policy.seed;
     revision.held_out_candidate_ids.assign(held_out.begin(), held_out.end());
     revision.replay_candidate_ids.assign(replay.begin(), replay.end());
+    revision.view = policy.view;
     std::map<std::string, size_t> split_counts;
     std::ostringstream jsonl;
     for (const auto * candidate : selected) {
@@ -193,6 +202,7 @@ bool common_learning_build_corpus(
         {"candidate_ids", candidate_array},
         {"replay_candidate_ids", revision.replay_candidate_ids},
         {"held_out_candidate_ids", revision.held_out_candidate_ids},
+        {"view", view_json(revision.view)},
         {"transaction_ids", std::vector<std::string>(transaction_ids.begin(), transaction_ids.end())},
         {"split_counts", split_counts},
         {"redaction_policy_id", policy.redaction_policy_id},

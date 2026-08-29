@@ -45,6 +45,7 @@ struct common_learning_corpus_revision {
     std::vector<std::string> candidate_ids;
     std::vector<std::string> replay_candidate_ids;
     std::vector<std::string> held_out_candidate_ids;
+    common_learning_corpus_view view;
     std::string jsonl;
     std::string manifest_json;
     std::string bundle_hash;

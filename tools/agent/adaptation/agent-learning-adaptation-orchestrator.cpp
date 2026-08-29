@@ -76,6 +76,9 @@ std::string candidate_payload(const common_training_candidate & candidate) {
         {"hypothesis", candidate.hypothesis},
         {"approved_prompt", candidate.approved_prompt},
         {"approved_target", candidate.approved_target},
+        {"learning_domain", candidate.learning_domain},
+        {"tool_family", candidate.tool_family},
+        {"provider_kind", candidate.provider_kind},
     }.dump();
 }
 
@@ -85,6 +88,11 @@ std::string corpus_payload(const common_learning_corpus_revision & corpus) {
         {"bundle_hash", corpus.bundle_hash},
         {"candidate_ids", corpus.candidate_ids},
         {"replay_candidate_ids", corpus.replay_candidate_ids},
+        {"view", {
+            {"learning_domain", corpus.view.learning_domain},
+            {"tool_family", corpus.view.tool_family},
+            {"provider_kinds", std::vector<std::string>(corpus.view.provider_kinds.begin(), corpus.view.provider_kinds.end())},
+        }},
     }.dump();
 }
 

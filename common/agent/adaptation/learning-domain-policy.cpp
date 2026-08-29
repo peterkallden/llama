@@ -30,7 +30,7 @@ bool common_learning_domain_policy_allows(
 
     for (const auto & signal : result.learning_signals) {
         if (signal.tool_name.empty()) continue;
-        const auto family = tool_family(signal.tool_name);
+        const auto family = signal.tool_family.empty() ? tool_family(signal.tool_name) : signal.tool_family;
         const auto override = policy.tool_use_families.find(family);
         const bool enabled = override == policy.tool_use_families.end()
             ? policy.tool_use : override->second;

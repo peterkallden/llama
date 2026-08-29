@@ -24,6 +24,10 @@ bool test_transport_neutral_tool_family_filter() {
             tool_result("dataset.inspect"))) return false;
     if (common_learning_domain_policy_allows(policy, request, plan,
             tool_result("mcp_diagnostics"))) return false;
+    auto canonical = tool_result("mcp_diagnostics.compile");
+    canonical.learning_signals.front().tool_family = "diagnostics";
+    canonical.learning_signals.front().provider_kind = "mcp";
+    if (!common_learning_domain_policy_allows(policy, request, plan, canonical)) return false;
     return true;
 }
 

@@ -52,6 +52,8 @@ static json signal_to_json(const common_learning_signal & signal) {
         {"tool_name", signal.tool_name},
         {"evidence_id", signal.evidence_id},
         {"summary", signal.summary},
+        {"tool_family", signal.tool_family},
+        {"provider_kind", signal.provider_kind},
     };
 }
 
@@ -71,6 +73,8 @@ static bool signal_from_json(const json & value, common_learning_signal & signal
     signal.tool_name = value.value("tool_name", "");
     signal.evidence_id = value.value("evidence_id", "");
     signal.summary = value.value("summary", "");
+    signal.tool_family = value.value("tool_family", "");
+    signal.provider_kind = value.value("provider_kind", "");
     return true;
 }
 
