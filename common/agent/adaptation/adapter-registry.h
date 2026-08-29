@@ -49,6 +49,21 @@ bool common_learning_make_adapter_manifest(
         common_learning_adapter_manifest & manifest,
         std::string & error);
 
+// A trainer result may legitimately be `not_run`: training and evaluation
+// are separate lifecycle stages.  Use this constructor after a host-owned
+// evaluation report has passed all gates; it binds the report to the
+// otherwise unevaluated result without rewriting the trainer's record.
+bool common_learning_make_evaluated_adapter_manifest(
+        const common_learning_training_job & job,
+        const common_learning_training_result & result,
+        const common_learning_evaluation_report & evaluation,
+        const std::string & base_architecture,
+        const std::string & serving_model_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & chat_template_fingerprint,
+        common_learning_adapter_manifest & manifest,
+        std::string & error);
+
 class common_learning_adapter_registry {
 public:
     bool admit(const common_learning_adapter_manifest & manifest, std::string & error);

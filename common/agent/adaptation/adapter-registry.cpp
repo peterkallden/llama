@@ -17,7 +17,7 @@ static bool safe_artifact_path(const std::string & value) {
         value.find("..") == std::string::npos;
 }
 
-bool common_learning_make_adapter_manifest(
+static bool make_adapter_manifest_from_result(
         const common_learning_training_job & job,
         const common_learning_training_result & result,
         const std::string & base_architecture,
@@ -26,7 +26,6 @@ bool common_learning_make_adapter_manifest(
         const std::string & chat_template_fingerprint,
         common_learning_adapter_manifest & manifest,
         std::string & error) {
-    error.clear();
     if (!common_learning_validate_training_result(job, result, error)) return false;
     if (!nonempty(base_architecture) || !nonempty(serving_model_fingerprint) ||
             !nonempty(tokenizer_fingerprint) || !nonempty(chat_template_fingerprint)) {
@@ -47,6 +46,50 @@ bool common_learning_make_adapter_manifest(
     manifest.artifact_sha256 = result.artifact_sha256;
     manifest.evaluation_revision = result.evaluation_revision;
     manifest.evaluation_status = result.evaluation_status;
+    return true;
+}
+
+bool common_learning_make_adapter_manifest(
+        const common_learning_training_job & job,
+        const common_learning_training_result & result,
+        const std::string & base_architecture,
+        const std::string & serving_model_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & chat_template_fingerprint,
+        common_learning_adapter_manifest & manifest,
+        std::string & error) {
+    error.clear();
+    if (!make_adapter_manifest_from_result(job, result, base_architecture,
+            serving_model_fingerprint, tokenizer_fingerprint,
+            chat_template_fingerprint, manifest, error)) return false;
+    return common_learning_validate_adapter_manifest(manifest, error);
+}
+
+bool common_learning_make_evaluated_adapter_manifest(
+        const common_learning_training_job & job,
+        const common_learning_training_result & result,
+        const common_learning_evaluation_report & evaluation,
+        const std::string & base_architecture,
+        const std::string & serving_model_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & chat_template_fingerprint,
+        common_learning_adapter_manifest & manifest,
+        std::string & error) {
+    error.clear();
+    if (!make_adapter_manifest_from_result(job, result, base_architecture,
+            serving_model_fingerprint, tokenizer_fingerprint,
+            chat_template_fingerprint, manifest, error)) return false;
+    if (!common_learning_validate_evaluation_report(evaluation, error)) return false;
+    if (evaluation.status != "passed" || evaluation.candidate_adapter_id != result.adapter_id ||
+            evaluation.corpus_revision_id != job.corpus_revision_id ||
+            evaluation.corpus_bundle_hash != job.corpus_bundle_hash ||
+            evaluation.base_training_fingerprint != job.base_training_fingerprint ||
+            evaluation.revision_id != result.evaluation_revision) {
+        error = "evaluation report does not match training result";
+        return false;
+    }
+    manifest.evaluation_revision = evaluation.revision_id;
+    manifest.evaluation_status = evaluation.status;
     return common_learning_validate_adapter_manifest(manifest, error);
 }
 

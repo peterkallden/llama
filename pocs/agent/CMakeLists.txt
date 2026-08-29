@@ -1755,6 +1755,27 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core vendor::hash)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Host-level end-to-end adaptation smoke.  The evaluator is an explicit test
+# seam; the smoke proves the worker, artifact-import and promotion lifecycle
+# without loading a model or pretending that training itself evaluated it.
+set(TARGET llama-agent-adaptation-e2e-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/agent-learning-adaptation-e2e-smoke.cpp
+    ../../tools/agent/adaptation/agent-learning-adaptation-orchestrator.cpp
+    ../../tools/agent/adaptation/agent-learning-worker.cpp
+    ../../tools/agent/adaptation/agent-learning-adapter-import.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation
+)
+target_link_libraries(${TARGET} PRIVATE
+    llama-agent-adaptation-storage
+    vendor::hash
+)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-adaptation-admin)
 add_executable(${TARGET}
     ../../tools/agent/adaptation/agent-learning-admin-main.cpp
@@ -1864,6 +1885,7 @@ set(AGENT_RUNTIME_TARGETS
 
 set(AGENT_TEST_BUILD_TARGETS
     llama-agent-cli-document-table-smoke
+    llama-agent-adaptation-e2e-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -1926,6 +1948,7 @@ if (LLAMA_MEMORY_COZO)
 endif()
 
 set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
+    llama-agent-adaptation-e2e-smoke
     llama-agent-resident-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -2008,6 +2031,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-tool-provider-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-provider-smoke>)
     set_property(TEST llama-agent-tool-provider-ctest PROPERTY LABELS agent)
+
+    add_test(NAME llama-agent-adaptation-e2e-ctest
+        COMMAND $<TARGET_FILE:llama-agent-adaptation-e2e-smoke>)
+    set_property(TEST llama-agent-adaptation-e2e-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-tool-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-tool-runtime-smoke>)
