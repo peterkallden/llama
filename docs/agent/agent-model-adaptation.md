@@ -676,7 +676,14 @@ activation. It is disabled by default:
       "max_evidence": 16,
       "backend": "jsonl",
       "transaction_path": "var/agent/learning.jsonl",
-      "stable_model_facing_tools": ["data.inspect"]
+      "stable_model_facing_tools": ["data.inspect"],
+      "domains": {
+        "planning": true,
+        "tool_use": false,
+        "research": true,
+        "procedure_learning": true,
+        "families": {"data": true}
+      }
     }
   }
 }
@@ -693,7 +700,11 @@ stable-tool list is deliberately opt-in; it permits a known, validated
 model-facing contract failure to be classified as model behavior, while
 binding, policy, transport, and provider failures remain host-contract
 evidence. This configuration does not create SFT pairs or change the active
-model.
+model. The optional `domains` object filters collection by learning purpose;
+family overrides use canonical model-facing families and apply equally to
+native, MCP, and OpenAPI tools. It does not create separate provider corpora;
+the corpus builder can later create deterministic views from approved
+candidates.
 
 The same complete host-configuration example is available at
 [`examples/agent-host-config-adaptation.json`](../../examples/agent-host-config-adaptation.json).

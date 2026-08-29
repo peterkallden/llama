@@ -11,7 +11,16 @@
       "transaction_path": "var/agent/learning.jsonl",
       "stable_model_facing_tools": [
         "data.inspect"
-      ]
+      ],
+      "domains": {
+        "planning": true,
+        "tool_use": false,
+        "research": true,
+        "procedure_learning": true,
+        "families": {
+          "data": true
+        }
+      }
     }
   },
   "model": {
