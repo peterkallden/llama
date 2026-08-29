@@ -709,6 +709,12 @@ includes the ordered overlay list, so changing an adapter or scale cannot
 reuse a resident context created for another profile. It does not itself
 resolve adapter paths, load a model, switch profiles, or authorize a candidate.
 
+At the host boundary, registry resolution verifies every referenced overlay
+before a runtime loader sees it. Only `active` adapters are runtime-resolvable;
+each one must match the profile's serving-model, tokenizer, and chat-template
+fingerprints. A baseline profile with no overlays remains valid. Canary adapters
+are evaluation material, not an implicit serving choice.
+
 A session is pinned to a profile for the duration of a turn. The host may
 perform a bounded, visible escalation to another profile, but a model cannot
 silently choose a larger model or activate an adapter. The resident load key

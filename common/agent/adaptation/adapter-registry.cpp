@@ -119,6 +119,34 @@ bool common_learning_adapter_registry::stage_canary(
     return true;
 }
 
+bool common_learning_adapter_registry::resolve_active_overlays(
+        const common_agent_model_profile & profile,
+        std::vector<common_learning_adapter_manifest> & overlays,
+        std::string & error) const {
+    overlays.clear();
+    if (!common_agent_validate_model_profile(profile, error)) return false;
+    for (const auto & requested : profile.adapters) {
+        const auto selected = std::find_if(manifests.begin(), manifests.end(),
+                [&](const auto & item) { return item.id == requested.adapter_id; });
+        if (selected == manifests.end()) {
+            error = "model profile adapter is not registered: " + requested.adapter_id;
+            return false;
+        }
+        if (selected->status != common_learning_adapter_status::active) {
+            error = "model profile adapter is not active: " + requested.adapter_id;
+            return false;
+        }
+        if (selected->serving_model_fingerprint != profile.base_model_fingerprint ||
+                selected->tokenizer_fingerprint != profile.tokenizer_fingerprint ||
+                selected->chat_template_fingerprint != profile.chat_template_fingerprint) {
+            error = "model profile adapter identity does not match base model";
+            return false;
+        }
+        overlays.push_back(*selected);
+    }
+    return true;
+}
+
 bool common_learning_adapter_registry::activate(const std::string & id, std::string & error) {
     error.clear();
     auto selected = std::find_if(manifests.begin(), manifests.end(), [&](const auto & item) { return item.id == id; });

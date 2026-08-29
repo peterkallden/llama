@@ -2,6 +2,7 @@
 
 #include "agent/adaptation/evaluation-contract.h"
 #include "agent/adaptation/trainer-protocol.h"
+#include "agent/runtime/model-profile.h"
 
 #include <string>
 #include <vector>
@@ -55,6 +56,10 @@ public:
             const std::string & id,
             const common_learning_evaluation_report & report,
             std::string & error);
+    bool resolve_active_overlays(
+            const common_agent_model_profile & profile,
+            std::vector<common_learning_adapter_manifest> & overlays,
+            std::string & error) const;
     bool activate(const std::string & id, std::string & error);
     bool retire(const std::string & id, std::string & error);
     bool reject(const std::string & id, std::string & error);

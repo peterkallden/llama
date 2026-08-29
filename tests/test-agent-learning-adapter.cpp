@@ -41,6 +41,18 @@ static common_learning_evaluation_report evaluation_for(
     return value;
 }
 
+static common_agent_model_profile profile_for(const std::string & adapter_id) {
+    common_agent_model_profile value;
+    value.id = "agent-runtime";
+    value.base_model_id = "qwen-small";
+    value.base_model_fingerprint = "sha256:base-serving";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.chat_template_fingerprint = "sha256:template";
+    value.context_size_tokens = 4096;
+    value.adapters.push_back({adapter_id, 1.0});
+    return value;
+}
+
 int main() {
     std::string error;
     common_learning_adapter_registry registry;
@@ -53,6 +65,9 @@ int main() {
     assert(registry.stage_canary(first.id, evaluation_for(first), error));
     assert(registry.activate(first.id, error));
     assert(registry.active_id() == first.id);
+    std::vector<common_learning_adapter_manifest> overlays;
+    assert(registry.resolve_active_overlays(profile_for(first.id), overlays, error));
+    assert(overlays.size() == 1 && overlays.front().id == first.id);
 
     auto second = manifest("adapter-v2");
     assert(registry.admit(second, error));
@@ -60,8 +75,13 @@ int main() {
     assert(registry.activate(second.id, error));
     assert(registry.active_id() == second.id);
     assert(registry.list().front().status == common_learning_adapter_status::retired);
+    auto mismatched = profile_for(second.id);
+    mismatched.base_model_fingerprint = "sha256:other-serving";
+    assert(!registry.resolve_active_overlays(mismatched, overlays, error));
+    assert(error.find("identity") != std::string::npos);
     assert(registry.retire(second.id, error));
     assert(registry.active_id().empty());
+    assert(!registry.resolve_active_overlays(common_agent_model_profile{}, overlays, error));
 
     auto invalid = manifest("bad");
     invalid.evaluation_status = "failed";
