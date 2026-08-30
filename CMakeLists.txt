@@ -170,6 +170,7 @@ option(LLAMA_AGENT_STORAGE_SQLITE "llama-agent: build optional SQLite storage ba
 option(LLAMA_AGENT_RUNTIME "llama: build the bounded agent runtime" OFF)
 option(LLAMA_AGENT_SANDBOX "llama-agent: build host sandbox backends" ${LLAMA_AGENT_RUNTIME})
 option(LLAMA_AGENT_BUILD_POCS "llama-agent: build agent POC and smoke targets" ${LLAMA_AGENT_RUNTIME})
+option(LLAMA_ASTC_VULKAN_POC "llama: build the experimental ASTC Vulkan proof of concept" OFF)
 option(LLAMA_AGENT_TOOLS_CLANG "llama-agent: enable clang/clangd semantic tool support" OFF)
 
 # The agent runtime is defined in terms of persistent memory and planning.
