@@ -9,9 +9,10 @@ work. It records decisions, observations, and changes against
 
 The work is on the isolated branch `kallden/vulkan-astc-int4-decoder`.
 The normal llama.cpp/ggml Vulkan backend remains unchanged and is the required
-fallback. The experiment currently has no production ASTC resource path and no
-device-executed validation shader. It now has a device resource smoke that
-creates and uploads ASTC images, but it does not yet sample them in a shader.
+fallback. The experiment currently has no production ASTC resource path. It
+now has a device-backed validation executable that can upload a known-valid
+constant ASTC block, execute the compiled shader, and read the reconstructed
+texels when a compatible physical device is available.
 
 Current phase: **Phase 1, contract and host-smoke foundation**.
 
@@ -98,8 +99,8 @@ the eventual packer must optimize neural-weight and dot-product objectives.
 - Added a minimal `texelFetch` compute shader source; compilation is conditional
   on `glslc` availability.
 - Kept production `ggml-vulkan` sources and shaders untouched.
-- Deferred shader readback until a known-valid ASTC block and compiled shader
-  are available.
+- Added an optional device shader smoke that uses a known-valid ASTC void-extent
+  block, sampled-image descriptors, a compute pipeline, and host readback.
 
 The first focused build was configured with `LLAMA_BUILD_TESTS=ON`,
 `LLAMA_BUILD_EXAMPLES=ON`, `LLAMA_ASTC_VULKAN_POC=ON`, and `GGML_VULKAN=OFF`.
@@ -136,6 +137,15 @@ refactored to take its staging size from the shared ASTC contract instead of
 duplicating the 128-bit constant. A final rebuild and ASTC CTest run passed
 (`5/5`).
 
+In the fifth focused run, the device shader smoke was wired into CMake and CTest
+for both 4x4 and 6x6. The shader writes one reconstructed `vec4` per texel into
+a storage buffer, and the host validates every channel against the 0.5 constant
+encoded in the void-extent block. The shader compiled and all host tests passed;
+the four device-dependent tests were skipped in this sandbox because no
+physical ASTC-capable Vulkan device was exposed at run time. Earlier probing had
+seen an Intel UHD Graphics 620 with both formats, so the executable remains
+ready for a host/device run outside the restricted environment.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -150,13 +160,13 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Execute the compiled validation shader through the device smoke using
-   sampled-image descriptors and a compute pipeline.
-2. Extend the device smoke with sampled-image descriptors, a compute pipeline,
-   and readback of the validation buffer.
-3. Use a known-valid ASTC block and compare decoded texels with a CPU reference.
-4. Revisit the plan and record constraints from image allocation, layout
-   transitions, descriptors, and shader execution.
+1. Run the new shader-device smoke on the Intel/target GPU and capture decoded
+   values for both block sizes.
+2. Add timestamp-query measurements for sequential versus non-local fetches.
+3. Record device name, driver version, shader workgroup shape, elapsed GPU time,
+   and represented bytes.
+4. Revisit the plan after numerical and bandwidth evidence, before designing a
+   weight packer or changing any ggml tensor path.
 
 ## Open questions
 

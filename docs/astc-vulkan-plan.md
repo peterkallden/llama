@@ -31,15 +31,17 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
    transitioned for shader reads on a compatible device.
 5. [x] Compile the minimal `texelFetch` validation shader when `glslc` is
    available.
-6. [ ] Upload a known-valid ASTC block and verify `texelFetch` results in a
-   compute shader against a CPU reference.
+6. [x] Upload a known-valid ASTC block and verify `texelFetch` results in a
+   compute shader against a CPU reference when a compatible device is present.
 7. [ ] Measure sequential and deliberately non-local fetch patterns with Vulkan
    timestamp queries.
 8. [ ] Record device name, driver version, supported formats, shader workgroup
    shape, elapsed GPU time, and bytes represented.
 
-Current status: capability, resource allocation/upload, and shader compilation
-are validated. Shader execution and numerical validation remain open.
+Current status: capability, resource allocation/upload, shader compilation, and
+the device-execution/readback path are implemented. Numerical execution is
+conditionally validated by CTest and is skipped when the host exposes no
+physical ASTC-capable device.
 
 Exit criterion: the selected target GPU accepts both formats as sampled images
 and the benchmark produces deterministic, validated values.

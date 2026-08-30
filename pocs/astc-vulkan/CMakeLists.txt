@@ -44,6 +44,15 @@ if (ASTC_VULKAN_GLSLC)
         COMMENT "Compiling ASTC Vulkan validation shader")
     add_custom_target(astc-vulkan-shader-smoke
         DEPENDS ${ASTC_VULKAN_SHADER_OUTPUT})
+    if (TARGET astc-vulkan-device-smoke)
+        add_executable(astc-vulkan-shader-device-smoke
+            astc-vulkan-shader-device-smoke.cpp)
+        target_include_directories(astc-vulkan-shader-device-smoke PRIVATE
+            ${ASTC_VULKAN_POC_INCLUDE_DIR})
+        target_link_libraries(astc-vulkan-shader-device-smoke PRIVATE Vulkan::Vulkan)
+        target_compile_features(astc-vulkan-shader-device-smoke PRIVATE cxx_std_17)
+        add_dependencies(astc-vulkan-shader-device-smoke astc-vulkan-shader-smoke)
+    endif()
 endif()
 
 if (BUILD_TESTING)
@@ -74,5 +83,17 @@ if (BUILD_TESTING)
             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
             --target astc-vulkan-shader-smoke)
         set_property(TEST astc-vulkan-shader-compile PROPERTY LABELS astc)
+        if (TARGET astc-vulkan-shader-device-smoke)
+            add_test(NAME astc-vulkan-shader-device-smoke-4x4
+                COMMAND astc-vulkan-shader-device-smoke
+                    ${ASTC_VULKAN_SHADER_OUTPUT} 4x4)
+            set_property(TEST astc-vulkan-shader-device-smoke-4x4 PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-shader-device-smoke-4x4 PROPERTY SKIP_RETURN_CODE 77)
+            add_test(NAME astc-vulkan-shader-device-smoke-6x6
+                COMMAND astc-vulkan-shader-device-smoke
+                    ${ASTC_VULKAN_SHADER_OUTPUT} 6x6)
+            set_property(TEST astc-vulkan-shader-device-smoke-6x6 PROPERTY LABELS astc)
+            set_property(TEST astc-vulkan-shader-device-smoke-6x6 PROPERTY SKIP_RETURN_CODE 77)
+        endif()
     endif()
 endif()
