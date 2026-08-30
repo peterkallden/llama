@@ -1,5 +1,6 @@
 #include "agent/runtime/model-catalog.h"
 
+#include <filesystem>
 #include <string>
 
 namespace {
@@ -64,7 +65,8 @@ bool test_parse_and_resolve() {
     common_agent_model_selection selection;
     if (!common_agent_model_catalog_resolve_profile(catalog, {}, selection, error)) return false;
     return selection.profile_id == "agent-default" &&
-        selection.base_model_id == "small" && selection.path == "/models/qwen.gguf" &&
+        selection.base_model_id == "small" &&
+        selection.path == (std::filesystem::path("/models") / "qwen.gguf").lexically_normal().string() &&
         selection.mmproj.empty() && selection.context_size_tokens == 4096 &&
         selection.adapters.size() == 1;
 }

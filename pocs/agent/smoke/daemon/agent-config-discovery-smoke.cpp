@@ -222,7 +222,7 @@ int main() {
     }
     common_agent_model_selection selected_model;
     if (!resolve_agent_host_model_selection(catalog_config, selected_model, error) ||
-            selected_model.path != "/models/small.gguf" ||
+            selected_model.path != (std::filesystem::path("/models") / "small.gguf").lexically_normal().string() ||
             selected_model.context_size_tokens != 4096) {
         std::fprintf(stderr, "model catalog profile was not resolved: %s\n", error.c_str());
         return 1;

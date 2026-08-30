@@ -11,6 +11,24 @@
 #include <iostream>
 #include <thread>
 
+class http_server_guard final {
+public:
+    explicit http_server_guard(httplib::Server & server)
+        : server_(server), thread_([this] { server_.listen_after_bind(); }) {}
+
+    ~http_server_guard() {
+        server_.stop();
+        if (thread_.joinable()) thread_.join();
+    }
+
+    http_server_guard(const http_server_guard &) = delete;
+    http_server_guard & operator=(const http_server_guard &) = delete;
+
+private:
+    httplib::Server & server_;
+    std::thread thread_;
+};
+
 class host_data_store final : public common_agent_data_store {
 public:
     bool put_row(const std::string & dataset, const std::string & row_id,
@@ -62,7 +80,7 @@ int main() {
     });
     const int port = server.bind_to_any_port("127.0.0.1");
     if (port <= 0) { std::cerr << "could not bind HTTP test server\n"; return 1; }
-    std::thread server_thread([&server] { server.listen_after_bind(); });
+    http_server_guard server_guard(server);
 
     const auto spec_path = std::filesystem::temp_directory_path() / "agent-openapi-host-smoke.json";
     std::ofstream spec(spec_path);
@@ -114,8 +132,6 @@ int main() {
     }
     if (catalog_check.operations.size() != 2) {
         std::cerr << "unexpected catalog operation count: " << catalog_check.operations.size() << "\n";
-        server.stop();
-        server_thread.join();
         return 1;
     }
     common_agent_cli_tool_selection selection;
@@ -143,14 +159,12 @@ int main() {
     }
     if (!has_list || !has_complex) {
         std::cerr << "expected OpenAPI tools were not exposed\n";
-        server.stop();
-        server_thread.join();
         return 1;
     }
     auto list = selection.tool_view->call({"list", "sales.listSales", "{}"}, error);
     if (!list.ok || list.dataset_refs.size() != 1 || list.resource_refs.size() != 1) {
         std::cerr << "collection materialization failed: " << error << "\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
     if (list.dataset_refs.front().source_resource_uri != list.resource_refs.front().uri ||
             list.dataset_refs.front().source_provider != "sales-api" ||
@@ -160,7 +174,7 @@ int main() {
             list.dataset_refs.front().content_hash.empty() ||
             list.content_json.find("materialized") == std::string::npos) {
         std::cerr << "dataset provenance or compact result missing\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
     agent_resource_descriptor source_descriptor;
     auto authority = make_agent_resource_read_authority(
@@ -171,13 +185,13 @@ int main() {
             source_descriptor.turn_id != "turn-1" ||
             source_descriptor.session_id != "session-1") {
         std::cerr << "source resource scope validation failed: " << error << "\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
     auto query_result = selection.tool_view->call({"query", "data.query",
         std::string("{\"dataset\":\"") + list.dataset_refs.front().uri + "\"}"}, error);
     if (!query_result.ok || data.last_dataset != list.dataset_refs.front().uri || data.rows.size() != 2) {
         std::cerr << "dataset dataflow failed: " << error << "\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
     auto wrong_scope_request = request;
     wrong_scope_request.tool_context.turn_id = "turn-2";
@@ -187,25 +201,23 @@ int main() {
             profile.id, wrong_scope_request, query, nullptr,
             wrong_scope_selection, error) || !wrong_scope_selection.tool_view) {
         std::cerr << "wrong-scope selection failed to resolve: " << error << "\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
     const auto wrong_scope_result = wrong_scope_selection.tool_view->call({
         "wrong-scope", "data.query",
         std::string("{\"dataset\":\"") + list.dataset_refs.front().uri + "\"}"}, error);
     if (wrong_scope_result.ok || wrong_scope_result.failure_code != "tool.dataset.out_of_scope") {
         std::cerr << "dataset was usable outside its turn scope\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
 
     auto complex = selection.tool_view->call({"complex", "sales.complex", "{}"}, error);
     if (!complex.ok || !complex.dataset_refs.empty() || complex.resource_refs.size() != 1 ||
             complex.content_json.find("items") == std::string::npos) {
         std::cerr << "complex JSON projection failed: " << error << "\n";
-        server.stop(); server_thread.join(); return 1;
+        return 1;
     }
 
-    server.stop();
-    server_thread.join();
     std::filesystem::remove(spec_path);
     std::cout << "agent-cli-openapi-host-smoke: ok\n";
 }
