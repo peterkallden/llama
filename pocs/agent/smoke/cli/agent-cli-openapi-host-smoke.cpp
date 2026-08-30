@@ -3,40 +3,11 @@
 
 #include "memory/memory-in-memory.h"
 #include "tools/agent/openapi/agent-openapi-catalog.h"
-#include <cpp-httplib/httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <fstream>
 #include <filesystem>
-#include <chrono>
 #include <iostream>
-#include <thread>
-
-class http_server_guard final {
-public:
-    explicit http_server_guard(httplib::Server & server)
-        : server_(server), thread_([this] { server_.listen_after_bind(); }) {
-        // The client can otherwise win the race with the listener startup on
-        // Windows, turning a connection failure into an unrelated teardown.
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    }
-
-    ~http_server_guard() {
-        stop();
-    }
-
-    void stop() {
-        server_.stop();
-        if (thread_.joinable()) thread_.join();
-    }
-
-    http_server_guard(const http_server_guard &) = delete;
-    http_server_guard & operator=(const http_server_guard &) = delete;
-
-private:
-    httplib::Server & server_;
-    std::thread thread_;
-};
 
 class host_data_store final : public common_agent_data_store {
 public:
@@ -80,17 +51,6 @@ public:
 };
 
 int main() {
-    httplib::Server server;
-    server.Get("/sales", [](const httplib::Request &, httplib::Response & response) {
-        response.set_content(R"([{"id":1,"amount":12.5},{"id":2,"amount":8}])", "application/json");
-    });
-    server.Get("/complex", [](const httplib::Request &, httplib::Response & response) {
-        response.set_content(R"({"items":[{"id":1}]})", "application/json");
-    });
-    const int port = server.bind_to_any_port("127.0.0.1");
-    if (port <= 0) { std::cerr << "could not bind HTTP test server\n"; return 1; }
-    http_server_guard server_guard(server);
-
     const auto spec_path = std::filesystem::temp_directory_path() / "agent-openapi-host-smoke.json";
     std::ofstream spec(spec_path);
     spec << R"({"openapi":"3.0.0","info":{"title":"sales","version":"1"},"paths":{"/sales":{"get":{"operationId":"listSales","responses":{"200":{"content":{"application/json":{"schema":{"type":"array"}}}}}}},"/complex":{"get":{"operationId":"complex","responses":{"200":{"content":{"application/json":{"schema":{"type":"object"}}}}}}}}})";
@@ -122,7 +82,7 @@ int main() {
     openapi.enabled = true;
     openapi.required = true;
     openapi.spec_path = spec_path.string();
-    openapi.base_url = "http://127.0.0.1:" + std::to_string(port);
+    openapi.base_url = "https://sales.example.invalid";
     openapi.prefix = "sales";
     openapi.access = "read_only";
     openapi.exposure = "auto";
@@ -131,6 +91,29 @@ int main() {
     openapi.request_timeout_ms = 2000;
     openapi.max_result_bytes = 1024 * 1024;
     request.openapi_providers.push_back(std::move(openapi));
+    request.openapi_executor_overrides.emplace("sales-api", [](
+            const agent_tool_context &, const agent_openapi_operation & operation,
+            const std::string & arguments_json, agent_openapi_execution_result & result,
+            std::string & executor_error) {
+        if (arguments_json != "{}") {
+            executor_error = "unexpected OpenAPI arguments";
+            return false;
+        }
+        result.ok = true;
+        result.http_status = 200;
+        result.mime_type = "application/json";
+        if (operation.operation_id == "listSales") {
+            result.structured_content_json = R"([{"id":1,"amount":12.5},{"id":2,"amount":8}])";
+        } else if (operation.operation_id == "complex") {
+            result.structured_content_json = R"({"items":[{"id":1}]})";
+        } else {
+            executor_error = "unexpected OpenAPI operation";
+            return false;
+        }
+        result.text_content = result.structured_content_json;
+        executor_error.clear();
+        return true;
+    });
     agent_openapi_catalog catalog_check;
     nlohmann::json spec_check;
     std::ifstream spec_check_file(spec_path);
@@ -227,10 +210,6 @@ int main() {
         return 1;
     }
 
-    // Stop the HTTP thread while the host/tooling objects still exist.  This
-    // makes shutdown ordering explicit and avoids a Windows-only teardown
-    // failure after an otherwise successful smoke run.
-    server_guard.stop();
     std::filesystem::remove(spec_path);
     std::cout << "agent-cli-openapi-host-smoke: ok\n";
 }

@@ -845,8 +845,13 @@ bool resolve_agent_host_tool_selection(
             result.resource_refs.push_back(std::move(descriptor));
             return true;
         };
+        auto executor = make_agent_openapi_http_executor(provider_config);
+        const auto executor_override = request.openapi_executor_overrides.find(provider_config.id);
+        if (executor_override != request.openapi_executor_overrides.end()) {
+            executor = executor_override->second;
+        }
         selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
-            std::move(catalog), make_agent_openapi_http_executor(provider_config), materializer));
+            std::move(catalog), std::move(executor), materializer));
     }
 
     if (native_provider || !mcp_providers.empty() || !selection.openapi_providers.empty()) {

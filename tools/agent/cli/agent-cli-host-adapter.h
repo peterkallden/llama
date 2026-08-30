@@ -4,6 +4,7 @@
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
+#include "../openapi/agent-openapi-provider.h"
 #include "../resource/agent-resource-store.h"
 #include "../resource/agent-resource-processing-service.h"
 #include "agent/sandbox/sandbox-host-config.h"
@@ -57,6 +58,10 @@ struct agent_host_tool_selection_request {
     common_agent_data_store * data_store = nullptr;
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
+    // Host-owned integration seam. Production callers normally leave this
+    // empty and use the configured HTTP executor; tests or an embedding host
+    // may bind an already-authorized executor for a named provider.
+    std::map<std::string, agent_openapi_executor> openapi_executor_overrides;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
     std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
