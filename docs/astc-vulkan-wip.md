@@ -10,7 +10,8 @@ work. It records decisions, observations, and changes against
 The work is on the isolated branch `kallden/vulkan-astc-int4-decoder`.
 The normal llama.cpp/ggml Vulkan backend remains unchanged and is the required
 fallback. The experiment currently has no production ASTC resource path and no
-device-executed shader.
+device-executed validation shader. It now has a device resource smoke that
+creates and uploads ASTC images, but it does not yet sample them in a shader.
 
 Current phase: **Phase 1, contract and host-smoke foundation**.
 
@@ -97,8 +98,8 @@ the eventual packer must optimize neural-weight and dot-product objectives.
 - Added a minimal `texelFetch` compute shader source; compilation is conditional
   on `glslc` availability.
 - Kept production `ggml-vulkan` sources and shaders untouched.
-- Deferred device smoke until sampled-image allocation and shader execution
-  exist.
+- Deferred shader readback until a known-valid ASTC block and compiled shader
+  are available.
 
 The first focused build was configured with `LLAMA_BUILD_TESTS=ON`,
 `LLAMA_BUILD_EXAMPLES=ON`, `LLAMA_ASTC_VULKAN_POC=ON`, and `GGML_VULKAN=OFF`.
@@ -117,6 +118,13 @@ sampled ASTC support. `glslc` was not installed, so the shader compile smoke was
 not registered. This confirms that capability must be selected per device and
 not inferred from the presence of a Vulkan loader alone.
 
+In the third focused run, the device resource smoke built and CTest passed
+(`4/4` including the previous tests). The local Intel UHD Graphics 620 device
+accepted both formats for sampled and transfer-destination usage, and both image
+uploads and layout transitions completed. The NVIDIA GeForce 920MX and llvmpipe
+remain excluded by the capability probe. `glslc` is still unavailable locally,
+so shader compilation and texel readback remain the next device-backed step.
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -133,12 +141,11 @@ After each implementation sweep:
 
 1. Add a GLSL compiler to the build environment and compile the validation
    shader through the same test path used by the existing Vulkan backend.
-2. Add a small Vulkan image/upload/readback harness around the validation shader.
-3. Add a device smoke with explicit skip behavior when no suitable Vulkan device
-   or format feature is available.
-4. Compare the shader result with a CPU reference before adding any matvec path.
-5. Revisit the plan and record whether image allocation, layout transitions, and
-   sampled-image descriptors introduce constraints not visible in the probe.
+2. Extend the device smoke with sampled-image descriptors, a compute pipeline,
+   and readback of the validation buffer.
+3. Use a known-valid ASTC block and compare decoded texels with a CPU reference.
+4. Revisit the plan and record constraints from image allocation, layout
+   transitions, descriptors, and shader execution.
 
 ## Open questions
 

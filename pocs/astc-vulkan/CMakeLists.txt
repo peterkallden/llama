@@ -22,6 +22,11 @@ if (Vulkan_FOUND)
         astc-vulkan-capability-probe.cpp)
     target_link_libraries(astc-vulkan-capability-probe PRIVATE Vulkan::Vulkan)
     target_compile_features(astc-vulkan-capability-probe PRIVATE cxx_std_17)
+
+    add_executable(astc-vulkan-device-smoke
+        astc-vulkan-device-smoke.cpp)
+    target_link_libraries(astc-vulkan-device-smoke PRIVATE Vulkan::Vulkan)
+    target_compile_features(astc-vulkan-device-smoke PRIVATE cxx_std_17)
 endif()
 
 find_program(ASTC_VULKAN_GLSLC glslc)
@@ -55,6 +60,13 @@ if (BUILD_TESTING)
             COMMAND astc-vulkan-capability-probe)
         set_property(TEST astc-vulkan-capability-probe PROPERTY LABELS astc)
         set_property(TEST astc-vulkan-capability-probe PROPERTY SKIP_RETURN_CODE 77)
+    endif()
+
+    if (TARGET astc-vulkan-device-smoke)
+        add_test(NAME astc-vulkan-device-smoke
+            COMMAND astc-vulkan-device-smoke)
+        set_property(TEST astc-vulkan-device-smoke PROPERTY LABELS astc)
+        set_property(TEST astc-vulkan-device-smoke PROPERTY SKIP_RETURN_CODE 77)
     endif()
 
     if (ASTC_VULKAN_GLSLC)

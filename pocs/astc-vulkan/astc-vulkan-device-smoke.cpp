@@ -1,0 +1,319 @@
+#include <vulkan/vulkan.h>
+
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+namespace {
+
+struct astc_image_resources {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkSampler sampler = VK_NULL_HANDLE;
+};
+
+uint32_t find_memory_type(VkPhysicalDevice physical_device, uint32_t type_bits,
+                          VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i) {
+        if ((type_bits & (1u << i)) != 0 &&
+            (memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+bool format_supports(VkPhysicalDevice physical_device, VkFormat format,
+                     VkFormatFeatureFlags required) {
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(physical_device, format, &properties);
+    return (properties.optimalTilingFeatures & required) == required;
+}
+
+bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
+                             VkQueue queue, uint32_t queue_family,
+                             VkFormat format, VkExtent3D extent) {
+    const VkImageCreateInfo image_info{
+        VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, nullptr, 0, VK_IMAGE_TYPE_2D,
+        format, extent, 1, 1, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_SHARING_MODE_EXCLUSIVE, 0, nullptr, VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    astc_image_resources resources;
+    if (vkCreateImage(device, &image_info, nullptr, &resources.image) != VK_SUCCESS) {
+        return false;
+    }
+
+    VkMemoryRequirements image_requirements{};
+    vkGetImageMemoryRequirements(device, resources.image, &image_requirements);
+    const uint32_t image_memory_type = find_memory_type(
+        physical_device, image_requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (image_memory_type == UINT32_MAX) {
+        vkDestroyImage(device, resources.image, nullptr);
+        return false;
+    }
+
+    const VkMemoryAllocateInfo image_allocate_info{
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr,
+        image_requirements.size, image_memory_type,
+    };
+    if (vkAllocateMemory(device, &image_allocate_info, nullptr, &resources.memory) != VK_SUCCESS ||
+        vkBindImageMemory(device, resources.image, resources.memory, 0) != VK_SUCCESS) {
+        if (resources.memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, resources.memory, nullptr);
+        }
+        vkDestroyImage(device, resources.image, nullptr);
+        return false;
+    }
+
+    const VkImageViewCreateInfo view_info{
+        VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0, resources.image,
+        VK_IMAGE_VIEW_TYPE_2D, format,
+        { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
+        { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    if (vkCreateImageView(device, &view_info, nullptr, &resources.view) != VK_SUCCESS) {
+        vkFreeMemory(device, resources.memory, nullptr);
+        vkDestroyImage(device, resources.image, nullptr);
+        return false;
+    }
+
+    const VkSamplerCreateInfo sampler_info{
+        VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, nullptr, 0,
+        VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST,
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f, VK_FALSE, 1.0f, VK_FALSE,
+        VK_COMPARE_OP_ALWAYS, 0.0f, 0.0f, VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+        VK_FALSE,
+    };
+    if (vkCreateSampler(device, &sampler_info, nullptr, &resources.sampler) != VK_SUCCESS) {
+        vkDestroyImageView(device, resources.view, nullptr);
+        vkFreeMemory(device, resources.memory, nullptr);
+        vkDestroyImage(device, resources.image, nullptr);
+        return false;
+    }
+
+    const VkBufferCreateInfo buffer_info{
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 16,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
+    };
+    VkBuffer staging_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+    bool success = false;
+    do {
+        if (vkCreateBuffer(device, &buffer_info, nullptr, &staging_buffer) != VK_SUCCESS) {
+            break;
+        }
+        VkMemoryRequirements staging_requirements{};
+        vkGetBufferMemoryRequirements(device, staging_buffer, &staging_requirements);
+        const uint32_t staging_memory_type = find_memory_type(
+            physical_device, staging_requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (staging_memory_type == UINT32_MAX) {
+            break;
+        }
+        const VkMemoryAllocateInfo staging_allocate_info{
+            VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr,
+            staging_requirements.size, staging_memory_type,
+        };
+        if (vkAllocateMemory(device, &staging_allocate_info, nullptr, &staging_memory) != VK_SUCCESS ||
+            vkBindBufferMemory(device, staging_buffer, staging_memory, 0) != VK_SUCCESS) {
+            break;
+        }
+        void * mapped = nullptr;
+        if (vkMapMemory(device, staging_memory, 0, 16, 0, &mapped) != VK_SUCCESS) {
+            break;
+        }
+        std::memset(mapped, 0, 16);
+        vkUnmapMemory(device, staging_memory);
+
+        const VkCommandPoolCreateInfo pool_info{
+            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
+            VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queue_family,
+        };
+        VkCommandPool command_pool = VK_NULL_HANDLE;
+        if (vkCreateCommandPool(device, &pool_info, nullptr, &command_pool) != VK_SUCCESS) {
+            break;
+        }
+        const VkCommandBufferAllocateInfo command_allocate_info{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, command_pool,
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1,
+        };
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        if (vkAllocateCommandBuffers(device, &command_allocate_info, &command_buffer) != VK_SUCCESS) {
+            vkDestroyCommandPool(device, command_pool, nullptr);
+            break;
+        }
+        const VkCommandBufferBeginInfo begin_info{
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr,
+        };
+        if (vkBeginCommandBuffer(command_buffer, &begin_info) != VK_SUCCESS) {
+            vkDestroyCommandPool(device, command_pool, nullptr);
+            break;
+        }
+
+        const VkImageMemoryBarrier to_transfer{
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED, resources.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+            &to_transfer);
+
+        const VkBufferImageCopy copy_region{
+            0, 0, 0, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, { 0, 0, 0 }, extent,
+        };
+        vkCmdCopyBufferToImage(command_buffer, staging_buffer, resources.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+
+        const VkImageMemoryBarrier to_shader{
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED, resources.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+            &to_shader);
+        if (vkEndCommandBuffer(command_buffer) != VK_SUCCESS) {
+            vkDestroyCommandPool(device, command_pool, nullptr);
+            break;
+        }
+
+        const VkSubmitInfo submit_info{
+            VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1,
+            &command_buffer, 0, nullptr,
+        };
+        const VkFenceCreateInfo fence_info{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0 };
+        VkFence fence = VK_NULL_HANDLE;
+        if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS ||
+            vkQueueSubmit(queue, 1, &submit_info, fence) != VK_SUCCESS ||
+            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            if (fence != VK_NULL_HANDLE) {
+                vkDestroyFence(device, fence, nullptr);
+            }
+            vkDestroyCommandPool(device, command_pool, nullptr);
+            break;
+        }
+        vkDestroyFence(device, fence, nullptr);
+        vkDestroyCommandPool(device, command_pool, nullptr);
+        success = true;
+    } while (false);
+
+    if (staging_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, staging_memory, nullptr);
+    }
+    if (staging_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, staging_buffer, nullptr);
+    }
+    vkDestroySampler(device, resources.sampler, nullptr);
+    vkDestroyImageView(device, resources.view, nullptr);
+    vkFreeMemory(device, resources.memory, nullptr);
+    vkDestroyImage(device, resources.image, nullptr);
+    return success;
+}
+
+} // namespace
+
+int main() {
+    const VkApplicationInfo application_info{
+        VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "astc-vulkan-device-smoke", 1,
+        "llama.cpp ASTC Vulkan PoC", 1, VK_API_VERSION_1_0,
+    };
+    const VkInstanceCreateInfo instance_info{
+        VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &application_info,
+        0, nullptr, 0, nullptr,
+    };
+
+    VkInstance instance = VK_NULL_HANDLE;
+    if (vkCreateInstance(&instance_info, nullptr, &instance) != VK_SUCCESS) {
+        std::fprintf(stderr, "ASTC device smoke skipped: cannot create Vulkan instance\n");
+        return 77;
+    }
+    uint32_t device_count = 0;
+    if (vkEnumeratePhysicalDevices(instance, &device_count, nullptr) != VK_SUCCESS || device_count == 0) {
+        vkDestroyInstance(instance, nullptr);
+        std::fprintf(stderr, "ASTC device smoke skipped: no physical device\n");
+        return 77;
+    }
+    std::vector<VkPhysicalDevice> devices(device_count);
+    if (vkEnumeratePhysicalDevices(instance, &device_count, devices.data()) != VK_SUCCESS) {
+        vkDestroyInstance(instance, nullptr);
+        return 77;
+    }
+
+    VkPhysicalDevice selected_device = VK_NULL_HANDLE;
+    uint32_t selected_queue_family = UINT32_MAX;
+    for (VkPhysicalDevice device : devices) {
+        const VkFormatFeatureFlags required =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        if (!format_supports(device, VK_FORMAT_ASTC_4x4_UNORM_BLOCK, required) ||
+            !format_supports(device, VK_FORMAT_ASTC_6x6_UNORM_BLOCK, required)) {
+            continue;
+        }
+        uint32_t queue_count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, nullptr);
+        std::vector<VkQueueFamilyProperties> queues(queue_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, queues.data());
+        for (uint32_t i = 0; i < queue_count; ++i) {
+            if ((queues[i].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0) {
+                selected_device = device;
+                selected_queue_family = i;
+                break;
+            }
+        }
+        if (selected_device != VK_NULL_HANDLE) {
+            break;
+        }
+    }
+    if (selected_device == VK_NULL_HANDLE) {
+        vkDestroyInstance(instance, nullptr);
+        std::fprintf(stderr, "ASTC device smoke skipped: no compatible device\n");
+        return 77;
+    }
+
+    constexpr float queue_priority = 1.0f;
+    const VkDeviceQueueCreateInfo queue_info{
+        VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0,
+        selected_queue_family, 1, &queue_priority,
+    };
+    const VkDeviceCreateInfo device_info{
+        VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, 0, 1, &queue_info,
+        0, nullptr, 0, nullptr, nullptr,
+    };
+    VkDevice device = VK_NULL_HANDLE;
+    if (vkCreateDevice(selected_device, &device_info, nullptr, &device) != VK_SUCCESS) {
+        vkDestroyInstance(instance, nullptr);
+        std::fprintf(stderr, "ASTC device smoke skipped: cannot create logical device\n");
+        return 77;
+    }
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, selected_queue_family, 0, &queue);
+    const bool success_4x4 = create_and_upload_image(
+        selected_device, device, queue, selected_queue_family,
+        VK_FORMAT_ASTC_4x4_UNORM_BLOCK, { 4, 4, 1 });
+    const bool success_6x6 = create_and_upload_image(
+        selected_device, device, queue, selected_queue_family,
+        VK_FORMAT_ASTC_6x6_UNORM_BLOCK, { 6, 6, 1 });
+    vkDeviceWaitIdle(device);
+    vkDestroyDevice(device, nullptr);
+    vkDestroyInstance(instance, nullptr);
+    if (!success_4x4 || !success_6x6) {
+        std::fprintf(stderr, "ASTC device smoke failed: image upload or layout transition failed\n");
+        return 1;
+    }
+    std::puts("ASTC 4x4 and 6x6 image resource smoke passed");
+    return 0;
+}
