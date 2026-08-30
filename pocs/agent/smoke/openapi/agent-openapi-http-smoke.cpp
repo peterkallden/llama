@@ -8,6 +8,18 @@
 #include <iostream>
 #include <thread>
 
+namespace {
+
+void set_environment_variable(const char * name, const char * value) {
+#ifdef _WIN32
+    assert(_putenv_s(name, value) == 0);
+#else
+    assert(setenv(name, value, 1) == 0);
+#endif
+}
+
+} // namespace
+
 int main() {
     httplib::Server server;
     server.Get("/sales/42", [](const httplib::Request & request, httplib::Response & response) {
@@ -100,9 +112,9 @@ int main() {
     assert(!denied.ok);
 
     config.allow_private_network = true;
-    setenv("OPENAPI_BASIC_USER", "user", 1);
-    setenv("OPENAPI_BASIC_PASSWORD", "pass", 1);
-    setenv("OPENAPI_API_KEY", "key-123", 1);
+    set_environment_variable("OPENAPI_BASIC_USER", "user");
+    set_environment_variable("OPENAPI_BASIC_PASSWORD", "pass");
+    set_environment_variable("OPENAPI_API_KEY", "key-123");
     context.allow_network = true;
     auto run_authenticated = [&](agent_host_openapi_provider_config authenticated_config,
             agent_openapi_operation authenticated_operation) {
@@ -157,8 +169,8 @@ int main() {
     api_key_config.auth.token_env = "OPENAPI_API_KEY";
     run_authenticated(api_key_config, api_key_operation);
 
-    setenv("OPENAPI_OAUTH_ID", "oauth-id", 1);
-    setenv("OPENAPI_OAUTH_SECRET", "oauth-secret", 1);
+    set_environment_variable("OPENAPI_OAUTH_ID", "oauth-id");
+    set_environment_variable("OPENAPI_OAUTH_SECRET", "oauth-secret");
     agent_openapi_operation oauth_operation;
     oauth_operation.operation_id = "auth";
     oauth_operation.method = "get";
