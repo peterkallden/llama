@@ -75,12 +75,19 @@ bool test_rejects_invalid_catalogs() {
     std::string error;
     common_agent_model_catalog catalog;
 
-    if (common_agent_model_catalog_from_json(R"json({
+    // A native absolute path is rejected on every supported platform.  A
+    // POSIX-only absolute path such as /etc/passwd is merely relative to the
+    // current drive on Windows, so it cannot exercise this contract there.
+    const auto outside_catalog_directory =
+        (std::filesystem::temp_directory_path() / "outside-model.gguf").generic_string();
+
+    const auto absolute_path_catalog = std::string(R"json({
       "schema_version": 1,
       "directory": "/models",
-      "bases": {"bad": {"path": "/etc/passwd"}},
+      "bases": {"bad": {"path": ")json") + outside_catalog_directory + R"json("}},
       "profiles": {}, "routing": {}, "limits": {}
-    })json", catalog, error)) return false;
+    })json";
+    if (common_agent_model_catalog_from_json(absolute_path_catalog, catalog, error)) return false;
 
     if (common_agent_model_catalog_from_json(R"json({
       "schema_version": 1,

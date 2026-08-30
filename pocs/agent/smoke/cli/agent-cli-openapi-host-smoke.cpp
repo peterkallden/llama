@@ -15,13 +15,17 @@
 class http_server_guard final {
 public:
     explicit http_server_guard(httplib::Server & server)
-        : server_(server), thread_([&server] { server.listen_after_bind(); }) {
+        : server_(server), thread_([this] { server_.listen_after_bind(); }) {
         // The client can otherwise win the race with the listener startup on
         // Windows, turning a connection failure into an unrelated teardown.
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
     ~http_server_guard() {
+        stop();
+    }
+
+    void stop() {
         server_.stop();
         if (thread_.joinable()) thread_.join();
     }
@@ -223,6 +227,10 @@ int main() {
         return 1;
     }
 
+    // Stop the HTTP thread while the host/tooling objects still exist.  This
+    // makes shutdown ordering explicit and avoids a Windows-only teardown
+    // failure after an otherwise successful smoke run.
+    server_guard.stop();
     std::filesystem::remove(spec_path);
     std::cout << "agent-cli-openapi-host-smoke: ok\n";
 }
