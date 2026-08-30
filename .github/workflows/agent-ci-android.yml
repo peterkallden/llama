@@ -38,6 +38,7 @@ concurrency:
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=4
+  ANDROID_NDK_VERSION: '29.0.13113456'
 
 permissions:
   contents: read
@@ -98,7 +99,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      NDK_VERSION: '29.0.14206865'
+      NDK_VERSION: ${{ env.ANDROID_NDK_VERSION }}
 
     steps:
       - name: Checkout
@@ -180,8 +181,18 @@ jobs:
           java-version: 17
           distribution: temurin
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          log-accepted-android-sdk-licenses: false
+
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
+      - name: Install Android NDK for SQLite smoke
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}"
 
       # Native compilation can take many minutes on a hosted runner. Build
       # both APKs before the emulator starts so its system services only need
