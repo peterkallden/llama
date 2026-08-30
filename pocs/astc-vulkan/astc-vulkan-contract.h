@@ -41,6 +41,17 @@ constexpr uint32_t ggml_vk_astc_block_count(uint32_t extent, uint32_t block_exte
     return (extent + block_extent - 1) / block_extent;
 }
 
+constexpr uint64_t ggml_vk_astc_image_block_count(
+        const ggml_vk_astc_format_contract & format, uint32_t width, uint32_t height) {
+    return static_cast<uint64_t>(ggml_vk_astc_block_count(width, format.block_width)) *
+           ggml_vk_astc_block_count(height, format.block_height);
+}
+
+constexpr uint64_t ggml_vk_astc_image_storage_bytes(
+        const ggml_vk_astc_format_contract & format, uint32_t width, uint32_t height) {
+    return ggml_vk_astc_image_block_count(format, width, height) * format.block_size_bytes;
+}
+
 constexpr uint32_t ggml_vk_astc_image_texel_count(
         uint32_t width, uint32_t height) {
     return width * height;

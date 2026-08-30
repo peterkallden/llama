@@ -35,8 +35,9 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
    compute shader against a CPU reference when a compatible device is present.
 7. [ ] Measure sequential and deliberately non-local fetch patterns with Vulkan
    timestamp queries.
-8. [ ] Record device name, driver version, supported formats, shader workgroup
-   shape, elapsed GPU time, and bytes represented.
+8. [x] Record the host-side represented-byte calculation, including block
+   rounding and edge padding; device name, driver version, and elapsed GPU time
+   remain pending timestamp measurements.
 
 Current status: capability, resource allocation/upload, shader compilation, and
 the device-execution/readback path are implemented. Numerical execution is

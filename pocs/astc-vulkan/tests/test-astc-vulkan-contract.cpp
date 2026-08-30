@@ -34,5 +34,19 @@ int main() {
     assert(ggml_vk_astc_block_count(37, 6) == 7);
     assert(ggml_vk_astc_image_texel_count(6, 6) == 36);
 
+    constexpr uint32_t large_extent = 4096;
+    static_assert(ggml_vk_astc_image_block_count(
+                      format_4x4, large_extent, large_extent) == 1024u * 1024u,
+                  "ASTC 4x4 block rounding changed");
+    static_assert(ggml_vk_astc_image_block_count(
+                      format_6x6, large_extent, large_extent) == 683u * 683u,
+                  "ASTC 6x6 block rounding changed");
+    assert(ggml_vk_astc_image_storage_bytes(format_4x4, large_extent, large_extent) ==
+           67108864u);
+    assert(ggml_vk_astc_image_storage_bytes(format_6x6, large_extent, large_extent) ==
+           7463824u);
+    assert(ggml_vk_astc_image_storage_bytes(format_4x4, 5, 5) == 64u);
+    assert(ggml_vk_astc_image_storage_bytes(format_6x6, 5, 5) == 16u);
+
     return 0;
 }

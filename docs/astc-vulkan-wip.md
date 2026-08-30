@@ -146,6 +146,13 @@ physical ASTC-capable Vulkan device was exposed at run time. Earlier probing had
 seen an Intel UHD Graphics 620 with both formats, so the executable remains
 ready for a host/device run outside the restricted environment.
 
+The sixth sweep made the bandwidth arithmetic an explicit host contract. The
+shared header now computes block counts and padded image storage in 64-bit
+bytes, and the contract test locks the 4096x4096 examples to 64 MiB for 4x4
+and 7,463,824 bytes (about 7.12 MiB) for 6x6. These figures describe the
+compressed image allocation, including edge-block padding; they are not a claim
+about effective model weight bits after metadata or alignment.
+
 ## Test sweep policy
 
 After each implementation sweep:
