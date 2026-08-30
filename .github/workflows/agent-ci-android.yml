@@ -183,6 +183,15 @@ jobs:
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
 
+      # Native compilation can take many minutes on a hosted runner. Build
+      # both APKs before the emulator starts so its system services only need
+      # to remain healthy for installation and instrumentation.
+      - name: Build Android SQLite smoke APKs
+        working-directory: examples/llama.android
+        run: >-
+          ./gradlew :lib:assembleDebug :lib:assembleDebugAndroidTest
+          --no-daemon --max-workers=3
+
       # android-emulator-runner performs a few ADB calls of its own after boot
       # and before it invokes `script`.  Keep this marker until our script has
       # actually begun, so a broken ADB service in that gap gets the same fresh
