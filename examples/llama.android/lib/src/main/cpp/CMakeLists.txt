@@ -48,10 +48,11 @@ endif()
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../)
 add_subdirectory(${LLAMA_SRC} build-llama)
 
-# Android uses the model-backed agent runtime without the Linux host layers
-# (daemon, server-context and external sandbox processes). Keep this target
-# on the same planner/executor/reflection implementation used by the full
-# runtime so Android does not grow a second agent contract.
+# Android uses the model-backed agent runtime with an embedded, Service-owned
+# daemon profile. The standalone Linux daemon transports, server-context
+# loader and external sandbox processes are not part of the APK. Keep this
+# target on the same planner/executor/reflection implementation used by the
+# full runtime so Android does not grow a second agent contract.
 add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation.cpp
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation-utils.cpp
@@ -92,6 +93,8 @@ target_include_directories(llama-agent-android-runtime PUBLIC
         ${LLAMA_SRC}/tools/server)
 
 target_compile_features(llama-agent-android-runtime PUBLIC cxx_std_17)
+# This flag excludes only desktop server-context/resident-loader code. It does
+# not disable AgentRuntimeService or its native worker queue.
 target_compile_definitions(llama-agent-android-runtime PRIVATE
         LLAMA_AGENT_ANDROID_CLI_ONLY=1)
 target_link_libraries(llama-agent-android-runtime PUBLIC

@@ -660,11 +660,13 @@ feature parity without changing model-facing tools or host configuration.
 
 The Android development profile now links the same model-backed planner,
 executor and reflection implementation through a small
-`llama-agent-android-runtime` target. It deliberately excludes the Linux host
-layers: daemon transport, server-context hosting, external processors and
-sandbox backends. Android therefore has the agent runtime contracts and local
-SQLite persistence without pretending that a mobile process can provide the
-host deployment facilities.
+`llama-agent-android-runtime` target. It retains the simpler embedded daemon
+profile: `AgentRuntimeService` owns one native worker queue, one CLI-backed
+generation model, SQLite state, events and cancellation. It deliberately
+excludes the Linux daemon's external transports, server-context hosting,
+resident multi-model loader, external processors and sandbox backends. Android
+therefore shares the agent contracts and local service semantics without
+advertising desktop deployment facilities it does not provide.
 
 The Android development artifact builds both the portable CPU/NEON backend and
 the optional Vulkan backend for `arm64-v8a`. CPU remains the fallback and is
@@ -2190,10 +2192,12 @@ different while keeping request, event, result and failure semantics aligned.
 The dispatcher/service layer is the intended transport-independent orchestration
 core. It owns command execution, session routing, cancellation, lifecycle state,
 readiness, host-owned stores and event production. JSONL, TCP and Unix sockets
-are adapters around that core, not separate orchestration paths. An eventual
-Android Service should call the same core through JNI/Binder and provide only
-Android lifecycle, paths and IPC concerns. It must not introduce a second
-planner, scheduler or tool-execution implementation.
+are adapters around that core, not separate orchestration paths. The current
+Android Service is the deliberately smaller embedded variant: it reuses the
+common session host, event contracts and native worker boundary through JNI,
+but does not expose the standalone daemon transports or resident multi-model
+loader. It must not introduce a second planner, scheduler or tool-execution
+implementation.
 
 The current preparation boundary is deliberately small: runtime/service
 configuration should be separable from daemon transport configuration, and the

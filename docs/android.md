@@ -29,14 +29,23 @@ needs the Android SDK/NDK and Vulkan host headers (`libvulkan-dev` on Ubuntu).
 The NDK supplies `glslc` and the SPIR-V headers used during shader generation.
 
 The Android agent host currently selects the common CLI inference backend for
-local GGUF execution. The desktop server-context backend and its server/mtmd
-dependencies are intentionally not part of this Android target; adding them
-later must be an explicit host capability, not an Android-specific fallback.
+local GGUF execution. Android still provides the simpler daemon-like profile
+through `AgentRuntimeService`: one configured GGUF generation model, one native
+worker queue, structured events, cancellation and SQLite-backed state. The
+desktop server-context backend and its server/mtmd dependencies are not part
+of this Android target.
+
+This is an embedded service profile, not the standalone Linux
+`llama-agent-daemon` executable. Android does not currently include the Linux
+daemon's TCP, Unix-socket or external HTTP transport, resident multi-model
+loader, embedding-model path, training worker or multi-model scheduler. Those
+features may be added as explicit Android capabilities later; they must not be
+silently implied by the common agent contracts.
 
 The Android agent integration is a host around the common agent runtime. The
-first functional path is a Service-owned local runtime with SQLite state,
-structured events and cancellation; the Activity/UI is a client of that
-Service. `AgentClientSession` is the example application's runtime adapter: it
+first functional path is a Service-owned local daemon profile with SQLite
+state, structured events and cancellation; the Activity/UI is a client of
+that Service. `AgentClientSession` is the example application's runtime adapter: it
 binds the Service, configures an imported model, submits turns and polls
 event/result messages. The JNI boundary stays small and does not expose
 planner or tool implementation classes. GGUF models remain outside the APK in

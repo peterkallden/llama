@@ -258,6 +258,10 @@ bool initialize_agent_runtime_session_from_resident_model(
     common_agent_runtime_session & session,
     std::string & error) {
 #ifdef LLAMA_AGENT_ANDROID_CLI_ONLY
+    // Android owns the daemon-like lifecycle through AgentRuntimeService, but
+    // this profile has no standalone resident-model/server-context loader.
+    // Keep the unsupported path explicit so shared sources do not pull
+    // desktop loader symbols into the APK.
     (void) options;
     (void) backend;
     (void) resident_model;
