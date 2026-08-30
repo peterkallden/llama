@@ -22,17 +22,24 @@ into `ggml-vulkan` is a later decision gate after device-backed evidence.
 
 ## Phase 1: contracts and standalone benchmark
 
-1. Add host-neutral format contracts and focused CTest targets.
-2. Add a small standalone Vulkan test utility, outside the normal inference
+1. [x] Add host-neutral format contracts and focused CTest targets.
+2. [x] Add a small standalone Vulkan test utility, outside the normal inference
    path.
-3. Query `VK_FORMAT_ASTC_4x4_UNORM_BLOCK` and
+3. [x] Query `VK_FORMAT_ASTC_4x4_UNORM_BLOCK` and
    `VK_FORMAT_ASTC_6x6_UNORM_BLOCK` for optimal-tiling sampled-image support.
-4. Upload known pre-encoded ASTC images and verify `texelFetch` results in a
+4. [x] Verify that ASTC 4x4 and 6x6 images can be allocated, uploaded, and
+   transitioned for shader reads on a compatible device.
+5. [x] Compile the minimal `texelFetch` validation shader when `glslc` is
+   available.
+6. [ ] Upload a known-valid ASTC block and verify `texelFetch` results in a
    compute shader against a CPU reference.
-5. Measure sequential and deliberately non-local fetch patterns with Vulkan
+7. [ ] Measure sequential and deliberately non-local fetch patterns with Vulkan
    timestamp queries.
-6. Record device name, driver version, supported formats, shader workgroup
+8. [ ] Record device name, driver version, supported formats, shader workgroup
    shape, elapsed GPU time, and bytes represented.
+
+Current status: capability, resource allocation/upload, and shader compilation
+are validated. Shader execution and numerical validation remain open.
 
 Exit criterion: the selected target GPU accepts both formats as sampled images
 and the benchmark produces deterministic, validated values.

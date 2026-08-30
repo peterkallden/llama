@@ -125,6 +125,17 @@ uploads and layout transitions completed. The NVIDIA GeForce 920MX and llvmpipe
 remain excluded by the capability probe. `glslc` is still unavailable locally,
 so shader compilation and texel readback remain the next device-backed step.
 
+In the fourth focused run, the validation shader compiled successfully with the
+Android NDK `glslc` (1.4.341 toolchain) and CTest passed (`5/5`). The compile
+test confirms GLSL/SPIR-V syntax and descriptor declarations only; it does not
+yet execute the shader or validate decoded texel values.
+
+The final review for this etapp passed `git diff --check` and a separate
+`-Wall -Wextra -Werror` compilation of all new C++ sources. The device smoke was
+refactored to take its staging size from the shared ASTC contract instead of
+duplicating the 128-bit constant. A final rebuild and ASTC CTest run passed
+(`5/5`).
+
 ## Test sweep policy
 
 After each implementation sweep:
@@ -139,8 +150,8 @@ After each implementation sweep:
 
 ## Next sweep
 
-1. Add a GLSL compiler to the build environment and compile the validation
-   shader through the same test path used by the existing Vulkan backend.
+1. Execute the compiled validation shader through the device smoke using
+   sampled-image descriptors and a compute pipeline.
 2. Extend the device smoke with sampled-image descriptors, a compute pipeline,
    and readback of the validation buffer.
 3. Use a known-valid ASTC block and compare decoded texels with a CPU reference.

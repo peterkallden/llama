@@ -1,3 +1,5 @@
+#include "astc-vulkan-contract.h"
+
 #include <vulkan/vulkan.h>
 
 #include <cstdio>
@@ -5,6 +7,9 @@
 #include <vector>
 
 namespace {
+
+constexpr VkDeviceSize kAstcBlockBytes =
+    ggml_vk_astc_4x4_unorm_rgba.block_size_bytes;
 
 struct astc_image_resources {
     VkImage image = VK_NULL_HANDLE;
@@ -100,7 +105,7 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
     }
 
     const VkBufferCreateInfo buffer_info{
-        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 16,
+        VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, kAstcBlockBytes,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, nullptr,
     };
     VkBuffer staging_buffer = VK_NULL_HANDLE;
@@ -127,10 +132,10 @@ bool create_and_upload_image(VkPhysicalDevice physical_device, VkDevice device,
             break;
         }
         void * mapped = nullptr;
-        if (vkMapMemory(device, staging_memory, 0, 16, 0, &mapped) != VK_SUCCESS) {
+        if (vkMapMemory(device, staging_memory, 0, kAstcBlockBytes, 0, &mapped) != VK_SUCCESS) {
             break;
         }
-        std::memset(mapped, 0, 16);
+        std::memset(mapped, 0, kAstcBlockBytes);
         vkUnmapMemory(device, staging_memory);
 
         const VkCommandPoolCreateInfo pool_info{
