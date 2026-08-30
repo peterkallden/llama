@@ -210,10 +210,8 @@ jobs:
           disable-animations: false
           working-directory: examples/llama.android
           script: |
-            set -eu
             rm -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
-            retry_marker="$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
-            rm -f "$retry_marker"
+            rm -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
             adb wait-for-device
             test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
             echo "Emulator ABI:"
@@ -222,10 +220,7 @@ jobs:
             adb shell df -h /data /data/local/tmp
             adb shell pm uninstall com.arm.aichat.test || true
             adb shell pm uninstall com.example.llama.aichat || true
-            if ! bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh"; then
-              touch "$retry_marker"
-              exit 75
-            fi
+            bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh" || { touch "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"; exit 75; }
             ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
 
       - name: Detect unhealthy primary emulator
@@ -257,7 +252,6 @@ jobs:
           disable-animations: false
           working-directory: examples/llama.android
           script: |
-            set -eu
             adb wait-for-device
             test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
             echo "Emulator ABI:"
