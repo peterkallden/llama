@@ -37,10 +37,12 @@ of this Android target.
 
 This is an embedded service profile, not the standalone Linux
 `llama-agent-daemon` executable. Android does not currently include the Linux
-daemon's TCP, Unix-socket or external HTTP transport, resident multi-model
-loader, embedding-model path, training worker or multi-model scheduler. Those
-features may be added as explicit Android capabilities later; they must not be
-silently implied by the common agent contracts.
+daemon's inbound TCP, Unix-socket or HTTP listener transports, resident
+multi-model loader, embedding-model path, training worker or multi-model
+scheduler. It does include an outbound MCP HTTP client: once an endpoint is
+configured, its discovered external tools are resolved into the normal Android
+turn's tool catalog and can be selected by the model. Those boundaries must not
+be silently implied by the common agent contracts.
 
 The Android agent integration is a host around the common agent runtime. The
 first functional path is a Service-owned local daemon profile with SQLite
