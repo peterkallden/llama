@@ -863,7 +863,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 # This target intentionally is not registered as a default CTest: it calls
