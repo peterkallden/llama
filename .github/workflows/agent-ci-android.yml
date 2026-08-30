@@ -183,6 +183,13 @@ jobs:
       - name: Install Vulkan host headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
 
+      # android-emulator-runner performs a few ADB calls of its own after boot
+      # and before it invokes `script`.  Keep this marker until our script has
+      # actually begun, so a broken ADB service in that gap gets the same fresh
+      # emulator retry as an unhealthy Package Manager.
+      - name: Arm primary emulator infrastructure retry
+        run: touch "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
+
       - name: Run Android SQLite instrumentation smoke (primary emulator)
         id: android_sqlite_smoke_primary
         continue-on-error: true
@@ -204,6 +211,7 @@ jobs:
           working-directory: examples/llama.android
           script: |
             set -euo pipefail
+            rm -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
             retry_marker="$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
             rm -f "$retry_marker"
             adb wait-for-device
@@ -224,7 +232,8 @@ jobs:
         id: android_sqlite_retry
         if: always()
         run: |
-          if [[ -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy" ]]; then
+          if [[ -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy" || \
+                -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started" ]]; then
             echo "required=true" >> "$GITHUB_OUTPUT"
           else
             echo "required=false" >> "$GITHUB_OUTPUT"
